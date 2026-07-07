@@ -43,7 +43,9 @@
 （依賴全關後：body 標注 DEV-M/USR/LEG 者轉 ready-for-human，其餘轉 ready-for-agent）
 ```
 
-**解除阻擋規則**：slice 的「Blocked by」所列 issue 全數關閉時，依 body 開頭標注判定去向——含「（DEV-M，人工）」「（USR，人工）」「（LEG，人工）」者貼 `ready-for-human`，否則貼 `ready-for-agent`。人工類 slice 清單：#14（存證部分）、#18、#19、#22、#28、#34、#47、#48、#53、#54。
+**解除阻擋規則**：slice 的「Blocked by」所列 issue 全數關閉時，依 body 開頭標注判定去向——含「（DEV-M，人工）」「（USR，人工）」「（LEG，人工）」者貼 `ready-for-human`，否則貼 `ready-for-agent`。人工類 slice 清單：#14（存證部分）、#18、#28、#34、#47、#48、#53、#55（實機/佈署部分）。
+
+**2026-07-08 決策紀錄**：#19 iOS Go（Ad Hoc）已關閉（`docs/decisions/G0.10-ios-lane.md`），iOS Lane 解凍、#55 追蹤；#54 與 epic #10（Tier 2）已 wontfix（`.out-of-scope/tier2-betaflight-sitl.md`）；#22 調研階段轉 `ready-for-agent`，實體資料選定仍需維護者確認。
 
 ## 關閉條件（所有 slice 一體適用）
 
