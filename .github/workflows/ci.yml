@@ -131,12 +131,19 @@ jobs:
           CXX: ${{ github.workspace }}/.deps/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang++
         run: scripts/test_native.sh
 
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Run Android native unit tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           target: google_apis
           arch: x86_64
+          emulator-boot-timeout: 1200
           script: |
             adb shell mkdir -p /data/local/tmp/aerosim-tests
             for test_binary in build/tests/test_*; do
