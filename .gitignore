@@ -4,5 +4,10 @@
 build/
 bin/
 .sconsign.dblite
+__pycache__/
+*.pyc
+license_server.sqlite3*
+.env
+*.secret
 *.os
 *.tmp

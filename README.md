@@ -33,6 +33,7 @@ GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts
 scripts/test_native.sh
 python3 scripts/check_licenses.py
 scripts/test_license_scan.sh
+python3 -m unittest license_server.test_license_server
 GODOT_CPP_DIR=/path/to/godot-cpp scons target=template_debug platform=linux
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5
 ```
@@ -45,6 +46,7 @@ GitHub Actions 會執行：
 
 1. 原生 C++ 單元測試。
 2. 授權掃描，並確認 GPL fixture 會 fail。
-3. 下載並驗證 Godot `4.7-stable` Linux editor hash。
-4. 下載鎖定 commit 的 godot-cpp，建置 Linux GDExtension。
-5. headless smoke，確認 GDScript 可呼叫 native probe 並輸出檔案。
+3. 授權伺服器 API 整合測試。
+4. 下載並驗證 Godot `4.7-stable` Linux editor hash。
+5. 下載鎖定 commit 的 godot-cpp，建置 Linux GDExtension。
+6. headless smoke，確認 GDScript 可呼叫 native probe 並輸出檔案。
