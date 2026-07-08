@@ -113,7 +113,7 @@ jobs:
               export WINEDEBUG=-all
               export WINEARCH=win64
               export WINEPREFIX=/tmp/aerosim-wine
-              wineboot --init
+              wineboot --init || true
               for test_exe in build/tests/*.exe; do
                 wine "$test_exe"
               done
