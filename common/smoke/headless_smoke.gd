@@ -1,6 +1,7 @@
 extends SceneTree
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 
 class InputProbe:
@@ -12,6 +13,8 @@ class InputProbe:
     func _input(event: InputEvent) -> void:
         if event.is_action_pressed(action):
             pressed = true
+
+var verified_jolt_collision_trials := 0
 
 func _initialize() -> void:
     call_deferred("_run")
@@ -56,6 +59,14 @@ func _run() -> void:
     if not _verify_flight_control_public_path(native):
         quit(1)
         return
+    var collision_public_verified := _verify_collision_public_path(native)
+    if not collision_public_verified:
+        quit(1)
+        return
+    var jolt_collision_verified := await _verify_jolt_collision_scene(native)
+    if not jolt_collision_verified:
+        quit(1)
+        return
     if not await _verify_runtime_actions():
         quit(1)
         return
@@ -95,6 +106,9 @@ func _run() -> void:
         "trajectory_stride": stride,
         "trajectory_samples": int(trajectory.size() / stride),
         "input_fallback_status": input_fallback_status,
+        "collision_public_path": collision_public_verified,
+        "jolt_collision_handoff": jolt_collision_verified,
+        "jolt_collision_trials": verified_jolt_collision_trials,
         "desktop_substep_hz": 1000,
         "desktop_substeps": int(trajectory[trajectory.size() - 1]),
         "mobile_substep_hz": 500,
@@ -137,6 +151,349 @@ func _verify_flight_control_public_path(native: Object) -> bool:
         return false
     return true
 
+func _verify_collision_public_path(native: Object) -> bool:
+    native.call("reset_flight")
+    native.call("set_collision_release_frames", 5)
+    if not native.call("arm_flight_control", 0.0):
+        push_error("Collision public path should arm from low throttle")
+        return false
+
+    var impact: PackedFloat64Array = _step_native_collision(
+        native,
+        0.5,
+        true,
+        Vector3.LEFT,
+        Vector3.ZERO,
+        Vector3.ZERO,
+        Vector3.ZERO,
+        -1.0
+    )
+    if impact.size() < 14 or int(impact[12]) != 1 or int(impact[13]) < 1:
+        push_error("Collision public path must expose Jolt authority and integrator reset")
+        return false
+
+    var clear := PackedFloat64Array()
+    for _frame in range(4):
+        clear = _step_native_collision(
+            native,
+            0.8,
+            false,
+            Vector3.ZERO,
+            Vector3.ZERO,
+            Vector3.ZERO,
+            Vector3.ZERO,
+            -1.0
+        )
+    if clear.size() < 14 or int(clear[12]) != 1:
+        push_error("Collision public path must respect configured no-contact release frames")
+        return false
+    clear = _step_native_collision(
+        native,
+        0.8,
+        false,
+        Vector3.ZERO,
+        Vector3.ZERO,
+        Vector3.ZERO,
+        Vector3.ZERO,
+        -1.0
+    )
+    if clear.size() < 14 or int(clear[12]) != 0:
+        push_error("Collision public path must return to flight authority after configured clear frames")
+        return false
+    native.call("reset_flight")
+    return true
+
+func _verify_jolt_collision_scene(native: Object) -> bool:
+    if ProjectSettings.get_setting("physics/3d/physics_engine", "") != "Jolt Physics":
+        push_error("Project must lock physics/3d/physics_engine to Jolt Physics")
+        return false
+
+    verified_jolt_collision_trials = 0
+    for scenario in ["wall", "glancing_ground", "pole", "tumble_ground"]:
+        for seed in range(100):
+            var first: Dictionary = await _run_jolt_collision_trial(native, scenario, seed)
+            var second: Dictionary = await _run_jolt_collision_trial(native, scenario, seed)
+            if not first.ok or not second.ok or not _same_collision_row(first.row, second.row):
+                push_error("Headless Jolt G0.8 trial failed: %s seed %d first=%s second=%s" % [scenario, seed, first.get("reason", ""), second.get("reason", "")])
+                return false
+            verified_jolt_collision_trials += 1
+    return true
+
+func _run_jolt_collision_trial(native: Object, scenario: String, seed: int) -> Dictionary:
+    var trial_root := Node3D.new()
+    trial_root.name = "JoltCollisionTrial"
+    root.add_child(trial_root)
+
+    var drone = CollisionProbeBodyScript.new()
+    drone.contact_monitor = true
+    drone.max_contacts_reported = 4
+    drone.gravity_scale = 0.0
+    drone.set("continuous_cd", true)
+    _add_shape(drone, _drone_shape(scenario))
+    trial_root.add_child(drone)
+
+    _setup_jolt_trial_geometry(trial_root, drone, scenario, seed)
+    var energy_before := _kinetic(drone.linear_velocity, drone.angular_velocity)
+
+    if drone.get("continuous_cd") != true:
+        trial_root.queue_free()
+        return {"ok": false, "row": PackedFloat64Array(), "reason": "ccd_off"}
+
+    native.call("reset_flight")
+    native.call("arm_flight_control", 0.0)
+    var impact_row := PackedFloat64Array()
+    var reason := "no_contact"
+    for _frame in range(45):
+        await physics_frame
+        if drone.contact_seen:
+            if not _vector_finite(drone.contact_normal) or drone.contact_normal.length() <= 0.0:
+                reason = "bad_contact_normal"
+                break
+            if not _vector_finite(drone.contact_impulse) or drone.contact_impulse.length() <= 0.0:
+                reason = "bad_contact_impulse"
+                break
+            _sync_native_from_body(native, drone)
+            var solved_linear: Vector3 = drone.linear_velocity
+            var solved_angular: Vector3 = drone.angular_velocity
+            impact_row = _step_native_collision(
+                native,
+                0.5,
+                true,
+                drone.contact_normal,
+                drone.contact_impulse,
+                solved_linear,
+                solved_angular,
+                energy_before
+            )
+            reason = "impact"
+            break
+
+    var ok := impact_row.size() >= 24 and int(impact_row[12]) == 1 and int(impact_row[13]) >= 1
+    if not ok and reason == "impact":
+        reason = "handoff_row"
+    ok = ok and _collision_row_finite(impact_row)
+    if not ok and reason == "impact":
+        reason = "impact_finite"
+    ok = ok and _row_normal(impact_row).distance_to(drone.contact_normal) <= 1e-6
+    if not ok and reason == "impact":
+        reason = "normal_missing"
+    ok = ok and _row_impulse(impact_row).length() > 0.0
+    ok = ok and _row_impulse(impact_row).distance_to(drone.contact_impulse) <= 1e-6
+    if not ok and reason == "impact":
+        reason = "impulse_missing"
+    ok = ok and float(impact_row[17]) <= energy_before * 1.01 + 1e-9
+    if not ok and reason == "impact":
+        reason = "energy row=%f limit=%f" % [float(impact_row[17]), energy_before * 1.01]
+    if ok:
+        _apply_collision_row_to_body(drone, impact_row)
+        var body_energy := _kinetic(drone.linear_velocity, drone.angular_velocity)
+        ok = _body_state_finite(drone) and body_energy <= energy_before * 1.01 + 1e-5
+        if not ok:
+            reason = "body_impact_state body=%f limit=%f finite=%s" % [body_energy, energy_before * 1.01, str(_body_state_finite(drone))]
+    ok = ok and not (scenario == "wall" and drone.global_position.x > 0.3)
+    if not ok and reason == "impact":
+        reason = "tunneled"
+    if ok:
+        var clear := PackedFloat64Array()
+        for _frame in range(3):
+            await physics_frame
+            _sync_native_from_body(native, drone)
+            clear = _step_native_clear_collision(native, 0.8)
+            _apply_collision_row_to_body(drone, clear)
+        ok = clear.size() >= 24 and int(clear[12]) == 0
+        if not ok:
+            reason = "handoff_clear"
+        var vertical_velocity_before_response := float(clear[9])
+        for _frame in range(Engine.physics_ticks_per_second / 2):
+            await physics_frame
+            _sync_native_from_body(native, drone)
+            clear = _step_native_clear_collision(native, 0.8)
+            _apply_collision_row_to_body(drone, clear)
+        ok = ok and clear.size() >= 18 and float(clear[9]) > vertical_velocity_before_response and _collision_row_finite(clear)
+        if not ok and reason == "impact":
+            reason = "response"
+        if ok:
+            _apply_collision_row_to_body(drone, clear)
+            ok = _body_state_finite(drone) and drone.linear_velocity.y > vertical_velocity_before_response
+            if not ok:
+                reason = "body_response"
+        impact_row = clear
+    if ok:
+        reason = "ok"
+
+    trial_root.queue_free()
+    await process_frame
+    return {"ok": ok, "row": impact_row, "reason": reason}
+
+func _step_native_clear_collision(native: Object, throttle: float) -> PackedFloat64Array:
+    return _step_native_collision(
+        native,
+        throttle,
+        false,
+        Vector3.ZERO,
+        Vector3.ZERO,
+        Vector3.ZERO,
+        Vector3.ZERO,
+        -1.0
+    )
+
+func _step_native_collision(
+    native: Object,
+    throttle: float,
+    touching: bool,
+    normal: Vector3,
+    impulse: Vector3,
+    resolved_linear: Vector3,
+    resolved_angular: Vector3,
+    energy_limit: float
+) -> PackedFloat64Array:
+    return native.call(
+        "step_collision_angle_mode",
+        Engine.physics_ticks_per_second,
+        1000,
+        throttle,
+        0.0,
+        0.0,
+        0.0,
+        touching,
+        normal.x,
+        normal.y,
+        normal.z,
+        impulse.x,
+        impulse.y,
+        impulse.z,
+        0.0,
+        resolved_linear.x,
+        resolved_linear.y,
+        resolved_linear.z,
+        resolved_angular.x,
+        resolved_angular.y,
+        resolved_angular.z,
+        energy_limit
+    )
+
+func _setup_jolt_trial_geometry(parent: Node3D, drone: RigidBody3D, scenario: String, seed: int) -> void:
+    if scenario == "wall":
+        var wall := StaticBody3D.new()
+        wall.position = Vector3.ZERO
+        var wall_box := BoxShape3D.new()
+        wall_box.size = Vector3(0.2, 2.0, 2.0)
+        _add_shape(wall, wall_box)
+        parent.add_child(wall)
+        drone.position = Vector3(-1.0, _jitter(seed, 1, -0.05, 0.05), _jitter(seed, 2, -0.05, 0.05))
+        drone.linear_velocity = Vector3(30.0 + _jitter(seed, 3, -0.25, 0.25), 0.0, 0.0)
+    elif scenario == "glancing_ground":
+        var ground := StaticBody3D.new()
+        ground.position = Vector3.ZERO
+        var ground_box := BoxShape3D.new()
+        ground_box.size = Vector3(4.0, 0.1, 4.0)
+        _add_shape(ground, ground_box)
+        parent.add_child(ground)
+        var speed := 20.0 + _jitter(seed, 4, -0.5, 0.5)
+        var angle := deg_to_rad(5.0)
+        drone.position = Vector3(-0.8, 0.16, _jitter(seed, 5, -0.05, 0.05))
+        drone.linear_velocity = Vector3(speed * cos(angle), -speed * sin(angle), 0.0)
+    elif scenario == "pole":
+        var pole := StaticBody3D.new()
+        pole.position = Vector3.ZERO
+        var pole_shape := CylinderShape3D.new()
+        pole_shape.radius = 0.08
+        pole_shape.height = 2.0
+        _add_shape(pole, pole_shape)
+        parent.add_child(pole)
+        var z_offset := _jitter(seed, 6, -0.12, 0.12)
+        drone.position = Vector3(-1.0, 0.0, z_offset)
+        drone.linear_velocity = Vector3(14.0, 0.0, -z_offset * 3.0)
+    else:
+        var tumble_ground := StaticBody3D.new()
+        tumble_ground.position = Vector3.ZERO
+        var tumble_box := BoxShape3D.new()
+        tumble_box.size = Vector3(4.0, 0.1, 4.0)
+        _add_shape(tumble_ground, tumble_box)
+        parent.add_child(tumble_ground)
+        drone.position = Vector3(_jitter(seed, 7, -0.2, 0.2), 0.8, _jitter(seed, 8, -0.2, 0.2))
+        drone.linear_velocity = Vector3(_jitter(seed, 9, -2.0, 2.0), -8.0, _jitter(seed, 10, -2.0, 2.0))
+        drone.angular_velocity = Vector3(_jitter(seed, 11, -9.0, 9.0), _jitter(seed, 12, -9.0, 9.0), _jitter(seed, 13, -9.0, 9.0))
+
+func _drone_shape(scenario: String) -> Shape3D:
+    if scenario == "tumble_ground":
+        var box := BoxShape3D.new()
+        box.size = Vector3(0.24, 0.08, 0.24)
+        return box
+    var sphere := SphereShape3D.new()
+    sphere.radius = 0.1
+    return sphere
+
+func _add_shape(body: CollisionObject3D, shape: Shape3D) -> void:
+    var collision_shape := CollisionShape3D.new()
+    collision_shape.shape = shape
+    body.add_child(collision_shape)
+
+func _collision_row_finite(row: PackedFloat64Array) -> bool:
+    if row.size() < 24:
+        return false
+    for index in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]:
+        if not is_finite(row[index]):
+            return false
+    return true
+
+func _apply_collision_row_to_body(body: Object, row: PackedFloat64Array) -> void:
+    body.apply_native_state(
+        Vector3(row[1], row[2], row[3]),
+        Quaternion(row[4], row[5], row[6], row[7]),
+        Vector3(row[8], row[9], row[10]),
+        Vector3(row[14], row[15], row[16])
+    )
+
+func _sync_native_from_body(native: Object, body: RigidBody3D) -> void:
+    var q := body.global_transform.basis.get_rotation_quaternion()
+    native.call(
+        "sync_flight_state",
+        body.global_position.x,
+        body.global_position.y,
+        body.global_position.z,
+        q.x,
+        q.y,
+        q.z,
+        q.w,
+        body.linear_velocity.x,
+        body.linear_velocity.y,
+        body.linear_velocity.z,
+        body.angular_velocity.x,
+        body.angular_velocity.y,
+        body.angular_velocity.z
+    )
+
+func _row_impulse(row: PackedFloat64Array) -> Vector3:
+    return Vector3(row[21], row[22], row[23])
+
+func _row_normal(row: PackedFloat64Array) -> Vector3:
+    return Vector3(row[18], row[19], row[20])
+
+func _body_state_finite(body: RigidBody3D) -> bool:
+    var q := body.global_transform.basis.get_rotation_quaternion()
+    return _vector_finite(body.global_position) and _vector_finite(body.linear_velocity) and _vector_finite(body.angular_velocity) and is_finite(q.x) and is_finite(q.y) and is_finite(q.z) and is_finite(q.w)
+
+func _same_collision_row(a: PackedFloat64Array, b: PackedFloat64Array) -> bool:
+    if a.size() != b.size():
+        return false
+    for index in range(a.size()):
+        if index == 13:
+            continue
+        if abs(a[index] - b[index]) > 1e-6:
+            return false
+    return true
+
+func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3) -> float:
+    return 0.5 * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()
+
+func _vector_finite(value: Vector3) -> bool:
+    return is_finite(value.x) and is_finite(value.y) and is_finite(value.z)
+
+func _jitter(seed: int, salt: int, low: float, high: float) -> float:
+    var unit := fposmod(sin(float(seed * 31 + salt * 17)) * 43758.5453123, 1.0)
+    return low + (high - low) * unit
+
 func _verify_runtime_actions() -> bool:
     var scene := SmokeScene.instantiate()
     root.add_child(scene)
@@ -151,9 +508,16 @@ func _verify_runtime_actions() -> bool:
         return false
 
     await _press_key(KEY_T)
-    await physics_frame
+    for _frame in range(30):
+        await physics_frame
+        if scene.collision_handoff_count > 0:
+            break
     if not scene.takeoff_requested or not scene.native.call("flight_control_armed"):
         push_error("flight_takeoff action must request takeoff and arm through runtime")
+        scene.queue_free()
+        return false
+    if scene.collision_handoff_count <= 0:
+        push_error("flight runtime must feed DroneBody Jolt contact into native collision authority")
         scene.queue_free()
         return false
 

@@ -1,6 +1,13 @@
-[gd_scene load_steps=2 format=3 uid="uid://aerosim_smoke_scene"]
+[gd_scene load_steps=6 format=3 uid="uid://aerosim_smoke_scene"]
 
 [ext_resource type="Script" path="res://common/flight/flight_runtime.gd" id="1_2nq71"]
+[ext_resource type="Script" path="res://common/flight/collision_probe_body.gd" id="2_e6a3t"]
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_drone"]
+radius = 0.1
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_wall"]
+size = Vector3(0.2, 2, 2)
 
 [node name="SmokeRoot" type="Node3D"]
 script = ExtResource("1_2nq71")
@@ -8,3 +15,18 @@ script = ExtResource("1_2nq71")
 [node name="FallbackStatus" type="Label3D" parent="."]
 unique_name_in_owner = true
 text = "Input fallback unavailable"
+
+[node name="DroneBody" type="RigidBody3D" parent="."]
+script = ExtResource("2_e6a3t")
+gravity_scale = 0.0
+contact_monitor = true
+max_contacts_reported = 4
+continuous_cd = true
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DroneBody"]
+shape = SubResource("SphereShape3D_drone")
+
+[node name="RuntimeWall" type="StaticBody3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="RuntimeWall"]
+shape = SubResource("BoxShape3D_wall")

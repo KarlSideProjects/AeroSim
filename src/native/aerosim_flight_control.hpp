@@ -17,11 +17,14 @@ class FlightController {
 private:
     bool armed_ = false;
     std::string arm_reject_code_ = "";
+    int integrator_reset_count_ = 0;
 
 public:
     bool arm(double throttle);
     bool armed() const;
     const std::string &arm_reject_code() const;
+    void reset_integrators();
+    int integrator_reset_count() const;
     TrajectorySample step_angle_mode(
             RigidBodyState &state,
             SimulationClock &clock,

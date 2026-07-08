@@ -48,6 +48,14 @@ const std::string &FlightController::arm_reject_code() const {
     return arm_reject_code_;
 }
 
+void FlightController::reset_integrators() {
+    ++integrator_reset_count_;
+}
+
+int FlightController::integrator_reset_count() const {
+    return integrator_reset_count_;
+}
+
 TrajectorySample FlightController::step_angle_mode(
         RigidBodyState &state,
         SimulationClock &clock,
@@ -67,6 +75,7 @@ TrajectorySample FlightController::step_angle_mode(
 }
 
 void FlightController::reset_flight(RigidBodyState &state, SimulationClock &clock) {
+    reset_integrators();
     state = {};
     clock = {};
 }
