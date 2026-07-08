@@ -277,13 +277,16 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     contact.resolved_angular_velocity = {resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z};
     contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
 
+    const aerosim::ImuSample imu_sample = imu_.sample(simulation_state_);
+    flight_control_used_estimated_attitude_ = true;
     const aerosim::CollisionStepResult result = collision_authority_.step(
             simulation_state_,
             simulation_clock_,
             flight_controller_,
             config,
             command,
-            contact);
+            contact,
+            imu_sample.estimated_attitude);
 
     PackedFloat64Array row;
     const aerosim::TrajectorySample &sample = result.sample;

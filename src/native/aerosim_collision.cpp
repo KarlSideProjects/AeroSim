@@ -126,6 +126,17 @@ CollisionStepResult CollisionAuthoritySwitch::step(
         const SimulationConfig &config,
         const FlightCommand &command,
         const CollisionContact &contact) {
+    return step(state, clock, controller, config, command, contact, state.orientation);
+}
+
+CollisionStepResult CollisionAuthoritySwitch::step(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        FlightController &controller,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const CollisionContact &contact,
+        const Quat &estimated_attitude) {
     if (contact.touching) {
         if (authority_ != PhysicsAuthority::Jolt) {
             controller.reset_integrators();
@@ -149,7 +160,7 @@ CollisionStepResult CollisionAuthoritySwitch::step(
         authority_ = PhysicsAuthority::FlightCore;
     }
 
-    return {authority_, controller.step_angle_mode(state, clock, config, command), {}, {}};
+    return {authority_, controller.step_angle_mode(state, clock, config, command, estimated_attitude), {}, {}};
 }
 
 } // namespace aerosim

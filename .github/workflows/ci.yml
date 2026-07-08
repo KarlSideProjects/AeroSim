@@ -6,7 +6,7 @@ on:
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
 
@@ -77,24 +77,27 @@ jobs:
           PY
 
   windows:
-    runs-on: windows-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build tools
-        run: python3 -m pip install scons
-
-      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Install Windows compatibility build tools
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mingw-w64 wine64
+          python3 -m pip install scons
 
       - name: Native unit test
-        shell: bash
         env:
-          AEROSIM_MSVC: "1"
-          CXX: cl
+          CXX: x86_64-w64-mingw32-g++
           EXE_SUFFIX: .exe
           AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
-          MSYS2_ARG_CONV_EXCL: "*"
-        run: scripts/test_native.sh
+          AEROSIM_RUN_NATIVE_TESTS: "0"
+        run: |
+          scripts/test_native.sh
+          for test_exe in build/tests/*.exe; do
+            wine "$test_exe"
+          done
 
       - name: Upload Windows replay artifact
         uses: actions/upload-artifact@v4
@@ -103,17 +106,15 @@ jobs:
           path: build/replay_terminal_state.json
 
       - name: Fetch godot-cpp
-        shell: bash
         run: |
           git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
           git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
 
       - name: Build GDExtension
-        shell: bash
-        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=windows
+        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=windows use_mingw=yes
 
   android:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     env:
       ANDROID_NDK_ROOT: ${{ github.workspace }}/.deps/android-ndk
     steps:
@@ -166,7 +167,7 @@ jobs:
         run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=android arch=arm64 ANDROID_HOME=
 
   replay-compare:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     needs: [linux, windows, android]
     steps:
       - uses: actions/checkout@v4

@@ -84,6 +84,21 @@ double clamp_gain(double gain) {
     return std::clamp(gain, 0.0, 1.0);
 }
 
+bool zero_vec(const Vec3 &v) {
+    return v.x == 0.0 && v.y == 0.0 && v.z == 0.0;
+}
+
+bool ideal_attitude_source(const ImuConfig &config) {
+    return zero_vec(config.gyro_bias) &&
+            zero_vec(config.accel_bias) &&
+            config.gyro_noise_density == 0.0 &&
+            config.accel_noise_density == 0.0 &&
+            config.gyro_bias_drift_stddev == 0.0 &&
+            config.accel_bias_drift_stddev == 0.0 &&
+            config.gyro_random_walk_stddev == 0.0 &&
+            config.accel_random_walk_stddev == 0.0;
+}
+
 } // namespace
 
 ImuSimulator::ImuSimulator(const ImuConfig &config) :
@@ -150,7 +165,10 @@ ImuSample ImuSimulator::sample(const RigidBodyState &state) {
             accel_walk_ +
             noise3(config_.accel_noise_density * white_scale);
 
-    if (!estimate_initialized_) {
+    if (ideal_attitude_source(config_)) {
+        estimated_attitude_ = normalized(delayed.orientation);
+        estimate_initialized_ = true;
+    } else if (!estimate_initialized_) {
         estimated_attitude_ = normalized(delayed.orientation);
         estimate_initialized_ = true;
     } else {

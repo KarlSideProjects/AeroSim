@@ -1,6 +1,7 @@
 #include "aerosim_imu.hpp"
 #include "aerosim_flight_control.hpp"
 
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -68,6 +69,18 @@ int main() {
         return fail("IMU attitude estimate must stay normalized");
     }
 
+    aerosim::ImuSimulator ideal_imu({});
+    ideal_imu.sample({});
+    aerosim::RigidBodyState tilted_ideal_state;
+    const double ideal_tilt = 12.0 * 3.14159265358979323846 / 180.0;
+    tilted_ideal_state.orientation.x = std::sin(ideal_tilt * 0.5);
+    tilted_ideal_state.orientation.w = std::cos(ideal_tilt * 0.5);
+    const aerosim::ImuSample ideal_sample = ideal_imu.sample(tilted_ideal_state);
+    if (!near(ideal_sample.estimated_attitude.x, tilted_ideal_state.orientation.x, 1e-12) ||
+            !near(ideal_sample.estimated_attitude.w, tilted_ideal_state.orientation.w, 1e-12)) {
+        return fail("zero-error IMU attitude estimate must follow the observed orientation without estimator lag");
+    }
+
     aerosim::SimulationConfig sim_config;
     sim_config.physics_hz = 100;
     sim_config.substep_hz = 100;
@@ -87,6 +100,22 @@ int main() {
     controller.step_angle_mode(tilted_state, clock, sim_config, hover, aerosim::Quat{});
     if (!near(tilted_state.angular_velocity.x, 0.0, 1e-12)) {
         return fail("Angle Mode must use IMU estimated attitude instead of true body attitude");
+    }
+
+    aerosim::ImuConfig bias_config;
+    bias_config.gyro_bias = {0.10, -0.20, 0.30};
+    bias_config.accel_bias = {1.0, 2.0, 3.0};
+    aerosim::ImuSimulator biased_imu(bias_config);
+    const aerosim::ImuSample biased = biased_imu.sample({});
+    if (!near(biased.gyro_rad_per_s.x, 0.10, 0.0) ||
+            !near(biased.gyro_rad_per_s.y, -0.20, 0.0) ||
+            !near(biased.gyro_rad_per_s.z, 0.30, 0.0)) {
+        return fail("constant gyro bias must be visible in zero-noise IMU samples");
+    }
+    if (!near(biased.accel_mps2.x, 1.0, 0.0) ||
+            !near(biased.accel_mps2.y, bias_config.gravity_mps2 + 2.0, 1e-12) ||
+            !near(biased.accel_mps2.z, 3.0, 0.0)) {
+        return fail("constant accel bias must be visible in zero-noise IMU samples");
     }
 
     aerosim::ImuConfig deterministic_config;
@@ -172,6 +201,43 @@ int main() {
     }
     if (!near(gyro_x_allan.mean, expected_gyro_variance, expected_gyro_variance * 0.25)) {
         return fail("gyro Allan variance at one sample must match configured white-noise density");
+    }
+
+    aerosim::ImuConfig psd_config;
+    psd_config.seed = 88;
+    psd_config.sample_hz = 200.0;
+    psd_config.gyro_noise_density = 0.03;
+    constexpr int kPsdSamples = 2048;
+    std::array<double, kPsdSamples> gyro_samples{};
+    aerosim::ImuSimulator psd_imu(psd_config);
+    Stats psd_stats;
+    for (double &sample : gyro_samples) {
+        sample = psd_imu.sample({}).gyro_rad_per_s.x;
+        psd_stats.add(sample);
+    }
+    const auto band_power = [&gyro_samples, mean = psd_stats.mean](int first_bin, int last_bin) {
+        constexpr double kPi = 3.14159265358979323846;
+        double total = 0.0;
+        int bins = 0;
+        for (int bin = first_bin; bin <= last_bin; ++bin) {
+            double real = 0.0;
+            double imag = 0.0;
+            for (int index = 0; index < kPsdSamples; ++index) {
+                const double centered = gyro_samples[static_cast<std::size_t>(index)] - mean;
+                const double angle = 2.0 * kPi * static_cast<double>(bin * index) / static_cast<double>(kPsdSamples);
+                real += centered * std::cos(angle);
+                imag -= centered * std::sin(angle);
+            }
+            total += (real * real + imag * imag) / static_cast<double>(kPsdSamples);
+            ++bins;
+        }
+        return total / static_cast<double>(bins);
+    };
+    const double low_band = band_power(2, 17);
+    const double high_band = band_power(160, 175);
+    const double psd_ratio = low_band / high_band;
+    if (!std::isfinite(psd_ratio) || psd_ratio < 0.25 || psd_ratio > 4.0) {
+        return fail("gyro white-noise PSD must stay broadly flat across low and high frequency bands");
     }
 
     aerosim::ImuConfig drift_config;

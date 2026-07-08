@@ -119,6 +119,7 @@ func _run() -> void:
         "mobile_substep_hz": 500,
         "mobile_substeps_1s": int(mobile_trajectory[mobile_trajectory.size() - 1])
     }))
+    file.close()
     quit(0)
 
 func _input_fallback_status() -> String:
@@ -185,6 +186,8 @@ func _verify_imu_public_path(native: Object) -> bool:
     if diagnostics.get("uses_estimated_attitude", false) != true:
         push_error("Flight control diagnostics must prove attitude source is the IMU estimate, not truth")
         return false
+    native.call("configure_imu", quiet_config)
+    native.call("reset_flight")
     return true
 
 func _same_imu_config(actual: Dictionary, expected: Dictionary) -> bool:
