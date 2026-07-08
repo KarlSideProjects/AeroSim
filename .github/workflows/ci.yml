@@ -84,6 +84,27 @@ jobs:
           assert abs(qnorm - 1.0) <= 1e-6
           PY
 
+      - name: Install Godot export templates
+        run: |
+          curl -L -o /tmp/godot-export-templates.tpz https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_export_templates.tpz
+          echo "1035dfde4edcc2472bb0c0b9610ce3ee9302642c2b9957e9066372f9f6bb759ab250c8887551a66f0bc5f51bbd9a58bb45e33a0f29844e97615a9b1138c1120e  /tmp/godot-export-templates.tpz" | sha512sum -c -
+          rm -rf /tmp/godot-export-templates "$HOME/.local/share/godot/export_templates/4.7.stable"
+          mkdir -p /tmp/godot-export-templates "$HOME/.local/share/godot/export_templates/4.7.stable"
+          unzip -q /tmp/godot-export-templates.tpz -d /tmp/godot-export-templates
+          cp -a /tmp/godot-export-templates/templates/. "$HOME/.local/share/godot/export_templates/4.7.stable/"
+
+      - name: Build Linux release GDExtension
+        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_release platform=linux
+
+      - name: Export Linux release artifact
+        run: scripts/export_linux_release.sh
+
+      - name: Upload Linux release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: build/release/AeroSim-linux.zip
+
   windows:
     runs-on: [self-hosted, Linux, X64]
     steps:

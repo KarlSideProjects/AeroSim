@@ -3,6 +3,7 @@ set -euo pipefail
 
 test -s docs/release_delivery_sop.md
 
+mkdir -p build
 artifact="$(mktemp build/release-artifact.XXXXXX)"
 out_file="$(mktemp)"
 err_file="$(mktemp)"

@@ -22,6 +22,7 @@ build/THIRD_PARTY_NOTICES.txt
 Release artifact size checks use:
 
 ```bash
+scripts/export_linux_release.sh
 python3 scripts/check_release_artifacts.py \
   build/release/AeroSim-windows.zip \
   build/release/AeroSim-linux.zip \
@@ -36,7 +37,7 @@ Each artifact must be `<= 300 MB`.
 | Artifact | Path | Gate | Current status |
 | --- | --- | --- | --- |
 | Windows desktop bundle | `build/release/AeroSim-windows.zip` | size <= 300 MB | not verified |
-| Linux desktop bundle | `build/release/AeroSim-linux.zip` | size <= 300 MB | not verified |
+| Linux desktop bundle | `build/release/AeroSim-linux.zip` | size <= 300 MB | CI export pending |
 | macOS desktop bundle | `build/release/AeroSim-macos.zip` | size <= 300 MB, signed/notarized if distributed outside a trusted channel | not verified |
 | Android sideload APK | `build/release/AeroSim-android.apk` | size <= 300 MB, installs on device | not verified |
 | Third-party notices | `build/THIRD_PARTY_NOTICES.txt` | generated from `third_party/licenses.json` | CI verified |
