@@ -129,6 +129,7 @@ jobs:
         env:
           AEROSIM_RUN_NATIVE_TESTS: "0"
           CXX: ${{ github.workspace }}/.deps/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang++
+          CXXFLAGS: -static-libstdc++
         run: scripts/test_native.sh
 
       - name: Enable KVM
