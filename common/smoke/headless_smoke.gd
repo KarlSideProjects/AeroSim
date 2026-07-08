@@ -17,7 +17,7 @@ class InputProbe:
 var verified_jolt_collision_trials := 0
 
 func _initialize() -> void:
-    call_deferred("_run")
+    _run()
 
 func _run() -> void:
     var output_path := _output_path()
