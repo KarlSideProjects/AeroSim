@@ -14,7 +14,15 @@ jobs:
         run: python3 -m pip install scons
 
       - name: Native unit test
+        env:
+          AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
         run: scripts/test_native.sh
+
+      - name: Upload Linux replay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-linux
+          path: build/replay_terminal_state.json
 
       - name: License scan
         run: scripts/test_license_scan.sh
@@ -63,3 +71,116 @@ jobs:
           )))
           assert abs(qnorm - 1.0) <= 1e-6
           PY
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: python3 -m pip install scons
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Native unit test
+        shell: bash
+        env:
+          AEROSIM_MSVC: "1"
+          CXX: cl
+          EXE_SUFFIX: .exe
+          AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
+          MSYS2_ARG_CONV_EXCL: "*"
+        run: scripts/test_native.sh
+
+      - name: Upload Windows replay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-windows
+          path: build/replay_terminal_state.json
+
+      - name: Fetch godot-cpp
+        shell: bash
+        run: |
+          git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
+          git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
+
+      - name: Build GDExtension
+        shell: bash
+        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=windows
+
+  android:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_NDK_ROOT: ${{ github.workspace }}/.deps/android-ndk
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: python3 -m pip install scons
+
+      - name: Install Android NDK
+        run: |
+          curl -L -o /tmp/android-ndk.zip https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+          echo "22105e410cf29afcf163760cc95522b9fb981121  /tmp/android-ndk.zip" | sha1sum -c -
+          unzip -q /tmp/android-ndk.zip -d .deps
+          mv .deps/android-ndk-r27d "$ANDROID_NDK_ROOT"
+
+      - name: Build Android native unit tests
+        env:
+          AEROSIM_RUN_NATIVE_TESTS: "0"
+          CXX: ${{ github.workspace }}/.deps/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang++
+          CXXFLAGS: -static-libstdc++
+        run: scripts/test_native.sh
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run Android native unit tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          emulator-boot-timeout: 1200
+          script: scripts/run_android_native_tests.sh
+
+      - name: Upload Android replay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-android
+          path: build/replay_terminal_state.json
+
+      - name: Fetch godot-cpp
+        run: |
+          git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
+          git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
+
+      - name: Build GDExtension
+        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=android arch=arm64 ANDROID_HOME=
+
+  replay-compare:
+    runs-on: ubuntu-latest
+    needs: [linux, windows, android]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download replay artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: replay-*
+          path: build/replay-artifacts
+
+      - name: Compare Linux and Windows replay terminal state
+        run: |
+          python3 scripts/compare_replay_artifacts.py \
+            build/replay-artifacts/replay-linux/replay_terminal_state.json \
+            build/replay-artifacts/replay-windows/replay_terminal_state.json
+          python3 scripts/compare_replay_artifacts.py \
+            build/replay-artifacts/replay-linux/replay_terminal_state.json \
+            build/replay-artifacts/replay-android/replay_terminal_state.json
+          python3 scripts/compare_replay_artifacts.py \
+            build/replay-artifacts/replay-windows/replay_terminal_state.json \
+            build/replay-artifacts/replay-android/replay_terminal_state.json

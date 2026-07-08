@@ -9,7 +9,10 @@ if not os.path.exists(os.path.join(godot_cpp_dir, "SConstruct")):
 
 env = SConscript(os.path.join(godot_cpp_dir, "SConstruct"))
 env.Append(CPPPATH=["src/native"])
-env.Append(CCFLAGS=["-ffp-contract=off"])
+if ARGUMENTS.get("platform", "") == "windows" and not env.get("use_mingw", False):
+    env.Append(CCFLAGS=["/fp:strict"])
+else:
+    env.Append(CCFLAGS=["-ffp-contract=off"])
 os.makedirs("bin", exist_ok=True)
 
 sources = Glob("src/native/*.cpp")

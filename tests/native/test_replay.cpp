@@ -1,0 +1,127 @@
+#include "aerosim_replay.hpp"
+
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+
+namespace {
+
+int fail(const char *message) {
+    std::cerr << message << "\n";
+    return EXIT_FAILURE;
+}
+
+bool same_bits(double a, double b) {
+    return std::memcmp(&a, &b, sizeof(double)) == 0;
+}
+
+bool same_sample_bits(const aerosim::TrajectorySample &a, const aerosim::TrajectorySample &b) {
+    return same_bits(a.time_seconds, b.time_seconds) &&
+            same_bits(a.state.position.x, b.state.position.x) &&
+            same_bits(a.state.position.y, b.state.position.y) &&
+            same_bits(a.state.position.z, b.state.position.z) &&
+            same_bits(a.state.orientation.x, b.state.orientation.x) &&
+            same_bits(a.state.orientation.y, b.state.orientation.y) &&
+            same_bits(a.state.orientation.z, b.state.orientation.z) &&
+            same_bits(a.state.orientation.w, b.state.orientation.w) &&
+            same_bits(a.state.velocity.x, b.state.velocity.x) &&
+            same_bits(a.state.velocity.y, b.state.velocity.y) &&
+            same_bits(a.state.velocity.z, b.state.velocity.z) &&
+            same_bits(a.state.angular_velocity.x, b.state.angular_velocity.x) &&
+            same_bits(a.state.angular_velocity.y, b.state.angular_velocity.y) &&
+            same_bits(a.state.angular_velocity.z, b.state.angular_velocity.z) &&
+            a.substeps == b.substeps;
+}
+
+aerosim::RecordedInputSequence standard_maneuver(std::int32_t frames) {
+    aerosim::ReplayRecorder recorder;
+    for (std::int32_t frame = 0; frame < frames; ++frame) {
+        aerosim::FlightCommand command;
+        command.throttle = frame < frames / 4 ? 0.62 : 0.50;
+        command.roll_degrees = static_cast<double>((frame % 120) - 60) * 0.25;
+        command.pitch_degrees = static_cast<double>((frame % 96) - 48) * 0.20;
+        command.yaw_rate_degrees_per_second = static_cast<double>((frame % 80) - 40) * 3.0;
+        recorder.record(command);
+    }
+    return recorder.sequence();
+}
+
+bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
+    if (path == nullptr || path[0] == '\0') {
+        return true;
+    }
+    std::ofstream out(path);
+    if (!out) {
+        return false;
+    }
+    out << std::setprecision(17)
+        << "{\n"
+        << "  \"schema_version\": 1,\n"
+        << "  \"time_seconds\": " << sample.time_seconds << ",\n"
+        << "  \"substeps\": " << sample.substeps << ",\n"
+        << "  \"position_m\": ["
+        << sample.state.position.x << ", "
+        << sample.state.position.y << ", "
+        << sample.state.position.z << "],\n"
+        << "  \"orientation_xyzw\": ["
+        << sample.state.orientation.x << ", "
+        << sample.state.orientation.y << ", "
+        << sample.state.orientation.z << ", "
+        << sample.state.orientation.w << "]\n"
+        << "}\n";
+    return true;
+}
+
+} // namespace
+
+int main() {
+    aerosim::SimulationConfig config;
+    config.physics_hz = 240;
+    config.substep_hz = 1000;
+
+    aerosim::ReplayRecorder recorder;
+    for (int frame = 0; frame < config.physics_hz * 2; ++frame) {
+        aerosim::FlightCommand command;
+        command.throttle = 0.52 + static_cast<double>(frame % 7) * 0.01;
+        command.roll_degrees = static_cast<double>((frame % 21) - 10);
+        command.pitch_degrees = static_cast<double>((frame % 17) - 8);
+        command.yaw_rate_degrees_per_second = static_cast<double>((frame % 11) - 5) * 15.0;
+        recorder.record(command);
+    }
+
+    const aerosim::RecordedInputSequence inputs = recorder.sequence();
+    const auto first = aerosim::replay_angle_mode(config, inputs);
+    const auto second = aerosim::replay_angle_mode(config, inputs);
+
+    if (first.size() != inputs.frames.size() || second.size() != inputs.frames.size()) {
+        return fail("replay must emit one trajectory sample for every recorded input frame");
+    }
+    for (std::size_t i = 0; i < inputs.frames.size(); ++i) {
+        if (!same_sample_bits(first[i], second[i])) {
+            return fail("same-platform replay must be bitwise identical for the same input sequence");
+        }
+    }
+
+    aerosim::SimulationConfig standard_config;
+    standard_config.seconds = 60.0;
+    standard_config.physics_hz = 240;
+    standard_config.substep_hz = 1000;
+
+    const auto standard_inputs = standard_maneuver(
+            static_cast<std::int32_t>(standard_config.seconds * standard_config.physics_hz));
+    const auto reference = aerosim::replay_angle_mode(standard_config, standard_inputs);
+    const auto platform_run = aerosim::replay_angle_mode(standard_config, standard_inputs);
+    const aerosim::ReplayDelta delta = aerosim::compare_replay_final_state(
+            reference.back(),
+            platform_run.back());
+    if (!aerosim::within_g06a_tolerance(delta)) {
+        return fail("G0.6a cross-platform final-state tolerance check rejected the standard maneuver");
+    }
+    if (!write_artifact(std::getenv("AEROSIM_REPLAY_ARTIFACT"), platform_run.back())) {
+        return fail("failed to write replay terminal-state artifact");
+    }
+
+    return EXIT_SUCCESS;
+}
