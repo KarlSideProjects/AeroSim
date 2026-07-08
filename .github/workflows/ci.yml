@@ -31,6 +31,9 @@ jobs:
       - name: License scan
         run: scripts/test_license_scan.sh
 
+      - name: Release artifact checks
+        run: scripts/test_release_artifacts.sh
+
       - name: License server API test
         run: python3 -m unittest license_server.test_license_server
 
