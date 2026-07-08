@@ -6,8 +6,6 @@
 namespace aerosim {
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-
 double sample_dt(const ImuConfig &config) {
     return config.sample_hz > 0.0 ? 1.0 / config.sample_hz : 1.0 / 240.0;
 }

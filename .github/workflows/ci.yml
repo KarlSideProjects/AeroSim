@@ -85,40 +85,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Windows compatibility build tools
+      - name: Windows compatibility build and replay in Docker
         run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mingw-w64 wine64
-          python3 -m venv build/scons-venv
-          build/scons-venv/bin/python -m pip install --upgrade pip
-          build/scons-venv/bin/python -m pip install scons
-          echo "$PWD/build/scons-venv/bin" >> "$GITHUB_PATH"
-
-      - name: Native unit test
-        env:
-          CXX: x86_64-w64-mingw32-g++
-          EXE_SUFFIX: .exe
-          AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
-          AEROSIM_RUN_NATIVE_TESTS: "0"
-        run: |
-          scripts/test_native.sh
-          for test_exe in build/tests/*.exe; do
-            wine "$test_exe"
-          done
+          docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$PWD:/work" \
+            -w /work \
+            ubuntu:24.04 \
+            bash -lc '
+              set -euo pipefail
+              trap "chown -R \"$HOST_UID:$HOST_GID\" build bin .deps 2>/dev/null || true" EXIT
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y ca-certificates git python3 python3-venv unzip mingw-w64 wine64
+              python3 -m venv build/scons-venv
+              build/scons-venv/bin/python -m pip install --upgrade pip
+              build/scons-venv/bin/python -m pip install scons
+              export PATH="$PWD/build/scons-venv/bin:$PATH"
+              export CXX=x86_64-w64-mingw32-g++
+              export EXE_SUFFIX=.exe
+              export AEROSIM_REPLAY_ARTIFACT=build/replay_terminal_state.json
+              export AEROSIM_RUN_NATIVE_TESTS=0
+              scripts/test_native.sh
+              export WINEDEBUG=-all
+              export WINEPREFIX=/tmp/aerosim-wine
+              wineboot --init
+              for test_exe in build/tests/*.exe; do
+                wine "$test_exe"
+              done
+              git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
+              git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
+              GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=windows use_mingw=yes
+            '
 
       - name: Upload Windows replay artifact
         uses: actions/upload-artifact@v4
         with:
           name: replay-windows
           path: build/replay_terminal_state.json
-
-      - name: Fetch godot-cpp
-        run: |
-          git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
-          git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
-
-      - name: Build GDExtension
-        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=windows use_mingw=yes
 
   android:
     runs-on: [self-hosted, Linux, X64]
