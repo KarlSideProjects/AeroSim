@@ -154,6 +154,7 @@ jobs:
               git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
               git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
               GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=windows use_mingw=yes
+              GODOT_CPP_DIR=.deps/godot-cpp scons target=template_release platform=windows use_mingw=yes
             '
 
       - name: Upload Windows replay artifact
@@ -161,6 +162,32 @@ jobs:
         with:
           name: replay-windows
           path: build/replay_terminal_state.json
+
+      - name: Fetch Godot 4.7
+        run: |
+          rm -rf /tmp/godot /tmp/godot.zip
+          curl -L -o /tmp/godot.zip https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
+          echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  /tmp/godot.zip" | sha256sum -c -
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          echo "GODOT_BIN=$(find /tmp/godot -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
+
+      - name: Install Godot export templates
+        run: |
+          curl -L -o /tmp/godot-export-templates.tpz https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_export_templates.tpz
+          echo "1035dfde4edcc2472bb0c0b9610ce3ee9302642c2b9957e9066372f9f6bb759ab250c8887551a66f0bc5f51bbd9a58bb45e33a0f29844e97615a9b1138c1120e  /tmp/godot-export-templates.tpz" | sha512sum -c -
+          rm -rf /tmp/godot-export-templates "$HOME/.local/share/godot/export_templates/4.7.stable"
+          mkdir -p /tmp/godot-export-templates "$HOME/.local/share/godot/export_templates/4.7.stable"
+          unzip -q /tmp/godot-export-templates.tpz -d /tmp/godot-export-templates
+          cp -a /tmp/godot-export-templates/templates/. "$HOME/.local/share/godot/export_templates/4.7.stable/"
+
+      - name: Export Windows release artifact
+        run: scripts/export_windows_release.sh
+
+      - name: Upload Windows release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: build/release/AeroSim-windows.zip
 
   android:
     runs-on: [self-hosted, Linux, X64]
