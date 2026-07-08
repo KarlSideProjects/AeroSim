@@ -63,3 +63,59 @@ jobs:
           )))
           assert abs(qnorm - 1.0) <= 1e-6
           PY
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: python3 -m pip install scons
+
+      - name: Native unit test
+        shell: bash
+        env:
+          CXX: clang++
+          EXE_SUFFIX: .exe
+        run: scripts/test_native.sh
+
+      - name: Fetch godot-cpp
+        shell: bash
+        run: |
+          git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
+          git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
+
+      - name: Build GDExtension
+        shell: bash
+        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=windows
+
+  android:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_NDK_ROOT: ${{ github.workspace }}/.deps/android-ndk
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: python3 -m pip install scons
+
+      - name: Install Android NDK
+        run: |
+          curl -L -o /tmp/android-ndk.zip https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+          echo "22105e410cf29afcf163760cc95522b9fb981121  /tmp/android-ndk.zip" | sha1sum -c -
+          unzip -q /tmp/android-ndk.zip -d .deps
+          mv .deps/android-ndk-r27d "$ANDROID_NDK_ROOT"
+
+      - name: Build native unit tests
+        env:
+          AEROSIM_RUN_NATIVE_TESTS: "0"
+          CXX: ${{ github.workspace }}/.deps/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++
+        run: scripts/test_native.sh
+
+      - name: Fetch godot-cpp
+        run: |
+          git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
+          git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
+
+      - name: Build GDExtension
+        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=android arch=arm64 ANDROID_HOME=
