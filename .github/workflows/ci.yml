@@ -36,6 +36,7 @@ jobs:
 
       - name: Fetch Godot 4.7
         run: |
+          rm -rf /tmp/godot /tmp/godot.zip
           curl -L -o /tmp/godot.zip https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
           echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  /tmp/godot.zip" | sha256sum -c -
           unzip -q /tmp/godot.zip -d /tmp/godot
@@ -109,6 +110,7 @@ jobs:
               export AEROSIM_RUN_NATIVE_TESTS=0
               scripts/test_native.sh
               export WINEDEBUG=-all
+              export WINEARCH=win64
               export WINEPREFIX=/tmp/aerosim-wine
               wineboot --init
               for test_exe in build/tests/*.exe; do
@@ -155,9 +157,12 @@ jobs:
 
       - name: Enable KVM
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            exit 0
+          fi
+          ls -l /dev/kvm || true
+          echo "::error::/dev/kvm is not readable/writable by the self-hosted runner user; fix runner group membership before running Android emulator tests."
+          exit 1
 
       - name: Run Android native unit tests
         uses: reactivecircus/android-emulator-runner@v2
