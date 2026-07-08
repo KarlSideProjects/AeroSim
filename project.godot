@@ -5,5 +5,8 @@ config/name="AeroSim"
 run/main_scene="res://levels/smoke/smoke.tscn"
 config/features=PackedStringArray("4.7")
 
+[physics]
+common/physics_ticks_per_second=240
+
 [rendering]
 renderer/rendering_method="forward_plus"
