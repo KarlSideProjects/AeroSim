@@ -2,6 +2,10 @@
 set -euo pipefail
 
 mkdir -p build/tests
-${CXX:-g++} -std=c++17 -Wall -Wextra -Werror -Isrc/native \
-    tests/native/test_probe.cpp src/native/aerosim_simulation.cpp -o build/tests/test_probe
-build/tests/test_probe
+for test_source in tests/native/test_*.cpp; do
+    test_name=$(basename "${test_source}" .cpp)
+    ${CXX:-g++} -std=c++17 -Wall -Wextra -Werror -Isrc/native \
+        "${test_source}" src/native/aerosim_simulation.cpp src/native/aerosim_flight_control.cpp \
+        -o "build/tests/${test_name}"
+    "build/tests/${test_name}"
+done
