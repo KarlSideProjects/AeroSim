@@ -1,0 +1,8 @@
+.godot/
+.import/
+.deps/
+build/
+bin/
+.sconsign.dblite
+*.os
+*.tmp

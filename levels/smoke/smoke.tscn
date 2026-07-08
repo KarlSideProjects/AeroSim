@@ -1,0 +1,3 @@
+[gd_scene format=3 uid="uid://aerosim_smoke_scene"]
+
+[node name="SmokeRoot" type="Node3D"]

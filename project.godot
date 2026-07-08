@@ -1,0 +1,9 @@
+config_version=5
+
+[application]
+config/name="AeroSim"
+run/main_scene="res://levels/smoke/smoke.tscn"
+config/features=PackedStringArray("4.7")
+
+[rendering]
+renderer/rendering_method="forward_plus"
