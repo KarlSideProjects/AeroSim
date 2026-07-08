@@ -80,10 +80,13 @@ jobs:
       - name: Install build tools
         run: python3 -m pip install scons
 
+      - uses: ilammy/msvc-dev-cmd@v1
+
       - name: Native unit test
         shell: bash
         env:
-          CXX: clang++
+          AEROSIM_MSVC: "1"
+          CXX: cl
           EXE_SUFFIX: .exe
           AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
         run: scripts/test_native.sh
@@ -127,27 +130,21 @@ jobs:
           CXX: ${{ github.workspace }}/.deps/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang++
         run: scripts/test_native.sh
 
-      - name: Install Android emulator image
-        run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64"
-          avdmanager create avd --force --name aerosim-ci --package "system-images;android-35;google_apis;x86_64" --device pixel
-
       - name: Run Android native unit tests
-        env:
-          AEROSIM_REPLAY_ARTIFACT: /data/local/tmp/replay_terminal_state.json
-        run: |
-          "$ANDROID_HOME/emulator/emulator" -avd aerosim-ci -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -no-metrics &
-          adb wait-for-device
-          until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; do sleep 2; done
-          adb shell mkdir -p /data/local/tmp/aerosim-tests
-          for test_binary in build/tests/test_*; do
-            adb push "$test_binary" /data/local/tmp/aerosim-tests/ >/dev/null
-            adb shell chmod 755 "/data/local/tmp/aerosim-tests/$(basename "$test_binary")"
-            adb shell "AEROSIM_REPLAY_ARTIFACT=$AEROSIM_REPLAY_ARTIFACT /data/local/tmp/aerosim-tests/$(basename "$test_binary")"
-          done
-          mkdir -p build
-          adb pull "$AEROSIM_REPLAY_ARTIFACT" build/replay_terminal_state.json
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          script: |
+            adb shell mkdir -p /data/local/tmp/aerosim-tests
+            for test_binary in build/tests/test_*; do
+              adb push "$test_binary" /data/local/tmp/aerosim-tests/ >/dev/null
+              adb shell chmod 755 "/data/local/tmp/aerosim-tests/$(basename "$test_binary")"
+              adb shell "AEROSIM_REPLAY_ARTIFACT=/data/local/tmp/replay_terminal_state.json /data/local/tmp/aerosim-tests/$(basename "$test_binary")"
+            done
+            mkdir -p build
+            adb pull /data/local/tmp/replay_terminal_state.json build/replay_terminal_state.json
 
       - name: Upload Android replay artifact
         uses: actions/upload-artifact@v4
