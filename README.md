@@ -42,7 +42,7 @@ GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts
 
 ## G0.6a 決定性與重播
 
-- `SConstruct` 與 `scripts/test_native.sh` 都使用 `-ffp-contract=off`，避免 GDExtension 與 native tests 的 fused multiply-add 行為分歧。
+- `SConstruct` 與 `scripts/test_native.sh` 都關閉 fused multiply-add contraction：GCC/Clang 使用 `-ffp-contract=off`，Windows MSVC GDExtension 使用 `/fp:strict`。
 - `src/native/aerosim_replay.hpp` 提供 `FlightCommand` frame 錄製與 `replay_angle_mode` 重播；`tests/native/test_replay.cpp` 驗證同平台相同輸入序列 bitwise replay。
 - G0.6a 跨平台終端容忍固定在共用核心：姿態差 `<= 0.5` 度、位置差 `<= 0.05` m。
 
@@ -57,4 +57,5 @@ GitHub Actions 會執行：
 5. 下載鎖定 commit 的 godot-cpp，建置 Linux GDExtension。
 6. headless smoke，確認 GDScript 可呼叫 native probe 並輸出檔案。
 7. Windows 原生 C++ 單元測試與 GDExtension 建置。
-8. Android NDK 編譯同一組原生 C++ 單元測試 source，並建置 Android arm64 GDExtension；Android binary 執行需由裝置/模擬器驗證。
+8. Android emulator 執行同一組原生 C++ 單元測試，並建置 Android arm64 GDExtension。
+9. Linux / Windows / Android replay terminal-state artifacts 互相比對 G0.6a tolerance。

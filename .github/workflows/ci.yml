@@ -14,7 +14,15 @@ jobs:
         run: python3 -m pip install scons
 
       - name: Native unit test
+        env:
+          AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
         run: scripts/test_native.sh
+
+      - name: Upload Linux replay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-linux
+          path: build/replay_terminal_state.json
 
       - name: License scan
         run: scripts/test_license_scan.sh
@@ -77,7 +85,14 @@ jobs:
         env:
           CXX: clang++
           EXE_SUFFIX: .exe
+          AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
         run: scripts/test_native.sh
+
+      - name: Upload Windows replay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-windows
+          path: build/replay_terminal_state.json
 
       - name: Fetch godot-cpp
         shell: bash
@@ -106,11 +121,39 @@ jobs:
           unzip -q /tmp/android-ndk.zip -d .deps
           mv .deps/android-ndk-r27d "$ANDROID_NDK_ROOT"
 
-      - name: Build native unit tests
+      - name: Build Android native unit tests
         env:
           AEROSIM_RUN_NATIVE_TESTS: "0"
-          CXX: ${{ github.workspace }}/.deps/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++
+          CXX: ${{ github.workspace }}/.deps/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang++
         run: scripts/test_native.sh
+
+      - name: Install Android emulator image
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platform-tools" "emulator" "system-images;android-35;google_apis;x86_64"
+          avdmanager create avd --force --name aerosim-ci --package "system-images;android-35;google_apis;x86_64" --device pixel
+
+      - name: Run Android native unit tests
+        env:
+          AEROSIM_REPLAY_ARTIFACT: /data/local/tmp/replay_terminal_state.json
+        run: |
+          "$ANDROID_HOME/emulator/emulator" -avd aerosim-ci -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -no-metrics &
+          adb wait-for-device
+          until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; do sleep 2; done
+          adb shell mkdir -p /data/local/tmp/aerosim-tests
+          for test_binary in build/tests/test_*; do
+            adb push "$test_binary" /data/local/tmp/aerosim-tests/ >/dev/null
+            adb shell chmod 755 "/data/local/tmp/aerosim-tests/$(basename "$test_binary")"
+            adb shell "AEROSIM_REPLAY_ARTIFACT=$AEROSIM_REPLAY_ARTIFACT /data/local/tmp/aerosim-tests/$(basename "$test_binary")"
+          done
+          mkdir -p build
+          adb pull "$AEROSIM_REPLAY_ARTIFACT" build/replay_terminal_state.json
+
+      - name: Upload Android replay artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: replay-android
+          path: build/replay_terminal_state.json
 
       - name: Fetch godot-cpp
         run: |
@@ -119,3 +162,27 @@ jobs:
 
       - name: Build GDExtension
         run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=android arch=arm64 ANDROID_HOME=
+
+  replay-compare:
+    runs-on: ubuntu-latest
+    needs: [linux, windows, android]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download replay artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: replay-*
+          path: build/replay-artifacts
+
+      - name: Compare Linux and Windows replay terminal state
+        run: |
+          python3 scripts/compare_replay_artifacts.py \
+            build/replay-artifacts/replay-linux/replay_terminal_state.json \
+            build/replay-artifacts/replay-windows/replay_terminal_state.json
+          python3 scripts/compare_replay_artifacts.py \
+            build/replay-artifacts/replay-linux/replay_terminal_state.json \
+            build/replay-artifacts/replay-android/replay_terminal_state.json
+          python3 scripts/compare_replay_artifacts.py \
+            build/replay-artifacts/replay-windows/replay_terminal_state.json \
+            build/replay-artifacts/replay-android/replay_terminal_state.json

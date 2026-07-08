@@ -2,6 +2,8 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 
 namespace {
@@ -44,6 +46,32 @@ aerosim::RecordedInputSequence standard_maneuver(std::int32_t frames) {
         recorder.record(command);
     }
     return recorder.sequence();
+}
+
+bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
+    if (path == nullptr || path[0] == '\0') {
+        return true;
+    }
+    std::ofstream out(path);
+    if (!out) {
+        return false;
+    }
+    out << std::setprecision(17)
+        << "{\n"
+        << "  \"schema_version\": 1,\n"
+        << "  \"time_seconds\": " << sample.time_seconds << ",\n"
+        << "  \"substeps\": " << sample.substeps << ",\n"
+        << "  \"position_m\": ["
+        << sample.state.position.x << ", "
+        << sample.state.position.y << ", "
+        << sample.state.position.z << "],\n"
+        << "  \"orientation_xyzw\": ["
+        << sample.state.orientation.x << ", "
+        << sample.state.orientation.y << ", "
+        << sample.state.orientation.z << ", "
+        << sample.state.orientation.w << "]\n"
+        << "}\n";
+    return true;
 }
 
 } // namespace
@@ -90,6 +118,9 @@ int main() {
             platform_run.back());
     if (!aerosim::within_g06a_tolerance(delta)) {
         return fail("G0.6a cross-platform final-state tolerance check rejected the standard maneuver");
+    }
+    if (!write_artifact(std::getenv("AEROSIM_REPLAY_ARTIFACT"), platform_run.back())) {
+        return fail("failed to write replay terminal-state artifact");
     }
 
     return EXIT_SUCCESS;
