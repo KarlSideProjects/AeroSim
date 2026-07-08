@@ -592,6 +592,45 @@ func _verify_runtime_actions() -> bool:
         push_error("Smoke runtime must expose no-controller KeyboardProfile fallback UI")
         scene.queue_free()
         return false
+    if not scene.has_method("quick_fly"):
+        push_error("Smoke runtime must expose Quick Fly from the cold-start main menu")
+        scene.queue_free()
+        return false
+    if scene.main_menu_entries != ["Quick Fly", "Controller", "Drone", "Map", "Settings"]:
+        push_error("Cold-start main menu must expose the fixed 3.5.4 first-layer entries")
+        scene.queue_free()
+        return false
+    var quick_fly_button := scene.get_node_or_null("MainMenu/Entries/QuickFly") as Button
+    if quick_fly_button == null or quick_fly_button.text != "Quick Fly":
+        push_error("Cold-start main menu must expose an interactive Quick Fly button")
+        scene.queue_free()
+        return false
+    quick_fly_button.pressed.emit()
+    await process_frame
+    if scene.screen != "flight" or not scene.takeoff_requested:
+        push_error("Quick Fly button must enter the default drone/map flight scene")
+        scene.queue_free()
+        return false
+    scene.quick_fly("uncalibrated")
+    if scene.screen != "controller_setup":
+        push_error("Quick Fly with an uncalibrated controller must route to Controller Setup")
+        scene.queue_free()
+        return false
+    scene.quick_fly("drone_load_failed")
+    if scene.screen != "error" or scene.last_error_message.is_empty():
+        push_error("Quick Fly load failures must show an explicit error screen")
+        scene.queue_free()
+        return false
+    scene.quick_fly("no_controller")
+    if scene.screen != "fallback_prompt" or not scene.last_error_message.contains("KeyboardProfile"):
+        push_error("Quick Fly without a controller must show an explicit KeyboardProfile fallback prompt")
+        scene.queue_free()
+        return false
+    scene.accept_fallback()
+    if scene.screen != "flight" or not scene.takeoff_requested:
+        push_error("Quick Fly fallback must enter the default drone/map flight scene")
+        scene.queue_free()
+        return false
 
     await _press_key(KEY_T)
     for _frame in range(30):
@@ -612,10 +651,26 @@ func _verify_runtime_actions() -> bool:
         push_error("flight_pause action must pause runtime")
         scene.queue_free()
         return false
+    var paused_position: Vector3 = scene.drone_body.global_position
+    for _frame in range(5):
+        await physics_frame
+    if scene.drone_body.global_position.distance_to(paused_position) > 1e-6:
+        push_error("flight_pause action must freeze runtime physics")
+        scene.queue_free()
+        return false
+    await _press_key(KEY_P)
+    if scene.paused:
+        push_error("flight_pause action must resume runtime physics")
+        scene.queue_free()
+        return false
 
     await _press_key(KEY_R)
-    if scene.reset_count != 1 or scene.takeoff_requested:
-        push_error("flight_respawn action must reset runtime flight state")
+    if scene.reset_count != 1 or not scene.takeoff_requested or not scene.native.call("flight_control_armed"):
+        push_error("flight_respawn action must reset while keeping flight armed and active")
+        scene.queue_free()
+        return false
+    if scene.drone_body.position.distance_to(Vector3(-1.0, 0.0, 0.0)) > 1e-6 or scene.drone_body.linear_velocity.length() > 1e-6 or scene.drone_body.angular_velocity.length() > 1e-6:
+        push_error("flight_respawn action must return to spawn and clear body velocity; position=%s linear=%s angular=%s" % [scene.drone_body.position, scene.drone_body.linear_velocity, scene.drone_body.angular_velocity])
         scene.queue_free()
         return false
 
