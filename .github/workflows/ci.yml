@@ -47,6 +47,7 @@ jobs:
 
       - name: Fetch godot-cpp
         run: |
+          rm -rf .deps/godot-cpp
           git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
           git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
 
@@ -149,6 +150,7 @@ jobs:
                 echo "Running ${test_exe} under Wine"
                 wine "$test_exe"
               done
+              rm -rf .deps/godot-cpp
               git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
               git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
               GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=windows use_mingw=yes
@@ -214,6 +216,7 @@ jobs:
 
       - name: Fetch godot-cpp
         run: |
+          rm -rf .deps/godot-cpp
           git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
           git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
 
