@@ -61,13 +61,22 @@ TrajectorySample FlightController::step_angle_mode(
         SimulationClock &clock,
         const SimulationConfig &config,
         const FlightCommand &command) {
+    return step_angle_mode(state, clock, config, command, state.orientation);
+}
+
+TrajectorySample FlightController::step_angle_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const Quat &estimated_attitude) {
     SimulationConfig frame_config = config;
     const double throttle = std::clamp(command.throttle, 0.0, 1.0);
     frame_config.total_thrust_newtons = armed_ ? frame_config.mass_kg * frame_config.gravity_mps2 * throttle * 2.0 : 0.0;
     if (armed_) {
-        state.angular_velocity.x = bounded_rate((radians(command.pitch_degrees) - angle_x(state.orientation)) * 4.0);
+        state.angular_velocity.x = bounded_rate((radians(command.pitch_degrees) - angle_x(estimated_attitude)) * 4.0);
         state.angular_velocity.y = radians(command.yaw_rate_degrees_per_second);
-        state.angular_velocity.z = bounded_rate((radians(command.roll_degrees) - angle_z(state.orientation)) * 4.0);
+        state.angular_velocity.z = bounded_rate((radians(command.roll_degrees) - angle_z(estimated_attitude)) * 4.0);
     } else {
         state.angular_velocity = {};
     }
