@@ -2,6 +2,7 @@ extends SceneTree
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
+const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 
 class InputProbe:
@@ -56,6 +57,9 @@ func _run() -> void:
         push_error("AeroSimNative must expose a high-throttle arm rejection reason")
         quit(1)
         return
+    if _has_arg("--hardware-only"):
+        quit(0 if await _verify_hardware_config_public_path() else 1)
+        return
     if not _verify_flight_control_public_path(native):
         quit(1)
         return
@@ -68,6 +72,10 @@ func _run() -> void:
         quit(1)
         return
     if not await _verify_runtime_actions():
+        quit(1)
+        return
+    var hardware_config_public_verified := await _verify_hardware_config_public_path()
+    if not hardware_config_public_verified:
         quit(1)
         return
 
@@ -109,6 +117,7 @@ func _run() -> void:
         "collision_public_path": collision_public_verified,
         "jolt_collision_handoff": jolt_collision_verified,
         "jolt_collision_trials": verified_jolt_collision_trials,
+        "hardware_config_public_path": hardware_config_public_verified,
         "desktop_substep_hz": 1000,
         "desktop_substeps": int(trajectory[trajectory.size() - 1]),
         "mobile_substep_hz": 500,
@@ -542,6 +551,150 @@ func _verify_runtime_actions() -> bool:
     scene.queue_free()
     return true
 
+func _verify_hardware_config_public_path() -> bool:
+    var loader := HardwareConfig.new()
+    var factory_default: Dictionary = loader.current
+    var preset: Dictionary = loader.load_preset("res://config/drones/5_inch_6s.json")
+    if not loader.last_ok:
+        push_error("5 inch hardware preset must load: %s" % loader.last_error)
+        return false
+    var race_preset: Dictionary = loader.load_preset("res://config/drones/5_inch_6s_race.json")
+    if not loader.last_ok or race_preset.version == preset.version:
+        push_error("5 inch race hardware preset must load as a distinct built-in preset")
+        return false
+    for key in ["frame", "motor", "propeller", "battery", "esc", "aircraft", "sensors", "fpv"]:
+        if not preset.has(key):
+            push_error("5 inch hardware preset missing 3.6.1 category: %s" % key)
+            return false
+    for key in ["version", "units", "coordinate_frame", "motor_order", "spin_direction", "prop_table_interpolation"]:
+        if not preset.has(key):
+            push_error("5 inch hardware preset missing required metadata: %s" % key)
+            return false
+    if loader.prop_sample_at_rpm(preset, 1000.0).ok:
+        push_error("Prop table must reject rpm requests below the measured table")
+        return false
+    if loader.prop_sample_at_rpm(preset, 20000.0).ok:
+        push_error("Prop table must reject rpm requests above the measured table")
+        return false
+    var prop_mid: Dictionary = loader.prop_sample_at_rpm(preset, 10000.0)
+    if not prop_mid.ok or abs(float(prop_mid.thrust_n) - 4.5) > 1e-9:
+        push_error("Prop table must linearly interpolate in-range thrust")
+        return false
+    if not _hardware_schema_rejects(loader, preset, "units.mass", "lb"):
+        push_error("Hardware schema must reject unexpected units")
+        return false
+    if not _hardware_schema_rejects(loader, preset, "coordinate_frame.body", "NED"):
+        push_error("Hardware schema must reject unexpected coordinate frames")
+        return false
+    if not _hardware_schema_rejects(loader, preset, "motor_order", ["front_right", "rear_right", "rear_left", "front_left"]):
+        push_error("Hardware schema must reject unexpected motor order")
+        return false
+    if not _hardware_schema_rejects(loader, preset, "spin_direction", ["left", "right", "left", "right"]):
+        push_error("Hardware schema must reject unexpected spin direction")
+        return false
+    var schema_doc := _hardware_schema_doc()
+    for spec_value in schema_doc.numeric_ranges:
+        var spec: Dictionary = spec_value
+        if not _hardware_schema_rejects(loader, preset, spec.path, float(spec.max) + 1.0):
+            push_error("Hardware schema must reject out-of-range value at %s" % spec.path)
+            return false
+        if not _hardware_schema_rejects(loader, preset, spec.path, float(spec.min) - 1.0):
+            push_error("Hardware schema must reject out-of-range value at %s" % spec.path)
+            return false
+    var bad_prop := preset.duplicate(true)
+    bad_prop.propeller.table[0].current_a = -1.0
+    if loader.validate_config(bad_prop) == "":
+        push_error("Hardware schema must reject out-of-range propeller table rows")
+        return false
+    var bad_curve := preset.duplicate(true)
+    bad_curve.battery.discharge_curve[0].remaining = 2.0
+    if loader.validate_config(bad_curve) == "":
+        push_error("Hardware schema must reject out-of-range battery discharge rows")
+        return false
+    bad_curve = preset.duplicate(true)
+    bad_curve.battery.discharge_curve[0].voltage_v = 1000.0
+    if loader.validate_config(bad_curve) == "":
+        push_error("Hardware schema must reject impossible battery discharge voltage")
+        return false
+    bad_curve = preset.duplicate(true)
+    bad_curve.battery.discharge_curve[0].voltage_v = "25.2"
+    if loader.validate_config(bad_curve) == "":
+        push_error("Hardware schema must reject non-numeric battery discharge voltage")
+        return false
+    var bad_layout := preset.duplicate(true)
+    bad_layout.aircraft.motor_layout[0].x = 2.0
+    if loader.validate_config(bad_layout) == "":
+        push_error("Hardware schema must reject out-of-range motor layout rows")
+        return false
+    if loader.load_preset("res://config/drones/invalid_out_of_range.json") != factory_default or loader.last_ok:
+        push_error("Out-of-range hardware JSON load must fail loud and fall back to factory default")
+        return false
+
+    var scene := SmokeScene.instantiate()
+    root.add_child(scene)
+    await process_frame
+    var native_before: Object = scene.native
+    var reset_count_before: int = scene.reset_count
+    if not loader.apply_to_runtime(scene, "res://config/drones/5_inch_6s.json"):
+        push_error("Runtime must hot-switch the built-in 5 inch hardware preset")
+        scene.queue_free()
+        return false
+    if scene.native != native_before or scene.reset_count != reset_count_before or scene.get_meta("hardware_config_version", "") != preset.version:
+        push_error("Runtime hardware preset hot-switch must not reload scene/native state")
+        scene.queue_free()
+        return false
+    if not _native_hovers_at_mass(scene.native, float(preset.aircraft.mass_kg)):
+        push_error("Runtime hardware preset mass must affect native simulation")
+        scene.queue_free()
+        return false
+    if loader.apply_to_runtime(scene, "res://config/drones/invalid_out_of_range.json"):
+        push_error("Invalid runtime hardware preset must report failure")
+        scene.queue_free()
+        return false
+    if scene.get_meta("hardware_config_version", "") != factory_default.version:
+        push_error("Invalid runtime hardware preset must mark factory-default fallback")
+        scene.queue_free()
+        return false
+    if not _native_hovers_at_mass(scene.native, float(factory_default.aircraft.mass_kg)):
+        push_error("Invalid runtime hardware preset must apply factory-default mass to native")
+        scene.queue_free()
+        return false
+    scene.queue_free()
+    return true
+
+func _hardware_schema_doc() -> Dictionary:
+    var file := FileAccess.open("res://config/drone_schema.json", FileAccess.READ)
+    if file == null:
+        return {}
+    var json := JSON.new()
+    if json.parse(file.get_as_text()) != OK or not (json.data is Dictionary):
+        return {}
+    return json.data
+
+func _hardware_schema_rejects(loader: RefCounted, base: Dictionary, path: String, value: Variant) -> bool:
+    var mutated := base.duplicate(true)
+    _set_hardware_path(mutated, path, value)
+    return loader.validate_config(mutated) != ""
+
+func _set_hardware_path(config: Dictionary, path: String, value: Variant) -> void:
+    var parts := path.split(".")
+    var cursor: Dictionary = config
+    for index in range(parts.size() - 1):
+        cursor = cursor[parts[index]]
+    cursor[parts[parts.size() - 1]] = value
+
+func _native_hovers_at_mass(native: Object, mass_kg: float) -> bool:
+    native.call("reset_flight")
+    native.call("arm_flight_control", 0.0)
+    var hover: PackedFloat64Array = native.call(
+        "simulate_trajectory",
+        1.0,
+        Engine.physics_ticks_per_second,
+        1000,
+        mass_kg * 9.80665
+    )
+    return not hover.is_empty() and abs(float(hover[hover.size() - int(native.call("trajectory_stride")) + 2])) <= 1e-6
+
 func _press_key(keycode: int) -> void:
     var event := InputEventKey.new()
     event.keycode = keycode
@@ -706,6 +859,9 @@ func _float_arg(name: String, default_value: float) -> float:
         if args[index] == name:
             return args[index + 1].to_float()
     return default_value
+
+func _has_arg(name: String) -> bool:
+    return OS.get_cmdline_user_args().has(name)
 
 func _project_path(path: String) -> String:
     if path.is_absolute_path():

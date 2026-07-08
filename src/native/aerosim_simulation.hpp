@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -33,6 +34,24 @@ struct SimulationConfig {
     double gravity_mps2 = 9.80665;
     double total_thrust_newtons = 0.0;
     RigidBodyState initial_state;
+};
+
+struct HardwareConfig {
+    double mass_kg = 1.0;
+
+    bool set_mass_kg(double value) {
+        if (!std::isfinite(value) || value <= 0.0) {
+            return false;
+        }
+        mass_kg = value;
+        return true;
+    }
+
+    SimulationConfig simulation_config() const {
+        SimulationConfig config;
+        config.mass_kg = mass_kg;
+        return config;
+    }
 };
 
 struct SimulationClock {
