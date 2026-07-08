@@ -89,6 +89,7 @@ jobs:
           CXX: cl
           EXE_SUFFIX: .exe
           AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
+          MSYS2_ARG_CONV_EXCL: "*"
         run: scripts/test_native.sh
 
       - name: Upload Windows replay artifact
