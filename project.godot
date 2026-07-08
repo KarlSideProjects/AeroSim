@@ -7,6 +7,7 @@ config/features=PackedStringArray("4.7")
 
 [physics]
 common/physics_ticks_per_second=240
+3d/physics_engine="Jolt Physics"
 
 [input]
 flight_takeoff={
