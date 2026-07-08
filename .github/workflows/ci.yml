@@ -144,15 +144,7 @@ jobs:
           target: google_apis
           arch: x86_64
           emulator-boot-timeout: 1200
-          script: |
-            adb shell mkdir -p /data/local/tmp/aerosim-tests
-            for test_binary in build/tests/test_*; do
-              adb push "$test_binary" /data/local/tmp/aerosim-tests/ >/dev/null
-              adb shell chmod 755 "/data/local/tmp/aerosim-tests/$(basename "$test_binary")"
-              adb shell "AEROSIM_REPLAY_ARTIFACT=/data/local/tmp/replay_terminal_state.json /data/local/tmp/aerosim-tests/$(basename "$test_binary")"
-            done
-            mkdir -p build
-            adb pull /data/local/tmp/replay_terminal_state.json build/replay_terminal_state.json
+          script: scripts/run_android_native_tests.sh
 
       - name: Upload Android replay artifact
         uses: actions/upload-artifact@v4
