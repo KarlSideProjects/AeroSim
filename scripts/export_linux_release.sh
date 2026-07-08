@@ -19,7 +19,8 @@ if [ ! -s "$release_lib" ]; then
 fi
 
 rm -rf "$out_dir" "$out_zip"
-mkdir -p "$out_dir"
+mkdir -p "$out_dir" .deps
+touch build/.gdignore .deps/.gdignore
 "$godot_bin" --headless --path . --export-release "Linux Desktop" "$out_dir/AeroSim.x86_64"
 chmod +x "$out_dir/AeroSim.x86_64"
 
