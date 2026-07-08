@@ -106,6 +106,7 @@ jobs:
               build/scons-venv/bin/python -m pip install scons
               export PATH="$PWD/build/scons-venv/bin:$PATH"
               export CXX=x86_64-w64-mingw32-g++
+              export CXXFLAGS="-static -static-libgcc -static-libstdc++"
               export EXE_SUFFIX=.exe
               export AEROSIM_REPLAY_ARTIFACT=build/replay_terminal_state.json
               export AEROSIM_RUN_NATIVE_TESTS=0
@@ -114,7 +115,14 @@ jobs:
               export WINEARCH=win64
               export WINEPREFIX=/tmp/aerosim-wine
               wineboot --init || true
-              for test_exe in build/tests/*.exe; do
+              mapfile -t test_exes < <(find build/tests -maxdepth 1 -type f -name "*.exe" | sort)
+              if [ "${#test_exes[@]}" -eq 0 ]; then
+                echo "::error::No Windows test executables were built in build/tests"
+                ls -la build/tests
+                exit 1
+              fi
+              for test_exe in "${test_exes[@]}"; do
+                echo "Running ${test_exe} under Wine"
                 wine "$test_exe"
               done
               git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
