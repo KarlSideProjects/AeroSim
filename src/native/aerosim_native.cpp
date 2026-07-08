@@ -2,8 +2,37 @@
 
 #include "aerosim_probe.hpp"
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/vector3.hpp>
 
 using namespace godot;
+
+namespace {
+
+bool bool_value(const Dictionary &dict, const char *key, bool fallback) {
+    return dict.has(key) ? static_cast<bool>(dict[key]) : fallback;
+}
+
+double double_value(const Dictionary &dict, const char *key, double fallback) {
+    return dict.has(key) ? static_cast<double>(dict[key]) : fallback;
+}
+
+std::int32_t int_value(const Dictionary &dict, const char *key, std::int32_t fallback) {
+    return dict.has(key) ? static_cast<std::int32_t>(dict[key]) : fallback;
+}
+
+aerosim::Vec3 vec3_value(const Dictionary &dict, const char *key, const aerosim::Vec3 &fallback) {
+    if (!dict.has(key)) {
+        return fallback;
+    }
+    const Vector3 value = dict[key];
+    return {value.x, value.y, value.z};
+}
+
+Vector3 godot_vec3(const aerosim::Vec3 &value) {
+    return {static_cast<real_t>(value.x), static_cast<real_t>(value.y), static_cast<real_t>(value.z)};
+}
+
+} // namespace
 
 void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("probe_value"), &AeroSimNative::probe_value);
@@ -16,6 +45,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("flight_control_armed"), &AeroSimNative::flight_control_armed);
     ClassDB::bind_method(D_METHOD("flight_control_arm_reject_code"), &AeroSimNative::flight_control_arm_reject_code);
     ClassDB::bind_method(D_METHOD("reset_flight"), &AeroSimNative::reset_flight);
+    ClassDB::bind_method(D_METHOD("configure_imu", "config"), &AeroSimNative::configure_imu);
+    ClassDB::bind_method(D_METHOD("imu_configuration"), &AeroSimNative::imu_configuration);
+    ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
     ClassDB::bind_method(D_METHOD("set_collision_release_frames", "release_frames"), &AeroSimNative::set_collision_release_frames);
     ClassDB::bind_method(
             D_METHOD("sync_flight_state", "position_x", "position_y", "position_z", "orientation_x", "orientation_y", "orientation_z", "orientation_w", "velocity_x", "velocity_y", "velocity_z", "angular_velocity_x", "angular_velocity_y", "angular_velocity_z"),
@@ -86,6 +118,56 @@ String AeroSimNative::flight_control_arm_reject_code() const {
 void AeroSimNative::reset_flight() {
     flight_controller_.reset_flight(simulation_state_, simulation_clock_);
     collision_authority_ = {};
+    imu_.reset(imu_config_.seed);
+    flight_control_used_estimated_attitude_ = false;
+}
+
+void AeroSimNative::configure_imu(const Dictionary &config) {
+    imu_noise_enabled_ = bool_value(config, "noise_enabled", imu_noise_enabled_);
+    imu_bias_enabled_ = bool_value(config, "bias_enabled", imu_bias_enabled_);
+    imu_random_walk_enabled_ = bool_value(config, "random_walk_enabled", imu_random_walk_enabled_);
+    imu_delay_enabled_ = bool_value(config, "delay_enabled", imu_delay_enabled_);
+
+    imu_config_.gyro_noise_density = imu_noise_enabled_ ? double_value(config, "gyro_noise_density", imu_config_.gyro_noise_density) : 0.0;
+    imu_config_.accel_noise_density = imu_noise_enabled_ ? double_value(config, "accelerometer_noise_density", imu_config_.accel_noise_density) : 0.0;
+    imu_config_.gyro_bias = imu_bias_enabled_ ? vec3_value(config, "gyro_bias", imu_config_.gyro_bias) : aerosim::Vec3{};
+    imu_config_.accel_bias = imu_bias_enabled_ ? vec3_value(config, "accelerometer_bias", imu_config_.accel_bias) : aerosim::Vec3{};
+    imu_config_.gyro_bias_drift_stddev = imu_bias_enabled_ ? double_value(config, "gyro_bias_drift", imu_config_.gyro_bias_drift_stddev) : 0.0;
+    imu_config_.accel_bias_drift_stddev = imu_bias_enabled_ ? double_value(config, "accelerometer_bias_drift", imu_config_.accel_bias_drift_stddev) : 0.0;
+    imu_config_.gyro_random_walk_stddev = imu_random_walk_enabled_ ? double_value(config, "gyro_random_walk", imu_config_.gyro_random_walk_stddev) : 0.0;
+    imu_config_.accel_random_walk_stddev = imu_random_walk_enabled_ ? double_value(config, "accelerometer_random_walk", imu_config_.accel_random_walk_stddev) : 0.0;
+    imu_config_.barometer_random_walk_stddev_m = imu_random_walk_enabled_ ? double_value(config, "barometer_random_walk", imu_config_.barometer_random_walk_stddev_m) : 0.0;
+    imu_config_.barometer_noise_stddev_m = imu_noise_enabled_ ? double_value(config, "barometer_noise", imu_config_.barometer_noise_stddev_m) : 0.0;
+    imu_config_.barometer_bias_drift_stddev_m = imu_bias_enabled_ ? double_value(config, "barometer_bias_drift", imu_config_.barometer_bias_drift_stddev_m) : 0.0;
+    imu_config_.delay_samples = imu_delay_enabled_ ? int_value(config, "sample_delay_frames", imu_config_.delay_samples) : 0;
+    imu_ = aerosim::ImuSimulator(imu_config_);
+}
+
+Dictionary AeroSimNative::imu_configuration() const {
+    Dictionary config;
+    config["noise_enabled"] = imu_noise_enabled_;
+    config["bias_enabled"] = imu_bias_enabled_;
+    config["random_walk_enabled"] = imu_random_walk_enabled_;
+    config["delay_enabled"] = imu_delay_enabled_;
+    config["gyro_noise_density"] = imu_config_.gyro_noise_density;
+    config["accelerometer_noise_density"] = imu_config_.accel_noise_density;
+    config["gyro_bias"] = godot_vec3(imu_config_.gyro_bias);
+    config["accelerometer_bias"] = godot_vec3(imu_config_.accel_bias);
+    config["gyro_bias_drift"] = imu_config_.gyro_bias_drift_stddev;
+    config["accelerometer_bias_drift"] = imu_config_.accel_bias_drift_stddev;
+    config["gyro_random_walk"] = imu_config_.gyro_random_walk_stddev;
+    config["accelerometer_random_walk"] = imu_config_.accel_random_walk_stddev;
+    config["barometer_noise"] = imu_config_.barometer_noise_stddev_m;
+    config["barometer_bias_drift"] = imu_config_.barometer_bias_drift_stddev_m;
+    config["barometer_random_walk"] = imu_config_.barometer_random_walk_stddev_m;
+    config["sample_delay_frames"] = imu_config_.delay_samples;
+    return config;
+}
+
+Dictionary AeroSimNative::flight_control_diagnostics() const {
+    Dictionary diagnostics;
+    diagnostics["uses_estimated_attitude"] = flight_control_used_estimated_attitude_;
+    return diagnostics;
 }
 
 void AeroSimNative::set_collision_release_frames(std::int32_t release_frames) {
@@ -130,7 +212,14 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
 
     PackedFloat64Array row;
-    const aerosim::TrajectorySample sample = flight_controller_.step_angle_mode(simulation_state_, simulation_clock_, config, command);
+    const aerosim::ImuSample imu_sample = imu_.sample(simulation_state_);
+    flight_control_used_estimated_attitude_ = true;
+    const aerosim::TrajectorySample sample = flight_controller_.step_angle_mode(
+            simulation_state_,
+            simulation_clock_,
+            config,
+            command,
+            imu_sample.estimated_attitude);
     row.append(sample.time_seconds);
     row.append(sample.state.position.x);
     row.append(sample.state.position.y);

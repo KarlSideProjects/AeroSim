@@ -4,9 +4,11 @@
 
 #include "aerosim_collision.hpp"
 #include "aerosim_flight_control.hpp"
+#include "aerosim_imu.hpp"
 #include "aerosim_simulation.hpp"
 
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_float64_array.hpp>
 
 class AeroSimNative : public godot::RefCounted {
@@ -20,6 +22,13 @@ private:
     aerosim::SimulationClock simulation_clock_;
     aerosim::FlightController flight_controller_;
     aerosim::CollisionAuthoritySwitch collision_authority_;
+    aerosim::ImuConfig imu_config_;
+    aerosim::ImuSimulator imu_;
+    bool imu_noise_enabled_ = false;
+    bool imu_bias_enabled_ = false;
+    bool imu_random_walk_enabled_ = false;
+    bool imu_delay_enabled_ = false;
+    bool flight_control_used_estimated_attitude_ = false;
 
 public:
     std::int32_t probe_value() const;
@@ -33,6 +42,9 @@ public:
     bool flight_control_armed() const;
     godot::String flight_control_arm_reject_code() const;
     void reset_flight();
+    void configure_imu(const godot::Dictionary &config);
+    godot::Dictionary imu_configuration() const;
+    godot::Dictionary flight_control_diagnostics() const;
     void set_collision_release_frames(std::int32_t release_frames);
     void sync_flight_state(
             double position_x,

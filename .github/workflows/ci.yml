@@ -53,6 +53,7 @@ jobs:
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["desktop_substep_hz"])')" = "1000"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["desktop_substeps"])')" = "60000"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["mobile_substeps_1s"])')" = "500"
+          test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["imu_public_path"])')" = "True"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["collision_public_path"])')" = "True"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["jolt_collision_handoff"])')" = "True"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["jolt_collision_trials"])')" = "400"
