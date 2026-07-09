@@ -29,6 +29,7 @@ done
 
 mkdir -p "$(dirname "$output_path")"
 mkdir -p "$(dirname "$csv_output_path")"
+rm -f "$output_path" "$csv_output_path"
 rm -rf .godot
 mkdir -p .godot build .deps
 touch build/.gdignore .deps/.gdignore

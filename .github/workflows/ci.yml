@@ -33,7 +33,11 @@ jobs:
       - name: Native unit test
         env:
           AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
+          AEROSIM_A3_ORACLE_CASES: build/a3_oracle_cases.csv
         run: scripts/test_native.sh
+
+      - name: Python A3 oracle
+        run: scripts/check_a3_oracle.py build/a3_oracle_cases.csv
 
       - name: Hardcoded airframe constant scan
         run: scripts/check_hardcoded_airframe_constants.sh

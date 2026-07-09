@@ -1,6 +1,7 @@
 #include "aerosim_native.hpp"
 
 #include "aerosim_probe.hpp"
+#include <cmath>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
@@ -53,6 +54,10 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("imu_configuration"), &AeroSimNative::imu_configuration);
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
+    ClassDB::bind_method(
+            D_METHOD("set_a3_drag_model", "enabled", "coefficient_x", "coefficient_y", "coefficient_z", "motor_0_rpm", "motor_1_rpm", "motor_2_rpm", "motor_3_rpm"),
+            &AeroSimNative::set_a3_drag_model);
+    ClassDB::bind_method(D_METHOD("a3_drag_configuration"), &AeroSimNative::a3_drag_configuration);
     ClassDB::bind_method(D_METHOD("set_collision_release_frames", "release_frames"), &AeroSimNative::set_collision_release_frames);
     ClassDB::bind_method(
             D_METHOD("sync_flight_state", "position_x", "position_y", "position_z", "orientation_x", "orientation_y", "orientation_z", "orientation_w", "velocity_x", "velocity_y", "velocity_z", "angular_velocity_x", "angular_velocity_y", "angular_velocity_z"),
@@ -115,6 +120,7 @@ PackedFloat64Array AeroSimNative::step_simulation(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
+    config.a3_drag = a3_drag_config_;
 
     PackedFloat64Array row;
     const aerosim::TrajectorySample sample = aerosim::step_physics_frame(simulation_state_, simulation_clock_, config);
@@ -221,6 +227,48 @@ Dictionary AeroSimNative::hardware_power_diagnostics() const {
     return diagnostics;
 }
 
+bool AeroSimNative::set_a3_drag_model(
+        bool enabled,
+        double coefficient_x,
+        double coefficient_y,
+        double coefficient_z,
+        double motor_0_rpm,
+        double motor_1_rpm,
+        double motor_2_rpm,
+        double motor_3_rpm) {
+    const double values[] = {
+            coefficient_x,
+            coefficient_y,
+            coefficient_z,
+            motor_0_rpm,
+            motor_1_rpm,
+            motor_2_rpm,
+            motor_3_rpm,
+    };
+    for (double value : values) {
+        if (!std::isfinite(value) || value < 0.0) {
+            return false;
+        }
+    }
+    a3_drag_config_.enabled = enabled;
+    a3_drag_config_.coefficient = {coefficient_x, coefficient_y, coefficient_z};
+    a3_drag_config_.motor_rpm = {motor_0_rpm, motor_1_rpm, motor_2_rpm, motor_3_rpm};
+    return true;
+}
+
+Dictionary AeroSimNative::a3_drag_configuration() const {
+    Dictionary config;
+    config["enabled"] = a3_drag_config_.enabled;
+    config["coefficient_x"] = a3_drag_config_.coefficient.x;
+    config["coefficient_y"] = a3_drag_config_.coefficient.y;
+    config["coefficient_z"] = a3_drag_config_.coefficient.z;
+    config["motor_0_rpm"] = a3_drag_config_.motor_rpm[0];
+    config["motor_1_rpm"] = a3_drag_config_.motor_rpm[1];
+    config["motor_2_rpm"] = a3_drag_config_.motor_rpm[2];
+    config["motor_3_rpm"] = a3_drag_config_.motor_rpm[3];
+    return config;
+}
+
 void AeroSimNative::set_collision_release_frames(std::int32_t release_frames) {
     collision_authority_.set_release_frames(release_frames);
 }
@@ -255,6 +303,7 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
+    config.a3_drag = a3_drag_config_;
 
     aerosim::FlightCommand command;
     command.throttle = throttle;
@@ -299,6 +348,7 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
+    config.a3_drag = a3_drag_config_;
 
     aerosim::AcroCommand command;
     command.throttle = throttle;
@@ -354,6 +404,7 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
+    config.a3_drag = a3_drag_config_;
 
     aerosim::FlightCommand command;
     command.throttle = throttle;
@@ -421,6 +472,7 @@ PackedFloat64Array AeroSimNative::simulate_trajectory(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
+    config.a3_drag = a3_drag_config_;
 
     PackedFloat64Array rows;
     for (const aerosim::TrajectorySample &sample : aerosim::simulate_trajectory(config)) {

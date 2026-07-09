@@ -1,5 +1,7 @@
 #include "aerosim_simulation.hpp"
 
+#include "aerosim_aerodynamics.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -40,10 +42,12 @@ Vec3 rotate(const Quat &q, const Vec3 &v) {
 
 void integrate(RigidBodyState &state, const SimulationConfig &config, double dt) {
     const Vec3 thrust_world = rotate(state.orientation, {0.0, config.total_thrust_newtons, 0.0});
+    const Vec3 drag_world = rotate(state.orientation, a3_drag_force_body(config.a3_drag, state.orientation, state.velocity));
+    const Vec3 force_world = thrust_world + drag_world;
     const Vec3 acceleration{
-            thrust_world.x / config.mass_kg,
-            thrust_world.y / config.mass_kg - config.gravity_mps2,
-            thrust_world.z / config.mass_kg,
+            force_world.x / config.mass_kg,
+            force_world.y / config.mass_kg - config.gravity_mps2,
+            force_world.z / config.mass_kg,
     };
 
     state.velocity = state.velocity + acceleration * dt;

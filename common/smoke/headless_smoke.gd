@@ -67,6 +67,10 @@ func _run() -> void:
     if not _verify_flight_control_public_path(native):
         quit(1)
         return
+    var a3_drag_public_verified := _verify_a3_drag_public_path(native)
+    if not a3_drag_public_verified:
+        quit(1)
+        return
     var imu_public_verified := _verify_imu_public_path(native)
     if not imu_public_verified:
         quit(1)
@@ -122,6 +126,7 @@ func _run() -> void:
         "trajectory_stride": stride,
         "trajectory_samples": int(trajectory.size() / stride),
         "input_fallback_status": input_fallback_status,
+        "a3_drag_public_path": a3_drag_public_verified,
         "imu_public_path": imu_public_verified,
         "collision_public_path": collision_public_verified,
         "jolt_collision_handoff": jolt_collision_verified,
@@ -323,6 +328,43 @@ func _verify_flight_control_public_path(native: Object) -> bool:
     var roll_rate_dps := rad_to_deg(float(acro.get("angular_velocity_z_rad_s", 0.0)))
     if absf(roll_rate_dps - 720.0) > 720.0 * 0.05:
         push_error("G2.5 public Acro full-stick roll must reach 720 deg/s within 5%%")
+        return false
+    return true
+
+func _verify_a3_drag_public_path(native: Object) -> bool:
+    for method in ["set_a3_drag_model", "a3_drag_configuration", "sync_flight_state"]:
+        if not native.has_method(method):
+            push_error("AeroSimNative.%s must exist for A3 drag public configuration" % method)
+            return false
+
+    if not native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012, 10000.0, 10000.0, 10000.0, 10000.0):
+        push_error("A3 drag public path must accept a disabled valid configuration")
+        return false
+    var disabled: Dictionary = native.call("a3_drag_configuration")
+    if bool(disabled.get("enabled", true)) != false:
+        push_error("A3 drag configuration must echo the disabled switch")
+        return false
+
+    native.call("reset_simulation")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var off_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.0)
+    if absf(float(off_row[8]) - 10.0) > 1e-9:
+        push_error("A3 disabled must not decelerate the public coasting path")
+        return false
+
+    if not native.call("set_a3_drag_model", true, 0.0001, 0.0001, 0.00012, 10000.0, 10000.0, 10000.0, 10000.0):
+        push_error("A3 drag public path must accept an enabled valid configuration")
+        return false
+    var enabled: Dictionary = native.call("a3_drag_configuration")
+    if bool(enabled.get("enabled", false)) != true:
+        push_error("A3 drag configuration must echo the enabled switch")
+        return false
+
+    native.call("reset_simulation")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var on_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.0)
+    if float(on_row[8]) >= float(off_row[8]):
+        push_error("A3 enabled must decelerate the public coasting path")
         return false
     return true
 
