@@ -125,6 +125,8 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Set job-local tool paths
         run: |
@@ -142,6 +144,7 @@ jobs:
             ubuntu:24.04 \
             bash -lc '
               set -euo pipefail
+              rm -rf build bin .deps .sconsign.dblite src/native/*.os
               trap "chown -R \"$HOST_UID:$HOST_GID\" build bin .deps 2>/dev/null || true" EXIT
               export DEBIAN_FRONTEND=noninteractive
               dpkg --add-architecture i386
