@@ -8,7 +8,14 @@ jobs:
   linux:
     runs-on: [self-hosted, Linux, X64]
     steps:
+      - name: Clean self-hosted workspace
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
+            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Set job-local tool paths
         run: |
@@ -124,6 +131,11 @@ jobs:
   windows:
     runs-on: [self-hosted, Linux, X64]
     steps:
+      - name: Clean self-hosted workspace
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
+            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+
       - uses: actions/checkout@v4
         with:
           clean: false
@@ -140,12 +152,13 @@ jobs:
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             -v "$PWD:/work" \
+            -v "$RUNNER_TEMP:/runner-temp" \
             -w /work \
             ubuntu:24.04 \
             bash -lc '
               set -euo pipefail
               rm -rf build bin .deps .sconsign.dblite src/native/*.os
-              trap "chown -R \"$HOST_UID:$HOST_GID\" build bin .deps 2>/dev/null || true" EXIT
+              trap "chown -R \"$HOST_UID:$HOST_GID\" build bin .deps /runner-temp/aerosim-wine 2>/dev/null || true" EXIT
               export DEBIAN_FRONTEND=noninteractive
               dpkg --add-architecture i386
               apt-get update
@@ -162,7 +175,7 @@ jobs:
               scripts/test_native.sh
               export WINEDEBUG=-all
               export WINEARCH=win64
-              export WINEPREFIX=/work/build/wineprefix
+              export WINEPREFIX=/runner-temp/aerosim-wine
               wineboot --init || true
               mapfile -t test_exes < <(find build/tests -maxdepth 1 -type f -name "*.exe" | sort)
               if [ "${#test_exes[@]}" -eq 0 ]; then
@@ -223,7 +236,14 @@ jobs:
     env:
       ANDROID_NDK_ROOT: ${{ github.workspace }}/.deps/android-ndk
     steps:
+      - name: Clean self-hosted workspace
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
+            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Set job-local tool paths
         id: android_tool_paths
@@ -352,7 +372,14 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     needs: [linux, windows, android]
     steps:
+      - name: Clean self-hosted workspace
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
+            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Download replay artifacts
         uses: actions/download-artifact@v4
