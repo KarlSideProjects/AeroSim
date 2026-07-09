@@ -4,6 +4,7 @@ set -euo pipefail
 test -s docs/release_delivery_sop.md
 grep -q "scripts/export_android_release.sh" docs/release_delivery_sop.md
 test -x scripts/export_android_release.sh
+grep -q '^textures/vram_compression/import_etc2_astc=true$' project.godot
 
 mkdir -p build
 artifact="$(mktemp build/release-artifact.XXXXXX)"
