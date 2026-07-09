@@ -33,6 +33,7 @@ private:
     bool imu_random_walk_enabled_ = false;
     bool imu_delay_enabled_ = false;
     bool flight_control_used_estimated_attitude_ = false;
+    godot::String flight_mode_ = "ANGLE";
 
 public:
     std::int32_t probe_value() const;
@@ -55,6 +56,7 @@ public:
     bool flight_control_armed() const;
     godot::String flight_control_arm_reject_code() const;
     void reset_flight();
+    void capture_altitude_hold();
     void configure_imu(const godot::Dictionary &config);
     godot::Dictionary imu_configuration() const;
     godot::Dictionary flight_control_diagnostics() const;
@@ -126,7 +128,36 @@ public:
             double rc_rate,
             double super_rate,
             double expo);
+    godot::PackedFloat64Array step_altitude_hold_mode(
+            std::int32_t physics_hz,
+            std::int32_t substep_hz,
+            double throttle,
+            double roll_degrees,
+            double pitch_degrees,
+            double yaw_rate_degrees_per_second);
     godot::PackedFloat64Array step_collision_angle_mode(
+            std::int32_t physics_hz,
+            std::int32_t substep_hz,
+            double throttle,
+            double roll_degrees,
+            double pitch_degrees,
+            double yaw_rate_degrees_per_second,
+            bool touching,
+            double normal_x,
+            double normal_y,
+            double normal_z,
+            double impulse_x,
+            double impulse_y,
+            double impulse_z,
+            double restitution,
+            double resolved_velocity_x,
+            double resolved_velocity_y,
+            double resolved_velocity_z,
+            double resolved_angular_velocity_x,
+            double resolved_angular_velocity_y,
+            double resolved_angular_velocity_z,
+            double max_kinetic_energy_joules);
+    godot::PackedFloat64Array step_collision_altitude_hold_mode(
             std::int32_t physics_hz,
             std::int32_t substep_hz,
             double throttle,

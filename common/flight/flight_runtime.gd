@@ -5,6 +5,7 @@ const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const TAKEOFF_VELOCITY := Vector3(30.0, 0.0, 0.0)
+const FLIGHT_THROTTLE := 0.75
 
 @onready var fallback_status_label: Label3D = %FallbackStatus
 @onready var drone_body = get_node_or_null("DroneBody")
@@ -21,6 +22,7 @@ var last_error_message := ""
 var last_collision_authority := -1
 var collision_handoff_count := 0
 var reset_hold_frames := 0
+var flight_mode := "ANGLE"
 
 func _ready() -> void:
     _build_main_menu()
@@ -41,6 +43,8 @@ func _unhandled_input(event: InputEvent) -> void:
         set_paused(not paused)
     elif event.is_action_pressed("flight_respawn"):
         respawn()
+    elif event.is_action_pressed("flight_altitude_hold"):
+        toggle_altitude_hold()
     elif event.is_action_pressed("flight_exit"):
         exit_requested = true
 
@@ -58,11 +62,12 @@ func _physics_process(_delta: float) -> void:
     if drone_body != null:
         _sync_native_from_drone()
         var energy_limit := _kinetic(drone_body.linear_velocity, drone_body.angular_velocity)
+        var step_method := "step_collision_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_collision_angle_mode"
         row = native.call(
-            "step_collision_angle_mode",
+            step_method,
             Engine.physics_ticks_per_second,
             1000,
-            0.75,
+            FLIGHT_THROTTLE,
             0.0,
             0.0,
             0.0,
@@ -86,7 +91,8 @@ func _physics_process(_delta: float) -> void:
             collision_handoff_count += 1
         drone_body.reset_contact()
     else:
-        row = native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.75, 0.0, 0.0, 0.0)
+        var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
+        row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, FLIGHT_THROTTLE, 0.0, 0.0, 0.0)
     if row.size() >= 13:
         last_collision_authority = int(row[12])
     if drone_body != null and row.size() >= 17:
@@ -99,8 +105,10 @@ func _physics_process(_delta: float) -> void:
 
 func request_takeoff() -> void:
     screen = "flight"
+    flight_mode = "ANGLE"
     set_paused(false)
     takeoff_requested = true
+    update_fallback_status()
     if drone_body != null:
         drone_body.reset_contact()
         drone_body.global_position = SPAWN_POSITION
@@ -132,9 +140,11 @@ func accept_fallback() -> void:
 func respawn() -> void:
     reset_count += 1
     screen = "flight"
+    flight_mode = "ANGLE"
     takeoff_requested = true
     if native != null:
         native.call("reset_flight")
+    update_fallback_status()
     if drone_body != null:
         _reset_drone_body()
         # ponytail: short reset hold; replace with real throttle input state when controller profiles land.
@@ -142,7 +152,17 @@ func respawn() -> void:
 
 func update_fallback_status() -> void:
     last_profile_status = InputProfiles.fallback_status(Input.get_connected_joypads())
-    fallback_status_label.text = last_profile_status
+    fallback_status_label.text = "%s | Mode: %s" % [last_profile_status, flight_mode]
+
+func toggle_altitude_hold() -> void:
+    if native == null or not takeoff_requested:
+        return
+    if flight_mode == "ALTITUDE_HOLD":
+        flight_mode = "ANGLE"
+    else:
+        native.call("capture_altitude_hold")
+        flight_mode = "ALTITUDE_HOLD"
+    update_fallback_status()
 
 func set_paused(value: bool) -> void:
     paused = value

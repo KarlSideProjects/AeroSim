@@ -102,6 +102,46 @@ int main() {
         return fail("Angle Mode hover should level attitude without requiring Position Hold");
     }
 
+    aerosim::RigidBodyState altitude_hold_state;
+    aerosim::SimulationClock altitude_hold_clock;
+    aerosim::FlightController altitude_hold_controller;
+    if (!altitude_hold_controller.arm(0.0)) {
+        return fail("Altitude Hold setup should arm from low throttle");
+    }
+    const double hold_altitude_m = 3.0;
+    double angle_mode_thrust = 0.0;
+    double altitude_hold_entry_thrust = 0.0;
+    double altitude_hold_exit_thrust = 0.0;
+    altitude_hold_state.position.y = hold_altitude_m;
+    altitude_hold_controller.step_angle_mode(altitude_hold_state, altitude_hold_clock, config, hover, aerosim::Quat{});
+    angle_mode_thrust = altitude_hold_controller.motor_thrust_newtons();
+    altitude_hold_controller.capture_altitude_hold(hold_altitude_m);
+    for (int frame = 0; frame < config.physics_hz * 60; ++frame) {
+        const double noise_phase = static_cast<double>(frame) / static_cast<double>(config.physics_hz);
+        const double noisy_barometer_m = hold_altitude_m +
+                0.10 * std::sin(noise_phase * 11.0) +
+                0.05 * std::sin(noise_phase * 37.0);
+        altitude_hold_controller.step_altitude_hold_mode(
+                altitude_hold_state,
+                altitude_hold_clock,
+                config,
+                hover,
+                noisy_barometer_m,
+                aerosim::Quat{});
+        if (frame == 0) {
+            altitude_hold_entry_thrust = altitude_hold_controller.motor_thrust_newtons();
+        }
+    }
+    altitude_hold_controller.step_angle_mode(altitude_hold_state, altitude_hold_clock, config, hover, aerosim::Quat{});
+    altitude_hold_exit_thrust = altitude_hold_controller.motor_thrust_newtons();
+    if (std::abs(altitude_hold_state.position.y - hold_altitude_m) > 0.15) {
+        return fail("G2.6 Altitude Hold must keep 60 second altitude drift within +/-15 cm with barometer noise");
+    }
+    if (std::abs(altitude_hold_entry_thrust - angle_mode_thrust) > config.mass_kg * config.gravity_mps2 * 0.05 ||
+            std::abs(altitude_hold_exit_thrust - altitude_hold_entry_thrust) > config.mass_kg * config.gravity_mps2 * 0.05) {
+        return fail("Altitude Hold mode transitions must not introduce a thrust step");
+    }
+
     aerosim::RigidBodyState hold_state;
     aerosim::SimulationClock hold_clock;
     aerosim::FlightController hold_controller;
