@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace aerosim {
@@ -120,6 +121,11 @@ TrajectorySample step_physics_frame(
         RigidBodyState &state,
         SimulationClock &clock,
         const SimulationConfig &config);
+TrajectorySample step_physics_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const std::function<void(double)> &before_substep);
 std::vector<TrajectorySample> simulate_trajectory(const SimulationConfig &config);
 
 } // namespace aerosim

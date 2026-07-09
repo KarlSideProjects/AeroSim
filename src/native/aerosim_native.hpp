@@ -78,6 +78,16 @@ public:
             double roll_degrees,
             double pitch_degrees,
             double yaw_rate_degrees_per_second);
+    godot::PackedFloat64Array step_acro_mode(
+            std::int32_t physics_hz,
+            std::int32_t substep_hz,
+            double throttle,
+            double roll_stick,
+            double pitch_stick,
+            double yaw_stick,
+            double rc_rate,
+            double super_rate,
+            double expo);
     godot::PackedFloat64Array step_collision_angle_mode(
             std::int32_t physics_hz,
             std::int32_t substep_hz,

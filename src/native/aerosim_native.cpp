@@ -61,6 +61,9 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("step_angle_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second"),
             &AeroSimNative::step_angle_mode);
     ClassDB::bind_method(
+            D_METHOD("step_acro_mode", "physics_hz", "substep_hz", "throttle", "roll_stick", "pitch_stick", "yaw_stick", "rc_rate", "super_rate", "expo"),
+            &AeroSimNative::step_acro_mode);
+    ClassDB::bind_method(
             D_METHOD("step_collision_angle_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules"),
             &AeroSimNative::step_collision_angle_mode);
     ClassDB::bind_method(
@@ -194,6 +197,13 @@ Dictionary AeroSimNative::imu_configuration() const {
 Dictionary AeroSimNative::flight_control_diagnostics() const {
     Dictionary diagnostics;
     diagnostics["uses_estimated_attitude"] = flight_control_used_estimated_attitude_;
+    const aerosim::PidTimingStats &timing = flight_controller_.pid_timing_stats();
+    diagnostics["pid_target_hz"] = timing.target_hz;
+    diagnostics["pid_p99_jitter_fraction"] = timing.p99_jitter_fraction;
+    diagnostics["pid_samples"] = static_cast<double>(timing.samples);
+    diagnostics["angular_velocity_x_rad_s"] = simulation_state_.angular_velocity.x;
+    diagnostics["angular_velocity_y_rad_s"] = simulation_state_.angular_velocity.y;
+    diagnostics["angular_velocity_z_rad_s"] = simulation_state_.angular_velocity.z;
     return diagnostics;
 }
 
@@ -261,6 +271,49 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
             config,
             command,
             imu_sample.estimated_attitude);
+    row.append(sample.time_seconds);
+    row.append(sample.state.position.x);
+    row.append(sample.state.position.y);
+    row.append(sample.state.position.z);
+    row.append(sample.state.orientation.x);
+    row.append(sample.state.orientation.y);
+    row.append(sample.state.orientation.z);
+    row.append(sample.state.orientation.w);
+    row.append(sample.state.velocity.x);
+    row.append(sample.state.velocity.y);
+    row.append(sample.state.velocity.z);
+    row.append(static_cast<double>(sample.substeps));
+    return row;
+}
+
+PackedFloat64Array AeroSimNative::step_acro_mode(
+        std::int32_t physics_hz,
+        std::int32_t substep_hz,
+        double throttle,
+        double roll_stick,
+        double pitch_stick,
+        double yaw_stick,
+        double rc_rate,
+        double super_rate,
+        double expo) {
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    config.physics_hz = physics_hz;
+    config.substep_hz = substep_hz;
+
+    aerosim::AcroCommand command;
+    command.throttle = throttle;
+    command.roll_stick = roll_stick;
+    command.pitch_stick = pitch_stick;
+    command.yaw_stick = yaw_stick;
+    command.rates = {rc_rate, super_rate, expo};
+
+    const aerosim::TrajectorySample sample = flight_controller_.step_acro_mode(
+            simulation_state_,
+            simulation_clock_,
+            config,
+            command);
+
+    PackedFloat64Array row;
     row.append(sample.time_seconds);
     row.append(sample.state.position.x);
     row.append(sample.state.position.y);

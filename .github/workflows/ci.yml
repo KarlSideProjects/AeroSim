@@ -8,7 +8,14 @@ jobs:
   linux:
     runs-on: [self-hosted, Linux, X64]
     steps:
+      - name: Clean self-hosted workspace
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
+            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Set job-local tool paths
         run: |
@@ -124,7 +131,14 @@ jobs:
   windows:
     runs-on: [self-hosted, Linux, X64]
     steps:
+      - name: Clean self-hosted workspace
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
+            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Set job-local tool paths
         run: |
@@ -138,15 +152,24 @@ jobs:
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             -v "$PWD:/work" \
+            -v "$RUNNER_TEMP:/runner-temp" \
             -w /work \
             ubuntu:24.04 \
             bash -lc '
               set -euo pipefail
-              trap "chown -R \"$HOST_UID:$HOST_GID\" build bin .deps 2>/dev/null || true" EXIT
+              rm -rf build bin .deps .sconsign.dblite src/native/*.os
+              trap "chown -R \"$HOST_UID:$HOST_GID\" build bin .deps /runner-temp/aerosim-wine 2>/dev/null || true" EXIT
               export DEBIAN_FRONTEND=noninteractive
               dpkg --add-architecture i386
               apt-get update
               apt-get install -y ca-certificates git python3 python3-venv unzip mingw-w64 wine64 wine32:i386
+              if ! getent group "$HOST_GID" >/dev/null; then
+                groupadd -g "$HOST_GID" hostgroup
+              fi
+              if ! getent passwd "$HOST_UID" >/dev/null; then
+                useradd -u "$HOST_UID" -g "$HOST_GID" -M -d /runner-temp hostuser
+              fi
+              host_user="$(getent passwd "$HOST_UID" | cut -d: -f1)"
               python3 -m venv build/scons-venv
               build/scons-venv/bin/python -m pip install --upgrade pip
               build/scons-venv/bin/python -m pip install scons
@@ -159,8 +182,10 @@ jobs:
               scripts/test_native.sh
               export WINEDEBUG=-all
               export WINEARCH=win64
-              export WINEPREFIX=/work/build/wineprefix
-              wineboot --init || true
+              export WINEPREFIX=/runner-temp/aerosim-wine
+              mkdir -p "$WINEPREFIX"
+              chown -R "$HOST_UID:$HOST_GID" build "$WINEPREFIX"
+              runuser -u "$host_user" -- wineboot --init || true
               mapfile -t test_exes < <(find build/tests -maxdepth 1 -type f -name "*.exe" | sort)
               if [ "${#test_exes[@]}" -eq 0 ]; then
                 echo "::error::No Windows test executables were built in build/tests"
@@ -169,7 +194,7 @@ jobs:
               fi
               for test_exe in "${test_exes[@]}"; do
                 echo "Running ${test_exe} under Wine"
-                wine "$test_exe"
+                runuser -u "$host_user" -- wine "$test_exe"
               done
               rm -rf .deps/godot-cpp
               git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
@@ -220,13 +245,39 @@ jobs:
     env:
       ANDROID_NDK_ROOT: ${{ github.workspace }}/.deps/android-ndk
     steps:
+      - name: Clean self-hosted workspace
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
+            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Set job-local tool paths
+        id: android_tool_paths
         run: |
           echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache" >> "$GITHUB_ENV"
           echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg-config" >> "$GITHUB_ENV"
           echo "XDG_DATA_HOME=$RUNNER_TEMP/xdg-data" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$RUNNER_TEMP/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$RUNNER_TEMP/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_USER_HOME=$RUNNER_TEMP/android-user" >> "$GITHUB_ENV"
+          echo "ANDROID_AVD_HOME=$RUNNER_TEMP/android-avd" >> "$GITHUB_ENV"
+          echo "ADB_VENDOR_KEYS=$RUNNER_TEMP/adb-keys" >> "$GITHUB_ENV"
+          adb_port=$((5037 + GITHUB_RUN_ID % 1000))
+          emulator_port=$((5554 + 2 * (GITHUB_RUN_ID % 16)))
+          avd_name="aerosim-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "ADB_SERVER_PORT=$adb_port"
+            echo "AEROSIM_ANDROID_AVD_NAME=$avd_name"
+            echo "AEROSIM_ANDROID_EMULATOR_PORT=$emulator_port"
+          } >> "$GITHUB_ENV"
+          {
+            echo "avd_name=$avd_name"
+            echo "emulator_port=$emulator_port"
+          } >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/android-sdk" "$RUNNER_TEMP/android-user" "$RUNNER_TEMP/android-avd"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -272,6 +323,8 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
+          avd-name: ${{ steps.android_tool_paths.outputs.avd_name }}
+          emulator-port: ${{ steps.android_tool_paths.outputs.emulator_port }}
           emulator-boot-timeout: 1200
           script: scripts/run_android_native_tests.sh
 
@@ -328,7 +381,14 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     needs: [linux, windows, android]
     steps:
+      - name: Clean self-hosted workspace
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
+            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+
       - uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Download replay artifacts
         uses: actions/download-artifact@v4
