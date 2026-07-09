@@ -49,12 +49,12 @@ Vec3 a3_drag_force_body(
         rotor_speed_sum += 2.0 * kPi * rpm / 60.0;
     }
 
-    const Vec3 body_velocity = rotate_inverse(body_attitude, world_velocity);
-    return {
-            -config.coefficient.x * rotor_speed_sum * body_velocity.x,
-            -config.coefficient.y * rotor_speed_sum * body_velocity.y,
-            -config.coefficient.z * rotor_speed_sum * body_velocity.z,
+    const Vec3 drag_scaled_world{
+            -config.coefficient.x * rotor_speed_sum * world_velocity.x,
+            -config.coefficient.y * rotor_speed_sum * world_velocity.y,
+            -config.coefficient.z * rotor_speed_sum * world_velocity.z,
     };
+    return rotate_inverse(body_attitude, drag_scaled_world);
 }
 
 A3ForwardFlightEquilibrium a3_forward_flight_equilibrium(

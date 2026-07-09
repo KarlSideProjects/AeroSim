@@ -6,8 +6,10 @@ This is the CI-A pattern for aerodynamic formula ports.
 
 `tests/native/test_aerodynamics.cpp` writes C++ A3 drag cases when
 `AEROSIM_A3_ORACLE_CASES` is set. `scripts/check_a3_oracle.py` reads those
-cases and recomputes the same points with the gym-pybullet-drones
-`BaseAviary._drag` formula:
+cases and recomputes the same points by loading the pinned
+`gym-pybullet-drones` `BaseAviary.py` source and calling `BaseAviary._drag`
+from commit
+`9bc12bc583fa3b28807b2f90a8cadf09fb06e1ff`:
 
 ```text
 drag_factors = -DRAG_COEFF * sum(2*pi*rpm/60)
@@ -23,8 +25,8 @@ For #30, reuse the same shape:
 
 1. Add the smallest public native function for the effect.
 2. Add one native test that writes oracle CSV rows behind an env var.
-3. Add one `scripts/check_<effect>_oracle.py` that computes the original Python
-   formula and fails on the frozen tolerance.
+3. Add one `scripts/check_<effect>_oracle.py` that calls the pinned upstream
+   Python implementation and fails on the frozen tolerance.
 4. Wire the script into CI immediately after `scripts/test_native.sh`.
 
 Keep case files under `build/`; CI workspaces may be cleaned between jobs.

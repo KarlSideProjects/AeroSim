@@ -39,7 +39,7 @@ jobs:
         run: |
           python3 -m venv build/scons-venv
           build/scons-venv/bin/python -m pip install --upgrade pip
-          build/scons-venv/bin/python -m pip install scons
+          build/scons-venv/bin/python -m pip install scons numpy
           echo "$PWD/build/scons-venv/bin" >> "$GITHUB_PATH"
 
       - name: Native unit test

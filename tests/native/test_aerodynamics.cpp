@@ -86,9 +86,9 @@ int main() {
     attitude.w = std::cos(yaw * 0.5);
 
     const aerosim::Vec3 force = aerosim::a3_drag_force_body(drag, attitude, {8.0, -2.0, 1.0});
-    if (!near(force.x, -0.017287733985339705, 1e-12) ||
+    if (!near(force.x, -0.017173738424413127, 1e-12) ||
             !near(force.y, 0.004607669225265029, 1e-12) ||
-            !near(force.z, -0.008150443692971675, 1e-12)) {
+            !near(force.z, -0.0072384792055590445, 1e-12)) {
         return fail("A3 drag must match the Forster/gym-pybullet-drones body-frame force at an oracle point");
     }
 
@@ -119,6 +119,27 @@ int main() {
     if (!near(equilibrium.pitch_radians, analytic_pitch, analytic_pitch * 0.05) ||
             !near(equilibrium.thrust_newtons, analytic_thrust, analytic_thrust * 0.05)) {
         return fail("G3.1 steady forward-flight pitch and thrust must stay within 5% of the Forster analytic solution");
+    }
+
+    aerosim::SimulationConfig forward;
+    forward.seconds = 1.0;
+    forward.physics_hz = 100;
+    forward.substep_hz = 1000;
+    forward.mass_kg = 0.72;
+    forward.gravity_mps2 = 9.80665;
+    forward.total_thrust_newtons = analytic_thrust;
+    forward.a3_drag = drag;
+    forward.initial_state.velocity = {18.0, 0.0, 0.0};
+    forward.initial_state.orientation = {0.0, 0.0, std::sin(-analytic_pitch * 0.5), std::cos(analytic_pitch * 0.5)};
+    const auto forward_samples = aerosim::simulate_trajectory(forward);
+    if (forward_samples.empty()) {
+        return fail("G3.1 forward-flight equilibrium must produce simulation samples");
+    }
+    const aerosim::Vec3 final_velocity = forward_samples.back().state.velocity;
+    if (std::abs(final_velocity.x - 18.0) > 18.0 * 0.05 ||
+            std::abs(final_velocity.y) > 18.0 * 0.05 ||
+            std::abs(final_velocity.z) > 18.0 * 0.05) {
+        return fail("G3.1 analytic pitch/thrust must hold steady forward flight in the integrator within 5%");
     }
 
     if (!write_oracle_cases(std::getenv("AEROSIM_A3_ORACLE_CASES"))) {
