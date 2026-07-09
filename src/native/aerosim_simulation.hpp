@@ -64,7 +64,9 @@ struct SimulationConfig {
     double battery_nominal_voltage_v = 0.0;
     double battery_cells = 0.0;
     double battery_cell_resistance_ohm = 0.0;
+    double battery_remaining_mah = 0.0;
     double max_total_current_a = 0.0;
+    double max_motor_rpm = 0.0;
     A3DragConfig a3_drag;
     A4GroundEffectConfig a4_ground_effect;
     RigidBodyState initial_state;
@@ -78,7 +80,9 @@ struct HardwareConfig {
     double battery_nominal_voltage_v = 0.0;
     double battery_cells = 0.0;
     double battery_cell_resistance_ohm = 0.0;
+    double battery_remaining_mah = 0.0;
     double max_total_current_a = 0.0;
+    double max_motor_rpm = 0.0;
 
     bool set_mass_kg(double value) {
         if (!std::isfinite(value) || value <= 0.0) {
@@ -115,6 +119,16 @@ struct HardwareConfig {
         return true;
     }
 
+    bool set_telemetry_model(double max_motor_rpm_value, double battery_remaining_mah_value) {
+        if (!std::isfinite(max_motor_rpm_value) || max_motor_rpm_value < 0.0 ||
+                !std::isfinite(battery_remaining_mah_value) || battery_remaining_mah_value < 0.0) {
+            return false;
+        }
+        max_motor_rpm = max_motor_rpm_value;
+        battery_remaining_mah = battery_remaining_mah_value;
+        return true;
+    }
+
     SimulationConfig simulation_config() const {
         SimulationConfig config;
         config.mass_kg = mass_kg;
@@ -124,7 +138,9 @@ struct HardwareConfig {
         config.battery_nominal_voltage_v = battery_nominal_voltage_v;
         config.battery_cells = battery_cells;
         config.battery_cell_resistance_ohm = battery_cell_resistance_ohm;
+        config.battery_remaining_mah = battery_remaining_mah;
         config.max_total_current_a = max_total_current_a;
+        config.max_motor_rpm = max_motor_rpm;
         return config;
     }
 };

@@ -2,6 +2,7 @@
 
 #include "aerosim_simulation.hpp"
 
+#include <array>
 #include <string>
 
 namespace aerosim {
@@ -33,6 +34,46 @@ struct PidTimingStats {
     std::uint64_t samples = 0;
 };
 
+constexpr std::int32_t kTelemetrySnapshotSchemaVersion = 1;
+constexpr double kTelemetrySnapshotHz = 30.0;
+
+struct MotorTelemetry {
+    double thrust_newtons = 0.0;
+    double speed_rad_s = 0.0;
+    double current_a = 0.0;
+    bool saturated = false;
+};
+
+struct PidAxisTelemetry {
+    double output = 0.0;
+    bool saturated = false;
+};
+
+struct BatteryTelemetry {
+    double voltage_v = 0.0;
+    double sag_v = 0.0;
+    double remaining_mah = 0.0;
+};
+
+struct TelemetrySnapshot {
+    std::int32_t schema_version = kTelemetrySnapshotSchemaVersion;
+    std::uint64_t timestamp_us = 0;
+    std::uint64_t publish_count = 0;
+    double snapshot_hz = kTelemetrySnapshotHz;
+    std::array<MotorTelemetry, 4> motors;
+    Vec3 wind_world_mps;
+    Vec3 wind_body_mps;
+    double turbulence_intensity = 0.0;
+    double ground_effect_gain = 0.0;
+    double downwash_force_n = 0.0;
+    Vec3 propwash_disturbance_rad_s2;
+    Vec3 drag_body_n;
+    BatteryTelemetry battery;
+    std::array<PidAxisTelemetry, 3> pid;
+    bool armed = false;
+    std::string mode = "ANGLE";
+};
+
 double betaflight_rate_degrees_per_second(double stick, const RateProfile &profile);
 
 class FlightController {
@@ -48,6 +89,18 @@ private:
     double altitude_hold_trim_throttle_ = 0.0;
     bool altitude_hold_just_captured_ = false;
     PidTimingStats pid_timing_stats_;
+    std::array<TelemetrySnapshot, 2> telemetry_buffers_;
+    int telemetry_read_index_ = 0;
+    double next_telemetry_publish_s_ = 0.0;
+    std::uint64_t telemetry_publish_count_ = 0;
+
+    void maybe_publish_telemetry(
+            const TrajectorySample &sample,
+            const SimulationConfig &config,
+            double throttle,
+            const std::array<double, 3> &pid_output,
+            const std::array<bool, 3> &pid_saturated,
+            const std::string &mode);
 
 public:
     bool arm(double throttle);
@@ -58,6 +111,7 @@ public:
     double motor_thrust_newtons() const;
     void capture_altitude_hold(double target_altitude_m);
     const PidTimingStats &pid_timing_stats() const;
+    const TelemetrySnapshot &telemetry_snapshot() const;
     TrajectorySample step_angle_mode(
             RigidBodyState &state,
             SimulationClock &clock,

@@ -47,6 +47,7 @@ public:
             double battery_cells,
             double battery_cell_resistance_ohm,
             double max_total_current_a);
+    bool set_hardware_telemetry_model(double max_motor_rpm, double battery_remaining_mah);
     void reset_simulation();
     godot::PackedFloat64Array step_simulation(
             std::int32_t physics_hz,
@@ -61,6 +62,7 @@ public:
     godot::Dictionary imu_configuration() const;
     godot::Dictionary flight_control_diagnostics() const;
     godot::Dictionary hardware_power_diagnostics() const;
+    godot::Dictionary telemetry_snapshot() const;
     bool set_a3_drag_model(
             bool enabled,
             double coefficient_x,

@@ -4,6 +4,7 @@
 #include "aerosim_probe.hpp"
 #include <cmath>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
 using namespace godot;
@@ -34,6 +35,22 @@ Vector3 godot_vec3(const aerosim::Vec3 &value) {
     return {static_cast<real_t>(value.x), static_cast<real_t>(value.y), static_cast<real_t>(value.z)};
 }
 
+Dictionary motor_telemetry_dict(const aerosim::MotorTelemetry &motor) {
+    Dictionary dict;
+    dict["thrust_newtons"] = motor.thrust_newtons;
+    dict["speed_rad_s"] = motor.speed_rad_s;
+    dict["current_a"] = motor.current_a;
+    dict["saturated"] = motor.saturated;
+    return dict;
+}
+
+Dictionary pid_telemetry_dict(const aerosim::PidAxisTelemetry &axis) {
+    Dictionary dict;
+    dict["output"] = axis.output;
+    dict["saturated"] = axis.saturated;
+    return dict;
+}
+
 } // namespace
 
 void AeroSimNative::_bind_methods() {
@@ -43,6 +60,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("set_hardware_power_model", "max_total_thrust_newtons", "hover_throttle", "motor_tau_s", "battery_nominal_voltage_v", "battery_cells", "battery_cell_resistance_ohm", "max_total_current_a"),
             &AeroSimNative::set_hardware_power_model);
+    ClassDB::bind_method(
+            D_METHOD("set_hardware_telemetry_model", "max_motor_rpm", "battery_remaining_mah"),
+            &AeroSimNative::set_hardware_telemetry_model);
     ClassDB::bind_method(D_METHOD("reset_simulation"), &AeroSimNative::reset_simulation);
     ClassDB::bind_method(
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
@@ -56,6 +76,7 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("imu_configuration"), &AeroSimNative::imu_configuration);
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
+    ClassDB::bind_method(D_METHOD("telemetry_snapshot"), &AeroSimNative::telemetry_snapshot);
     ClassDB::bind_method(
             D_METHOD("set_a3_drag_model", "enabled", "coefficient_x", "coefficient_y", "coefficient_z", "motor_0_rpm", "motor_1_rpm", "motor_2_rpm", "motor_3_rpm"),
             &AeroSimNative::set_a3_drag_model);
@@ -126,6 +147,10 @@ bool AeroSimNative::set_hardware_power_model(
             battery_cells,
             battery_cell_resistance_ohm,
             max_total_current_a);
+}
+
+bool AeroSimNative::set_hardware_telemetry_model(double max_motor_rpm, double battery_remaining_mah) {
+    return hardware_config_.set_telemetry_model(max_motor_rpm, battery_remaining_mah);
 }
 
 void AeroSimNative::reset_simulation() {
@@ -255,7 +280,52 @@ Dictionary AeroSimNative::hardware_power_diagnostics() const {
     diagnostics["battery_nominal_voltage_v"] = config.battery_nominal_voltage_v;
     diagnostics["battery_cell_resistance_ohm"] = config.battery_cell_resistance_ohm;
     diagnostics["max_total_current_a"] = config.max_total_current_a;
+    diagnostics["max_motor_rpm"] = config.max_motor_rpm;
+    diagnostics["battery_remaining_mah"] = config.battery_remaining_mah;
     return diagnostics;
+}
+
+Dictionary AeroSimNative::telemetry_snapshot() const {
+    const aerosim::TelemetrySnapshot &snapshot = flight_controller_.telemetry_snapshot();
+    Dictionary dict;
+    dict["schema_version"] = snapshot.schema_version;
+    dict["timestamp_us"] = static_cast<std::int64_t>(snapshot.timestamp_us);
+    dict["publish_count"] = static_cast<std::int64_t>(snapshot.publish_count);
+    dict["snapshot_hz"] = snapshot.snapshot_hz;
+    dict["coordinate_frame"] = "FRD";
+    Array motor_order;
+    motor_order.append("rear_right");
+    motor_order.append("front_right");
+    motor_order.append("rear_left");
+    motor_order.append("front_left");
+    dict["motor_order"] = motor_order;
+    dict["motor_order_standard"] = "Betaflight quad-X 1-4";
+    Array motors;
+    for (const aerosim::MotorTelemetry &motor : snapshot.motors) {
+        motors.append(motor_telemetry_dict(motor));
+    }
+    dict["motors"] = motors;
+    dict["wind_world_mps"] = godot_vec3(snapshot.wind_world_mps);
+    dict["wind_body_mps"] = godot_vec3(snapshot.wind_body_mps);
+    dict["turbulence_intensity"] = snapshot.turbulence_intensity;
+    dict["ground_effect_gain"] = snapshot.ground_effect_gain;
+    dict["downwash_force_n"] = snapshot.downwash_force_n;
+    dict["propwash_disturbance_rad_s2"] = godot_vec3(snapshot.propwash_disturbance_rad_s2);
+    dict["drag_body_n"] = godot_vec3(snapshot.drag_body_n);
+    Dictionary battery;
+    battery["voltage_v"] = snapshot.battery.voltage_v;
+    battery["sag_v"] = snapshot.battery.sag_v;
+    battery["remaining_mah"] = snapshot.battery.remaining_mah;
+    dict["battery"] = battery;
+    Array pid;
+    for (const aerosim::PidAxisTelemetry &axis : snapshot.pid) {
+        pid.append(pid_telemetry_dict(axis));
+    }
+    dict["pid"] = pid;
+    dict["armed"] = snapshot.armed;
+    dict["mode"] = snapshot.mode.c_str();
+    dict["source"] = "native_double_buffer";
+    return dict;
 }
 
 bool AeroSimNative::set_a3_drag_model(
