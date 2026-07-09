@@ -72,9 +72,142 @@ bool write_oracle_cases(const char *path) {
     return true;
 }
 
+bool write_a4_a5_oracle_cases(const char *path) {
+    if (path == nullptr || path[0] == '\0') {
+        return true;
+    }
+
+    std::ofstream out(path);
+    if (!out) {
+        return false;
+    }
+
+    out << std::setprecision(17)
+        << "effect,case,kf,gnd_eff_coeff,prop_radius,height_clip,rpm_0,rpm_1,rpm_2,rpm_3,height,force_y,dw_coeff_1,dw_coeff_2,dw_coeff_3,upper_x,upper_y,upper_z,lower_x,lower_y,lower_z\n";
+
+    const aerosim::A4GroundEffectConfig ground{
+            true,
+            3.16e-10,
+            11.36859,
+            2.31348e-2,
+            2.31348e-2,
+            {9000.0, 10000.0, 11000.0, 12000.0},
+    };
+    const double heights[] = {
+            ground.prop_radius_m,
+            2.5 * ground.prop_radius_m,
+            5.0 * ground.prop_radius_m,
+    };
+    for (int index = 0; index < 3; ++index) {
+        const double force_y = aerosim::a4_ground_effect_lift_newtons(ground, heights[index]);
+        out << "a4," << index << ","
+            << ground.kf << ","
+            << ground.ground_effect_coeff << ","
+            << ground.prop_radius_m << ","
+            << ground.height_clip_m;
+        for (double rpm : ground.motor_rpm) {
+            out << "," << rpm;
+        }
+        out << "," << heights[index] << ","
+            << force_y << ",,,,,,,,,\n";
+    }
+
+    const aerosim::A5DownwashConfig downwash{
+            true,
+            2.31348e-2,
+            2267.18,
+            0.16,
+            -0.11,
+    };
+    const aerosim::Vec3 uppers[] = {
+            {0.1, 2.0, 0.0},
+            {0.0, 3.0, 0.2},
+            {-0.3, 4.0, 0.1},
+    };
+    const aerosim::Vec3 lower{0.0, 0.0, 0.0};
+    for (int index = 0; index < 3; ++index) {
+        const double force_y = aerosim::a5_downwash_force_y_newtons(downwash, uppers[index], lower);
+        out << "a5," << index << ",,,"
+            << downwash.prop_radius_m << ",,,,,,,"
+            << force_y << ","
+            << downwash.coeff_1 << ","
+            << downwash.coeff_2 << ","
+            << downwash.coeff_3 << ","
+            << uppers[index].x << ","
+            << uppers[index].y << ","
+            << uppers[index].z << ","
+            << lower.x << ","
+            << lower.y << ","
+            << lower.z << "\n";
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
+    aerosim::A4GroundEffectConfig ground;
+    ground.enabled = true;
+    ground.kf = 3.16e-10;
+    ground.ground_effect_coeff = 11.36859;
+    ground.prop_radius_m = 2.31348e-2;
+    ground.height_clip_m = ground.prop_radius_m;
+    ground.motor_rpm = {12000.0, 12000.0, 12000.0, 12000.0};
+
+    aerosim::A4GroundEffectConfig ground_off = ground;
+    ground_off.enabled = false;
+    if (!near(aerosim::a4_ground_effect_lift_newtons(ground_off, ground.prop_radius_m), 0.0, 1e-12)) {
+        return fail("A4 disabled ground effect must not add lift");
+    }
+
+    const double base_lift = 4.0 * ground.kf * 12000.0 * 12000.0;
+    const double low_lift = aerosim::a4_ground_effect_lift_newtons(ground, ground.prop_radius_m);
+    const double high_lift = aerosim::a4_ground_effect_lift_newtons(ground, 5.0 * ground.prop_radius_m);
+    if (!near(low_lift / base_lift, ground.ground_effect_coeff / 16.0, 1e-12) ||
+            !(low_lift > high_lift * 20.0)) {
+        return fail("G3.2 A4 lift gain must follow the Shi/gym-pybullet-drones z/R curve and switch");
+    }
+
+    aerosim::SimulationConfig hover;
+    hover.seconds = 0.5;
+    hover.physics_hz = 100;
+    hover.substep_hz = 1000;
+    hover.mass_kg = 0.72;
+    hover.gravity_mps2 = 9.80665;
+    hover.total_thrust_newtons = hover.mass_kg * hover.gravity_mps2;
+    hover.initial_state.position.y = ground.prop_radius_m;
+    const auto hover_off = aerosim::simulate_trajectory(hover);
+    hover.a4_ground_effect = ground;
+    const auto hover_on = aerosim::simulate_trajectory(hover);
+    if (hover_off.empty() || hover_on.empty() ||
+            std::abs(hover_off.back().state.position.y - hover.initial_state.position.y) > 1e-9 ||
+            !(hover_on.back().state.position.y > hover.initial_state.position.y + 0.01)) {
+        return fail("G3.2 low-altitude hover must show an observable A4 cushion when enabled");
+    }
+
+    aerosim::A5DownwashConfig downwash;
+    downwash.enabled = true;
+    downwash.prop_radius_m = 2.31348e-2;
+    downwash.coeff_1 = 2267.18;
+    downwash.coeff_2 = 0.16;
+    downwash.coeff_3 = -0.11;
+
+    aerosim::A5DownwashConfig downwash_off = downwash;
+    downwash_off.enabled = false;
+    if (!near(aerosim::a5_downwash_force_y_newtons(downwash_off, {0.1, 2.0, 0.0}, {0.0, 0.0, 0.0}), 0.0, 1e-12)) {
+        return fail("A5 disabled downwash must not reduce lift");
+    }
+
+    const double dz = 2.0;
+    const double dxy = 0.1;
+    const double alpha = downwash.coeff_1 * std::pow(downwash.prop_radius_m / (4.0 * dz), 2.0);
+    const double beta = downwash.coeff_2 * dz + downwash.coeff_3;
+    const double expected_downwash = -alpha * std::exp(-0.5 * std::pow(dxy / beta, 2.0));
+    const double actual_downwash = aerosim::a5_downwash_force_y_newtons(downwash, {dxy, dz, 0.0}, {0.0, 0.0, 0.0});
+    if (!near(actual_downwash, expected_downwash, 1e-12) || !(actual_downwash < 0.0)) {
+        return fail("G3.3 A5 dual-aircraft lift reduction must follow the DSL/gym-pybullet-drones downwash model and switch");
+    }
+
     aerosim::A3DragConfig drag;
     drag.enabled = true;
     drag.coefficient = {1.0e-6, 1.0e-6, 1.2e-6};
@@ -144,6 +277,9 @@ int main() {
 
     if (!write_oracle_cases(std::getenv("AEROSIM_A3_ORACLE_CASES"))) {
         return fail("A3 oracle case artifact must be writable for CI-A comparison");
+    }
+    if (!write_a4_a5_oracle_cases(std::getenv("AEROSIM_A4_A5_ORACLE_CASES"))) {
+        return fail("A4/A5 oracle case artifact must be writable for CI-A comparison");
     }
 
     return EXIT_SUCCESS;

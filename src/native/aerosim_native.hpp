@@ -23,6 +23,8 @@ private:
     aerosim::HardwareConfig hardware_config_;
     aerosim::FlightController flight_controller_;
     aerosim::A3DragConfig a3_drag_config_;
+    aerosim::A4GroundEffectConfig a4_ground_effect_config_;
+    aerosim::A5DownwashConfig a5_downwash_config_;
     aerosim::CollisionAuthoritySwitch collision_authority_;
     aerosim::ImuConfig imu_config_;
     aerosim::ImuSimulator imu_;
@@ -67,6 +69,31 @@ public:
             double motor_2_rpm,
             double motor_3_rpm);
     godot::Dictionary a3_drag_configuration() const;
+    bool set_a4_ground_effect_model(
+            bool enabled,
+            double kf,
+            double ground_effect_coeff,
+            double prop_radius_m,
+            double height_clip_m,
+            double motor_0_rpm,
+            double motor_1_rpm,
+            double motor_2_rpm,
+            double motor_3_rpm);
+    godot::Dictionary a4_ground_effect_configuration() const;
+    bool set_a5_downwash_model(
+            bool enabled,
+            double prop_radius_m,
+            double coeff_1,
+            double coeff_2,
+            double coeff_3);
+    godot::Dictionary a5_downwash_configuration() const;
+    double a5_downwash_force_y(
+            double upper_x,
+            double upper_y,
+            double upper_z,
+            double lower_x,
+            double lower_y,
+            double lower_z) const;
     void set_collision_release_frames(std::int32_t release_frames);
     void sync_flight_state(
             double position_x,

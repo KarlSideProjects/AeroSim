@@ -57,6 +57,56 @@ Vec3 a3_drag_force_body(
     return rotate_inverse(body_attitude, drag_scaled_world);
 }
 
+double a4_ground_effect_lift_newtons(
+        const A4GroundEffectConfig &config,
+        double height_m) {
+    if (!config.enabled ||
+            !std::isfinite(config.kf) || config.kf < 0.0 ||
+            !std::isfinite(config.ground_effect_coeff) || config.ground_effect_coeff < 0.0 ||
+            !std::isfinite(config.prop_radius_m) || config.prop_radius_m <= 0.0 ||
+            !std::isfinite(config.height_clip_m) || config.height_clip_m <= 0.0 ||
+            !std::isfinite(height_m)) {
+        return 0.0;
+    }
+
+    const double height = std::max(height_m, config.height_clip_m);
+    const double height_ratio = config.prop_radius_m / (4.0 * height);
+    double lift = 0.0;
+    for (double rpm : config.motor_rpm) {
+        if (!std::isfinite(rpm) || rpm < 0.0) {
+            return 0.0;
+        }
+        lift += rpm * rpm * config.kf * config.ground_effect_coeff * height_ratio * height_ratio;
+    }
+    return lift;
+}
+
+double a5_downwash_force_y_newtons(
+        const A5DownwashConfig &config,
+        const Vec3 &upper_position,
+        const Vec3 &lower_position) {
+    if (!config.enabled ||
+            !std::isfinite(config.prop_radius_m) || config.prop_radius_m <= 0.0 ||
+            !std::isfinite(config.coeff_1) ||
+            !std::isfinite(config.coeff_2) ||
+            !std::isfinite(config.coeff_3)) {
+        return 0.0;
+    }
+
+    const double delta_y = upper_position.y - lower_position.y;
+    const double delta_x = upper_position.x - lower_position.x;
+    const double delta_z = upper_position.z - lower_position.z;
+    const double delta_xz = std::sqrt(delta_x * delta_x + delta_z * delta_z);
+    const double beta = config.coeff_2 * delta_y + config.coeff_3;
+    if (delta_y <= 0.0 || delta_xz >= 10.0 || beta == 0.0 ||
+            !std::isfinite(delta_xz) || !std::isfinite(beta)) {
+        return 0.0;
+    }
+
+    const double alpha = config.coeff_1 * std::pow(config.prop_radius_m / (4.0 * delta_y), 2.0);
+    return -alpha * std::exp(-0.5 * std::pow(delta_xz / beta, 2.0));
+}
+
 A3ForwardFlightEquilibrium a3_forward_flight_equilibrium(
         const A3DragConfig &config,
         double mass_kg,
