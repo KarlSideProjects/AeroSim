@@ -49,6 +49,19 @@ jobs:
           AEROSIM_A4_A5_ORACLE_CASES: build/a4_a5_oracle_cases.csv
         run: scripts/test_native.sh
 
+      - name: Python tool tests
+        run: python3 tests/test_sitl_cross_validate.py
+
+      - name: Optional Betaflight SITL cross validation
+        if: ${{ vars.AEROSIM_BETAFLIGHT_SITL_ADAPTER != '' }}
+        env:
+          AEROSIM_BETAFLIGHT_SITL_ADAPTER: ${{ vars.AEROSIM_BETAFLIGHT_SITL_ADAPTER }}
+        run: |
+          python3 scripts/sitl_cross_validate.py --report build/sitl_cross_validation.json
+          install -D build/sitl_cross_validation.json \
+            "$AEROSIM_CI_ARTIFACT_JOB_DIR/sitl-cross-validation/sitl_cross_validation.json"
+          echo "::notice::Stored sitl-cross-validation in $AEROSIM_CI_ARTIFACT_JOB_DIR"
+
       - name: Python A3 oracle
         run: scripts/check_a3_oracle.py build/a3_oracle_cases.csv
 

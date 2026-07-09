@@ -34,11 +34,14 @@ scripts/test_native.sh
 python3 scripts/check_licenses.py
 scripts/test_license_scan.sh
 python3 -m unittest license_server.test_license_server
+AEROSIM_BETAFLIGHT_SITL_ADAPTER=/path/to/betaflight-sitl-adapter python3 scripts/sitl_cross_validate.py
 GODOT_CPP_DIR=/path/to/godot-cpp scons target=template_debug platform=linux
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5
 ```
 
 `scripts/run_headless_smoke.sh` 會以 headless 模式執行 `common/smoke/headless_smoke.gd`，呼叫 `AeroSimNative.probe_value()`，依 `--frames` 或 `--seconds` 跑 physics ticks，並輸出 JSON。
+
+`scripts/sitl_cross_validate.py` 是 G2.9 開發工具：它要求外部 Betaflight SITL adapter executable，透過 stdio CSV 隔離 GPL 邊界，輸出 `build/sitl_cross_validation.json`；未提供 adapter 時會 `not verified` 失敗，不會 mock。
 
 ## G0.6a 決定性與重播
 
@@ -59,3 +62,4 @@ GitHub Actions 會執行：
 7. Windows 原生 C++ 單元測試與 GDExtension 建置。
 8. Android emulator 執行同一組原生 C++ 單元測試，並建置 Android arm64 GDExtension。
 9. Linux / Windows / Android replay terminal-state artifacts 互相比對 G0.6a tolerance。
+10. 若設定 `AEROSIM_BETAFLIGHT_SITL_ADAPTER` repo variable，Linux job 會額外跑 G2.9 SITL 交叉驗證，報告存 self-hosted runner Local Folder。
