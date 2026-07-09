@@ -223,10 +223,29 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set job-local tool paths
+        id: android_tool_paths
         run: |
           echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache" >> "$GITHUB_ENV"
           echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg-config" >> "$GITHUB_ENV"
           echo "XDG_DATA_HOME=$RUNNER_TEMP/xdg-data" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$RUNNER_TEMP/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$RUNNER_TEMP/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_USER_HOME=$RUNNER_TEMP/android-user" >> "$GITHUB_ENV"
+          echo "ANDROID_AVD_HOME=$RUNNER_TEMP/android-avd" >> "$GITHUB_ENV"
+          echo "ADB_VENDOR_KEYS=$RUNNER_TEMP/adb-keys" >> "$GITHUB_ENV"
+          adb_port=$((5037 + GITHUB_RUN_ID % 1000))
+          emulator_port=$((5554 + 2 * (GITHUB_RUN_ID % 64)))
+          avd_name="aerosim-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "ADB_SERVER_PORT=$adb_port"
+            echo "AEROSIM_ANDROID_AVD_NAME=$avd_name"
+            echo "AEROSIM_ANDROID_EMULATOR_PORT=$emulator_port"
+          } >> "$GITHUB_ENV"
+          {
+            echo "avd_name=$avd_name"
+            echo "emulator_port=$emulator_port"
+          } >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/android-sdk" "$RUNNER_TEMP/android-user" "$RUNNER_TEMP/android-avd"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -272,6 +291,8 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
+          avd-name: ${{ steps.android_tool_paths.outputs.avd_name }}
+          emulator-port: ${{ steps.android_tool_paths.outputs.emulator_port }}
           emulator-boot-timeout: 1200
           script: scripts/run_android_native_tests.sh
 
