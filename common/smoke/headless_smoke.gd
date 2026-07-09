@@ -244,6 +244,10 @@ func _same_imu_value(actual: Variant, expected: Variant) -> bool:
     return is_equal_approx(float(actual), float(expected))
 
 func _verify_flight_control_public_path(native: Object) -> bool:
+    if not native.has_method("step_acro_mode"):
+        push_error("AeroSimNative.step_acro_mode must exist for Acro/rates public path")
+        return false
+
     native.call("reset_flight")
     var disarmed_row: PackedFloat64Array = native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.75, 0.0, 0.0, 0.0)
     if disarmed_row[2] > 0.0:
@@ -272,6 +276,53 @@ func _verify_flight_control_public_path(native: Object) -> bool:
     var reset_row: PackedFloat64Array = native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.0, 0.0, 0.0, 0.0)
     if int(reset_row[11]) <= 0:
         push_error("reset_flight should clear the substep clock before the next step")
+        return false
+
+    native.call("reset_flight")
+    native.call("arm_flight_control", 0.0)
+    var hold_row := PackedFloat64Array()
+    for _frame in range(Engine.physics_ticks_per_second * 60):
+        hold_row = native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.0, 0.0, 0.0)
+    if absf(_row_roll_degrees(hold_row)) > 1.0 or absf(_row_pitch_degrees(hold_row)) > 1.0:
+        push_error("G2.3 public Angle Mode drift must stay within 1 degree over 60 seconds")
+        return false
+    var timing: Dictionary = native.call("flight_control_diagnostics")
+    if float(timing.get("pid_target_hz", 0.0)) != 1000.0 or float(timing.get("pid_p99_jitter_fraction", 1.0)) > 0.10 or int(timing.get("pid_samples", 0)) <= 0:
+        push_error("G2.1 public PID timing diagnostics must prove P99 jitter <= +/-10%")
+        return false
+
+    native.call("reset_flight")
+    native.call("arm_flight_control", 0.0)
+    var reached_90 := false
+    var rise_time_s := 0.0
+    var max_roll := 0.0
+    var last_outside_2_percent_s := 0.0
+    for _frame in range(Engine.physics_ticks_per_second):
+        var step_row: PackedFloat64Array = native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.5, 30.0, 0.0, 0.0)
+        var roll := _row_roll_degrees(step_row)
+        max_roll = maxf(max_roll, roll)
+        if not reached_90 and roll >= 27.0:
+            reached_90 = true
+            rise_time_s = float(step_row[0])
+        if absf(roll - 30.0) > 0.6:
+            last_outside_2_percent_s = float(step_row[0])
+    if not reached_90 or rise_time_s > 0.150:
+        push_error("G2.4 public Angle Mode rise time must be <= 150 ms")
+        return false
+    if max_roll > 33.0:
+        push_error("G2.4 public Angle Mode overshoot must be <= 10%%")
+        return false
+    if last_outside_2_percent_s > 0.500:
+        push_error("G2.4 public Angle Mode must remain in the 2%% band after 500 ms")
+        return false
+
+    native.call("reset_flight")
+    native.call("arm_flight_control", 0.0)
+    native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, 0.5, 1.0, 0.0, 0.0, 1.0, 0.722222222222, 0.0)
+    var acro: Dictionary = native.call("flight_control_diagnostics")
+    var roll_rate_dps := rad_to_deg(float(acro.get("angular_velocity_z_rad_s", 0.0)))
+    if absf(roll_rate_dps - 720.0) > 720.0 * 0.05:
+        push_error("G2.5 public Acro full-stick roll must reach 720 deg/s within 5%%")
         return false
     return true
 
@@ -599,6 +650,12 @@ func _row_impulse(row: PackedFloat64Array) -> Vector3:
 
 func _row_normal(row: PackedFloat64Array) -> Vector3:
     return Vector3(row[18], row[19], row[20])
+
+func _row_roll_degrees(row: PackedFloat64Array) -> float:
+    return rad_to_deg(2.0 * atan2(float(row[6]), float(row[7])))
+
+func _row_pitch_degrees(row: PackedFloat64Array) -> float:
+    return rad_to_deg(2.0 * atan2(float(row[4]), float(row[7])))
 
 func _body_state_finite(body: RigidBody3D) -> bool:
     var q := body.global_transform.basis.get_rotation_quaternion()

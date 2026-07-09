@@ -123,6 +123,14 @@ TrajectorySample step_physics_frame(
         RigidBodyState &state,
         SimulationClock &clock,
         const SimulationConfig &config) {
+    return step_physics_frame(state, clock, config, [](double) {});
+}
+
+TrajectorySample step_physics_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const std::function<void(double)> &before_substep) {
     if (config.physics_hz <= 0 || config.substep_hz <= 0 || config.mass_kg <= 0.0) {
         return {};
     }
@@ -135,6 +143,7 @@ TrajectorySample step_physics_frame(
     clock.substep_accumulator -= frame_substeps;
 
     for (std::int32_t step = 0; step < frame_substeps; ++step) {
+        before_substep(dt);
         integrate(state, config, dt);
     }
     clock.total_substeps += static_cast<std::uint64_t>(frame_substeps);

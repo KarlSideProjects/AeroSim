@@ -13,12 +13,35 @@ struct FlightCommand {
     double yaw_rate_degrees_per_second = 0.0;
 };
 
+struct RateProfile {
+    double rc_rate = 1.0;
+    double super_rate = 0.0;
+    double expo = 0.0;
+};
+
+struct AcroCommand {
+    double throttle = 0.0;
+    double roll_stick = 0.0;
+    double pitch_stick = 0.0;
+    double yaw_stick = 0.0;
+    RateProfile rates;
+};
+
+struct PidTimingStats {
+    double target_hz = 0.0;
+    double p99_jitter_fraction = 0.0;
+    std::uint64_t samples = 0;
+};
+
+double betaflight_rate_degrees_per_second(double stick, const RateProfile &profile);
+
 class FlightController {
 private:
     bool armed_ = false;
     std::string arm_reject_code_ = "";
     int integrator_reset_count_ = 0;
     double motor_thrust_newtons_ = 0.0;
+    PidTimingStats pid_timing_stats_;
 
 public:
     bool arm(double throttle);
@@ -26,6 +49,7 @@ public:
     const std::string &arm_reject_code() const;
     void reset_integrators();
     int integrator_reset_count() const;
+    const PidTimingStats &pid_timing_stats() const;
     TrajectorySample step_angle_mode(
             RigidBodyState &state,
             SimulationClock &clock,
@@ -37,6 +61,11 @@ public:
             const SimulationConfig &config,
             const FlightCommand &command,
             const Quat &estimated_attitude);
+    TrajectorySample step_acro_mode(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const AcroCommand &command);
     void reset_flight(RigidBodyState &state, SimulationClock &clock);
 };
 
