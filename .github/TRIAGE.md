@@ -22,6 +22,7 @@
 | `ready-for-agent` | 規格完整**且無未關閉的前置依賴**，AFK agent 可認領 | agent |
 | `ready-for-human` | 規格完整且無阻擋，但需人工（實機 DEV-M／使用者研究 USR／法務 LEG／商業決策） | 人 |
 | `blocked` | 規格完整但「Blocked by」尚有未關閉項（本 repo 對標準五態的擴充） | 等待 |
+| `in-progress` | 已有進行中的 draft PR 或 worktree（本 repo 擴充）——**不可重複派工**；佇列無 `ready-for-agent` 時優先續作 | agent |
 | `wontfix` | 不做，關閉（拒絕的 enhancement 先寫入 `.out-of-scope/`） | — |
 
 ### 不進狀態機的 issue
@@ -48,6 +49,11 @@
 **混合型 slice（實作先行）**：僅「存證/實機量測」需人工、實作本身是程式工作的 slice（如 #14、#18、#55），解鎖時貼 `ready-for-agent`——agent 完成實作與自動化驗證後在 issue 留言 @ 維護者補人工存證，存證完成才可關閉；下游解鎖一律以 issue 關閉為準。純人工 slice（盲測 #28/#34/#47、實機閘門 #48、封測 #53）維持 `ready-for-human`。
 
 **2026-07-08 決策紀錄**：#19 iOS Go（Ad Hoc）已關閉（`docs/decisions/G0.10-ios-lane.md`），iOS Lane 解凍、#55 追蹤；#54 與 epic #10（Tier 2）已 wontfix（`.out-of-scope/tier2-betaflight-sitl.md`）；#22 調研階段已完成，實體資料選定需維護者確認，故目前為 `ready-for-human`。
+
+**實作中三種發現的處理（2026-07-10 新增，回應狀態機誤用）**：
+1. **工作沒做完** → 貼 `in-progress`（draft PR 持有成果），不是 `blocked`；續作即可。
+2. **發現真依賴**（需要別張 issue 的成果才能完成）→ 把該依賴**寫進 body 的 Blocked by**（自動補貨靠掃描此欄位），轉貼 `blocked`，draft PR 留註記；依賴關閉時自動解鎖並續作。
+3. **發現缺陷**（既有已關閉 slice 的行為缺口）→ 開新 `bug` issue（含重現指引），不擴大原 issue 範圍、不重開已關閉 issue。
 
 ## 關閉條件（所有 slice 一體適用）
 
