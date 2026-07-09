@@ -1,5 +1,6 @@
 #include "aerosim_native.hpp"
 
+#include "aerosim_aerodynamics.hpp"
 #include "aerosim_probe.hpp"
 #include <cmath>
 #include <godot_cpp/core/class_db.hpp>
