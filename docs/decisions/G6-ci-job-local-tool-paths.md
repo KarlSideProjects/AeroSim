@@ -19,6 +19,8 @@ CI 已改成多 runner 平行執行。任何會被 job 下載、解壓、刪除�
 - Godot cache 使用 `XDG_CACHE_HOME` 底下的 job-local 路徑。
 - 不使用 shared temp 或 user-home 底下的 Godot binary、export template、editor settings 路徑。
 - 其他會被覆蓋的工具暫存檔也使用 `$RUNNER_TEMP` 底下的 run/job 專屬子目錄，或該 job workspace 內的路徑。
+- GitHub Actions artifact storage 不可靠時，CI 產物保存改用 self-hosted runner 的 Local Folder，並以 repo/run/attempt 分目錄隔離。
+- 如果後續需要保存或交換 Docker image，優先用本機 Docker registry，不推到遠端 registry。
 
 ## 理由
 
@@ -30,3 +32,4 @@ CI 已改成多 runner 平行執行。任何會被 job 下載、解壓、刪除�
 - Workflow job 應先建立 `$RUNNER_TEMP/aerosim-tools-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB` 這類唯一工具根目錄，再從該根目錄派生 Godot、godot-cpp、Android SDK/NDK/AVD、keystore 與 XDG 路徑。
 - Export scripts 預設從 `XDG_DATA_HOME/godot/export_templates/4.7.stable` 讀 templates；未設定 XDG 時必須 fail loud，或由呼叫端明確提供 `GODOT_EXPORT_TEMPLATES_DIR`。
 - Android export script 寫入 editor settings 時必須尊重 `XDG_CONFIG_HOME`。
+- Workflow 不使用 GitHub artifact upload/download 做必要 gate。需要跨 job 讀取的 replay/release 產物，寫入 `${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}` 底下的 repo/run/attempt 安全 key 路徑。

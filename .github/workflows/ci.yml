@@ -22,7 +22,14 @@ jobs:
           tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
           rm -rf "$tool_root"
           mkdir -p "$tool_root"
+          repo_key="${GITHUB_REPOSITORY//\//-}"
+          artifact_root="${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}"
+          artifact_run_dir="$artifact_root/$repo_key/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          artifact_job_dir="$artifact_run_dir/$GITHUB_JOB"
+          mkdir -p "$artifact_job_dir"
           echo "AEROSIM_TOOL_ROOT=$tool_root" >> "$GITHUB_ENV"
+          echo "AEROSIM_CI_ARTIFACT_RUN_DIR=$artifact_run_dir" >> "$GITHUB_ENV"
+          echo "AEROSIM_CI_ARTIFACT_JOB_DIR=$artifact_job_dir" >> "$GITHUB_ENV"
           echo "XDG_CACHE_HOME=$tool_root/xdg-cache" >> "$GITHUB_ENV"
           echo "XDG_CONFIG_HOME=$tool_root/xdg-config" >> "$GITHUB_ENV"
           echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
@@ -47,11 +54,11 @@ jobs:
       - name: Hardcoded airframe constant scan
         run: scripts/check_hardcoded_airframe_constants.sh
 
-      - name: Upload Linux replay artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: replay-linux
-          path: build/replay_terminal_state.json
+      - name: Store Linux replay artifact locally
+        run: |
+          install -D build/replay_terminal_state.json \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-linux/replay_terminal_state.json"
+          echo "::notice::Stored replay-linux in $AEROSIM_CI_ARTIFACT_RUN_DIR"
 
       - name: License scan
         run: scripts/test_license_scan.sh
@@ -131,11 +138,11 @@ jobs:
       - name: Export Linux release artifact
         run: scripts/export_linux_release.sh
 
-      - name: Upload Linux release artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-linux
-          path: build/release/AeroSim-linux.zip
+      - name: Store Linux release artifact locally
+        run: |
+          install -D build/release/AeroSim-linux.zip \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/release-linux/AeroSim-linux.zip"
+          echo "::notice::Stored release-linux in $AEROSIM_CI_ARTIFACT_RUN_DIR"
 
   windows:
     runs-on: [self-hosted, Linux, X64]
@@ -154,7 +161,14 @@ jobs:
           tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
           rm -rf "$tool_root"
           mkdir -p "$tool_root"
+          repo_key="${GITHUB_REPOSITORY//\//-}"
+          artifact_root="${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}"
+          artifact_run_dir="$artifact_root/$repo_key/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          artifact_job_dir="$artifact_run_dir/$GITHUB_JOB"
+          mkdir -p "$artifact_job_dir"
           echo "AEROSIM_TOOL_ROOT=$tool_root" >> "$GITHUB_ENV"
+          echo "AEROSIM_CI_ARTIFACT_RUN_DIR=$artifact_run_dir" >> "$GITHUB_ENV"
+          echo "AEROSIM_CI_ARTIFACT_JOB_DIR=$artifact_job_dir" >> "$GITHUB_ENV"
           echo "XDG_CACHE_HOME=$tool_root/xdg-cache" >> "$GITHUB_ENV"
           echo "XDG_CONFIG_HOME=$tool_root/xdg-config" >> "$GITHUB_ENV"
           echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
@@ -218,11 +232,11 @@ jobs:
               scons target=template_release platform=windows use_mingw=yes
             '
 
-      - name: Upload Windows replay artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: replay-windows
-          path: build/replay_terminal_state.json
+      - name: Store Windows replay artifact locally
+        run: |
+          install -D build/replay_terminal_state.json \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-windows/replay_terminal_state.json"
+          echo "::notice::Stored replay-windows in $AEROSIM_CI_ARTIFACT_RUN_DIR"
 
       - name: Fetch Godot 4.7
         run: |
@@ -249,11 +263,11 @@ jobs:
       - name: Export Windows release artifact
         run: scripts/export_windows_release.sh
 
-      - name: Upload Windows release artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-windows
-          path: build/release/AeroSim-windows.zip
+      - name: Store Windows release artifact locally
+        run: |
+          install -D build/release/AeroSim-windows.zip \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/release-windows/AeroSim-windows.zip"
+          echo "::notice::Stored release-windows in $AEROSIM_CI_ARTIFACT_RUN_DIR"
 
   android:
     runs-on: [self-hosted, Linux, X64]
@@ -273,7 +287,14 @@ jobs:
           tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
           rm -rf "$tool_root"
           mkdir -p "$tool_root"
+          repo_key="${GITHUB_REPOSITORY//\//-}"
+          artifact_root="${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}"
+          artifact_run_dir="$artifact_root/$repo_key/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          artifact_job_dir="$artifact_run_dir/$GITHUB_JOB"
+          mkdir -p "$artifact_job_dir"
           echo "AEROSIM_TOOL_ROOT=$tool_root" >> "$GITHUB_ENV"
+          echo "AEROSIM_CI_ARTIFACT_RUN_DIR=$artifact_run_dir" >> "$GITHUB_ENV"
+          echo "AEROSIM_CI_ARTIFACT_JOB_DIR=$artifact_job_dir" >> "$GITHUB_ENV"
           echo "XDG_CACHE_HOME=$tool_root/xdg-cache" >> "$GITHUB_ENV"
           echo "XDG_CONFIG_HOME=$tool_root/xdg-config" >> "$GITHUB_ENV"
           echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
@@ -351,11 +372,11 @@ jobs:
           emulator-boot-timeout: 1200
           script: scripts/run_android_native_tests.sh
 
-      - name: Upload Android replay artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: replay-android
-          path: build/replay_terminal_state.json
+      - name: Store Android replay artifact locally
+        run: |
+          install -D build/replay_terminal_state.json \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-android/replay_terminal_state.json"
+          echo "::notice::Stored replay-android in $AEROSIM_CI_ARTIFACT_RUN_DIR"
 
       - name: Fetch godot-cpp
         run: |
@@ -394,11 +415,11 @@ jobs:
       - name: Export Android release artifact
         run: scripts/export_android_release.sh
 
-      - name: Upload Android release artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-android-apk
-          path: build/release/AeroSim-android.apk
+      - name: Store Android release artifact locally
+        run: |
+          install -D build/release/AeroSim-android.apk \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/ci-android-apk/AeroSim-android.apk"
+          echo "::notice::Stored ci-android-apk in $AEROSIM_CI_ARTIFACT_RUN_DIR"
 
   replay-compare:
     runs-on: [self-hosted, Linux, X64]
@@ -413,20 +434,22 @@ jobs:
         with:
           clean: false
 
-      - name: Download replay artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: replay-*
-          path: build/replay-artifacts
+      - name: Set local artifact paths
+        run: |
+          repo_key="${GITHUB_REPOSITORY//\//-}"
+          artifact_root="${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}"
+          artifact_run_dir="$artifact_root/$repo_key/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "AEROSIM_CI_ARTIFACT_RUN_DIR=$artifact_run_dir" >> "$GITHUB_ENV"
+          test -d "$artifact_run_dir"
 
       - name: Compare Linux and Windows replay terminal state
         run: |
           python3 scripts/compare_replay_artifacts.py \
-            build/replay-artifacts/replay-linux/replay_terminal_state.json \
-            build/replay-artifacts/replay-windows/replay_terminal_state.json
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-linux/replay_terminal_state.json" \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-windows/replay_terminal_state.json"
           python3 scripts/compare_replay_artifacts.py \
-            build/replay-artifacts/replay-linux/replay_terminal_state.json \
-            build/replay-artifacts/replay-android/replay_terminal_state.json
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-linux/replay_terminal_state.json" \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-android/replay_terminal_state.json"
           python3 scripts/compare_replay_artifacts.py \
-            build/replay-artifacts/replay-windows/replay_terminal_state.json \
-            build/replay-artifacts/replay-android/replay_terminal_state.json
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-windows/replay_terminal_state.json" \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-android/replay_terminal_state.json"
