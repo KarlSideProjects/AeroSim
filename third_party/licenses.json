@@ -3,12 +3,16 @@
     {
       "name": "Godot Engine",
       "version": "4.7-stable",
-      "license": "MIT"
+      "license": "MIT",
+      "homepage": "https://godotengine.org/",
+      "notice": "Godot Engine is distributed under the MIT license. Release bundles must also carry Godot's engine copyright notices."
     },
     {
       "name": "godot-cpp",
       "version": "ba0edfed90512ec64aba51d4295a3e7e30112f86",
-      "license": "MIT"
+      "license": "MIT",
+      "homepage": "https://github.com/godotengine/godot-cpp",
+      "notice": "godot-cpp is distributed under the MIT license."
     }
   ]
 }

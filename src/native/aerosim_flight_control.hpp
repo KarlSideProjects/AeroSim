@@ -30,6 +30,12 @@ public:
             SimulationClock &clock,
             const SimulationConfig &config,
             const FlightCommand &command);
+    TrajectorySample step_angle_mode(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const Quat &estimated_attitude);
     void reset_flight(RigidBodyState &state, SimulationClock &clock);
 };
 

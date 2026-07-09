@@ -33,6 +33,10 @@ bool same_bits(double a, double b) {
     return std::memcmp(&a, &b, sizeof(double)) == 0;
 }
 
+bool near(double actual, double expected, double tolerance) {
+    return std::abs(actual - expected) <= tolerance;
+}
+
 bool same_state_bits(const aerosim::RigidBodyState &a, const aerosim::RigidBodyState &b) {
     return same_bits(a.position.x, b.position.x) &&
             same_bits(a.position.y, b.position.y) &&
@@ -287,6 +291,33 @@ int main() {
     impulse_authority.step(impulse_state, impulse_clock, impulse_controller, config, hover, {});
     if (impulse_authority.current_authority() != aerosim::PhysicsAuthority::FlightCore) {
         return fail("configured release frame count must hand back after N clear frames");
+    }
+
+    aerosim::RigidBodyState handback_state;
+    const double ten_degrees = 10.0 * 3.14159265358979323846 / 180.0;
+    handback_state.orientation.x = std::sin(ten_degrees * 0.5);
+    handback_state.orientation.w = std::cos(ten_degrees * 0.5);
+    aerosim::SimulationClock handback_clock;
+    aerosim::FlightController handback_controller;
+    handback_controller.arm(0.0);
+    aerosim::CollisionAuthoritySwitch handback_authority(1);
+    aerosim::CollisionContact handback_contact;
+    handback_contact.touching = true;
+    handback_contact.normal = {0.0, 1.0, 0.0};
+    handback_authority.step(handback_state, handback_clock, handback_controller, config, hover, handback_contact);
+    const aerosim::CollisionStepResult handback = handback_authority.step(
+            handback_state,
+            handback_clock,
+            handback_controller,
+            config,
+            hover,
+            {},
+            aerosim::Quat{});
+    if (handback.authority != aerosim::PhysicsAuthority::FlightCore) {
+        return fail("collision authority must hand back to flight core on the configured clear frame");
+    }
+    if (!near(handback_state.angular_velocity.x, 0.0, 1e-12)) {
+        return fail("collision handback Angle Mode must use IMU estimated attitude instead of true body attitude");
     }
 
     constexpr std::array<Scenario, 4> scenarios{

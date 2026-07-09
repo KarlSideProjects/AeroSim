@@ -48,6 +48,14 @@ public:
             const SimulationConfig &config,
             const FlightCommand &command,
             const CollisionContact &contact);
+    CollisionStepResult step(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const CollisionContact &contact,
+            const Quat &estimated_attitude);
 };
 
 } // namespace aerosim

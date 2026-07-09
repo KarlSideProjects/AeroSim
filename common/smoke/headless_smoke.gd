@@ -18,7 +18,7 @@ class InputProbe:
 var verified_jolt_collision_trials := 0
 
 func _initialize() -> void:
-    call_deferred("_run")
+    _run()
 
 func _run() -> void:
     var output_path := _output_path()
@@ -61,6 +61,10 @@ func _run() -> void:
         quit(0 if await _verify_hardware_config_public_path() else 1)
         return
     if not _verify_flight_control_public_path(native):
+        quit(1)
+        return
+    var imu_public_verified := _verify_imu_public_path(native)
+    if not imu_public_verified:
         quit(1)
         return
     var collision_public_verified := _verify_collision_public_path(native)
@@ -114,6 +118,7 @@ func _run() -> void:
         "trajectory_stride": stride,
         "trajectory_samples": int(trajectory.size() / stride),
         "input_fallback_status": input_fallback_status,
+        "imu_public_path": imu_public_verified,
         "collision_public_path": collision_public_verified,
         "jolt_collision_handoff": jolt_collision_verified,
         "jolt_collision_trials": verified_jolt_collision_trials,
@@ -123,10 +128,91 @@ func _run() -> void:
         "mobile_substep_hz": 500,
         "mobile_substeps_1s": int(mobile_trajectory[mobile_trajectory.size() - 1])
     }))
+    file.close()
     quit(0)
 
 func _input_fallback_status() -> String:
     return InputProfiles.fallback_status(Input.get_connected_joypads())
+
+func _verify_imu_public_path(native: Object) -> bool:
+    for method in ["configure_imu", "imu_configuration", "flight_control_diagnostics"]:
+        if not native.has_method(method):
+            push_error("AeroSimNative.%s must exist for IMU public configuration and attitude-source diagnostics" % method)
+            return false
+
+    var quiet_config := {
+        "noise_enabled": false,
+        "bias_enabled": false,
+        "random_walk_enabled": false,
+        "delay_enabled": false,
+        "gyro_noise_density": 0.0,
+        "accelerometer_noise_density": 0.0,
+        "gyro_bias": Vector3.ZERO,
+        "accelerometer_bias": Vector3.ZERO,
+        "gyro_bias_drift": 0.0,
+        "accelerometer_bias_drift": 0.0,
+        "gyro_random_walk": 0.0,
+        "accelerometer_random_walk": 0.0,
+        "barometer_noise": 0.0,
+        "barometer_bias_drift": 0.0,
+        "barometer_random_walk": 0.0,
+        "sample_delay_frames": 0
+    }
+    native.call("configure_imu", quiet_config)
+    if not _same_imu_config(native.call("imu_configuration"), quiet_config):
+        push_error("AeroSimNative must echo disabled IMU noise/bias/random-walk/delay configuration")
+        return false
+
+    var noisy_config := {
+        "noise_enabled": true,
+        "bias_enabled": true,
+        "random_walk_enabled": true,
+        "delay_enabled": true,
+        "gyro_noise_density": 0.003,
+        "accelerometer_noise_density": 0.08,
+        "gyro_bias": Vector3(0.01, -0.02, 0.03),
+        "accelerometer_bias": Vector3(0.1, -0.2, 0.3),
+        "gyro_bias_drift": 0.0002,
+        "accelerometer_bias_drift": 0.003,
+        "gyro_random_walk": 0.0004,
+        "accelerometer_random_walk": 0.005,
+        "barometer_noise": 0.12,
+        "barometer_bias_drift": 0.01,
+        "barometer_random_walk": 0.02,
+        "sample_delay_frames": 2
+    }
+    native.call("configure_imu", noisy_config)
+    if not _same_imu_config(native.call("imu_configuration"), noisy_config):
+        push_error("AeroSimNative must echo enabled IMU noise/bias/random-walk/delay configuration")
+        return false
+
+    native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("IMU public path should arm flight control from low throttle")
+        return false
+    native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.0, 0.0, 0.0)
+    var diagnostics: Dictionary = native.call("flight_control_diagnostics")
+    if diagnostics.get("uses_estimated_attitude", false) != true:
+        push_error("Flight control diagnostics must prove attitude source is the IMU estimate, not truth")
+        return false
+    native.call("configure_imu", quiet_config)
+    native.call("reset_flight")
+    return true
+
+func _same_imu_config(actual: Dictionary, expected: Dictionary) -> bool:
+    for key in expected:
+        if not actual.has(key) or not _same_imu_value(actual[key], expected[key]):
+            return false
+    return true
+
+func _same_imu_value(actual: Variant, expected: Variant) -> bool:
+    if expected is Vector3:
+        return actual is Vector3 and actual.distance_to(expected) <= 1e-9
+    if expected is bool:
+        return actual == expected
+    if expected is int:
+        return int(actual) == expected
+    return is_equal_approx(float(actual), float(expected))
 
 func _verify_flight_control_public_path(native: Object) -> bool:
     native.call("reset_flight")
@@ -515,6 +601,45 @@ func _verify_runtime_actions() -> bool:
         push_error("Smoke runtime must expose no-controller KeyboardProfile fallback UI")
         scene.queue_free()
         return false
+    if not scene.has_method("quick_fly"):
+        push_error("Smoke runtime must expose Quick Fly from the cold-start main menu")
+        scene.queue_free()
+        return false
+    if scene.main_menu_entries != ["Quick Fly", "Controller", "Drone", "Map", "Settings"]:
+        push_error("Cold-start main menu must expose the fixed 3.5.4 first-layer entries")
+        scene.queue_free()
+        return false
+    var quick_fly_button := scene.get_node_or_null("MainMenu/Entries/QuickFly") as Button
+    if quick_fly_button == null or quick_fly_button.text != "Quick Fly":
+        push_error("Cold-start main menu must expose an interactive Quick Fly button")
+        scene.queue_free()
+        return false
+    quick_fly_button.pressed.emit()
+    await process_frame
+    if scene.screen != "flight" or not scene.takeoff_requested:
+        push_error("Quick Fly button must enter the default drone/map flight scene")
+        scene.queue_free()
+        return false
+    scene.quick_fly("uncalibrated")
+    if scene.screen != "controller_setup":
+        push_error("Quick Fly with an uncalibrated controller must route to Controller Setup")
+        scene.queue_free()
+        return false
+    scene.quick_fly("drone_load_failed")
+    if scene.screen != "error" or scene.last_error_message.is_empty():
+        push_error("Quick Fly load failures must show an explicit error screen")
+        scene.queue_free()
+        return false
+    scene.quick_fly("no_controller")
+    if scene.screen != "fallback_prompt" or not scene.last_error_message.contains("KeyboardProfile"):
+        push_error("Quick Fly without a controller must show an explicit KeyboardProfile fallback prompt")
+        scene.queue_free()
+        return false
+    scene.accept_fallback()
+    if scene.screen != "flight" or not scene.takeoff_requested:
+        push_error("Quick Fly fallback must enter the default drone/map flight scene")
+        scene.queue_free()
+        return false
 
     await _press_key(KEY_T)
     for _frame in range(30):
@@ -535,10 +660,26 @@ func _verify_runtime_actions() -> bool:
         push_error("flight_pause action must pause runtime")
         scene.queue_free()
         return false
+    var paused_position: Vector3 = scene.drone_body.global_position
+    for _frame in range(5):
+        await physics_frame
+    if scene.drone_body.global_position.distance_to(paused_position) > 1e-6:
+        push_error("flight_pause action must freeze runtime physics")
+        scene.queue_free()
+        return false
+    await _press_key(KEY_P)
+    if scene.paused:
+        push_error("flight_pause action must resume runtime physics")
+        scene.queue_free()
+        return false
 
     await _press_key(KEY_R)
-    if scene.reset_count != 1 or scene.takeoff_requested:
-        push_error("flight_respawn action must reset runtime flight state")
+    if scene.reset_count != 1 or not scene.takeoff_requested or not scene.native.call("flight_control_armed"):
+        push_error("flight_respawn action must reset while keeping flight armed and active")
+        scene.queue_free()
+        return false
+    if scene.drone_body.position.distance_to(Vector3(-1.0, 0.0, 0.0)) > 1e-6 or scene.drone_body.linear_velocity.length() > 1e-6 or scene.drone_body.angular_velocity.length() > 1e-6:
+        push_error("flight_respawn action must return to spawn and clear body velocity; position=%s linear=%s angular=%s" % [scene.drone_body.position, scene.drone_body.linear_velocity, scene.drone_body.angular_velocity])
         scene.queue_free()
         return false
 
