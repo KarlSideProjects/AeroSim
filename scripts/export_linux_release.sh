@@ -2,7 +2,7 @@
 set -euo pipefail
 
 godot_bin="${GODOT_BIN:-godot}"
-templates_dir="${GODOT_EXPORT_TEMPLATES_DIR:-$HOME/.local/share/godot/export_templates/4.7.stable}"
+templates_dir="${GODOT_EXPORT_TEMPLATES_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/4.7.stable}"
 release_lib="bin/libaerosim_native.linux.template_release.x86_64.so"
 out_dir="build/release/AeroSim-linux"
 out_zip="build/release/AeroSim-linux.zip"

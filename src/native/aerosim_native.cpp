@@ -37,6 +37,7 @@ Vector3 godot_vec3(const aerosim::Vec3 &value) {
 void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("probe_value"), &AeroSimNative::probe_value);
     ClassDB::bind_method(D_METHOD("trajectory_stride"), &AeroSimNative::trajectory_stride);
+    ClassDB::bind_method(D_METHOD("set_hardware_mass_kg", "mass_kg"), &AeroSimNative::set_hardware_mass_kg);
     ClassDB::bind_method(D_METHOD("reset_simulation"), &AeroSimNative::reset_simulation);
     ClassDB::bind_method(
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
@@ -71,6 +72,10 @@ std::int32_t AeroSimNative::trajectory_stride() const {
     return 12;
 }
 
+bool AeroSimNative::set_hardware_mass_kg(double mass_kg) {
+    return hardware_config_.set_mass_kg(mass_kg);
+}
+
 void AeroSimNative::reset_simulation() {
     simulation_state_ = {};
     simulation_clock_ = {};
@@ -81,7 +86,7 @@ PackedFloat64Array AeroSimNative::step_simulation(
         std::int32_t physics_hz,
         std::int32_t substep_hz,
         double total_thrust_newtons) {
-    aerosim::SimulationConfig config;
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
@@ -201,7 +206,7 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
         double roll_degrees,
         double pitch_degrees,
         double yaw_rate_degrees_per_second) {
-    aerosim::SimulationConfig config;
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
 
@@ -257,7 +262,7 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
         double max_kinetic_energy_joules) {
-    aerosim::SimulationConfig config;
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
 
@@ -322,7 +327,7 @@ PackedFloat64Array AeroSimNative::simulate_trajectory(
         std::int32_t physics_hz,
         std::int32_t substep_hz,
         double total_thrust_newtons) const {
-    aerosim::SimulationConfig config;
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.seconds = seconds;
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;

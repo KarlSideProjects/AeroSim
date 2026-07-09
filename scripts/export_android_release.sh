@@ -2,7 +2,7 @@
 set -euo pipefail
 
 godot_bin="${GODOT_BIN:-godot}"
-templates_dir="${GODOT_EXPORT_TEMPLATES_DIR:-$HOME/.local/share/godot/export_templates/4.7.stable}"
+templates_dir="${GODOT_EXPORT_TEMPLATES_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/4.7.stable}"
 release_lib="${AEROSIM_ANDROID_RELEASE_LIB:-bin/libaerosim_native.android.template_release.arm64.so}"
 out_apk="${AEROSIM_ANDROID_OUT_APK:-build/release/AeroSim-android.apk}"
 ci_keystore="${AEROSIM_ANDROID_CI_KEYSTORE:-.deps/aerosim-ci-android.keystore}"
@@ -47,11 +47,12 @@ mkdir -p "$(dirname "$out_apk")" "$(dirname "$ci_keystore")" .deps
 touch build/.gdignore .deps/.gdignore
 
 python3 - "$android_sdk" "$java_home" "$PWD/$ci_keystore" <<'PY'
+import os
 from pathlib import Path
 import sys
 
 android_sdk, java_home, ci_keystore = sys.argv[1:]
-settings_dir = Path.home() / ".config" / "godot"
+settings_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "godot"
 settings_file = settings_dir / "editor_settings-4.7.tres"
 settings_dir.mkdir(parents=True, exist_ok=True)
 

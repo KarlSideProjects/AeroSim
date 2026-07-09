@@ -20,6 +20,7 @@ protected:
 private:
     aerosim::RigidBodyState simulation_state_;
     aerosim::SimulationClock simulation_clock_;
+    aerosim::HardwareConfig hardware_config_;
     aerosim::FlightController flight_controller_;
     aerosim::CollisionAuthoritySwitch collision_authority_;
     aerosim::ImuConfig imu_config_;
@@ -33,6 +34,7 @@ private:
 public:
     std::int32_t probe_value() const;
     std::int32_t trajectory_stride() const;
+    bool set_hardware_mass_kg(double mass_kg);
     void reset_simulation();
     godot::PackedFloat64Array step_simulation(
             std::int32_t physics_hz,
