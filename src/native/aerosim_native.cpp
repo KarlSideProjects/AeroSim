@@ -51,6 +51,7 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("flight_control_armed"), &AeroSimNative::flight_control_armed);
     ClassDB::bind_method(D_METHOD("flight_control_arm_reject_code"), &AeroSimNative::flight_control_arm_reject_code);
     ClassDB::bind_method(D_METHOD("reset_flight"), &AeroSimNative::reset_flight);
+    ClassDB::bind_method(D_METHOD("capture_altitude_hold"), &AeroSimNative::capture_altitude_hold);
     ClassDB::bind_method(D_METHOD("configure_imu", "config"), &AeroSimNative::configure_imu);
     ClassDB::bind_method(D_METHOD("imu_configuration"), &AeroSimNative::imu_configuration);
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
@@ -81,8 +82,14 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("step_acro_mode", "physics_hz", "substep_hz", "throttle", "roll_stick", "pitch_stick", "yaw_stick", "rc_rate", "super_rate", "expo"),
             &AeroSimNative::step_acro_mode);
     ClassDB::bind_method(
+            D_METHOD("step_altitude_hold_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second"),
+            &AeroSimNative::step_altitude_hold_mode);
+    ClassDB::bind_method(
             D_METHOD("step_collision_angle_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules"),
             &AeroSimNative::step_collision_angle_mode);
+    ClassDB::bind_method(
+            D_METHOD("step_collision_altitude_hold_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules"),
+            &AeroSimNative::step_collision_altitude_hold_mode);
     ClassDB::bind_method(
             D_METHOD("simulate_trajectory", "seconds", "physics_hz", "substep_hz", "total_thrust_newtons"),
             &AeroSimNative::simulate_trajectory);
@@ -169,6 +176,12 @@ void AeroSimNative::reset_flight() {
     collision_authority_ = {};
     imu_.reset(imu_config_.seed);
     flight_control_used_estimated_attitude_ = false;
+    flight_mode_ = "ANGLE";
+}
+
+void AeroSimNative::capture_altitude_hold() {
+    flight_controller_.capture_altitude_hold(simulation_state_.position.y);
+    flight_mode_ = "ALTITUDE_HOLD";
 }
 
 void AeroSimNative::configure_imu(const Dictionary &config) {
@@ -216,10 +229,12 @@ Dictionary AeroSimNative::imu_configuration() const {
 Dictionary AeroSimNative::flight_control_diagnostics() const {
     Dictionary diagnostics;
     diagnostics["uses_estimated_attitude"] = flight_control_used_estimated_attitude_;
+    diagnostics["flight_mode"] = flight_mode_;
     const aerosim::PidTimingStats &timing = flight_controller_.pid_timing_stats();
     diagnostics["pid_target_hz"] = timing.target_hz;
     diagnostics["pid_p99_jitter_fraction"] = timing.p99_jitter_fraction;
     diagnostics["pid_samples"] = static_cast<double>(timing.samples);
+    diagnostics["motor_thrust_newtons"] = flight_controller_.motor_thrust_newtons();
     diagnostics["angular_velocity_x_rad_s"] = simulation_state_.angular_velocity.x;
     diagnostics["angular_velocity_y_rad_s"] = simulation_state_.angular_velocity.y;
     diagnostics["angular_velocity_z_rad_s"] = simulation_state_.angular_velocity.z;
@@ -425,6 +440,7 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     PackedFloat64Array row;
     const aerosim::ImuSample imu_sample = imu_.sample(simulation_state_);
     flight_control_used_estimated_attitude_ = true;
+    flight_mode_ = "ANGLE";
     const aerosim::TrajectorySample sample = flight_controller_.step_angle_mode(
             simulation_state_,
             simulation_clock_,
@@ -474,6 +490,7 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
             simulation_clock_,
             config,
             command);
+    flight_mode_ = "ACRO";
 
     PackedFloat64Array row;
     row.append(sample.time_seconds);
@@ -537,6 +554,7 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
 
     const aerosim::ImuSample imu_sample = imu_.sample(simulation_state_);
     flight_control_used_estimated_attitude_ = true;
+    flight_mode_ = "ANGLE";
     const aerosim::CollisionStepResult result = collision_authority_.step(
             simulation_state_,
             simulation_clock_,
@@ -575,6 +593,51 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     return row;
 }
 
+PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
+        std::int32_t physics_hz,
+        std::int32_t substep_hz,
+        double throttle,
+        double roll_degrees,
+        double pitch_degrees,
+        double yaw_rate_degrees_per_second) {
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    config.physics_hz = physics_hz;
+    config.substep_hz = substep_hz;
+    config.a3_drag = a3_drag_config_;
+    config.a4_ground_effect = a4_ground_effect_config_;
+
+    aerosim::FlightCommand command;
+    command.throttle = throttle;
+    command.roll_degrees = roll_degrees;
+    command.pitch_degrees = pitch_degrees;
+    command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
+
+    PackedFloat64Array row;
+    const aerosim::ImuSample imu_sample = imu_.sample(simulation_state_);
+    flight_control_used_estimated_attitude_ = true;
+    flight_mode_ = "ALTITUDE_HOLD";
+    const aerosim::TrajectorySample sample = flight_controller_.step_altitude_hold_mode(
+            simulation_state_,
+            simulation_clock_,
+            config,
+            command,
+            imu_sample.barometer_altitude_m,
+            imu_sample.estimated_attitude);
+    row.append(sample.time_seconds);
+    row.append(sample.state.position.x);
+    row.append(sample.state.position.y);
+    row.append(sample.state.position.z);
+    row.append(sample.state.orientation.x);
+    row.append(sample.state.orientation.y);
+    row.append(sample.state.orientation.z);
+    row.append(sample.state.orientation.w);
+    row.append(sample.state.velocity.x);
+    row.append(sample.state.velocity.y);
+    row.append(sample.state.velocity.z);
+    row.append(static_cast<double>(sample.substeps));
+    return row;
+}
+
 PackedFloat64Array AeroSimNative::simulate_trajectory(
         double seconds,
         std::int32_t physics_hz,
@@ -604,4 +667,90 @@ PackedFloat64Array AeroSimNative::simulate_trajectory(
         rows.append(static_cast<double>(sample.substeps));
     }
     return rows;
+}
+
+PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
+        std::int32_t physics_hz,
+        std::int32_t substep_hz,
+        double throttle,
+        double roll_degrees,
+        double pitch_degrees,
+        double yaw_rate_degrees_per_second,
+        bool touching,
+        double normal_x,
+        double normal_y,
+        double normal_z,
+        double impulse_x,
+        double impulse_y,
+        double impulse_z,
+        double restitution,
+        double resolved_velocity_x,
+        double resolved_velocity_y,
+        double resolved_velocity_z,
+        double resolved_angular_velocity_x,
+        double resolved_angular_velocity_y,
+        double resolved_angular_velocity_z,
+        double max_kinetic_energy_joules) {
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    config.physics_hz = physics_hz;
+    config.substep_hz = substep_hz;
+    config.a3_drag = a3_drag_config_;
+    config.a4_ground_effect = a4_ground_effect_config_;
+
+    aerosim::FlightCommand command;
+    command.throttle = throttle;
+    command.roll_degrees = roll_degrees;
+    command.pitch_degrees = pitch_degrees;
+    command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
+
+    aerosim::CollisionContact contact;
+    contact.touching = touching;
+    contact.normal = {normal_x, normal_y, normal_z};
+    contact.impulse = {impulse_x, impulse_y, impulse_z};
+    contact.restitution = restitution;
+    contact.has_resolved_state = touching;
+    contact.resolved_velocity = {resolved_velocity_x, resolved_velocity_y, resolved_velocity_z};
+    contact.resolved_angular_velocity = {resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z};
+    contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
+
+    const aerosim::ImuSample imu_sample = imu_.sample(simulation_state_);
+    flight_control_used_estimated_attitude_ = true;
+    flight_mode_ = "ALTITUDE_HOLD";
+    const aerosim::CollisionStepResult result = collision_authority_.step_altitude_hold(
+            simulation_state_,
+            simulation_clock_,
+            flight_controller_,
+            config,
+            command,
+            imu_sample.barometer_altitude_m,
+            contact,
+            imu_sample.estimated_attitude);
+
+    PackedFloat64Array row;
+    const aerosim::TrajectorySample &sample = result.sample;
+    row.append(sample.time_seconds);
+    row.append(sample.state.position.x);
+    row.append(sample.state.position.y);
+    row.append(sample.state.position.z);
+    row.append(sample.state.orientation.x);
+    row.append(sample.state.orientation.y);
+    row.append(sample.state.orientation.z);
+    row.append(sample.state.orientation.w);
+    row.append(sample.state.velocity.x);
+    row.append(sample.state.velocity.y);
+    row.append(sample.state.velocity.z);
+    row.append(static_cast<double>(sample.substeps));
+    row.append(result.authority == aerosim::PhysicsAuthority::Jolt ? 1.0 : 0.0);
+    row.append(static_cast<double>(flight_controller_.integrator_reset_count()));
+    row.append(sample.state.angular_velocity.x);
+    row.append(sample.state.angular_velocity.y);
+    row.append(sample.state.angular_velocity.z);
+    row.append(aerosim::kinetic_energy_joules(sample.state, config.mass_kg));
+    row.append(result.normal.x);
+    row.append(result.normal.y);
+    row.append(result.normal.z);
+    row.append(result.impulse.x);
+    row.append(result.impulse.y);
+    row.append(result.impulse.z);
+    return row;
 }

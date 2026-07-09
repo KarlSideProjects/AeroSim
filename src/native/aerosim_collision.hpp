@@ -56,6 +56,15 @@ public:
             const FlightCommand &command,
             const CollisionContact &contact,
             const Quat &estimated_attitude);
+    CollisionStepResult step_altitude_hold(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            double measured_altitude_m,
+            const CollisionContact &contact,
+            const Quat &estimated_attitude);
 };
 
 } // namespace aerosim

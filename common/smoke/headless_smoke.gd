@@ -174,7 +174,7 @@ func _configure_default_power_model(native: Object) -> bool:
     return true
 
 func _verify_imu_public_path(native: Object) -> bool:
-    for method in ["configure_imu", "imu_configuration", "flight_control_diagnostics"]:
+    for method in ["configure_imu", "imu_configuration", "flight_control_diagnostics", "capture_altitude_hold", "step_altitude_hold_mode"]:
         if not native.has_method(method):
             push_error("AeroSimNative.%s must exist for IMU public configuration and attitude-source diagnostics" % method)
             return false
@@ -224,15 +224,65 @@ func _verify_imu_public_path(native: Object) -> bool:
     if not _same_imu_config(native.call("imu_configuration"), noisy_config):
         push_error("AeroSimNative must echo enabled IMU noise/bias/random-walk/delay configuration")
         return false
+    var hover_throttle := float(native.call("hardware_power_diagnostics").get("hover_throttle", 0.5))
 
     native.call("reset_flight")
     if not native.call("arm_flight_control", 0.0):
         push_error("IMU public path should arm flight control from low throttle")
         return false
-    native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.0, 0.0, 0.0)
+    native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, hover_throttle, 0.0, 0.0, 0.0)
     var diagnostics: Dictionary = native.call("flight_control_diagnostics")
     if diagnostics.get("uses_estimated_attitude", false) != true:
         push_error("Flight control diagnostics must prove attitude source is the IMU estimate, not truth")
+        return false
+    native.call("configure_imu", quiet_config)
+    native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("Altitude Hold public path should arm from low throttle")
+        return false
+    for _frame in range(Engine.physics_ticks_per_second * 2):
+        native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, hover_throttle, 0.0, 0.0, 0.0)
+    var angle_diagnostics: Dictionary = native.call("flight_control_diagnostics")
+    var angle_thrust := float(angle_diagnostics.get("motor_thrust_newtons", 0.0))
+    native.call("capture_altitude_hold")
+    native.call("step_altitude_hold_mode", Engine.physics_ticks_per_second, 1000, hover_throttle, 0.0, 0.0, 0.0)
+    var hold_entry_diagnostics: Dictionary = native.call("flight_control_diagnostics")
+    var hold_entry_thrust := float(hold_entry_diagnostics.get("motor_thrust_newtons", 0.0))
+    if str(hold_entry_diagnostics.get("flight_mode", "")) != "ALTITUDE_HOLD":
+        push_error("Altitude Hold diagnostics must report the active flight mode")
+        return false
+    if absf(hold_entry_thrust - angle_thrust) > 0.05 * 9.80665:
+        push_error("Altitude Hold public path must enter without a thrust step")
+        return false
+    var altitude_noise_config := quiet_config.duplicate()
+    altitude_noise_config.noise_enabled = true
+    altitude_noise_config.barometer_noise = 0.10
+    native.call("configure_imu", altitude_noise_config)
+    native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("Altitude Hold drift public path should arm from low throttle")
+        return false
+    for _frame in range(Engine.physics_ticks_per_second * 2):
+        native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, hover_throttle, 0.0, 0.0, 0.0)
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    native.call("capture_altitude_hold")
+    var altitude_hold_row := PackedFloat64Array()
+    var max_altitude_drift := 0.0
+    for _frame in range(Engine.physics_ticks_per_second * 60):
+        altitude_hold_row = native.call("step_altitude_hold_mode", Engine.physics_ticks_per_second, 1000, hover_throttle, 0.0, 0.0, 0.0)
+        max_altitude_drift = maxf(max_altitude_drift, absf(float(altitude_hold_row[2])))
+    if max_altitude_drift > 0.15:
+        push_error("G2.6 public Altitude Hold must keep 60 second drift within +/-15 cm with barometer noise; max drift=%.6f m" % max_altitude_drift)
+        return false
+    var hold_exit_diagnostics: Dictionary = native.call("flight_control_diagnostics")
+    var hold_exit_thrust := float(hold_exit_diagnostics.get("motor_thrust_newtons", 0.0))
+    native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, hover_throttle, 0.0, 0.0, 0.0)
+    var angle_exit_diagnostics: Dictionary = native.call("flight_control_diagnostics")
+    if str(angle_exit_diagnostics.get("flight_mode", "")) != "ANGLE":
+        push_error("Angle diagnostics must report the active flight mode after leaving Altitude Hold")
+        return false
+    if absf(float(angle_exit_diagnostics.get("motor_thrust_newtons", 0.0)) - hold_exit_thrust) > 0.05 * 9.80665:
+        push_error("Altitude Hold public path must exit without a thrust step")
         return false
     native.call("configure_imu", quiet_config)
     native.call("reset_flight")
@@ -864,6 +914,21 @@ func _verify_runtime_actions() -> bool:
         push_error("flight runtime must feed DroneBody Jolt contact into native collision authority")
         scene.queue_free()
         return false
+    if not scene.fallback_status_label.text.contains("Mode: ANGLE"):
+        push_error("flight runtime must show Angle mode on the existing status line")
+        scene.queue_free()
+        return false
+
+    await _press_key(KEY_H)
+    if scene.flight_mode != "ALTITUDE_HOLD" or not scene.fallback_status_label.text.contains("Mode: ALTITUDE_HOLD"):
+        push_error("flight_altitude_hold action must switch the existing status line to Altitude Hold")
+        scene.queue_free()
+        return false
+    await _press_key(KEY_H)
+    if scene.flight_mode != "ANGLE" or not scene.fallback_status_label.text.contains("Mode: ANGLE"):
+        push_error("flight_altitude_hold action must return the existing status line to Angle mode")
+        scene.queue_free()
+        return false
 
     await _press_key(KEY_P)
     if not scene.paused:
@@ -1115,6 +1180,7 @@ func _verify_keyboard_profile_actions() -> bool:
         "flight_takeoff": KEY_T,
         "flight_pause": KEY_P,
         "flight_respawn": KEY_R,
+        "flight_altitude_hold": KEY_H,
         "flight_exit": KEY_ESCAPE
     }
     for action in actions:
@@ -1165,6 +1231,7 @@ func _verify_gamepad_profile_actions() -> bool:
         "flight_takeoff": JOY_BUTTON_A,
         "flight_pause": JOY_BUTTON_START,
         "flight_respawn": JOY_BUTTON_X,
+        "flight_altitude_hold": JOY_BUTTON_Y,
         "flight_exit": JOY_BUTTON_B
     }
     for action in actions:
