@@ -7,12 +7,14 @@ on:
 jobs:
   linux:
     runs-on: [self-hosted, Linux, X64]
-    env:
-      XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
-      XDG_CONFIG_HOME: ${{ runner.temp }}/xdg-config
-      XDG_DATA_HOME: ${{ runner.temp }}/xdg-data
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set job-local tool paths
+        run: |
+          echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg-config" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=$RUNNER_TEMP/xdg-data" >> "$GITHUB_ENV"
 
       - name: Install build tools
         run: |
@@ -118,12 +120,14 @@ jobs:
 
   windows:
     runs-on: [self-hosted, Linux, X64]
-    env:
-      XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
-      XDG_CONFIG_HOME: ${{ runner.temp }}/xdg-config
-      XDG_DATA_HOME: ${{ runner.temp }}/xdg-data
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set job-local tool paths
+        run: |
+          echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg-config" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=$RUNNER_TEMP/xdg-data" >> "$GITHUB_ENV"
 
       - name: Windows compatibility build and replay in Docker
         run: |
@@ -212,11 +216,14 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     env:
       ANDROID_NDK_ROOT: ${{ github.workspace }}/.deps/android-ndk
-      XDG_CACHE_HOME: ${{ runner.temp }}/xdg-cache
-      XDG_CONFIG_HOME: ${{ runner.temp }}/xdg-config
-      XDG_DATA_HOME: ${{ runner.temp }}/xdg-data
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set job-local tool paths
+        run: |
+          echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg-config" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=$RUNNER_TEMP/xdg-data" >> "$GITHUB_ENV"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
