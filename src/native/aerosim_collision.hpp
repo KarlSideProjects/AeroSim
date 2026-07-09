@@ -65,6 +65,13 @@ public:
             double measured_altitude_m,
             const CollisionContact &contact,
             const Quat &estimated_attitude);
+    CollisionStepResult step_acro(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const AcroCommand &command,
+            const CollisionContact &contact);
 };
 
 } // namespace aerosim
