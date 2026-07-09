@@ -12,6 +12,8 @@ out_file="$(mktemp)"
 err_file="$(mktemp)"
 android_test_dir="$(mktemp -d build/android-release-test.XXXXXX)"
 trap 'rm -rf "$android_test_dir"; rm -f "$artifact" "$out_file" "$err_file"' EXIT
+xdg_config_home="$android_test_dir/xdg-config"
+xdg_data_home="$android_test_dir/xdg-data"
 
 printf 'artifact' >"$artifact"
 python3 scripts/check_release_artifacts.py "$artifact" >"$out_file"
@@ -25,7 +27,27 @@ fi
 
 grep -q "missing artifact: build/does-not-exist.zip" "$err_file"
 
-if GODOT_EXPORT_TEMPLATES_DIR=build/does-not-exist \
+if env -u GODOT_EXPORT_TEMPLATES_DIR -u XDG_DATA_HOME \
+    scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
+    cat "$out_file"
+    echo "missing XDG_DATA_HOME unexpectedly passed" >&2
+    exit 1
+fi
+
+grep -q "missing XDG_DATA_HOME for job-local Godot export templates" "$err_file"
+
+if env -u XDG_CONFIG_HOME \
+    XDG_DATA_HOME="$xdg_data_home" \
+    scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
+    cat "$out_file"
+    echo "missing XDG_CONFIG_HOME unexpectedly passed" >&2
+    exit 1
+fi
+
+grep -q "missing XDG_CONFIG_HOME for job-local Godot editor settings" "$err_file"
+
+if XDG_CONFIG_HOME="$xdg_config_home" \
+    GODOT_EXPORT_TEMPLATES_DIR=build/does-not-exist \
     scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
     cat "$out_file"
     echo "missing Android export template unexpectedly passed" >&2
@@ -37,7 +59,8 @@ grep -q "missing Godot Android export template: build/does-not-exist/android_rel
 mkdir -p "$android_test_dir/templates" "$android_test_dir/sdk/build-tools/35.0.1"
 printf 'template' >"$android_test_dir/templates/android_release.apk"
 
-if GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
+if XDG_CONFIG_HOME="$xdg_config_home" \
+    GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
     scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
     cat "$out_file"
     echo "missing Android release GDExtension unexpectedly passed" >&2
@@ -50,6 +73,7 @@ fake_lib="$android_test_dir/libaerosim_native.android.template_release.arm64.so"
 printf 'native' >"$fake_lib"
 
 if env -u ANDROID_HOME -u ANDROID_SDK_ROOT \
+    XDG_CONFIG_HOME="$xdg_config_home" \
     GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
     AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
     scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
@@ -60,7 +84,8 @@ fi
 
 grep -q "missing Android SDK build-tools; set ANDROID_HOME or ANDROID_SDK_ROOT" "$err_file"
 
-if ANDROID_HOME="$android_test_dir/sdk" \
+if XDG_CONFIG_HOME="$xdg_config_home" \
+    ANDROID_HOME="$android_test_dir/sdk" \
     GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
     AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
     scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
@@ -75,7 +100,8 @@ fake_apksigner="$android_test_dir/sdk/build-tools/35.0.1/apksigner"
 printf '#!/usr/bin/env bash\nexit 0\n' >"$fake_apksigner"
 chmod +x "$fake_apksigner"
 
-if ANDROID_HOME="$android_test_dir/sdk" \
+if XDG_CONFIG_HOME="$xdg_config_home" \
+    ANDROID_HOME="$android_test_dir/sdk" \
     GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
     AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
     AEROSIM_KEYTOOL="$android_test_dir/missing-keytool" \

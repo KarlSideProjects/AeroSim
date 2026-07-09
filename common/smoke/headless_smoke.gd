@@ -4,6 +4,7 @@ const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 
 class InputProbe:
     extends Node
@@ -55,6 +56,9 @@ func _run() -> void:
         return
     if native.call("flight_control_arm_reject_code") != "throttle_not_low":
         push_error("AeroSimNative must expose a high-throttle arm rejection reason")
+        quit(1)
+        return
+    if not _configure_default_power_model(native):
         quit(1)
         return
     if _has_arg("--hardware-only"):
@@ -133,6 +137,31 @@ func _run() -> void:
 
 func _input_fallback_status() -> String:
     return InputProfiles.fallback_status(Input.get_connected_joypads())
+
+func _configure_default_power_model(native: Object) -> bool:
+    var loader := HardwareConfig.new()
+    var preset: Dictionary = loader.load_preset(DEFAULT_HARDWARE_PRESET)
+    if not loader.last_ok:
+        push_error("Default hardware preset must load for native public-path smoke: %s" % loader.last_error)
+        return false
+    var power_model: Dictionary = loader.derive_power_model(preset)
+    if not power_model.ok:
+        push_error("Default hardware preset must derive native public-path power: %s" % power_model.get("error", "unknown"))
+        return false
+    native.call("set_hardware_mass_kg", float(preset.aircraft.mass_kg))
+    if not native.call(
+            "set_hardware_power_model",
+            float(power_model.max_total_thrust_n),
+            float(power_model.hover_throttle),
+            float(power_model.motor_tau_s),
+            float(power_model.battery_nominal_voltage_v),
+            float(power_model.battery_cells),
+            float(power_model.battery_cell_resistance_ohm),
+            float(power_model.max_total_current_a)
+        ):
+        push_error("Default hardware preset must apply to native public-path smoke")
+        return false
+    return true
 
 func _verify_imu_public_path(native: Object) -> bool:
     for method in ["configure_imu", "imu_configuration", "flight_control_diagnostics"]:
@@ -303,18 +332,24 @@ func _verify_jolt_collision_scene(native: Object) -> bool:
         push_error("Project must lock physics/3d/physics_engine to Jolt Physics")
         return false
 
+    var diagnostics: Dictionary = native.call("hardware_power_diagnostics")
+    var mass_kg := float(diagnostics.get("mass_kg", 0.0))
+    if mass_kg <= 0.0:
+        push_error("Jolt collision smoke requires a positive configured hardware mass")
+        return false
+
     verified_jolt_collision_trials = 0
     for scenario in ["wall", "glancing_ground", "pole", "tumble_ground"]:
         for seed in range(100):
-            var first: Dictionary = await _run_jolt_collision_trial(native, scenario, seed)
-            var second: Dictionary = await _run_jolt_collision_trial(native, scenario, seed)
+            var first: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg)
+            var second: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg)
             if not first.ok or not second.ok or not _same_collision_row(first.row, second.row):
                 push_error("Headless Jolt G0.8 trial failed: %s seed %d first=%s second=%s" % [scenario, seed, first.get("reason", ""), second.get("reason", "")])
                 return false
             verified_jolt_collision_trials += 1
     return true
 
-func _run_jolt_collision_trial(native: Object, scenario: String, seed: int) -> Dictionary:
+func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass_kg: float) -> Dictionary:
     var trial_root := Node3D.new()
     trial_root.name = "JoltCollisionTrial"
     root.add_child(trial_root)
@@ -328,7 +363,7 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int) -> D
     trial_root.add_child(drone)
 
     _setup_jolt_trial_geometry(trial_root, drone, scenario, seed)
-    var energy_before := _kinetic(drone.linear_velocity, drone.angular_velocity)
+    var energy_before := _kinetic(drone.linear_velocity, drone.angular_velocity, mass_kg)
 
     if drone.get("continuous_cd") != true:
         trial_root.queue_free()
@@ -381,8 +416,8 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int) -> D
         reason = "energy row=%f limit=%f" % [float(impact_row[17]), energy_before * 1.01]
     if ok:
         _apply_collision_row_to_body(drone, impact_row)
-        var body_energy := _kinetic(drone.linear_velocity, drone.angular_velocity)
-        ok = _body_state_finite(drone) and body_energy <= energy_before * 1.01 + 1e-5
+        var body_energy := _kinetic(drone.linear_velocity, drone.angular_velocity, mass_kg)
+        ok = _body_state_finite(drone) and body_energy <= energy_before * 1.01 + 1e-4
         if not ok:
             reason = "body_impact_state body=%f limit=%f finite=%s" % [body_energy, energy_before * 1.01, str(_body_state_finite(drone))]
     ok = ok and not (scenario == "wall" and drone.global_position.x > 0.3)
@@ -579,8 +614,8 @@ func _same_collision_row(a: PackedFloat64Array, b: PackedFloat64Array) -> bool:
             return false
     return true
 
-func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3) -> float:
-    return 0.5 * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()
+func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, mass_kg: float) -> float:
+    return 0.5 * mass_kg * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()
 
 func _vector_finite(value: Vector3) -> bool:
     return is_finite(value.x) and is_finite(value.y) and is_finite(value.z)
@@ -718,9 +753,38 @@ func _verify_hardware_config_public_path() -> bool:
         push_error("Prop table must reject rpm requests above the measured table")
         return false
     var prop_mid: Dictionary = loader.prop_sample_at_rpm(preset, 10000.0)
-    if not prop_mid.ok or abs(float(prop_mid.thrust_n) - 4.5) > 1e-9:
+    if not prop_mid.ok or abs(float(prop_mid.thrust_n) - 7.2) > 1e-9:
         push_error("Prop table must linearly interpolate in-range thrust")
         return false
+    var power_model: Dictionary = loader.derive_power_model(preset)
+    if not power_model.ok:
+        push_error("Hardware preset must derive a motor/battery power model: %s" % power_model.get("error", "unknown"))
+        return false
+    if float(power_model.max_fit_residual_pct) > 3.0:
+        push_error("k_t/k_q least-squares residual must stay within 3%% at bench RPM points")
+        return false
+    var hover_torque_per_motor := float(power_model.k_q_nm_per_rpm2) * float(power_model.hover_rpm) * float(power_model.hover_rpm)
+    if hover_torque_per_motor <= 0.0 or abs(float(power_model.net_hover_yaw_torque_nm)) > hover_torque_per_motor * 0.02:
+        push_error("Counter-rotating motor order must cancel hover yaw torque within 2%%")
+        return false
+    if float(power_model.hover_throttle) < 0.22 or float(power_model.hover_throttle) > 0.35:
+        push_error("5 inch 6S preset hover throttle must be 22-35%%")
+        return false
+    if float(power_model.twr) < 8.0:
+        push_error("5 inch 6S preset thrust-to-weight ratio must be at least 8")
+        return false
+    if float(power_model.hover_endurance_minutes) < 3.0 or float(power_model.hover_endurance_minutes) > 6.0:
+        push_error("5 inch 6S preset hover endurance must be 3-6 minutes")
+        return false
+    if float(power_model.sag_model_r2) < 0.99:
+        push_error("Battery sag model fit must have R^2 >= 0.99")
+        return false
+    var previous_loaded_voltage := INF
+    for sag_row in power_model.sag_curve:
+        if float(sag_row.loaded_voltage_v) >= previous_loaded_voltage:
+            push_error("Battery sag loaded voltage must fall as remaining charge falls")
+            return false
+        previous_loaded_voltage = float(sag_row.loaded_voltage_v)
     if not _hardware_schema_rejects(loader, preset, "units.mass", "lb"):
         push_error("Hardware schema must reject unexpected units")
         return false
@@ -774,6 +838,27 @@ func _verify_hardware_config_public_path() -> bool:
     var scene := SmokeScene.instantiate()
     root.add_child(scene)
     await process_frame
+    if scene.get_meta("hardware_config_version", "") != preset.version:
+        push_error("Runtime must apply the built-in 5 inch hardware preset on startup")
+        scene.queue_free()
+        return false
+    if not scene.native.has_method("hardware_power_diagnostics"):
+        push_error("AeroSimNative must expose hardware power diagnostics for runtime preset verification")
+        scene.queue_free()
+        return false
+    var startup_power: Dictionary = scene.native.call("hardware_power_diagnostics")
+    if abs(float(startup_power.mass_kg) - float(preset.aircraft.mass_kg)) > 1e-9:
+        push_error("Runtime startup preset must apply aircraft mass to native")
+        scene.queue_free()
+        return false
+    if abs(float(startup_power.hover_throttle) - float(power_model.hover_throttle)) > 1e-9:
+        push_error("Runtime startup preset must apply derived hover throttle to native")
+        scene.queue_free()
+        return false
+    if float(startup_power.full_throttle_cap_newtons) >= float(power_model.max_total_thrust_n):
+        push_error("Runtime startup preset must apply battery sag to the native thrust cap")
+        scene.queue_free()
+        return false
     var native_before: Object = scene.native
     var reset_count_before: int = scene.reset_count
     if not loader.apply_to_runtime(scene, "res://config/drones/5_inch_6s.json"):

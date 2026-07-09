@@ -17,6 +17,15 @@ bool near(double actual, double expected, double tolerance) {
     return std::abs(actual - expected) <= tolerance;
 }
 
+void configure_power_model(aerosim::SimulationConfig &config) {
+    config.hover_throttle = 0.5;
+    config.max_total_thrust_newtons = config.mass_kg * config.gravity_mps2 * 2.0;
+    config.battery_nominal_voltage_v = 22.2;
+    config.battery_cells = 6.0;
+    config.battery_cell_resistance_ohm = 0.0;
+    config.max_total_current_a = 1.0;
+}
+
 } // namespace
 
 int main() {
@@ -39,6 +48,7 @@ int main() {
     config.seconds = 1.0;
     config.physics_hz = 240;
     config.substep_hz = 1000;
+    configure_power_model(config);
 
     aerosim::RigidBodyState disarmed_state;
     aerosim::SimulationClock disarmed_clock;
