@@ -24,6 +24,7 @@ Release artifact size checks use:
 ```bash
 scripts/export_linux_release.sh
 scripts/export_windows_release.sh
+scripts/export_android_release.sh
 python3 scripts/check_release_artifacts.py \
   build/release/AeroSim-windows.zip \
   build/release/AeroSim-linux.zip \
@@ -37,10 +38,10 @@ Each artifact must be `<= 300 MB`.
 
 | Artifact | Path | Gate | Current status |
 | --- | --- | --- | --- |
-| Windows desktop bundle | `build/release/AeroSim-windows.zip` | size <= 300 MB | CI export pending |
+| Windows desktop bundle | `build/release/AeroSim-windows.zip` | size <= 300 MB | CI verified |
 | Linux desktop bundle | `build/release/AeroSim-linux.zip` | size <= 300 MB | CI verified |
 | macOS desktop bundle | `build/release/AeroSim-macos.zip` | size <= 300 MB, signed/notarized if distributed outside a trusted channel | not verified |
-| Android sideload APK | `build/release/AeroSim-android.apk` | size <= 300 MB, installs on device | not verified |
+| Android sideload APK | `build/release/AeroSim-android.apk` | size <= 300 MB, installs on device | CI-only APK export pending; production signing and device install not verified |
 | Third-party notices | `build/THIRD_PARTY_NOTICES.txt` | generated from `third_party/licenses.json` | CI verified |
 
 ## Android Sideload
@@ -50,6 +51,12 @@ Each artifact must be `<= 300 MB`.
 3. Install the APK.
 4. Launch AeroSim and record cold-start time to first flyable screen.
 5. Record device model, Android version, install result, and launch result.
+
+The CI APK is signed with a generated test keystore at
+`.deps/aerosim-ci-android.keystore` for artifact validation only. Production
+delivery must replace it with the release keystore before sending the APK to a
+customer. CI uploads this test-signed artifact as `ci-android-apk`, not as a
+customer-ready release artifact.
 
 This is `not verified` until performed on a real device.
 

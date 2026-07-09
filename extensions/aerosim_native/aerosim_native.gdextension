@@ -7,3 +7,4 @@ reloadable = true
 linux.debug.x86_64 = "res://bin/libaerosim_native.linux.template_debug.x86_64.so"
 linux.release.x86_64 = "res://bin/libaerosim_native.linux.template_release.x86_64.so"
 windows.release.x86_64 = "res://bin/libaerosim_native.windows.template_release.x86_64.dll"
+android.release.arm64 = "res://bin/libaerosim_native.android.template_release.arm64.so"
