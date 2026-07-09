@@ -234,7 +234,7 @@ jobs:
           echo "ANDROID_AVD_HOME=$RUNNER_TEMP/android-avd" >> "$GITHUB_ENV"
           echo "ADB_VENDOR_KEYS=$RUNNER_TEMP/adb-keys" >> "$GITHUB_ENV"
           adb_port=$((5037 + GITHUB_RUN_ID % 1000))
-          emulator_port=$((5554 + 2 * (GITHUB_RUN_ID % 64)))
+          emulator_port=$((5554 + 2 * (GITHUB_RUN_ID % 16)))
           avd_name="aerosim-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           {
             echo "ADB_SERVER_PORT=$adb_port"
