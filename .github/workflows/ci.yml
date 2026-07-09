@@ -28,6 +28,9 @@ jobs:
           AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
         run: scripts/test_native.sh
 
+      - name: Hardcoded airframe constant scan
+        run: scripts/check_hardcoded_airframe_constants.sh
+
       - name: Upload Linux replay artifact
         uses: actions/upload-artifact@v4
         with:

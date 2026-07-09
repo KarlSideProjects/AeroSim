@@ -1,5 +1,6 @@
 #include "aerosim_simulation.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace aerosim {
@@ -67,6 +68,35 @@ void integrate(RigidBodyState &state, const SimulationConfig &config, double dt)
 
 double quat_norm(const Quat &q) {
     return std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+}
+
+double first_order_motor_response(double current, double target, double tau_s, double dt_s) {
+    if (!std::isfinite(current) || !std::isfinite(target) || !std::isfinite(tau_s) || !std::isfinite(dt_s) || dt_s < 0.0) {
+        return current;
+    }
+    if (tau_s <= 0.0 || dt_s == 0.0) {
+        return target;
+    }
+    const double alpha = 1.0 - std::exp(-dt_s / tau_s);
+    return current + (target - current) * alpha;
+}
+
+double available_thrust_cap_newtons(const SimulationConfig &config, double throttle) {
+    if (config.hover_throttle <= 0.0 || config.max_total_thrust_newtons <= 0.0) {
+        return 0.0;
+    }
+    const double raw_cap = config.max_total_thrust_newtons;
+    if (config.battery_nominal_voltage_v <= 0.0 ||
+            config.battery_cells <= 0.0 ||
+            config.battery_cell_resistance_ohm <= 0.0 ||
+            config.max_total_current_a <= 0.0) {
+        return raw_cap;
+    }
+    const double current_a = config.max_total_current_a * std::clamp(throttle, 0.0, 1.0);
+    const double loaded_voltage = config.battery_nominal_voltage_v -
+            current_a * config.battery_cell_resistance_ohm * config.battery_cells;
+    const double voltage_ratio = std::clamp(loaded_voltage / config.battery_nominal_voltage_v, 0.0, 1.0);
+    return raw_cap * voltage_ratio * voltage_ratio;
 }
 
 std::vector<TrajectorySample> simulate_trajectory(const SimulationConfig &config) {

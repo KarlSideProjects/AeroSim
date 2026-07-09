@@ -22,6 +22,15 @@ bool same_bits(double a, double b) {
     return std::memcmp(&a, &b, sizeof(double)) == 0;
 }
 
+void configure_power_model(aerosim::SimulationConfig &config) {
+    config.hover_throttle = 0.5;
+    config.max_total_thrust_newtons = config.mass_kg * config.gravity_mps2 * 2.0;
+    config.battery_nominal_voltage_v = 22.2;
+    config.battery_cells = 6.0;
+    config.battery_cell_resistance_ohm = 0.0;
+    config.max_total_current_a = 1.0;
+}
+
 struct Stats {
     int count = 0;
     double mean = 0.0;
@@ -84,6 +93,7 @@ int main() {
     aerosim::SimulationConfig sim_config;
     sim_config.physics_hz = 100;
     sim_config.substep_hz = 100;
+    configure_power_model(sim_config);
 
     aerosim::FlightController controller;
     if (!controller.arm(0.0)) {

@@ -35,6 +35,15 @@ bool same_sample_bits(const aerosim::TrajectorySample &a, const aerosim::Traject
             a.substeps == b.substeps;
 }
 
+void configure_power_model(aerosim::SimulationConfig &config) {
+    config.hover_throttle = 0.5;
+    config.max_total_thrust_newtons = config.mass_kg * config.gravity_mps2 * 2.0;
+    config.battery_nominal_voltage_v = 22.2;
+    config.battery_cells = 6.0;
+    config.battery_cell_resistance_ohm = 0.0;
+    config.max_total_current_a = 1.0;
+}
+
 aerosim::RecordedInputSequence standard_maneuver(std::int32_t frames) {
     aerosim::ReplayRecorder recorder;
     for (std::int32_t frame = 0; frame < frames; ++frame) {
@@ -80,6 +89,7 @@ int main() {
     aerosim::SimulationConfig config;
     config.physics_hz = 240;
     config.substep_hz = 1000;
+    configure_power_model(config);
 
     aerosim::ReplayRecorder recorder;
     for (int frame = 0; frame < config.physics_hz * 2; ++frame) {
@@ -108,6 +118,7 @@ int main() {
     standard_config.seconds = 60.0;
     standard_config.physics_hz = 240;
     standard_config.substep_hz = 1000;
+    configure_power_model(standard_config);
 
     const auto standard_inputs = standard_maneuver(
             static_cast<std::int32_t>(standard_config.seconds * standard_config.physics_hz));

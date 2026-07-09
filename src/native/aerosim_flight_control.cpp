@@ -24,6 +24,14 @@ double bounded_rate(double rate) {
     return std::clamp(rate, -6.0, 6.0);
 }
 
+double target_thrust_newtons(const SimulationConfig &config, double throttle) {
+    if (config.hover_throttle <= 0.0) {
+        return 0.0;
+    }
+    const double uncapped = config.mass_kg * config.gravity_mps2 * throttle / config.hover_throttle;
+    return std::clamp(uncapped, 0.0, available_thrust_cap_newtons(config, throttle));
+}
+
 } // namespace
 
 bool FlightController::arm(double throttle) {
@@ -72,7 +80,19 @@ TrajectorySample FlightController::step_angle_mode(
         const Quat &estimated_attitude) {
     SimulationConfig frame_config = config;
     const double throttle = std::clamp(command.throttle, 0.0, 1.0);
-    frame_config.total_thrust_newtons = armed_ ? frame_config.mass_kg * frame_config.gravity_mps2 * throttle * 2.0 : 0.0;
+    if (armed_) {
+        const double target_thrust = target_thrust_newtons(frame_config, throttle);
+        const double frame_dt = frame_config.physics_hz > 0 ? 1.0 / static_cast<double>(frame_config.physics_hz) : 0.0;
+        motor_thrust_newtons_ = first_order_motor_response(
+                motor_thrust_newtons_,
+                target_thrust,
+                frame_config.motor_tau_s,
+                frame_dt);
+        frame_config.total_thrust_newtons = motor_thrust_newtons_;
+    } else {
+        motor_thrust_newtons_ = 0.0;
+        frame_config.total_thrust_newtons = 0.0;
+    }
     if (armed_) {
         state.angular_velocity.x = bounded_rate((radians(command.pitch_degrees) - angle_x(estimated_attitude)) * 4.0);
         state.angular_velocity.y = radians(command.yaw_rate_degrees_per_second);
@@ -85,6 +105,7 @@ TrajectorySample FlightController::step_angle_mode(
 
 void FlightController::reset_flight(RigidBodyState &state, SimulationClock &clock) {
     reset_integrators();
+    motor_thrust_newtons_ = 0.0;
     state = {};
     clock = {};
 }

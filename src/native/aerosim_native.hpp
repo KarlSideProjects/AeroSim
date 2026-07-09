@@ -35,6 +35,14 @@ public:
     std::int32_t probe_value() const;
     std::int32_t trajectory_stride() const;
     bool set_hardware_mass_kg(double mass_kg);
+    bool set_hardware_power_model(
+            double max_total_thrust_newtons,
+            double hover_throttle,
+            double motor_tau_s,
+            double battery_nominal_voltage_v,
+            double battery_cells,
+            double battery_cell_resistance_ohm,
+            double max_total_current_a);
     void reset_simulation();
     godot::PackedFloat64Array step_simulation(
             std::int32_t physics_hz,
@@ -47,6 +55,7 @@ public:
     void configure_imu(const godot::Dictionary &config);
     godot::Dictionary imu_configuration() const;
     godot::Dictionary flight_control_diagnostics() const;
+    godot::Dictionary hardware_power_diagnostics() const;
     void set_collision_release_frames(std::int32_t release_frames);
     void sync_flight_state(
             double position_x,

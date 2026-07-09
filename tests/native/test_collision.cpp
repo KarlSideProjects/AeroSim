@@ -37,6 +37,15 @@ bool near(double actual, double expected, double tolerance) {
     return std::abs(actual - expected) <= tolerance;
 }
 
+void configure_power_model(aerosim::SimulationConfig &config) {
+    config.hover_throttle = 0.5;
+    config.max_total_thrust_newtons = config.mass_kg * config.gravity_mps2 * 2.0;
+    config.battery_nominal_voltage_v = 22.2;
+    config.battery_cells = 6.0;
+    config.battery_cell_resistance_ohm = 0.0;
+    config.max_total_current_a = 1.0;
+}
+
 bool same_state_bits(const aerosim::RigidBodyState &a, const aerosim::RigidBodyState &b) {
     return same_bits(a.position.x, b.position.x) &&
             same_bits(a.position.y, b.position.y) &&
@@ -116,6 +125,7 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed) {
     aerosim::SimulationConfig config;
     config.physics_hz = 240;
     config.substep_hz = 1000;
+    configure_power_model(config);
 
     TrialSetup setup = setup_trial(scenario, seed);
     aerosim::RigidBodyState state = setup.state;
@@ -172,6 +182,7 @@ int main() {
     aerosim::SimulationConfig config;
     config.physics_hz = 240;
     config.substep_hz = 1000;
+    configure_power_model(config);
 
     aerosim::RigidBodyState state;
     state.velocity = {30.0, 0.0, 0.0};

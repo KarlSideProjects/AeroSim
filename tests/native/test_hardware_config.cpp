@@ -48,6 +48,10 @@ int main() {
         return fail("angle mode hardware config test must arm from low throttle");
     }
 
+    if (!hardware.set_power_model(mass_kg * config.gravity_mps2 * 4.0, 0.50, 0.0, 22.2, 6.0, 0.0, 1.0)) {
+        return fail("hardware config must accept a no-sag hover power model");
+    }
+    config = hardware.simulation_config();
     aerosim::FlightCommand hover;
     hover.throttle = 0.5;
     for (int frame = 0; frame < config.physics_hz; ++frame) {
@@ -56,6 +60,47 @@ int main() {
 
     if (!std::isfinite(angle_state.position.y) || !near(angle_state.position.y, 0.0, 1e-9)) {
         return fail("Angle Mode hover must calculate thrust from configured mass");
+    }
+
+    if (!hardware.set_power_model(mass_kg * config.gravity_mps2 * 4.0, 0.30, 0.0, 22.2, 6.0, 0.0, 1.0)) {
+        return fail("hardware config must accept a derived motor power model");
+    }
+    config = hardware.simulation_config();
+    angle_state = {};
+    angle_clock = {};
+    aerosim::FlightController derived_controller;
+    if (!derived_controller.arm(0.0)) {
+        return fail("derived power model test must arm from low throttle");
+    }
+    hover.throttle = 0.30;
+    for (int frame = 0; frame < config.physics_hz; ++frame) {
+        derived_controller.step_angle_mode(angle_state, angle_clock, config, hover);
+    }
+    if (!std::isfinite(angle_state.position.y) || !near(angle_state.position.y, 0.0, 1e-9)) {
+        return fail("Angle Mode hover must use derived hover throttle instead of a hardcoded 0.5");
+    }
+
+    const double unsagged_max_thrust = mass_kg * config.gravity_mps2 * 4.0;
+    if (!hardware.set_power_model(unsagged_max_thrust, 0.25, 0.030, 22.2, 6.0, 0.003, 108.0)) {
+        return fail("hardware config must accept a motor time constant");
+    }
+    config = hardware.simulation_config();
+    const double sagged_cap = aerosim::available_thrust_cap_newtons(config, 1.0);
+    if (!(sagged_cap < unsagged_max_thrust && sagged_cap > mass_kg * config.gravity_mps2)) {
+        return fail("battery sag must reduce the real-time available thrust cap without preventing hover");
+    }
+    config.max_total_thrust_newtons = 0.0;
+    if (aerosim::available_thrust_cap_newtons(config, 1.0) != 0.0) {
+        return fail("available thrust cap must not fall back to mass/gravity/hover_throttle");
+    }
+    const double target_thrust = mass_kg * config.gravity_mps2;
+    const double one_tau_thrust = aerosim::first_order_motor_response(
+            0.0,
+            target_thrust,
+            config.motor_tau_s,
+            config.motor_tau_s);
+    if (!near(one_tau_thrust, target_thrust * (1.0 - std::exp(-1.0)), 1e-12)) {
+        return fail("motor thrust must follow the configured first-order time constant analytically");
     }
 
     return EXIT_SUCCESS;

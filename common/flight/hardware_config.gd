@@ -1,6 +1,8 @@
 extends RefCounted
 
 const SCHEMA_PATH := "res://config/drone_schema.json"
+const GRAVITY_MPS2 := 9.80665
+const USABLE_BATTERY_FRACTION := 0.80
 
 const FACTORY_DEFAULT := {
     "version": "factory-default",
@@ -30,8 +32,9 @@ const FACTORY_DEFAULT := {
         "blades": 3,
         "mass_kg": 0.0045,
         "table": [
-            {"rpm": 5000, "thrust_n": 1.2, "torque_nm": 0.012, "current_a": 3.0},
-            {"rpm": 15000, "thrust_n": 9.8, "torque_nm": 0.083, "current_a": 21.0}
+            {"rpm": 4000, "thrust_n": 1.152, "torque_nm": 0.0112, "current_a": 2.8},
+            {"rpm": 10000, "thrust_n": 7.2, "torque_nm": 0.0700, "current_a": 10.5},
+            {"rpm": 15000, "thrust_n": 16.2, "torque_nm": 0.1575, "current_a": 27.0}
         ]
     },
     "battery": {
@@ -92,8 +95,8 @@ func validate_config(config: Dictionary) -> String:
 func apply_to_runtime(runtime: Object, path: String) -> bool:
     var preset := load_preset(path)
     var ok := last_ok
-    _apply_current_to_runtime(runtime, path)
-    return ok
+    var apply_ok := _apply_current_to_runtime(runtime, path)
+    return ok and apply_ok
 
 func prop_sample_at_rpm(config: Dictionary, rpm: float) -> Dictionary:
     var table: Array = config.get("propeller", {}).get("table", [])
@@ -115,11 +118,92 @@ func prop_sample_at_rpm(config: Dictionary, rpm: float) -> Dictionary:
             }
     return {"ok": false, "error": "prop table rpm is not bracketed"}
 
-func _apply_current_to_runtime(runtime: Object, path: String) -> void:
+func derive_power_model(config: Dictionary) -> Dictionary:
+    var table: Array = config.get("propeller", {}).get("table", [])
+    var motor_count := int(config.get("motor", {}).get("count", 0))
+    var mass_kg := float(config.get("aircraft", {}).get("mass_kg", 0.0))
+    if table.size() < 2 or motor_count <= 0 or mass_kg <= 0.0:
+        return {"ok": false, "error": "power model requires mass, motor count, and prop table"}
+
+    var thrust_fit := _fit_quadratic_from_rpm(table, "thrust_n")
+    var torque_fit := _fit_quadratic_from_rpm(table, "torque_nm")
+    if not thrust_fit.ok or not torque_fit.ok:
+        return {"ok": false, "error": "power model coefficient fit failed"}
+
+    var max_rpm := float(table[table.size() - 1].rpm)
+    var max_thrust_per_motor_n := float(table[table.size() - 1].thrust_n)
+    var hover_thrust_per_motor_n := mass_kg * GRAVITY_MPS2 / float(motor_count)
+    var hover_rpm := sqrt(hover_thrust_per_motor_n / float(thrust_fit.coefficient))
+    if hover_rpm <= 0.0 or hover_rpm > max_rpm:
+        return {"ok": false, "error": "hover rpm is outside measured prop table"}
+
+    var hover_sample := prop_sample_at_rpm(config, hover_rpm)
+    if not hover_sample.ok:
+        return {"ok": false, "error": hover_sample.error}
+
+    var total_hover_current_a := float(hover_sample.current_a) * float(motor_count)
+    var endurance_minutes := 0.0
+    if total_hover_current_a > 0.0:
+        endurance_minutes = float(config.battery.capacity_mah) / 1000.0 * USABLE_BATTERY_FRACTION / total_hover_current_a * 60.0
+
+    var max_total_thrust_n := max_thrust_per_motor_n * float(motor_count)
+    var hover_throttle := hover_rpm / max_rpm
+    var sag_curve := _loaded_voltage_curve(config, total_hover_current_a)
+    return {
+        "ok": true,
+        "k_t_n_per_rpm2": thrust_fit.coefficient,
+        "k_q_nm_per_rpm2": torque_fit.coefficient,
+        "max_fit_residual_pct": max(float(thrust_fit.max_residual_pct), float(torque_fit.max_residual_pct)),
+        "hover_throttle": hover_throttle,
+        "max_total_thrust_n": max_total_thrust_n,
+        "twr": max_total_thrust_n / (mass_kg * GRAVITY_MPS2),
+        "hover_endurance_minutes": endurance_minutes,
+        "hover_rpm": hover_rpm,
+        "hover_current_a": total_hover_current_a,
+        "hover_sag_voltage_v": _sag_voltage(float(config.battery.nominal_voltage_v), float(config.battery.cells), float(config.battery.cell_resistance_ohm), total_hover_current_a),
+        "net_hover_yaw_torque_nm": _net_yaw_torque(config.spin_direction, float(torque_fit.coefficient), hover_rpm),
+        "sag_curve": sag_curve,
+        "sag_model_r2": _linear_voltage_r2(sag_curve),
+        "motor_tau_s": float(config.motor.tau_m_s),
+        "battery_nominal_voltage_v": float(config.battery.nominal_voltage_v),
+        "battery_cells": float(config.battery.cells),
+        "battery_cell_resistance_ohm": float(config.battery.cell_resistance_ohm),
+        "max_total_current_a": float(table[table.size() - 1].current_a) * float(motor_count),
+        "inertia_estimate_kg_m2": config.aircraft.inertia_kg_m2,
+        "inertia_source": "preset_override"
+    }
+
+func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
     if runtime.get("native") != null:
         runtime.native.call("set_hardware_mass_kg", float(current.aircraft.mass_kg))
+        var power_model := derive_power_model(current)
+        if not power_model.ok:
+            last_ok = false
+            last_error = "power model derivation failed: %s" % power_model.get("error", "unknown")
+            push_error(last_error)
+            return false
+        if not runtime.native.has_method("set_hardware_power_model"):
+            last_ok = false
+            last_error = "native runtime missing set_hardware_power_model"
+            push_error(last_error)
+            return false
+        if not runtime.native.call(
+                "set_hardware_power_model",
+                float(power_model.max_total_thrust_n),
+                float(power_model.hover_throttle),
+                float(power_model.motor_tau_s),
+                float(power_model.battery_nominal_voltage_v),
+                float(power_model.battery_cells),
+                float(power_model.battery_cell_resistance_ohm),
+                float(power_model.max_total_current_a)
+            ):
+            last_ok = false
+            last_error = "native runtime rejected derived power model"
+            push_error(last_error)
+            return false
     runtime.set_meta("hardware_config_version", current.version)
     runtime.set_meta("hardware_config_path", path)
+    return true
 
 func _fail(error: String) -> Dictionary:
     current = FACTORY_DEFAULT.duplicate(true)
@@ -216,3 +300,77 @@ func _dig(value: Dictionary, path: String) -> Variant:
             return null
         cursor = cursor[part]
     return cursor
+
+func _fit_quadratic_from_rpm(table: Array, key: String) -> Dictionary:
+    var numerator := 0.0
+    var denominator := 0.0
+    for row in table:
+        var x := float(row.rpm) * float(row.rpm)
+        numerator += x * float(row[key])
+        denominator += x * x
+    if denominator <= 0.0:
+        return {"ok": false}
+    var coefficient := numerator / denominator
+    var max_residual_pct := 0.0
+    for row in table:
+        var measured := float(row[key])
+        if measured <= 0.0:
+            continue
+        var predicted := coefficient * float(row.rpm) * float(row.rpm)
+        max_residual_pct = max(max_residual_pct, abs(predicted - measured) / measured * 100.0)
+    return {"ok": true, "coefficient": coefficient, "max_residual_pct": max_residual_pct}
+
+func _loaded_voltage_curve(config: Dictionary, total_current_a: float) -> Array:
+    var rows := []
+    for row in config.battery.discharge_curve:
+        rows.append({
+            "remaining": float(row.remaining),
+            "open_circuit_voltage_v": float(row.voltage_v),
+            "loaded_voltage_v": _sag_voltage(float(row.voltage_v), float(config.battery.cells), float(config.battery.cell_resistance_ohm), total_current_a)
+        })
+    return rows
+
+func _sag_voltage(open_circuit_voltage_v: float, cells: float, cell_resistance_ohm: float, total_current_a: float) -> float:
+    return open_circuit_voltage_v - total_current_a * cell_resistance_ohm * cells
+
+func _net_yaw_torque(spin_direction: Array, k_q_nm_per_rpm2: float, rpm: float) -> float:
+    var net := 0.0
+    for direction in spin_direction:
+        var sign := 1.0 if String(direction) == "cw" else -1.0
+        net += sign * k_q_nm_per_rpm2 * rpm * rpm
+    return net
+
+func _linear_voltage_r2(rows: Array) -> float:
+    if rows.size() < 2:
+        return 0.0
+    var mean_y := 0.0
+    for row in rows:
+        mean_y += float(row.loaded_voltage_v)
+    mean_y /= float(rows.size())
+
+    var mean_x := 0.0
+    for row in rows:
+        mean_x += float(row.remaining)
+    mean_x /= float(rows.size())
+
+    var cov_xy := 0.0
+    var var_x := 0.0
+    for row in rows:
+        var x := float(row.remaining) - mean_x
+        var y := float(row.loaded_voltage_v) - mean_y
+        cov_xy += x * y
+        var_x += x * x
+    if var_x <= 0.0:
+        return 0.0
+    var slope := cov_xy / var_x
+    var intercept := mean_y - slope * mean_x
+    var ss_res := 0.0
+    var ss_tot := 0.0
+    for row in rows:
+        var y := float(row.loaded_voltage_v)
+        var predicted := intercept + slope * float(row.remaining)
+        ss_res += (y - predicted) * (y - predicted)
+        ss_tot += (y - mean_y) * (y - mean_y)
+    if ss_tot <= 0.0:
+        return 1.0
+    return 1.0 - ss_res / ss_tot

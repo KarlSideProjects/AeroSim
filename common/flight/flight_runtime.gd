@@ -1,6 +1,8 @@
 extends Node3D
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const HardwareConfig = preload("res://common/flight/hardware_config.gd")
+const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const TAKEOFF_VELOCITY := Vector3(30.0, 0.0, 0.0)
 
@@ -26,6 +28,10 @@ func _ready() -> void:
     if native == null:
         push_error("AeroSimNative is not registered")
         return
+    var hardware_config := HardwareConfig.new()
+    if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
+        last_error_message = hardware_config.last_error
+        push_error("Default hardware preset failed: %s" % hardware_config.last_error)
     update_fallback_status()
 
 func _unhandled_input(event: InputEvent) -> void:

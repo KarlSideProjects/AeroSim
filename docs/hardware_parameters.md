@@ -47,3 +47,21 @@ The propeller bench table is sorted by `rpm` and each row contains:
 Interpolation is linear inside the table range. Extrapolation is forbidden:
 requests below the first `rpm` or above the last `rpm` must fail loudly and
 fall back to the factory default where applicable.
+
+## Derived Power Model
+
+Runtime motor thrust is derived from the preset, not from hand-tuned constants.
+The loader fits thrust and torque coefficients through the bench table using
+least squares over `rpm^2`, then derives:
+
+- hover throttle
+- maximum total thrust
+- thrust-to-weight ratio
+- hover endurance from measured hover current
+- first-order motor time constant
+- battery loaded-voltage sag from discharge voltage and cell resistance
+
+`apply_to_runtime()` fails loudly if the derived model cannot be produced or if
+the native runtime rejects it. Angle Mode uses the derived hover throttle and
+thrust cap, so changing the preset changes the native flight behavior without
+hardcoding a 5-inch airframe in native code.

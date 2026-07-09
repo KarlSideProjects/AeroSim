@@ -38,6 +38,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("probe_value"), &AeroSimNative::probe_value);
     ClassDB::bind_method(D_METHOD("trajectory_stride"), &AeroSimNative::trajectory_stride);
     ClassDB::bind_method(D_METHOD("set_hardware_mass_kg", "mass_kg"), &AeroSimNative::set_hardware_mass_kg);
+    ClassDB::bind_method(
+            D_METHOD("set_hardware_power_model", "max_total_thrust_newtons", "hover_throttle", "motor_tau_s", "battery_nominal_voltage_v", "battery_cells", "battery_cell_resistance_ohm", "max_total_current_a"),
+            &AeroSimNative::set_hardware_power_model);
     ClassDB::bind_method(D_METHOD("reset_simulation"), &AeroSimNative::reset_simulation);
     ClassDB::bind_method(
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
@@ -49,6 +52,7 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("configure_imu", "config"), &AeroSimNative::configure_imu);
     ClassDB::bind_method(D_METHOD("imu_configuration"), &AeroSimNative::imu_configuration);
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
+    ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
     ClassDB::bind_method(D_METHOD("set_collision_release_frames", "release_frames"), &AeroSimNative::set_collision_release_frames);
     ClassDB::bind_method(
             D_METHOD("sync_flight_state", "position_x", "position_y", "position_z", "orientation_x", "orientation_y", "orientation_z", "orientation_w", "velocity_x", "velocity_y", "velocity_z", "angular_velocity_x", "angular_velocity_y", "angular_velocity_z"),
@@ -74,6 +78,24 @@ std::int32_t AeroSimNative::trajectory_stride() const {
 
 bool AeroSimNative::set_hardware_mass_kg(double mass_kg) {
     return hardware_config_.set_mass_kg(mass_kg);
+}
+
+bool AeroSimNative::set_hardware_power_model(
+        double max_total_thrust_newtons,
+        double hover_throttle,
+        double motor_tau_s,
+        double battery_nominal_voltage_v,
+        double battery_cells,
+        double battery_cell_resistance_ohm,
+        double max_total_current_a) {
+    return hardware_config_.set_power_model(
+            max_total_thrust_newtons,
+            hover_throttle,
+            motor_tau_s,
+            battery_nominal_voltage_v,
+            battery_cells,
+            battery_cell_resistance_ohm,
+            max_total_current_a);
 }
 
 void AeroSimNative::reset_simulation() {
@@ -172,6 +194,20 @@ Dictionary AeroSimNative::imu_configuration() const {
 Dictionary AeroSimNative::flight_control_diagnostics() const {
     Dictionary diagnostics;
     diagnostics["uses_estimated_attitude"] = flight_control_used_estimated_attitude_;
+    return diagnostics;
+}
+
+Dictionary AeroSimNative::hardware_power_diagnostics() const {
+    const aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    Dictionary diagnostics;
+    diagnostics["mass_kg"] = config.mass_kg;
+    diagnostics["hover_throttle"] = config.hover_throttle;
+    diagnostics["max_total_thrust_newtons"] = config.max_total_thrust_newtons;
+    diagnostics["full_throttle_cap_newtons"] = aerosim::available_thrust_cap_newtons(config, 1.0);
+    diagnostics["hover_throttle_cap_newtons"] = aerosim::available_thrust_cap_newtons(config, config.hover_throttle);
+    diagnostics["battery_nominal_voltage_v"] = config.battery_nominal_voltage_v;
+    diagnostics["battery_cell_resistance_ohm"] = config.battery_cell_resistance_ohm;
+    diagnostics["max_total_current_a"] = config.max_total_current_a;
     return diagnostics;
 }
 

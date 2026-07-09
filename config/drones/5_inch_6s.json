@@ -41,9 +41,9 @@
     "blades": 3,
     "mass_kg": 0.0045,
     "table": [
-      {"rpm": 5000, "thrust_n": 1.2, "torque_nm": 0.012, "current_a": 3.0},
-      {"rpm": 10000, "thrust_n": 4.5, "torque_nm": 0.038, "current_a": 10.5},
-      {"rpm": 15000, "thrust_n": 9.8, "torque_nm": 0.083, "current_a": 21.0}
+      {"rpm": 4000, "thrust_n": 1.152, "torque_nm": 0.0112, "current_a": 2.8},
+      {"rpm": 10000, "thrust_n": 7.2, "torque_nm": 0.0700, "current_a": 10.5},
+      {"rpm": 15000, "thrust_n": 16.2, "torque_nm": 0.1575, "current_a": 27.0}
     ]
   },
   "battery": {

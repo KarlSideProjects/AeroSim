@@ -18,6 +18,7 @@ private:
     bool armed_ = false;
     std::string arm_reject_code_ = "";
     int integrator_reset_count_ = 0;
+    double motor_thrust_newtons_ = 0.0;
 
 public:
     bool arm(double throttle);

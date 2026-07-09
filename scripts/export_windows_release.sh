@@ -2,7 +2,11 @@
 set -euo pipefail
 
 godot_bin="${GODOT_BIN:-godot}"
-templates_dir="${GODOT_EXPORT_TEMPLATES_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/godot/export_templates/4.7.stable}"
+if [ -z "${GODOT_EXPORT_TEMPLATES_DIR:-}" ] && [ -z "${XDG_DATA_HOME:-}" ]; then
+    echo "missing XDG_DATA_HOME for job-local Godot export templates" >&2
+    exit 1
+fi
+templates_dir="${GODOT_EXPORT_TEMPLATES_DIR:-$XDG_DATA_HOME/godot/export_templates/4.7.stable}"
 release_lib="bin/libaerosim_native.windows.template_release.x86_64.dll"
 out_dir="build/release/AeroSim-windows"
 out_zip="build/release/AeroSim-windows.zip"
