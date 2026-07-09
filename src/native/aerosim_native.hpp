@@ -22,6 +22,7 @@ private:
     aerosim::SimulationClock simulation_clock_;
     aerosim::HardwareConfig hardware_config_;
     aerosim::FlightController flight_controller_;
+    aerosim::A3DragConfig a3_drag_config_;
     aerosim::CollisionAuthoritySwitch collision_authority_;
     aerosim::ImuConfig imu_config_;
     aerosim::ImuSimulator imu_;
@@ -56,6 +57,16 @@ public:
     godot::Dictionary imu_configuration() const;
     godot::Dictionary flight_control_diagnostics() const;
     godot::Dictionary hardware_power_diagnostics() const;
+    bool set_a3_drag_model(
+            bool enabled,
+            double coefficient_x,
+            double coefficient_y,
+            double coefficient_z,
+            double motor_0_rpm,
+            double motor_1_rpm,
+            double motor_2_rpm,
+            double motor_3_rpm);
+    godot::Dictionary a3_drag_configuration() const;
     void set_collision_release_frames(std::int32_t release_frames);
     void sync_flight_state(
             double position_x,

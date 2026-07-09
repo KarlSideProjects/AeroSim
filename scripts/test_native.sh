@@ -5,6 +5,7 @@ mkdir -p build/tests
 run_tests="${AEROSIM_RUN_NATIVE_TESTS:-1}"
 exe_suffix="${EXE_SUFFIX:-}"
 native_sources=(
+    src/native/aerosim_aerodynamics.cpp
     src/native/aerosim_simulation.cpp
     src/native/aerosim_flight_control.cpp
     src/native/aerosim_imu.cpp

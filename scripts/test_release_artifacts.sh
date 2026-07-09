@@ -14,6 +14,8 @@ android_test_dir="$(mktemp -d build/android-release-test.XXXXXX)"
 trap 'rm -rf "$android_test_dir"; rm -f "$artifact" "$out_file" "$err_file"' EXIT
 xdg_config_home="$android_test_dir/xdg-config"
 xdg_data_home="$android_test_dir/xdg-data"
+runner_temp="$android_test_dir/runner-temp"
+mkdir -p "$runner_temp"
 
 printf 'artifact' >"$artifact"
 python3 scripts/check_release_artifacts.py "$artifact" >"$out_file"
@@ -47,6 +49,7 @@ fi
 grep -q "missing XDG_CONFIG_HOME for job-local Godot editor settings" "$err_file"
 
 if XDG_CONFIG_HOME="$xdg_config_home" \
+    RUNNER_TEMP="$runner_temp" \
     GODOT_EXPORT_TEMPLATES_DIR=build/does-not-exist \
     scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
     cat "$out_file"
@@ -60,6 +63,7 @@ mkdir -p "$android_test_dir/templates" "$android_test_dir/sdk/build-tools/35.0.1
 printf 'template' >"$android_test_dir/templates/android_release.apk"
 
 if XDG_CONFIG_HOME="$xdg_config_home" \
+    RUNNER_TEMP="$runner_temp" \
     GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
     scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
     cat "$out_file"
@@ -74,6 +78,7 @@ printf 'native' >"$fake_lib"
 
 if env -u ANDROID_HOME -u ANDROID_SDK_ROOT \
     XDG_CONFIG_HOME="$xdg_config_home" \
+    RUNNER_TEMP="$runner_temp" \
     GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
     AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
     scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
@@ -85,6 +90,7 @@ fi
 grep -q "missing Android SDK build-tools; set ANDROID_HOME or ANDROID_SDK_ROOT" "$err_file"
 
 if XDG_CONFIG_HOME="$xdg_config_home" \
+    RUNNER_TEMP="$runner_temp" \
     ANDROID_HOME="$android_test_dir/sdk" \
     GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
     AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
@@ -101,6 +107,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' >"$fake_apksigner"
 chmod +x "$fake_apksigner"
 
 if XDG_CONFIG_HOME="$xdg_config_home" \
+    RUNNER_TEMP="$runner_temp" \
     ANDROID_HOME="$android_test_dir/sdk" \
     GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
     AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \

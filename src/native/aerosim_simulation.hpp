@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <array>
 #include <vector>
 
 namespace aerosim {
@@ -27,6 +28,12 @@ struct RigidBodyState {
     Vec3 angular_velocity;
 };
 
+struct A3DragConfig {
+    bool enabled = false;
+    Vec3 coefficient;
+    std::array<double, 4> motor_rpm = {0.0, 0.0, 0.0, 0.0};
+};
+
 struct SimulationConfig {
     double seconds = 1.0;
     std::int32_t physics_hz = 240;
@@ -41,6 +48,7 @@ struct SimulationConfig {
     double battery_cells = 0.0;
     double battery_cell_resistance_ohm = 0.0;
     double max_total_current_a = 0.0;
+    A3DragConfig a3_drag;
     RigidBodyState initial_state;
 };
 
