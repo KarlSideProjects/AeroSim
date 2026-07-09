@@ -61,6 +61,9 @@ func _run() -> void:
     if not _configure_default_power_model(native):
         quit(1)
         return
+    if _has_arg("--rates-only"):
+        quit(0 if await _verify_rates_tuning_ui(native) else 1)
+        return
     if _has_arg("--hardware-only"):
         quit(0 if await _verify_hardware_config_public_path() else 1)
         return
@@ -88,6 +91,9 @@ func _run() -> void:
         quit(1)
         return
     if not await _verify_runtime_actions():
+        quit(1)
+        return
+    if not await _verify_rates_tuning_ui(native):
         quit(1)
         return
     var hardware_config_public_verified := await _verify_hardware_config_public_path()
@@ -961,6 +967,131 @@ func _verify_runtime_actions() -> bool:
     await _press_key(KEY_ESCAPE)
     if not scene.exit_requested:
         push_error("flight_exit action must request exit")
+        scene.queue_free()
+        return false
+
+    scene.queue_free()
+    return true
+
+func _verify_rates_tuning_ui(native: Object) -> bool:
+    if not native.has_method("betaflight_rate_degrees_per_second"):
+        push_error("AeroSimNative.betaflight_rate_degrees_per_second must expose the existing Betaflight-aligned rates engine")
+        return false
+    var native_full_stick := float(native.call("betaflight_rate_degrees_per_second", 1.0, 1.0, 0.722222222222, 0.0))
+    if absf(native_full_stick - 720.0) > 720.0 * 0.01:
+        push_error("G4B.6 rates UI preview must use the Betaflight-aligned native engine")
+        return false
+
+    var scene := SmokeScene.instantiate()
+    root.add_child(scene)
+    await process_frame
+    if scene.native == null:
+        push_error("Rates tuning smoke needs runtime AeroSimNative")
+        scene.queue_free()
+        return false
+    if not str(scene.rates_persistence_status).begins_with("not verified"):
+        push_error("Rates persistence must fail loud when #49 settings persistence is unavailable")
+        scene.queue_free()
+        return false
+
+    scene.set_paused(true)
+    await process_frame
+    var pause_layer := scene.get_node_or_null("PauseOverlay") as CanvasLayer
+    if pause_layer == null or not pause_layer.visible:
+        push_error("Pause Overlay must be a visible CanvasLayer while paused")
+        scene.queue_free()
+        return false
+    for item in ["Resume", "Reset", "Change Spawn", "Rates", "Camera", "OSD", "Controller Monitor", "Status Diagram", "Exit"]:
+        if scene.get_node_or_null("PauseOverlay/Root/Columns/Entries/%s" % item.replace(" ", "")) == null:
+            push_error("Pause Overlay missing fixed item: %s" % item)
+            scene.queue_free()
+            return false
+
+    var rates_button := scene.get_node_or_null("PauseOverlay/Root/Columns/Entries/Rates") as Button
+    rates_button.pressed.emit()
+    await process_frame
+    if not scene.rates_panel.visible:
+        push_error("Pause Overlay Rates path must open the rates tuning panel")
+        scene.queue_free()
+        return false
+    for field in ["rc_rate", "super_rate", "expo"]:
+        if not scene.rates_controls.has(field) or not (scene.rates_controls[field] is SpinBox):
+            push_error("Rates UI missing SpinBox for %s" % field)
+            scene.queue_free()
+            return false
+    var disclaimer := scene.find_child("SimProfileDisclaimer", true, false) as Label
+    if disclaimer == null or not disclaimer.text.contains("sim profile") or not disclaimer.text.contains("not Betaflight-equivalent"):
+        push_error("Rates UI must show the PID/filter sim profile disclaimer")
+        scene.queue_free()
+        return false
+    if scene.rate_curve_points.size() != 17 or absf(float(scene.rate_curve_points[8].rate_dps)) > 1e-9:
+        push_error("Rates UI must generate an immediate center-crossing curve preview")
+        scene.queue_free()
+        return false
+
+    var serial_before := int(scene.rates_update_serial)
+    if not scene.set_rates_profile(1.15, 0.72, 0.25):
+        push_error("Rates UI must accept Betaflight RC Rate / Super Rate / Expo values")
+        scene.queue_free()
+        return false
+    if int(scene.rates_update_serial) != serial_before + 1:
+        push_error("Rates edits must apply immediately without scene reload")
+        scene.queue_free()
+        return false
+    var preview_full_stick := float(scene.rate_curve_points[scene.rate_curve_points.size() - 1].rate_dps)
+    var engine_full_stick := float(scene.native.call("betaflight_rate_degrees_per_second", 1.0, 1.15, 0.72, 0.25))
+    if absf(preview_full_stick - engine_full_stick) > maxf(0.01, absf(engine_full_stick) * 0.01):
+        push_error("Rates preview must match the native Betaflight engine within 1%%")
+        scene.queue_free()
+        return false
+
+    var exported: String = scene.export_rates_json()
+    if not exported.contains("\"rate_model\": \"Betaflight\"") or not exported.contains("\"rc_rate\""):
+        push_error("Rates UI must export Betaflight-labelled JSON")
+        scene.queue_free()
+        return false
+    var mismatch_rows: Array = scene.rates_diff_from_json(JSON.stringify({"rates": {"rc_rate": 1.0, "super_rate": 0.0, "expo": 0.0}}))
+    if mismatch_rows.size() != 3 or bool(mismatch_rows[0].matches):
+        push_error("Rates JSON diff must expose field-level mismatches")
+        scene.queue_free()
+        return false
+    scene.restore_default_rates()
+    if not scene.import_rates_json(exported):
+        push_error("Rates JSON import must round-trip exported values")
+        scene.queue_free()
+        return false
+    var match_rows: Array = scene.rates_diff_from_json(exported)
+    for row in match_rows:
+        if not bool(row.matches):
+            push_error("Rates JSON diff must confirm round-tripped field: %s" % row.field)
+            scene.queue_free()
+            return false
+    var bf_diff: String = scene.betaflight_diff_text()
+    for token in ["roll_rc_rate", "roll_srate", "roll_expo"]:
+        if not bf_diff.contains(token):
+            push_error("Betaflight diff text must expose %s for field-level review" % token)
+            scene.queue_free()
+            return false
+    if scene.import_rates_json("{}") or not scene.rates_last_error.contains("missing field"):
+        push_error("Bad rates JSON imports must fail loud")
+        scene.queue_free()
+        return false
+
+    scene.set_paused(false)
+    scene.set_rates_profile(1.0, 0.0, 0.0)
+    scene.request_takeoff()
+    scene.use_acro_mode()
+    scene.acro_roll_stick = 1.0
+    scene.drone_body.global_position = Vector3(-10.0, 0.0, 0.0)
+    scene.drone_body.linear_velocity = Vector3.ZERO
+    scene.drone_body.angular_velocity = Vector3.ZERO
+    await physics_frame
+    var low_rate := rad_to_deg(float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0)))
+    scene.set_rates_profile(1.0, 0.722222222222, 0.0)
+    await physics_frame
+    var high_rate := rad_to_deg(float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0)))
+    if high_rate <= low_rate * 2.0:
+        push_error("Runtime ACRO path must consume changed rates on the next physics frame; low=%.3f high=%.3f" % [low_rate, high_rate])
         scene.queue_free()
         return false
 

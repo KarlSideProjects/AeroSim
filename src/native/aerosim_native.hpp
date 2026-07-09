@@ -61,6 +61,7 @@ public:
     godot::Dictionary imu_configuration() const;
     godot::Dictionary flight_control_diagnostics() const;
     godot::Dictionary hardware_power_diagnostics() const;
+    double betaflight_rate_degrees_per_second(double stick, double rc_rate, double super_rate, double expo) const;
     bool set_a3_drag_model(
             bool enabled,
             double coefficient_x,

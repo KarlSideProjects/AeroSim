@@ -57,6 +57,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
     ClassDB::bind_method(
+            D_METHOD("betaflight_rate_degrees_per_second", "stick", "rc_rate", "super_rate", "expo"),
+            &AeroSimNative::betaflight_rate_degrees_per_second);
+    ClassDB::bind_method(
             D_METHOD("set_a3_drag_model", "enabled", "coefficient_x", "coefficient_y", "coefficient_z", "motor_0_rpm", "motor_1_rpm", "motor_2_rpm", "motor_3_rpm"),
             &AeroSimNative::set_a3_drag_model);
     ClassDB::bind_method(D_METHOD("a3_drag_configuration"), &AeroSimNative::a3_drag_configuration);
@@ -253,6 +256,10 @@ Dictionary AeroSimNative::hardware_power_diagnostics() const {
     diagnostics["battery_cell_resistance_ohm"] = config.battery_cell_resistance_ohm;
     diagnostics["max_total_current_a"] = config.max_total_current_a;
     return diagnostics;
+}
+
+double AeroSimNative::betaflight_rate_degrees_per_second(double stick, double rc_rate, double super_rate, double expo) const {
+    return aerosim::betaflight_rate_degrees_per_second(stick, {rc_rate, super_rate, expo});
 }
 
 bool AeroSimNative::set_a3_drag_model(
