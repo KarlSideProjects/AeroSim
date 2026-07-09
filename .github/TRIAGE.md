@@ -50,6 +50,8 @@
 
 **2026-07-08 決策紀錄**：#19 iOS Go（Ad Hoc）已關閉（`docs/decisions/G0.10-ios-lane.md`），iOS Lane 解凍、#55 追蹤；#54 與 epic #10（Tier 2）已 wontfix（`.out-of-scope/tier2-betaflight-sitl.md`）；#22 調研階段已完成，實體資料選定需維護者確認，故目前為 `ready-for-human`。
 
+**2026-07-10 決策紀錄**：G3.4 驗收法修正（`docs/decisions/G3.4-verification-amendment.md`）；DEV-M/USR 存證修訂為**維護者親自遊玩驗收**、#22/#26 關閉、G2.8 豁免、G3.6 僅留機制軌（`docs/decisions/2026-07-10-acceptance-simplification.md`）；#27 獲授權於 self-hosted runner 建置 Betaflight SITL（僅開發工具鏈）。
+
 **實作中三種發現的處理（2026-07-10 新增，回應狀態機誤用）**：
 1. **工作沒做完** → 貼 `in-progress`（draft PR 持有成果），不是 `blocked`；續作即可。
 2. **發現真依賴**（需要別張 issue 的成果才能完成）→ 把該依賴**寫進 body 的 Blocked by**（自動補貨靠掃描此欄位），轉貼 `blocked`，draft PR 留註記；依賴關閉時自動解鎖並續作。
