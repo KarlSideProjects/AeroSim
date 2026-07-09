@@ -196,6 +196,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.1"
+
       - name: Install build tools
         run: |
           python3 -m venv build/scons-venv
@@ -276,7 +282,7 @@ jobs:
       - name: Upload Android release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-android
+          name: ci-android-apk
           path: build/release/AeroSim-android.apk
 
   replay-compare:

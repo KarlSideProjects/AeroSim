@@ -41,7 +41,7 @@ Each artifact must be `<= 300 MB`.
 | Windows desktop bundle | `build/release/AeroSim-windows.zip` | size <= 300 MB | CI verified |
 | Linux desktop bundle | `build/release/AeroSim-linux.zip` | size <= 300 MB | CI verified |
 | macOS desktop bundle | `build/release/AeroSim-macos.zip` | size <= 300 MB, signed/notarized if distributed outside a trusted channel | not verified |
-| Android sideload APK | `build/release/AeroSim-android.apk` | size <= 300 MB, installs on device | CI export pending; device install not verified |
+| Android sideload APK | `build/release/AeroSim-android.apk` | size <= 300 MB, installs on device | CI-only APK export pending; production signing and device install not verified |
 | Third-party notices | `build/THIRD_PARTY_NOTICES.txt` | generated from `third_party/licenses.json` | CI verified |
 
 ## Android Sideload
@@ -55,7 +55,8 @@ Each artifact must be `<= 300 MB`.
 The CI APK is signed with a generated test keystore at
 `.deps/aerosim-ci-android.keystore` for artifact validation only. Production
 delivery must replace it with the release keystore before sending the APK to a
-customer.
+customer. CI uploads this test-signed artifact as `ci-android-apk`, not as a
+customer-ready release artifact.
 
 This is `not verified` until performed on a real device.
 

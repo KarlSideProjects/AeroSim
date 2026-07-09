@@ -3,10 +3,12 @@ set -euo pipefail
 
 godot_bin="${GODOT_BIN:-godot}"
 templates_dir="${GODOT_EXPORT_TEMPLATES_DIR:-$HOME/.local/share/godot/export_templates/4.7.stable}"
-release_lib="bin/libaerosim_native.android.template_release.arm64.so"
-out_apk="build/release/AeroSim-android.apk"
-ci_keystore=".deps/aerosim-ci-android.keystore"
+release_lib="${AEROSIM_ANDROID_RELEASE_LIB:-bin/libaerosim_native.android.template_release.arm64.so}"
+out_apk="${AEROSIM_ANDROID_OUT_APK:-build/release/AeroSim-android.apk}"
+ci_keystore="${AEROSIM_ANDROID_CI_KEYSTORE:-.deps/aerosim-ci-android.keystore}"
 android_sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+keytool_bin="${AEROSIM_KEYTOOL:-keytool}"
+apksigner_bin="${AEROSIM_ANDROID_APKSIGNER:-}"
 
 if [ ! -s "$templates_dir/android_release.apk" ]; then
     echo "missing Godot Android export template: $templates_dir/android_release.apk" >&2
@@ -24,16 +26,63 @@ if [ -z "$android_sdk" ] || [ ! -d "$android_sdk/build-tools" ]; then
     exit 1
 fi
 
-if ! command -v keytool >/dev/null 2>&1; then
+if [ -z "$apksigner_bin" ]; then
+    apksigner_bin="$(find "$android_sdk/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -n 1)"
+fi
+
+if [ ! -x "$apksigner_bin" ]; then
+    echo "missing Android apksigner under $android_sdk/build-tools" >&2
+    exit 1
+fi
+
+if ! command -v "$keytool_bin" >/dev/null 2>&1; then
     echo "missing keytool for Android CI test keystore generation" >&2
     exit 1
 fi
 
-mkdir -p build/release .deps
+keytool_path="$(command -v "$keytool_bin")"
+java_home="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$keytool_path")")")}"
+
+mkdir -p "$(dirname "$out_apk")" "$(dirname "$ci_keystore")" .deps
 touch build/.gdignore .deps/.gdignore
 
+python3 - "$android_sdk" "$java_home" "$PWD/$ci_keystore" <<'PY'
+from pathlib import Path
+import sys
+
+android_sdk, java_home, ci_keystore = sys.argv[1:]
+settings_dir = Path.home() / ".config" / "godot"
+settings_file = settings_dir / "editor_settings-4.7.tres"
+settings_dir.mkdir(parents=True, exist_ok=True)
+
+values = {
+    "export/android/android_sdk_path": android_sdk,
+    "export/android/java_sdk_path": java_home,
+    "export/android/debug_keystore": ci_keystore,
+    "export/android/debug_keystore_pass": "android",
+}
+
+if settings_file.exists():
+    lines = settings_file.read_text(encoding="utf-8").splitlines()
+else:
+    lines = ['[gd_resource type="EditorSettings" format=3]', "", "[resource]"]
+
+for key, value in values.items():
+    replacement = f'{key} = "{value}"'
+    for index, line in enumerate(lines):
+        if line.startswith(f"{key} = "):
+            lines[index] = replacement
+            break
+    else:
+        if "[resource]" not in lines:
+            lines.extend(["", "[resource]"])
+        lines.append(replacement)
+
+settings_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+
 if [ ! -s "$ci_keystore" ]; then
-    keytool -genkeypair \
+    "$keytool_bin" -genkeypair \
         -keystore "$ci_keystore" \
         -storepass android \
         -alias aerosim-ci \
@@ -48,4 +97,6 @@ fi
 rm -f "$out_apk"
 "$godot_bin" --headless --path . --export-release "Android" "$out_apk"
 
+"$apksigner_bin" verify "$out_apk"
+unzip -l "$out_apk" | grep -q "lib/arm64-v8a/$(basename "$release_lib")"
 python3 scripts/check_release_artifacts.py "$out_apk"
