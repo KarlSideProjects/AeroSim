@@ -163,6 +163,13 @@ jobs:
               dpkg --add-architecture i386
               apt-get update
               apt-get install -y ca-certificates git python3 python3-venv unzip mingw-w64 wine64 wine32:i386
+              if ! getent group "$HOST_GID" >/dev/null; then
+                groupadd -g "$HOST_GID" hostgroup
+              fi
+              if ! getent passwd "$HOST_UID" >/dev/null; then
+                useradd -u "$HOST_UID" -g "$HOST_GID" -M -d /runner-temp hostuser
+              fi
+              host_user="$(getent passwd "$HOST_UID" | cut -d: -f1)"
               python3 -m venv build/scons-venv
               build/scons-venv/bin/python -m pip install --upgrade pip
               build/scons-venv/bin/python -m pip install scons
@@ -176,7 +183,9 @@ jobs:
               export WINEDEBUG=-all
               export WINEARCH=win64
               export WINEPREFIX=/runner-temp/aerosim-wine
-              wineboot --init || true
+              mkdir -p "$WINEPREFIX"
+              chown -R "$HOST_UID:$HOST_GID" build "$WINEPREFIX"
+              runuser -u "$host_user" -- wineboot --init || true
               mapfile -t test_exes < <(find build/tests -maxdepth 1 -type f -name "*.exe" | sort)
               if [ "${#test_exes[@]}" -eq 0 ]; then
                 echo "::error::No Windows test executables were built in build/tests"
@@ -185,7 +194,7 @@ jobs:
               fi
               for test_exe in "${test_exes[@]}"; do
                 echo "Running ${test_exe} under Wine"
-                wine "$test_exe"
+                runuser -u "$host_user" -- wine "$test_exe"
               done
               rm -rf .deps/godot-cpp
               git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
