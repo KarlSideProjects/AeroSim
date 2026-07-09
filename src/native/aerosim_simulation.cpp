@@ -66,7 +66,7 @@ void integrate(RigidBodyState &state, const SimulationConfig &config, double dt)
     };
 
     state.velocity = state.velocity + acceleration * dt;
-    state.position = state.position + state.velocity * dt;
+    state.position = state.position + (state.velocity + config.wind_mps) * dt;
 
     const Quat omega{
             state.angular_velocity.x,
