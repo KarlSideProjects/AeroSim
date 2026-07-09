@@ -116,6 +116,7 @@ int main() {
     altitude_hold_controller.step_angle_mode(altitude_hold_state, altitude_hold_clock, config, hover, aerosim::Quat{});
     angle_mode_thrust = altitude_hold_controller.motor_thrust_newtons();
     altitude_hold_controller.capture_altitude_hold(hold_altitude_m);
+    double max_altitude_hold_drift_m = 0.0;
     for (int frame = 0; frame < config.physics_hz * 60; ++frame) {
         const double noise_phase = static_cast<double>(frame) / static_cast<double>(config.physics_hz);
         const double noisy_barometer_m = hold_altitude_m +
@@ -131,10 +132,13 @@ int main() {
         if (frame == 0) {
             altitude_hold_entry_thrust = altitude_hold_controller.motor_thrust_newtons();
         }
+        max_altitude_hold_drift_m = std::max(
+                max_altitude_hold_drift_m,
+                std::abs(altitude_hold_state.position.y - hold_altitude_m));
     }
     altitude_hold_controller.step_angle_mode(altitude_hold_state, altitude_hold_clock, config, hover, aerosim::Quat{});
     altitude_hold_exit_thrust = altitude_hold_controller.motor_thrust_newtons();
-    if (std::abs(altitude_hold_state.position.y - hold_altitude_m) > 0.15) {
+    if (max_altitude_hold_drift_m > 0.15) {
         return fail("G2.6 Altitude Hold must keep 60 second altitude drift within +/-15 cm with barometer noise");
     }
     if (std::abs(altitude_hold_entry_thrust - angle_mode_thrust) > config.mass_kg * config.gravity_mps2 * 0.05 ||

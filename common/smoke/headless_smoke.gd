@@ -267,11 +267,12 @@ func _verify_imu_public_path(native: Object) -> bool:
     native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     native.call("capture_altitude_hold")
     var altitude_hold_row := PackedFloat64Array()
+    var max_altitude_drift := 0.0
     for _frame in range(Engine.physics_ticks_per_second * 60):
         altitude_hold_row = native.call("step_altitude_hold_mode", Engine.physics_ticks_per_second, 1000, hover_throttle, 0.0, 0.0, 0.0)
-    var altitude_drift := float(altitude_hold_row[2])
-    if absf(altitude_drift) > 0.15:
-        push_error("G2.6 public Altitude Hold must keep 60 second drift within +/-15 cm with barometer noise; drift=%.6f m" % altitude_drift)
+        max_altitude_drift = maxf(max_altitude_drift, absf(float(altitude_hold_row[2])))
+    if max_altitude_drift > 0.15:
+        push_error("G2.6 public Altitude Hold must keep 60 second drift within +/-15 cm with barometer noise; max drift=%.6f m" % max_altitude_drift)
         return false
     var hold_exit_diagnostics: Dictionary = native.call("flight_control_diagnostics")
     var hold_exit_thrust := float(hold_exit_diagnostics.get("motor_thrust_newtons", 0.0))
