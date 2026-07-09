@@ -159,6 +159,7 @@ func derive_power_model(config: Dictionary) -> Dictionary:
         "twr": max_total_thrust_n / (mass_kg * GRAVITY_MPS2),
         "hover_endurance_minutes": endurance_minutes,
         "hover_rpm": hover_rpm,
+        "max_motor_rpm": max_rpm,
         "hover_current_a": total_hover_current_a,
         "hover_sag_voltage_v": _sag_voltage(float(config.battery.nominal_voltage_v), float(config.battery.cells), float(config.battery.cell_resistance_ohm), total_hover_current_a),
         "net_hover_yaw_torque_nm": _net_yaw_torque(config.spin_direction, float(torque_fit.coefficient), hover_rpm),
@@ -166,6 +167,7 @@ func derive_power_model(config: Dictionary) -> Dictionary:
         "sag_model_r2": _linear_voltage_r2(sag_curve),
         "motor_tau_s": float(config.motor.tau_m_s),
         "battery_nominal_voltage_v": float(config.battery.nominal_voltage_v),
+        "battery_remaining_mah": float(config.battery.capacity_mah) * USABLE_BATTERY_FRACTION,
         "battery_cells": float(config.battery.cells),
         "battery_cell_resistance_ohm": float(config.battery.cell_resistance_ohm),
         "max_total_current_a": float(table[table.size() - 1].current_a) * float(motor_count),
@@ -199,6 +201,15 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             ):
             last_ok = false
             last_error = "native runtime rejected derived power model"
+            push_error(last_error)
+            return false
+        if runtime.native.has_method("set_hardware_telemetry_model") and not runtime.native.call(
+                "set_hardware_telemetry_model",
+                float(power_model.max_motor_rpm),
+                float(power_model.battery_remaining_mah)
+            ):
+            last_ok = false
+            last_error = "native runtime rejected telemetry model"
             push_error(last_error)
             return false
     runtime.set_meta("hardware_config_version", current.version)

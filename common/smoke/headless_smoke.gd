@@ -67,6 +67,9 @@ func _run() -> void:
     if not _verify_flight_control_public_path(native):
         quit(1)
         return
+    if not _verify_telemetry_snapshot_public_path(native):
+        quit(1)
+        return
     var a3_drag_public_verified := _verify_a3_drag_public_path(native)
     if not a3_drag_public_verified:
         quit(1)
@@ -170,6 +173,13 @@ func _configure_default_power_model(native: Object) -> bool:
             float(power_model.max_total_current_a)
         ):
         push_error("Default hardware preset must apply to native public-path smoke")
+        return false
+    if native.has_method("set_hardware_telemetry_model") and not native.call(
+            "set_hardware_telemetry_model",
+            float(power_model.max_motor_rpm),
+            float(power_model.battery_remaining_mah)
+        ):
+        push_error("Default hardware preset must apply native telemetry metadata")
         return false
     return true
 
@@ -385,6 +395,125 @@ func _verify_flight_control_public_path(native: Object) -> bool:
         push_error("G2.5 public Acro full-stick roll must reach 720 deg/s within 5%%")
         return false
     return true
+
+func _verify_telemetry_snapshot_public_path(native: Object) -> bool:
+    for method in ["telemetry_snapshot", "set_hardware_telemetry_model"]:
+        if not native.has_method(method):
+            push_error("AeroSimNative.%s must exist for status diagram telemetry" % method)
+            return false
+
+    native.call("reset_flight")
+    native.call("set_hardware_telemetry_model", 15000.0, 1040.0)
+    if not native.call("arm_flight_control", 0.0):
+        push_error("Telemetry public path should arm from low throttle")
+        return false
+    var hover_throttle := float(native.call("hardware_power_diagnostics").get("hover_throttle", 0.5))
+    var last_row := PackedFloat64Array()
+    for _frame in range(Engine.physics_ticks_per_second):
+        last_row = native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, hover_throttle, 0.0, 0.0, 0.0)
+    var snapshot: Dictionary = native.call("telemetry_snapshot")
+    var required_keys := [
+        "schema_version",
+        "timestamp_us",
+        "snapshot_hz",
+        "publish_count",
+        "coordinate_frame",
+        "motor_order",
+        "motors",
+        "wind_world_mps",
+        "wind_body_mps",
+        "turbulence_intensity",
+        "ground_effect_gain",
+        "downwash_force_n",
+        "propwash_disturbance_rad_s2",
+        "drag_body_n",
+        "battery",
+        "pid",
+        "armed",
+        "mode",
+        "source"
+    ]
+    for key in required_keys:
+        if not snapshot.has(key):
+            push_error("TelemetrySnapshot missing schema key: %s" % key)
+            return false
+    if int(snapshot.schema_version) != 1 or str(snapshot.coordinate_frame) != "FRD" or str(snapshot.source) != "native_double_buffer":
+        push_error("TelemetrySnapshot must expose schema version, FRD frame, and native double-buffer source")
+        return false
+    if int(snapshot.timestamp_us) <= 0 or int(snapshot.publish_count) < 30 or float(snapshot.snapshot_hz) != 30.0:
+        push_error("TelemetrySnapshot must publish at least 30 Hz")
+        return false
+    if int(last_row[0] * 1000000.0) - int(snapshot.timestamp_us) > 100000:
+        push_error("TelemetrySnapshot latency must be <= 100 ms")
+        return false
+    var motors: Array = snapshot.motors
+    if motors.size() != 4 or snapshot.motor_order != ["rear_right", "front_right", "rear_left", "front_left"]:
+        push_error("TelemetrySnapshot must freeze Betaflight quad-X motor order")
+        return false
+    var diagnostics: Dictionary = native.call("flight_control_diagnostics")
+    var total_thrust := 0.0
+    for motor_value in motors:
+        var motor: Dictionary = motor_value
+        total_thrust += float(motor.thrust_newtons)
+        if float(motor.speed_rad_s) <= 0.0 or float(motor.current_a) <= 0.0:
+            push_error("TelemetrySnapshot motors must expose live thrust/rad_s/current")
+            return false
+    if absf(total_thrust - float(diagnostics.motor_thrust_newtons)) > 1e-6:
+        push_error("TelemetrySnapshot motor thrust must match native flight-control diagnostics")
+        return false
+    var battery: Dictionary = snapshot.battery
+    if float(battery.sag_v) <= 0.0 or float(battery.voltage_v) <= 0.0 or float(battery.remaining_mah) <= 0.0:
+        push_error("TelemetrySnapshot battery must expose voltage, sag, and remaining mAh")
+        return false
+    if snapshot.wind_world_mps != Vector3.ZERO or snapshot.wind_body_mps != Vector3.ZERO:
+        push_error("TelemetrySnapshot wind indicators must stay zero until a wind model feeds them")
+        return false
+    if float(snapshot.turbulence_intensity) != 0.0 or float(snapshot.ground_effect_gain) != 0.0 or float(snapshot.downwash_force_n) != 0.0:
+        push_error("TelemetrySnapshot scalar effect indicators must stay zero until runtime models feed them")
+        return false
+    if snapshot.propwash_disturbance_rad_s2 != Vector3.ZERO or snapshot.drag_body_n != Vector3.ZERO:
+        push_error("TelemetrySnapshot vector effect indicators must stay zero until runtime models feed them")
+        return false
+
+    for _frame in range(12):
+        native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 1.0, 0.0, 90.0, 0.0)
+    snapshot = native.call("telemetry_snapshot")
+    motors = snapshot.motors
+    var pid: Array = snapshot.pid
+    var first_motor: Dictionary = motors[0]
+    var first_pid: Dictionary = pid[0]
+    if not bool(first_motor.saturated) or not bool(first_pid.saturated):
+        push_error("TelemetrySnapshot must expose motor and PID saturation")
+        return false
+
+    if not _verify_status_diagram_no_direct_polling():
+        return false
+    return true
+
+func _verify_status_diagram_no_direct_polling() -> bool:
+    var ui_script := _read_text("res://common/flight/status_diagram_debug.gd")
+    if ui_script == "":
+        return false
+    for forbidden in ["ClassDB", "AeroSimNative", "telemetry_snapshot", "step_angle_mode", "step_simulation", "sync_flight_state"]:
+        if ui_script.contains(forbidden):
+            push_error("Status diagram UI must consume snapshots only, found forbidden token: %s" % forbidden)
+            return false
+    for source_path in ["res://src/native/aerosim_flight_control.hpp", "res://src/native/aerosim_flight_control.cpp"]:
+        var source := _read_text(source_path)
+        if source == "":
+            return false
+        for forbidden in ["std::mutex", "lock_guard", "unique_lock", "shared_mutex"]:
+            if source.contains(forbidden):
+                push_error("TelemetrySnapshot exchange must stay double-buffered without mutex-wrapping physics state")
+                return false
+    return true
+
+func _read_text(path: String) -> String:
+    var file := FileAccess.open(path, FileAccess.READ)
+    if file == null:
+        push_error("Cannot read required verification source: %s" % path)
+        return ""
+    return file.get_as_text()
 
 func _verify_a3_drag_public_path(native: Object) -> bool:
     for method in ["set_a3_drag_model", "a3_drag_configuration", "sync_flight_state"]:
@@ -874,6 +1003,22 @@ func _same_collision_row(a: PackedFloat64Array, b: PackedFloat64Array) -> bool:
             return false
     return true
 
+func _same_motor_debug_values(a: Array, b: Array) -> bool:
+    if a.size() != b.size():
+        return false
+    for index in range(a.size()):
+        var left: Dictionary = a[index]
+        var right: Dictionary = b[index]
+        if absf(float(left.thrust_newtons) - float(right.thrust_newtons)) > 1e-9:
+            return false
+        if absf(float(left.speed_rad_s) - float(right.speed_rad_s)) > 1e-9:
+            return false
+        if absf(float(left.current_a) - float(right.current_a)) > 1e-9:
+            return false
+        if bool(left.saturated) != bool(right.saturated):
+            return false
+    return true
+
 func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, mass_kg: float) -> float:
     return 0.5 * mass_kg * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()
 
@@ -952,6 +1097,26 @@ func _verify_runtime_actions() -> bool:
     var runtime_mass := float(scene.native.call("hardware_power_diagnostics").get("mass_kg", 0.0))
     if absf(scene._kinetic(Vector3(10.0, 0.0, 0.0), Vector3.ZERO) - 0.5 * runtime_mass * 100.0) > 1e-9:
         push_error("flight runtime collision energy limit must use configured hardware mass")
+        scene.queue_free()
+        return false
+    if scene.status_diagram == null:
+        push_error("flight runtime must attach the status diagram debug CanvasLayer")
+        scene.queue_free()
+        return false
+    var ui_values: Dictionary = scene.status_diagram.debug_values
+    var native_snapshot: Dictionary = scene.native.call("telemetry_snapshot")
+    if ui_values.is_empty() or int(ui_values.timestamp_us) != int(native_snapshot.timestamp_us) or str(ui_values.source) != "native_double_buffer":
+        push_error("status diagram UI must render the latest native double-buffer telemetry snapshot")
+        scene.queue_free()
+        return false
+    if not _same_motor_debug_values(ui_values.motors, native_snapshot.motors):
+        push_error("status diagram motor values must match TelemetrySnapshot truth")
+        scene.queue_free()
+        return false
+    var ui_battery: Dictionary = ui_values.battery
+    var native_battery: Dictionary = native_snapshot.battery
+    if float(ui_battery.sag_v) != float(native_battery.sag_v):
+        push_error("status diagram battery sag must match TelemetrySnapshot truth")
         scene.queue_free()
         return false
     if not scene.fallback_status_label.text.contains("Mode: ANGLE"):

@@ -2,6 +2,7 @@ extends Node3D
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
+const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const TAKEOFF_VELOCITY := Vector3(30.0, 0.0, 0.0)
@@ -29,9 +30,11 @@ var flight_mode := "ANGLE"
 var acro_roll_stick := 0.0
 var acro_pitch_stick := 0.0
 var acro_yaw_stick := 0.0
+var status_diagram: CanvasLayer
 
 func _ready() -> void:
     _build_main_menu()
+    _build_status_diagram()
     native = ClassDB.instantiate("AeroSimNative")
     if native == null:
         push_error("AeroSimNative is not registered")
@@ -140,6 +143,7 @@ func _physics_process(_delta: float) -> void:
             Vector3(row[8], row[9], row[10]),
             Vector3(row[14], row[15], row[16])
         )
+    _update_status_diagram()
 
 func request_takeoff() -> void:
     screen = "flight"
@@ -223,6 +227,15 @@ func _build_main_menu() -> void:
         entries.add_child(button)
         if entry == "Quick Fly":
             button.pressed.connect(quick_fly.bind("calibrated"))
+
+func _build_status_diagram() -> void:
+    status_diagram = StatusDiagramDebug.new()
+    add_child(status_diagram)
+
+func _update_status_diagram() -> void:
+    if status_diagram == null or native == null or not native.has_method("telemetry_snapshot"):
+        return
+    status_diagram.update_from_snapshot(native.call("telemetry_snapshot"))
 
 func _reset_drone_body() -> void:
     drone_body.reset_contact()
