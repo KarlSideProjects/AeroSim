@@ -52,11 +52,12 @@ Each artifact must be `<= 300 MB`.
 4. Launch AeroSim and record cold-start time to first flyable screen.
 5. Record device model, Android version, install result, and launch result.
 
-The CI APK is signed with a generated test keystore at
-`.deps/aerosim-ci-android.keystore` for artifact validation only. Production
-delivery must replace it with the release keystore before sending the APK to a
-customer. CI uploads this test-signed artifact as `ci-android-apk`, not as a
-customer-ready release artifact.
+The CI APK is signed with a generated test keystore at the job-local
+`$RUNNER_TEMP/aerosim-tools-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB/aerosim-ci-android.keystore`
+path, or the explicit `AEROSIM_ANDROID_CI_KEYSTORE` path, for artifact
+validation only. Production delivery must replace it with the release keystore
+before sending the APK to a customer. CI uploads this test-signed artifact as
+`ci-android-apk`, not as a customer-ready release artifact.
 
 This is `not verified` until performed on a real device.
 

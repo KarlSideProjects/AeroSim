@@ -2,15 +2,20 @@
 set -euo pipefail
 
 godot_cpp_commit="ba0edfed90512ec64aba51d4295a3e7e30112f86"
-godot_cpp_dir="${GODOT_CPP_DIR:-.deps/godot-cpp}"
+: "${RUNNER_TEMP:?RUNNER_TEMP must be set for job-local Godot and build tool paths}"
+tool_root="${AEROSIM_TOOL_ROOT:-$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID:-local-$$}-${GITHUB_RUN_ATTEMPT:-1}-${GITHUB_JOB:-verify-issue-11}}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$tool_root/xdg-cache}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$tool_root/xdg-config}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$tool_root/xdg-data}"
+godot_cpp_dir="${GODOT_CPP_DIR:-$tool_root/godot-cpp}"
 
 scripts/test_native.sh
 scripts/test_license_scan.sh
 
 if ! command -v scons >/dev/null 2>&1; then
-    python3 -m venv .deps/venv
-    .deps/venv/bin/python -m pip install -q --upgrade pip scons
-    scons_cmd=".deps/venv/bin/scons"
+    python3 -m venv "$tool_root/scons-venv"
+    "$tool_root/scons-venv/bin/python" -m pip install -q --upgrade pip scons
+    scons_cmd="$tool_root/scons-venv/bin/scons"
 else
     scons_cmd="scons"
 fi

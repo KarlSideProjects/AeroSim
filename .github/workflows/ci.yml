@@ -19,9 +19,14 @@ jobs:
 
       - name: Set job-local tool paths
         run: |
-          echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache" >> "$GITHUB_ENV"
-          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg-config" >> "$GITHUB_ENV"
-          echo "XDG_DATA_HOME=$RUNNER_TEMP/xdg-data" >> "$GITHUB_ENV"
+          tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          rm -rf "$tool_root"
+          mkdir -p "$tool_root"
+          echo "AEROSIM_TOOL_ROOT=$tool_root" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$tool_root/xdg-cache" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$tool_root/xdg-config" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
+          echo "GODOT_CPP_DIR=$tool_root/godot-cpp" >> "$GITHUB_ENV"
 
       - name: Install build tools
         run: |
@@ -59,8 +64,8 @@ jobs:
 
       - name: Fetch Godot 4.7
         run: |
-          godot_dir="$RUNNER_TEMP/godot"
-          godot_zip="$RUNNER_TEMP/godot.zip"
+          godot_dir="$AEROSIM_TOOL_ROOT/godot"
+          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
           rm -rf "$godot_dir" "$godot_zip"
           curl -L -o "$godot_zip" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
           echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  $godot_zip" | sha256sum -c -
@@ -69,12 +74,12 @@ jobs:
 
       - name: Fetch godot-cpp
         run: |
-          rm -rf .deps/godot-cpp
-          git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
-          git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
+          rm -rf "$GODOT_CPP_DIR"
+          git clone https://github.com/godotengine/godot-cpp.git "$GODOT_CPP_DIR"
+          git -C "$GODOT_CPP_DIR" checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
 
       - name: Build GDExtension
-        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=linux
+        run: scons target=template_debug platform=linux
 
       - name: Headless smoke
         run: |
@@ -110,8 +115,8 @@ jobs:
 
       - name: Install Godot export templates
         run: |
-          templates_archive="$RUNNER_TEMP/godot-export-templates.tpz"
-          templates_unpack_dir="$RUNNER_TEMP/godot-export-templates"
+          templates_archive="$AEROSIM_TOOL_ROOT/godot-export-templates.tpz"
+          templates_unpack_dir="$AEROSIM_TOOL_ROOT/godot-export-templates"
           templates_dir="$XDG_DATA_HOME/godot/export_templates/4.7.stable"
           curl -L -o "$templates_archive" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_export_templates.tpz
           echo "1035dfde4edcc2472bb0c0b9610ce3ee9302642c2b9957e9066372f9f6bb759ab250c8887551a66f0bc5f51bbd9a58bb45e33a0f29844e97615a9b1138c1120e  $templates_archive" | sha512sum -c -
@@ -121,7 +126,7 @@ jobs:
           cp -a "$templates_unpack_dir/templates/." "$templates_dir/"
 
       - name: Build Linux release GDExtension
-        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_release platform=linux
+        run: scons target=template_release platform=linux
 
       - name: Export Linux release artifact
         run: scripts/export_linux_release.sh
@@ -146,9 +151,14 @@ jobs:
 
       - name: Set job-local tool paths
         run: |
-          echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache" >> "$GITHUB_ENV"
-          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg-config" >> "$GITHUB_ENV"
-          echo "XDG_DATA_HOME=$RUNNER_TEMP/xdg-data" >> "$GITHUB_ENV"
+          tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          rm -rf "$tool_root"
+          mkdir -p "$tool_root"
+          echo "AEROSIM_TOOL_ROOT=$tool_root" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$tool_root/xdg-cache" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$tool_root/xdg-config" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
+          echo "GODOT_CPP_DIR=$tool_root/godot-cpp" >> "$GITHUB_ENV"
 
       - name: Windows compatibility build and replay in Docker
         run: |
@@ -156,13 +166,13 @@ jobs:
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             -v "$PWD:/work" \
-            -v "$RUNNER_TEMP:/runner-temp" \
+            -v "$AEROSIM_TOOL_ROOT:/runner-temp" \
             -w /work \
             ubuntu:24.04 \
             bash -lc '
               set -euo pipefail
               rm -rf build bin .deps .sconsign.dblite src/native/*.os
-              trap "chown -R \"$HOST_UID:$HOST_GID\" build bin .deps /runner-temp/aerosim-wine 2>/dev/null || true" EXIT
+              trap "chown -R \"$HOST_UID:$HOST_GID\" build bin .deps /runner-temp 2>/dev/null || true" EXIT
               export DEBIAN_FRONTEND=noninteractive
               dpkg --add-architecture i386
               apt-get update
@@ -200,11 +210,12 @@ jobs:
                 echo "Running ${test_exe} under Wine"
                 runuser -u "$host_user" -- wine "$test_exe"
               done
-              rm -rf .deps/godot-cpp
-              git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
-              git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
-              GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=windows use_mingw=yes
-              GODOT_CPP_DIR=.deps/godot-cpp scons target=template_release platform=windows use_mingw=yes
+              export GODOT_CPP_DIR=/runner-temp/godot-cpp
+              rm -rf "$GODOT_CPP_DIR"
+              git clone https://github.com/godotengine/godot-cpp.git "$GODOT_CPP_DIR"
+              git -C "$GODOT_CPP_DIR" checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
+              scons target=template_debug platform=windows use_mingw=yes
+              scons target=template_release platform=windows use_mingw=yes
             '
 
       - name: Upload Windows replay artifact
@@ -215,8 +226,8 @@ jobs:
 
       - name: Fetch Godot 4.7
         run: |
-          godot_dir="$RUNNER_TEMP/godot"
-          godot_zip="$RUNNER_TEMP/godot.zip"
+          godot_dir="$AEROSIM_TOOL_ROOT/godot"
+          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
           rm -rf "$godot_dir" "$godot_zip"
           curl -L -o "$godot_zip" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
           echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  $godot_zip" | sha256sum -c -
@@ -225,8 +236,8 @@ jobs:
 
       - name: Install Godot export templates
         run: |
-          templates_archive="$RUNNER_TEMP/godot-export-templates.tpz"
-          templates_unpack_dir="$RUNNER_TEMP/godot-export-templates"
+          templates_archive="$AEROSIM_TOOL_ROOT/godot-export-templates.tpz"
+          templates_unpack_dir="$AEROSIM_TOOL_ROOT/godot-export-templates"
           templates_dir="$XDG_DATA_HOME/godot/export_templates/4.7.stable"
           curl -L -o "$templates_archive" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_export_templates.tpz
           echo "1035dfde4edcc2472bb0c0b9610ce3ee9302642c2b9957e9066372f9f6bb759ab250c8887551a66f0bc5f51bbd9a58bb45e33a0f29844e97615a9b1138c1120e  $templates_archive" | sha512sum -c -
@@ -246,8 +257,6 @@ jobs:
 
   android:
     runs-on: [self-hosted, Linux, X64]
-    env:
-      ANDROID_NDK_ROOT: ${{ github.workspace }}/.deps/android-ndk
     steps:
       - name: Clean self-hosted workspace
         run: |
@@ -261,14 +270,21 @@ jobs:
       - name: Set job-local tool paths
         id: android_tool_paths
         run: |
-          echo "XDG_CACHE_HOME=$RUNNER_TEMP/xdg-cache" >> "$GITHUB_ENV"
-          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg-config" >> "$GITHUB_ENV"
-          echo "XDG_DATA_HOME=$RUNNER_TEMP/xdg-data" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$RUNNER_TEMP/android-sdk" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$RUNNER_TEMP/android-sdk" >> "$GITHUB_ENV"
-          echo "ANDROID_USER_HOME=$RUNNER_TEMP/android-user" >> "$GITHUB_ENV"
-          echo "ANDROID_AVD_HOME=$RUNNER_TEMP/android-avd" >> "$GITHUB_ENV"
-          echo "ADB_VENDOR_KEYS=$RUNNER_TEMP/adb-keys" >> "$GITHUB_ENV"
+          tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          rm -rf "$tool_root"
+          mkdir -p "$tool_root"
+          echo "AEROSIM_TOOL_ROOT=$tool_root" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$tool_root/xdg-cache" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$tool_root/xdg-config" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
+          echo "GODOT_CPP_DIR=$tool_root/godot-cpp" >> "$GITHUB_ENV"
+          echo "AEROSIM_ANDROID_CI_KEYSTORE=$tool_root/aerosim-ci-android.keystore" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$tool_root/android-ndk" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$tool_root/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$tool_root/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_USER_HOME=$tool_root/android-user" >> "$GITHUB_ENV"
+          echo "ANDROID_AVD_HOME=$tool_root/android-avd" >> "$GITHUB_ENV"
+          echo "ADB_VENDOR_KEYS=$tool_root/adb-keys" >> "$GITHUB_ENV"
           adb_port=$((5037 + GITHUB_RUN_ID % 1000))
           emulator_port=$((5554 + 2 * (GITHUB_RUN_ID % 16)))
           avd_name="aerosim-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -281,7 +297,7 @@ jobs:
             echo "avd_name=$avd_name"
             echo "emulator_port=$emulator_port"
           } >> "$GITHUB_OUTPUT"
-          mkdir -p "$RUNNER_TEMP/android-sdk" "$RUNNER_TEMP/android-user" "$RUNNER_TEMP/android-avd"
+          mkdir -p "$tool_root/android-sdk" "$tool_root/android-user" "$tool_root/android-avd"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -298,19 +314,22 @@ jobs:
 
       - name: Install Android NDK
         run: |
-          ndk_zip="$RUNNER_TEMP/android-ndk.zip"
+          ndk_zip="$AEROSIM_TOOL_ROOT/android-ndk.zip"
+          ndk_unpack_dir="$AEROSIM_TOOL_ROOT/android-ndk-unpack"
+          rm -rf "$ANDROID_NDK_ROOT" "$ndk_unpack_dir"
           rm -f "$ndk_zip"
           curl -L -o "$ndk_zip" https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
           echo "22105e410cf29afcf163760cc95522b9fb981121  $ndk_zip" | sha1sum -c -
-          unzip -q "$ndk_zip" -d .deps
-          mv .deps/android-ndk-r27d "$ANDROID_NDK_ROOT"
+          unzip -q "$ndk_zip" -d "$ndk_unpack_dir"
+          mv "$ndk_unpack_dir/android-ndk-r27d" "$ANDROID_NDK_ROOT"
 
       - name: Build Android native unit tests
         env:
           AEROSIM_RUN_NATIVE_TESTS: "0"
-          CXX: ${{ github.workspace }}/.deps/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang++
           CXXFLAGS: -static-libstdc++
-        run: scripts/test_native.sh
+        run: |
+          export CXX="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang++"
+          scripts/test_native.sh
 
       - name: Enable KVM
         run: |
@@ -340,17 +359,17 @@ jobs:
 
       - name: Fetch godot-cpp
         run: |
-          rm -rf .deps/godot-cpp
-          git clone https://github.com/godotengine/godot-cpp.git .deps/godot-cpp
-          git -C .deps/godot-cpp checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
+          rm -rf "$GODOT_CPP_DIR"
+          git clone https://github.com/godotengine/godot-cpp.git "$GODOT_CPP_DIR"
+          git -C "$GODOT_CPP_DIR" checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
 
       - name: Build GDExtension
-        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_debug platform=android arch=arm64 ANDROID_HOME=
+        run: scons target=template_debug platform=android arch=arm64 ANDROID_HOME=
 
       - name: Fetch Godot 4.7
         run: |
-          godot_dir="$RUNNER_TEMP/godot"
-          godot_zip="$RUNNER_TEMP/godot.zip"
+          godot_dir="$AEROSIM_TOOL_ROOT/godot"
+          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
           rm -rf "$godot_dir" "$godot_zip"
           curl -L -o "$godot_zip" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
           echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  $godot_zip" | sha256sum -c -
@@ -359,8 +378,8 @@ jobs:
 
       - name: Install Godot export templates
         run: |
-          templates_archive="$RUNNER_TEMP/godot-export-templates.tpz"
-          templates_unpack_dir="$RUNNER_TEMP/godot-export-templates"
+          templates_archive="$AEROSIM_TOOL_ROOT/godot-export-templates.tpz"
+          templates_unpack_dir="$AEROSIM_TOOL_ROOT/godot-export-templates"
           templates_dir="$XDG_DATA_HOME/godot/export_templates/4.7.stable"
           curl -L -o "$templates_archive" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_export_templates.tpz
           echo "1035dfde4edcc2472bb0c0b9610ce3ee9302642c2b9957e9066372f9f6bb759ab250c8887551a66f0bc5f51bbd9a58bb45e33a0f29844e97615a9b1138c1120e  $templates_archive" | sha512sum -c -
@@ -370,7 +389,7 @@ jobs:
           cp -a "$templates_unpack_dir/templates/." "$templates_dir/"
 
       - name: Build Android release GDExtension
-        run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_release platform=android arch=arm64 ANDROID_HOME=
+        run: scons target=template_release platform=android arch=arm64 ANDROID_HOME=
 
       - name: Export Android release artifact
         run: scripts/export_android_release.sh

@@ -18,7 +18,7 @@ fi
 
 if [ ! -s "$release_lib" ]; then
     echo "missing Windows release GDExtension: $release_lib" >&2
-    echo "run: GODOT_CPP_DIR=.deps/godot-cpp scons target=template_release platform=windows use_mingw=yes" >&2
+    echo "run: GODOT_CPP_DIR=\$RUNNER_TEMP/aerosim-tools-\$GITHUB_RUN_ID-\$GITHUB_RUN_ATTEMPT-\$GITHUB_JOB/godot-cpp scons target=template_release platform=windows use_mingw=yes" >&2
     exit 1
 fi
 
