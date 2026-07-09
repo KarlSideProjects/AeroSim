@@ -83,6 +83,11 @@ enum class Scenario {
     TumbleGround,
 };
 
+enum class ControlMode {
+    Angle,
+    Acro,
+};
+
 struct TrialSetup {
     aerosim::RigidBodyState state;
     aerosim::CollisionContact contact;
@@ -121,7 +126,23 @@ TrialSetup setup_trial(Scenario scenario, std::uint32_t seed) {
     return setup;
 }
 
-TrialResult run_trial(Scenario scenario, std::uint32_t seed) {
+aerosim::CollisionStepResult step_trial_mode(
+        ControlMode mode,
+        aerosim::CollisionAuthoritySwitch &authority,
+        aerosim::RigidBodyState &state,
+        aerosim::SimulationClock &clock,
+        aerosim::FlightController &controller,
+        const aerosim::SimulationConfig &config,
+        const aerosim::FlightCommand &angle_command,
+        const aerosim::AcroCommand &acro_command,
+        const aerosim::CollisionContact &contact) {
+    if (mode == ControlMode::Acro) {
+        return authority.step_acro(state, clock, controller, config, acro_command, contact);
+    }
+    return authority.step(state, clock, controller, config, angle_command, contact);
+}
+
+TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
     aerosim::SimulationConfig config;
     config.physics_hz = 240;
     config.substep_hz = 1000;
@@ -136,8 +157,20 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed) {
 
     aerosim::FlightCommand hover;
     hover.throttle = 0.5;
+    aerosim::AcroCommand acro_hover;
+    acro_hover.throttle = 0.5;
+    acro_hover.rates = {1.0, 0.7, 0.0};
     const double kinetic_before = aerosim::kinetic_energy_joules(state, config.mass_kg);
-    const aerosim::CollisionStepResult impact = authority.step(state, clock, controller, config, hover, setup.contact);
+    const aerosim::CollisionStepResult impact = step_trial_mode(
+            mode,
+            authority,
+            state,
+            clock,
+            controller,
+            config,
+            hover,
+            acro_hover,
+            setup.contact);
     if (impact.authority != aerosim::PhysicsAuthority::Jolt) {
         return {};
     }
@@ -157,9 +190,15 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed) {
     recover.roll_degrees = 3.0;
     recover.pitch_degrees = -2.0;
     recover.yaw_rate_degrees_per_second = 45.0;
+    aerosim::AcroCommand acro_recover;
+    acro_recover.throttle = 0.8;
+    acro_recover.roll_stick = 0.1;
+    acro_recover.pitch_stick = -0.1;
+    acro_recover.yaw_stick = 0.1;
+    acro_recover.rates = {1.0, 0.7, 0.0};
 
     for (int frame = 0; frame < authority.release_frames(); ++frame) {
-        authority.step(state, clock, controller, config, recover, clear);
+        step_trial_mode(mode, authority, state, clock, controller, config, recover, acro_recover, clear);
     }
     if (authority.current_authority() != aerosim::PhysicsAuthority::FlightCore) {
         return {};
@@ -167,7 +206,7 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed) {
 
     const double y_before_response = state.position.y;
     for (int frame = 0; frame < config.physics_hz / 2; ++frame) {
-        authority.step(state, clock, controller, config, recover, clear);
+        step_trial_mode(mode, authority, state, clock, controller, config, recover, acro_recover, clear);
     }
     if (state.position.y <= y_before_response || !finite(state)) {
         return {};
@@ -337,16 +376,22 @@ int main() {
             Scenario::PoleBounce,
             Scenario::TumbleGround,
     };
+    constexpr std::array<ControlMode, 2> modes{
+            ControlMode::Angle,
+            ControlMode::Acro,
+    };
 
-    for (Scenario scenario : scenarios) {
-        for (std::uint32_t seed = 0; seed < 100; ++seed) {
-            const TrialResult first = run_trial(scenario, seed);
-            const TrialResult second = run_trial(scenario, seed);
-            if (first.substeps == 0 || second.substeps == 0) {
-                return fail("G0.8 randomized collision scenario failed its authority/energy/response contract");
-            }
-            if (first.substeps != second.substeps || !same_state_bits(first.final_state, second.final_state)) {
-                return fail("G0.8 same-seed collision replay must be bitwise deterministic");
+    for (ControlMode mode : modes) {
+        for (Scenario scenario : scenarios) {
+            for (std::uint32_t seed = 0; seed < 100; ++seed) {
+                const TrialResult first = run_trial(scenario, seed, mode);
+                const TrialResult second = run_trial(scenario, seed, mode);
+                if (first.substeps == 0 || second.substeps == 0) {
+                    return fail("G0.8 randomized collision scenario failed its authority/energy/response contract");
+                }
+                if (first.substeps != second.substeps || !same_state_bits(first.final_state, second.final_state)) {
+                    return fail("G0.8 same-seed collision replay must be bitwise deterministic");
+                }
             }
         }
     }

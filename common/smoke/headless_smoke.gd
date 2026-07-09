@@ -495,6 +495,9 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     return true
 
 func _verify_collision_public_path(native: Object) -> bool:
+    if not native.has_method("step_collision_acro_mode"):
+        push_error("AeroSimNative.step_collision_acro_mode must exist for ACRO collision authority")
+        return false
     native.call("reset_flight")
     native.call("set_collision_release_frames", 5)
     if not native.call("arm_flight_control", 0.0):
@@ -558,17 +561,18 @@ func _verify_jolt_collision_scene(native: Object) -> bool:
         return false
 
     verified_jolt_collision_trials = 0
-    for scenario in ["wall", "glancing_ground", "pole", "tumble_ground"]:
-        for seed in range(100):
-            var first: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg)
-            var second: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg)
-            if not first.ok or not second.ok or not _same_collision_row(first.row, second.row):
-                push_error("Headless Jolt G0.8 trial failed: %s seed %d first=%s second=%s" % [scenario, seed, first.get("reason", ""), second.get("reason", "")])
-                return false
-            verified_jolt_collision_trials += 1
+    for mode in ["ANGLE", "ACRO"]:
+        for scenario in ["wall", "glancing_ground", "pole", "tumble_ground"]:
+            for seed in range(100):
+                var first: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg, mode)
+                var second: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg, mode)
+                if not first.ok or not second.ok or not _same_collision_row(first.row, second.row):
+                    push_error("Headless Jolt G0.8 trial failed: %s %s seed %d first=%s second=%s" % [mode, scenario, seed, first.get("reason", ""), second.get("reason", "")])
+                    return false
+                verified_jolt_collision_trials += 1
     return true
 
-func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass_kg: float) -> Dictionary:
+func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass_kg: float, mode: String) -> Dictionary:
     var trial_root := Node3D.new()
     trial_root.name = "JoltCollisionTrial"
     root.add_child(trial_root)
@@ -612,7 +616,8 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
                 drone.contact_impulse,
                 solved_linear,
                 solved_angular,
-                energy_before
+                energy_before,
+                mode
             )
             reason = "impact"
             break
@@ -647,7 +652,7 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
         for _frame in range(3):
             await physics_frame
             _sync_native_from_body(native, drone)
-            clear = _step_native_clear_collision(native, 0.8)
+            clear = _step_native_clear_collision(native, 0.8, mode)
             _apply_collision_row_to_body(drone, clear)
         ok = clear.size() >= 24 and int(clear[12]) == 0
         if not ok:
@@ -656,7 +661,7 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
         for _frame in range(Engine.physics_ticks_per_second / 2):
             await physics_frame
             _sync_native_from_body(native, drone)
-            clear = _step_native_clear_collision(native, 0.8)
+            clear = _step_native_clear_collision(native, 0.8, mode)
             _apply_collision_row_to_body(drone, clear)
         ok = ok and clear.size() >= 18 and float(clear[9]) > vertical_velocity_before_response and _collision_row_finite(clear)
         if not ok and reason == "impact":
@@ -674,7 +679,7 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
     await process_frame
     return {"ok": ok, "row": impact_row, "reason": reason}
 
-func _step_native_clear_collision(native: Object, throttle: float) -> PackedFloat64Array:
+func _step_native_clear_collision(native: Object, throttle: float, mode := "ANGLE") -> PackedFloat64Array:
     return _step_native_collision(
         native,
         throttle,
@@ -683,7 +688,8 @@ func _step_native_clear_collision(native: Object, throttle: float) -> PackedFloa
         Vector3.ZERO,
         Vector3.ZERO,
         Vector3.ZERO,
-        -1.0
+        -1.0,
+        mode
     )
 
 func _step_native_collision(
@@ -694,8 +700,37 @@ func _step_native_collision(
     impulse: Vector3,
     resolved_linear: Vector3,
     resolved_angular: Vector3,
-    energy_limit: float
+    energy_limit: float,
+    mode := "ANGLE"
 ) -> PackedFloat64Array:
+    if mode == "ACRO":
+        return native.call(
+            "step_collision_acro_mode",
+            Engine.physics_ticks_per_second,
+            1000,
+            throttle,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.722222222222,
+            0.0,
+            touching,
+            normal.x,
+            normal.y,
+            normal.z,
+            impulse.x,
+            impulse.y,
+            impulse.z,
+            0.0,
+            resolved_linear.x,
+            resolved_linear.y,
+            resolved_linear.z,
+            resolved_angular.x,
+            resolved_angular.y,
+            resolved_angular.z,
+            energy_limit
+        )
     return native.call(
         "step_collision_angle_mode",
         Engine.physics_ticks_per_second,
@@ -914,6 +949,11 @@ func _verify_runtime_actions() -> bool:
         push_error("flight runtime must feed DroneBody Jolt contact into native collision authority")
         scene.queue_free()
         return false
+    var runtime_mass := float(scene.native.call("hardware_power_diagnostics").get("mass_kg", 0.0))
+    if absf(scene._kinetic(Vector3(10.0, 0.0, 0.0), Vector3.ZERO) - 0.5 * runtime_mass * 100.0) > 1e-9:
+        push_error("flight runtime collision energy limit must use configured hardware mass")
+        scene.queue_free()
+        return false
     if not scene.fallback_status_label.text.contains("Mode: ANGLE"):
         push_error("flight runtime must show Angle mode on the existing status line")
         scene.queue_free()
@@ -929,6 +969,35 @@ func _verify_runtime_actions() -> bool:
         push_error("flight_altitude_hold action must return the existing status line to Angle mode")
         scene.queue_free()
         return false
+
+    scene.flight_mode = "ACRO"
+    scene.update_fallback_status()
+    scene.native.call("reset_flight")
+    scene.native.call("set_collision_release_frames", 3)
+    scene.native.call("arm_flight_control", 0.0)
+    scene.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3(30.0, 0.0, 0.0), Vector3.ZERO)
+    scene.drone_body.contact_seen = true
+    scene.drone_body.contact_normal = Vector3.LEFT
+    scene.drone_body.contact_impulse = Vector3.ZERO
+    scene.acro_roll_stick = 1.0
+    var acro_handoffs_before: int = scene.collision_handoff_count
+    var acro_rate_observed := false
+    for _frame in range(Engine.physics_ticks_per_second / 2):
+        await physics_frame
+        if absf(scene.drone_body.angular_velocity.z) > 1.0:
+            acro_rate_observed = true
+            break
+    scene.acro_roll_stick = 0.0
+    if scene.collision_handoff_count <= acro_handoffs_before:
+        push_error("flight runtime ACRO path must feed DroneBody contact into native collision authority")
+        scene.queue_free()
+        return false
+    if scene.last_collision_authority != 0 or not acro_rate_observed:
+        push_error("flight runtime ACRO path must hand back and respond to rates input within 0.5 seconds; authority=%d angular_z=%f" % [scene.last_collision_authority, scene.drone_body.angular_velocity.z])
+        scene.queue_free()
+        return false
+    scene.flight_mode = "ANGLE"
+    scene.update_fallback_status()
 
     await _press_key(KEY_P)
     if not scene.paused:

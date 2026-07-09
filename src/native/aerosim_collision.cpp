@@ -208,4 +208,37 @@ CollisionStepResult CollisionAuthoritySwitch::step_altitude_hold(
             {}};
 }
 
+CollisionStepResult CollisionAuthoritySwitch::step_acro(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        FlightController &controller,
+        const SimulationConfig &config,
+        const AcroCommand &command,
+        const CollisionContact &contact) {
+    if (contact.touching) {
+        if (authority_ != PhysicsAuthority::Jolt) {
+            controller.reset_integrators();
+        }
+        authority_ = PhysicsAuthority::Jolt;
+        clear_frames_ = 0;
+        resolve_contact(state, contact, config.mass_kg);
+
+        CollisionStepResult result{authority_, sample_jolt_frame(state, clock, config), contact.normal, contact.impulse};
+        const double energy_limit = contact.max_kinetic_energy_joules > 0.0 ? contact.max_kinetic_energy_joules : -1.0;
+        clamp_energy(state, config.mass_kg, energy_limit);
+        result.sample.state = state;
+        return result;
+    }
+
+    if (authority_ == PhysicsAuthority::Jolt) {
+        ++clear_frames_;
+        if (clear_frames_ < release_frames_) {
+            return {authority_, sample_jolt_frame(state, clock, config), {}, {}};
+        }
+        authority_ = PhysicsAuthority::FlightCore;
+    }
+
+    return {authority_, controller.step_acro_mode(state, clock, config, command), {}, {}};
+}
+
 } // namespace aerosim

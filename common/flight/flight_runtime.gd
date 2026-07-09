@@ -6,6 +6,9 @@ const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const TAKEOFF_VELOCITY := Vector3(30.0, 0.0, 0.0)
 const FLIGHT_THROTTLE := 0.75
+const ACRO_RC_RATE := 1.0
+const ACRO_SUPER_RATE := 13.0 / 18
+const ACRO_EXPO := 0.0
 
 @onready var fallback_status_label: Label3D = %FallbackStatus
 @onready var drone_body = get_node_or_null("DroneBody")
@@ -23,6 +26,9 @@ var last_collision_authority := -1
 var collision_handoff_count := 0
 var reset_hold_frames := 0
 var flight_mode := "ANGLE"
+var acro_roll_stick := 0.0
+var acro_pitch_stick := 0.0
+var acro_yaw_stick := 0.0
 
 func _ready() -> void:
     _build_main_menu()
@@ -62,37 +68,69 @@ func _physics_process(_delta: float) -> void:
     if drone_body != null:
         _sync_native_from_drone()
         var energy_limit := _kinetic(drone_body.linear_velocity, drone_body.angular_velocity)
-        var step_method := "step_collision_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_collision_angle_mode"
-        row = native.call(
-            step_method,
-            Engine.physics_ticks_per_second,
-            1000,
-            FLIGHT_THROTTLE,
-            0.0,
-            0.0,
-            0.0,
-            drone_body.contact_seen,
-            drone_body.contact_normal.x,
-            drone_body.contact_normal.y,
-            drone_body.contact_normal.z,
-            drone_body.contact_impulse.x,
-            drone_body.contact_impulse.y,
-            drone_body.contact_impulse.z,
-            0.0,
-            drone_body.linear_velocity.x,
-            drone_body.linear_velocity.y,
-            drone_body.linear_velocity.z,
-            drone_body.angular_velocity.x,
-            drone_body.angular_velocity.y,
-            drone_body.angular_velocity.z,
-            energy_limit
-        )
+        if flight_mode == "ACRO":
+            row = native.call(
+                "step_collision_acro_mode",
+                Engine.physics_ticks_per_second,
+                1000,
+                FLIGHT_THROTTLE,
+                _acro_roll_stick(),
+                _acro_pitch_stick(),
+                _acro_yaw_stick(),
+                ACRO_RC_RATE,
+                ACRO_SUPER_RATE,
+                ACRO_EXPO,
+                drone_body.contact_seen,
+                drone_body.contact_normal.x,
+                drone_body.contact_normal.y,
+                drone_body.contact_normal.z,
+                drone_body.contact_impulse.x,
+                drone_body.contact_impulse.y,
+                drone_body.contact_impulse.z,
+                0.0,
+                drone_body.linear_velocity.x,
+                drone_body.linear_velocity.y,
+                drone_body.linear_velocity.z,
+                drone_body.angular_velocity.x,
+                drone_body.angular_velocity.y,
+                drone_body.angular_velocity.z,
+                energy_limit
+            )
+        else:
+            var step_method := "step_collision_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_collision_angle_mode"
+            row = native.call(
+                step_method,
+                Engine.physics_ticks_per_second,
+                1000,
+                FLIGHT_THROTTLE,
+                0.0,
+                0.0,
+                0.0,
+                drone_body.contact_seen,
+                drone_body.contact_normal.x,
+                drone_body.contact_normal.y,
+                drone_body.contact_normal.z,
+                drone_body.contact_impulse.x,
+                drone_body.contact_impulse.y,
+                drone_body.contact_impulse.z,
+                0.0,
+                drone_body.linear_velocity.x,
+                drone_body.linear_velocity.y,
+                drone_body.linear_velocity.z,
+                drone_body.angular_velocity.x,
+                drone_body.angular_velocity.y,
+                drone_body.angular_velocity.z,
+                energy_limit
+            )
         if drone_body.contact_seen:
             collision_handoff_count += 1
         drone_body.reset_contact()
     else:
-        var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
-        row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, FLIGHT_THROTTLE, 0.0, 0.0, 0.0)
+        if flight_mode == "ACRO":
+            row = native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, FLIGHT_THROTTLE, _acro_roll_stick(), _acro_pitch_stick(), _acro_yaw_stick(), ACRO_RC_RATE, ACRO_SUPER_RATE, ACRO_EXPO)
+        else:
+            var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
+            row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, FLIGHT_THROTTLE, 0.0, 0.0, 0.0)
     if row.size() >= 13:
         last_collision_authority = int(row[12])
     if drone_body != null and row.size() >= 17:
@@ -192,7 +230,26 @@ func _reset_drone_body() -> void:
     drone_body.freeze = true
 
 func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3) -> float:
-    return 0.5 * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()
+    return 0.5 * _mass_kg() * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()
+
+func _mass_kg() -> float:
+    if native == null or not native.has_method("hardware_power_diagnostics"):
+        return 1.0
+    var diagnostics: Dictionary = native.call("hardware_power_diagnostics")
+    return maxf(float(diagnostics.get("mass_kg", 1.0)), 0.000001)
+
+func _acro_roll_stick() -> float:
+    if acro_roll_stick != 0.0:
+        return acro_roll_stick
+    return Input.get_axis("ui_left", "ui_right")
+
+func _acro_pitch_stick() -> float:
+    if acro_pitch_stick != 0.0:
+        return acro_pitch_stick
+    return Input.get_axis("ui_down", "ui_up")
+
+func _acro_yaw_stick() -> float:
+    return acro_yaw_stick
 
 func _sync_native_from_drone() -> void:
     var q: Quaternion = drone_body.global_transform.basis.get_rotation_quaternion()
