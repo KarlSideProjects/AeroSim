@@ -46,10 +46,14 @@ jobs:
         env:
           AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json
           AEROSIM_A3_ORACLE_CASES: build/a3_oracle_cases.csv
+          AEROSIM_A4_A5_ORACLE_CASES: build/a4_a5_oracle_cases.csv
         run: scripts/test_native.sh
 
       - name: Python A3 oracle
         run: scripts/check_a3_oracle.py build/a3_oracle_cases.csv
+
+      - name: Python A4/A5 oracle
+        run: scripts/check_a4_a5_oracle.py build/a4_a5_oracle_cases.csv
 
       - name: Hardcoded airframe constant scan
         run: scripts/check_hardcoded_airframe_constants.sh
@@ -97,6 +101,7 @@ jobs:
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["desktop_substeps"])')" = "60000"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["mobile_substeps_1s"])')" = "500"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["imu_public_path"])')" = "True"
+          test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["a4_a5_public_path"])')" = "True"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["collision_public_path"])')" = "True"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["jolt_collision_handoff"])')" = "True"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["jolt_collision_trials"])')" = "400"

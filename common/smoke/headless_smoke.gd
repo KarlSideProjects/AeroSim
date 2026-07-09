@@ -71,6 +71,10 @@ func _run() -> void:
     if not a3_drag_public_verified:
         quit(1)
         return
+    var a4_a5_public_verified := _verify_a4_a5_public_path(native)
+    if not a4_a5_public_verified:
+        quit(1)
+        return
     var imu_public_verified := _verify_imu_public_path(native)
     if not imu_public_verified:
         quit(1)
@@ -127,6 +131,7 @@ func _run() -> void:
         "trajectory_samples": int(trajectory.size() / stride),
         "input_fallback_status": input_fallback_status,
         "a3_drag_public_path": a3_drag_public_verified,
+        "a4_a5_public_path": a4_a5_public_verified,
         "imu_public_path": imu_public_verified,
         "collision_public_path": collision_public_verified,
         "jolt_collision_handoff": jolt_collision_verified,
@@ -365,6 +370,77 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
     var on_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.0)
     if float(on_row[8]) >= float(off_row[8]):
         push_error("A3 enabled must decelerate the public coasting path")
+        return false
+    return true
+
+func _verify_a4_a5_public_path(native: Object) -> bool:
+    for method in ["set_a4_ground_effect_model", "a4_ground_effect_configuration", "set_a5_downwash_model", "a5_downwash_configuration", "a5_downwash_force_y", "sync_flight_state"]:
+        if not native.has_method(method):
+            push_error("AeroSimNative.%s must exist for A4/A5 public configuration" % method)
+            return false
+
+    var prop_radius := 0.0231348
+    if not native.call("set_hardware_mass_kg", 0.72):
+        push_error("A4 public path must accept the 5 inch test mass")
+        return false
+    if not native.call("set_a4_ground_effect_model", false, 3.16e-10, 11.36859, prop_radius, prop_radius, 12000.0, 12000.0, 12000.0, 12000.0):
+        push_error("A4 public path must accept a disabled valid configuration")
+        return false
+    var a4_disabled: Dictionary = native.call("a4_ground_effect_configuration")
+    if bool(a4_disabled.get("enabled", true)) != false:
+        push_error("A4 configuration must echo the disabled switch")
+        return false
+
+    native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("A4 public path must arm from low throttle")
+        return false
+    native.call("sync_flight_state", 0.0, prop_radius, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var off_y := prop_radius
+    for _frame in range(120):
+        var off_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.72 * 9.80665)
+        off_y = float(off_row[2])
+
+    if not native.call("set_a4_ground_effect_model", true, 3.16e-10, 11.36859, prop_radius, prop_radius, 12000.0, 12000.0, 12000.0, 12000.0):
+        push_error("A4 public path must accept an enabled valid configuration")
+        return false
+    var a4_enabled: Dictionary = native.call("a4_ground_effect_configuration")
+    if bool(a4_enabled.get("enabled", false)) != true:
+        push_error("A4 configuration must echo the enabled switch")
+        return false
+
+    native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("A4 public path must re-arm from low throttle")
+        return false
+    native.call("sync_flight_state", 0.0, prop_radius, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var on_y := prop_radius
+    for _frame in range(120):
+        var on_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.72 * 9.80665)
+        on_y = float(on_row[2])
+    if on_y <= off_y + 0.005:
+        push_error("A4 enabled public hover must show an observable ground cushion")
+        return false
+
+    if not native.call("set_a5_downwash_model", false, prop_radius, 2267.18, 0.16, -0.11):
+        push_error("A5 public path must accept a disabled valid configuration")
+        return false
+    var a5_disabled: Dictionary = native.call("a5_downwash_configuration")
+    if bool(a5_disabled.get("enabled", true)) != false:
+        push_error("A5 configuration must echo the disabled switch")
+        return false
+    if absf(float(native.call("a5_downwash_force_y", 0.1, 2.0, 0.0, 0.0, 0.0, 0.0))) > 1e-12:
+        push_error("A5 disabled public path must not reduce lift")
+        return false
+    if not native.call("set_a5_downwash_model", true, prop_radius, 2267.18, 0.16, -0.11):
+        push_error("A5 public path must accept an enabled valid configuration")
+        return false
+    var a5_enabled: Dictionary = native.call("a5_downwash_configuration")
+    if bool(a5_enabled.get("enabled", false)) != true:
+        push_error("A5 configuration must echo the enabled switch")
+        return false
+    if float(native.call("a5_downwash_force_y", 0.1, 2.0, 0.0, 0.0, 0.0, 0.0)) >= 0.0:
+        push_error("A5 enabled public path must reduce the lower aircraft lift")
         return false
     return true
 

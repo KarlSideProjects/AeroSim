@@ -19,6 +19,13 @@ drag = dot(base_rot.T, drag_factors * world_velocity)
 CI fails if any C++ force component differs from the Python oracle by more than
 `1e-6`.
 
+## A4 Ground Effect / A5 Downwash
+
+`tests/native/test_aerodynamics.cpp` writes A4/A5 cases when
+`AEROSIM_A4_A5_ORACLE_CASES` is set. `scripts/check_a4_a5_oracle.py` loads the
+same pinned `BaseAviary.py` and calls `BaseAviary._groundEffect` and
+`BaseAviary._downwash`; CI fails if any force differs by more than `1e-6`.
+
 ## Adding The Next Effect
 
 For #30, reuse the same shape:

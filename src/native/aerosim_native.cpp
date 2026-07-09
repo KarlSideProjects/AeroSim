@@ -1,5 +1,6 @@
 #include "aerosim_native.hpp"
 
+#include "aerosim_aerodynamics.hpp"
 #include "aerosim_probe.hpp"
 #include <cmath>
 #include <godot_cpp/core/class_db.hpp>
@@ -58,6 +59,17 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("set_a3_drag_model", "enabled", "coefficient_x", "coefficient_y", "coefficient_z", "motor_0_rpm", "motor_1_rpm", "motor_2_rpm", "motor_3_rpm"),
             &AeroSimNative::set_a3_drag_model);
     ClassDB::bind_method(D_METHOD("a3_drag_configuration"), &AeroSimNative::a3_drag_configuration);
+    ClassDB::bind_method(
+            D_METHOD("set_a4_ground_effect_model", "enabled", "kf", "ground_effect_coeff", "prop_radius_m", "height_clip_m", "motor_0_rpm", "motor_1_rpm", "motor_2_rpm", "motor_3_rpm"),
+            &AeroSimNative::set_a4_ground_effect_model);
+    ClassDB::bind_method(D_METHOD("a4_ground_effect_configuration"), &AeroSimNative::a4_ground_effect_configuration);
+    ClassDB::bind_method(
+            D_METHOD("set_a5_downwash_model", "enabled", "prop_radius_m", "coeff_1", "coeff_2", "coeff_3"),
+            &AeroSimNative::set_a5_downwash_model);
+    ClassDB::bind_method(D_METHOD("a5_downwash_configuration"), &AeroSimNative::a5_downwash_configuration);
+    ClassDB::bind_method(
+            D_METHOD("a5_downwash_force_y", "upper_x", "upper_y", "upper_z", "lower_x", "lower_y", "lower_z"),
+            &AeroSimNative::a5_downwash_force_y);
     ClassDB::bind_method(D_METHOD("set_collision_release_frames", "release_frames"), &AeroSimNative::set_collision_release_frames);
     ClassDB::bind_method(
             D_METHOD("sync_flight_state", "position_x", "position_y", "position_z", "orientation_x", "orientation_y", "orientation_z", "orientation_w", "velocity_x", "velocity_y", "velocity_z", "angular_velocity_x", "angular_velocity_y", "angular_velocity_z"),
@@ -121,6 +133,7 @@ PackedFloat64Array AeroSimNative::step_simulation(
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
     config.a3_drag = a3_drag_config_;
+    config.a4_ground_effect = a4_ground_effect_config_;
 
     PackedFloat64Array row;
     const aerosim::TrajectorySample sample = aerosim::step_physics_frame(simulation_state_, simulation_clock_, config);
@@ -269,6 +282,103 @@ Dictionary AeroSimNative::a3_drag_configuration() const {
     return config;
 }
 
+bool AeroSimNative::set_a4_ground_effect_model(
+        bool enabled,
+        double kf,
+        double ground_effect_coeff,
+        double prop_radius_m,
+        double height_clip_m,
+        double motor_0_rpm,
+        double motor_1_rpm,
+        double motor_2_rpm,
+        double motor_3_rpm) {
+    const double values[] = {
+            kf,
+            ground_effect_coeff,
+            prop_radius_m,
+            height_clip_m,
+            motor_0_rpm,
+            motor_1_rpm,
+            motor_2_rpm,
+            motor_3_rpm,
+    };
+    for (double value : values) {
+        if (!std::isfinite(value) || value < 0.0) {
+            return false;
+        }
+    }
+    if (prop_radius_m == 0.0 || height_clip_m == 0.0) {
+        return false;
+    }
+    a4_ground_effect_config_.enabled = enabled;
+    a4_ground_effect_config_.kf = kf;
+    a4_ground_effect_config_.ground_effect_coeff = ground_effect_coeff;
+    a4_ground_effect_config_.prop_radius_m = prop_radius_m;
+    a4_ground_effect_config_.height_clip_m = height_clip_m;
+    a4_ground_effect_config_.motor_rpm = {motor_0_rpm, motor_1_rpm, motor_2_rpm, motor_3_rpm};
+    return true;
+}
+
+Dictionary AeroSimNative::a4_ground_effect_configuration() const {
+    Dictionary config;
+    config["enabled"] = a4_ground_effect_config_.enabled;
+    config["kf"] = a4_ground_effect_config_.kf;
+    config["ground_effect_coeff"] = a4_ground_effect_config_.ground_effect_coeff;
+    config["prop_radius_m"] = a4_ground_effect_config_.prop_radius_m;
+    config["height_clip_m"] = a4_ground_effect_config_.height_clip_m;
+    config["motor_0_rpm"] = a4_ground_effect_config_.motor_rpm[0];
+    config["motor_1_rpm"] = a4_ground_effect_config_.motor_rpm[1];
+    config["motor_2_rpm"] = a4_ground_effect_config_.motor_rpm[2];
+    config["motor_3_rpm"] = a4_ground_effect_config_.motor_rpm[3];
+    return config;
+}
+
+bool AeroSimNative::set_a5_downwash_model(
+        bool enabled,
+        double prop_radius_m,
+        double coeff_1,
+        double coeff_2,
+        double coeff_3) {
+    const double values[] = {prop_radius_m, coeff_1, coeff_2, coeff_3};
+    for (double value : values) {
+        if (!std::isfinite(value)) {
+            return false;
+        }
+    }
+    if (prop_radius_m <= 0.0) {
+        return false;
+    }
+    a5_downwash_config_.enabled = enabled;
+    a5_downwash_config_.prop_radius_m = prop_radius_m;
+    a5_downwash_config_.coeff_1 = coeff_1;
+    a5_downwash_config_.coeff_2 = coeff_2;
+    a5_downwash_config_.coeff_3 = coeff_3;
+    return true;
+}
+
+Dictionary AeroSimNative::a5_downwash_configuration() const {
+    Dictionary config;
+    config["enabled"] = a5_downwash_config_.enabled;
+    config["prop_radius_m"] = a5_downwash_config_.prop_radius_m;
+    config["coeff_1"] = a5_downwash_config_.coeff_1;
+    config["coeff_2"] = a5_downwash_config_.coeff_2;
+    config["coeff_3"] = a5_downwash_config_.coeff_3;
+    return config;
+}
+
+double AeroSimNative::a5_downwash_force_y(
+        double upper_x,
+        double upper_y,
+        double upper_z,
+        double lower_x,
+        double lower_y,
+        double lower_z) const {
+    return aerosim::a5_downwash_force_y_newtons(
+            a5_downwash_config_,
+            {upper_x, upper_y, upper_z},
+            {lower_x, lower_y, lower_z});
+}
+
 void AeroSimNative::set_collision_release_frames(std::int32_t release_frames) {
     collision_authority_.set_release_frames(release_frames);
 }
@@ -304,6 +414,7 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a3_drag = a3_drag_config_;
+    config.a4_ground_effect = a4_ground_effect_config_;
 
     aerosim::FlightCommand command;
     command.throttle = throttle;
@@ -349,6 +460,7 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a3_drag = a3_drag_config_;
+    config.a4_ground_effect = a4_ground_effect_config_;
 
     aerosim::AcroCommand command;
     command.throttle = throttle;
@@ -405,6 +517,7 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a3_drag = a3_drag_config_;
+    config.a4_ground_effect = a4_ground_effect_config_;
 
     aerosim::FlightCommand command;
     command.throttle = throttle;
@@ -473,6 +586,7 @@ PackedFloat64Array AeroSimNative::simulate_trajectory(
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
     config.a3_drag = a3_drag_config_;
+    config.a4_ground_effect = a4_ground_effect_config_;
 
     PackedFloat64Array rows;
     for (const aerosim::TrajectorySample &sample : aerosim::simulate_trajectory(config)) {

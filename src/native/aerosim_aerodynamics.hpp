@@ -18,5 +18,12 @@ A3ForwardFlightEquilibrium a3_forward_flight_equilibrium(
         double mass_kg,
         double gravity_mps2,
         double forward_speed_mps);
+double a4_ground_effect_lift_newtons(
+        const A4GroundEffectConfig &config,
+        double height_m);
+double a5_downwash_force_y_newtons(
+        const A5DownwashConfig &config,
+        const Vec3 &upper_position,
+        const Vec3 &lower_position);
 
 } // namespace aerosim

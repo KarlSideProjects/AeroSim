@@ -41,7 +41,8 @@ Vec3 rotate(const Quat &q, const Vec3 &v) {
 }
 
 void integrate(RigidBodyState &state, const SimulationConfig &config, double dt) {
-    const Vec3 thrust_world = rotate(state.orientation, {0.0, config.total_thrust_newtons, 0.0});
+    const double ground_lift = a4_ground_effect_lift_newtons(config.a4_ground_effect, state.position.y);
+    const Vec3 thrust_world = rotate(state.orientation, {0.0, config.total_thrust_newtons + ground_lift, 0.0});
     const Vec3 drag_world = rotate(state.orientation, a3_drag_force_body(config.a3_drag, state.orientation, state.velocity));
     const Vec3 force_world = thrust_world + drag_world;
     const Vec3 acceleration{

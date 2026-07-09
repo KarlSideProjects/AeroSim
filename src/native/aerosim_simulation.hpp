@@ -34,6 +34,23 @@ struct A3DragConfig {
     std::array<double, 4> motor_rpm = {0.0, 0.0, 0.0, 0.0};
 };
 
+struct A4GroundEffectConfig {
+    bool enabled = false;
+    double kf = 0.0;
+    double ground_effect_coeff = 0.0;
+    double prop_radius_m = 0.0;
+    double height_clip_m = 0.0;
+    std::array<double, 4> motor_rpm = {0.0, 0.0, 0.0, 0.0};
+};
+
+struct A5DownwashConfig {
+    bool enabled = false;
+    double prop_radius_m = 0.0;
+    double coeff_1 = 0.0;
+    double coeff_2 = 0.0;
+    double coeff_3 = 0.0;
+};
+
 struct SimulationConfig {
     double seconds = 1.0;
     std::int32_t physics_hz = 240;
@@ -49,6 +66,7 @@ struct SimulationConfig {
     double battery_cell_resistance_ohm = 0.0;
     double max_total_current_a = 0.0;
     A3DragConfig a3_drag;
+    A4GroundEffectConfig a4_ground_effect;
     RigidBodyState initial_state;
 };
 
