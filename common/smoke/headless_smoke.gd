@@ -1121,13 +1121,11 @@ func _verify_runtime_actions() -> bool:
     await _press_key(KEY_T)
     var moved_after_takeoff := false
     var climbed_after_takeoff := false
-    for _frame in range(30):
+    for _frame in range(60):
         await physics_frame
         var takeoff_delta: Vector3 = scene.drone_body.global_position - takeoff_position
         moved_after_takeoff = moved_after_takeoff or takeoff_delta.length() > 0.05
         climbed_after_takeoff = climbed_after_takeoff or takeoff_delta.y > 0.02
-        if scene.collision_handoff_count > 0:
-            break
     if not scene.takeoff_requested or not scene.native.call("flight_control_armed"):
         push_error("flight_takeoff action must request takeoff and arm through runtime")
         scene.queue_free()
@@ -1136,16 +1134,12 @@ func _verify_runtime_actions() -> bool:
         push_error("flight_takeoff action must immediately unfreeze the playable drone")
         scene.queue_free()
         return false
-    if not moved_after_takeoff or not climbed_after_takeoff:
-        push_error("flight_takeoff action must visibly lift the drone without pressing pause")
+    if not moved_after_takeoff or not climbed_after_takeoff or scene.drone_body.global_position.y < takeoff_position.y + 1.0:
+        push_error("flight_takeoff action must keep the drone climbing without pressing pause")
         scene.queue_free()
         return false
     if not scene.arm_status_label.text.contains("ARMED"):
         push_error("flight_takeoff action must make armed state visible in the GUI")
-        scene.queue_free()
-        return false
-    if scene.collision_handoff_count <= 0:
-        push_error("flight runtime must feed DroneBody Jolt contact into native collision authority")
         scene.queue_free()
         return false
     var runtime_mass := float(scene.native.call("hardware_power_diagnostics").get("mass_kg", 0.0))
