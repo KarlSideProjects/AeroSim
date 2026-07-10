@@ -1,4 +1,4 @@
-name: GPU Performance Reference
+name: G0.1 Local Ubuntu Gate
 
 on:
   schedule:
@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  reference:
-    runs-on: [self-hosted, Linux, X64]
+  gate:
+    runs-on: [self-hosted, Linux, X64, aerosim-7945hx-4060ti]
     timeout-minutes: 60
     steps:
       - name: Clean self-hosted workspace
@@ -62,19 +62,17 @@ jobs:
           git clone https://github.com/godotengine/godot-cpp.git "$GODOT_CPP_DIR"
           git -C "$GODOT_CPP_DIR" checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
 
-      - name: Run full real-GPU reference protocol
+      - name: Run full local-Ubuntu G0.1 gate protocol
         env:
-          AEROSIM_REQUIRED_GPU_ADAPTER: NVIDIA
+          AEROSIM_REQUIRED_GPU_ADAPTER: NVIDIA GeForce RTX 4060 Ti
         run: |
           mkdir -p build/performance-gpu
           (
             flock -w 1800 9
             scripts/run_performance_benchmark.sh \
-              --mode reference \
               --effects off \
               --output build/performance-gpu/effects-off.json
             scripts/run_performance_benchmark.sh \
-              --mode reference \
               --effects on \
               --baseline-report build/performance-gpu/effects-off.json \
               --output build/performance-gpu/effects-on.json
@@ -90,11 +88,11 @@ jobs:
           for mode, effects in expected_effects.items():
               report = json.loads(Path(f"build/performance-gpu/effects-{mode}.json").read_text())
               assert report["sample_count"] == 14_400
-              assert report["gate"] == "G0.1-reference"
-              assert report["gate_eligible"] is False
-              assert report["reference_only"] is True
-              assert report["p99_within_limit"] is True
-              assert "NVIDIA" in report["measurement"]["video_adapter"]
+              assert report["gate"] == "G0.1"
+              assert report["gate_eligible"] is True
+              assert report["gate_verdict"] == "pass"
+              assert report["reference_only"] is False
+              assert report["measurement"]["video_adapter"] == "NVIDIA GeForce RTX 4060 Ti"
               assert report["measurement"]["active_effects"] == effects
           PY
 
