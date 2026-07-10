@@ -49,7 +49,7 @@
 |---|---|---|
 | Windows GA（WIN） | 直接提供安裝檔 + 自建授權伺服器啟用（可複用既有 FastAPI 授權架構：註冊 → 簽發 → JWT 驗證） | 主線 |
 | macOS / Linux GA（MAC, LIN） | 同上；**控制器實機閘門（G5.1）須逐 OS 通過，任一 OS 未過僅凍結該 OS Lane**，不得以「Desktop」名義隱含通過 | 主線（可獨立延後） |
-| Android GA | 私下提供 APK（側載），授權驗證同上 | 主線 |
+| Android build-only | 保留 APK export/artifact 與大小檢查；沒有實機驗收，不得宣稱可發行 | **not verified** |
 | iOS | **待商業決策**：私下發行僅有 Ad Hoc（100 台裝置/年）、TestFlight（≤1 萬人，仍須 Apple 審查）兩條路；Enterprise Program 僅限發給自家員工，發給外部客戶違反協議 | 凍結，Phase 0 後決策 |
 | Tier 2 桌面模組 | 隨 Desktop Lane，獨立安裝包 | 附屬 |
 

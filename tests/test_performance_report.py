@@ -18,6 +18,13 @@ from performance_report import build_report, compare_reports, main
 
 BASELINE_CPU = "AMD Ryzen 9 7945HX with Radeon Graphics"
 BASELINE_GPU = "NVIDIA GeForce RTX 4060 Ti"
+BASELINE_OS_RELEASE = "Ubuntu 26.04 LTS"
+BASELINE_NVIDIA_DRIVER = "580.159.03"
+BASELINE_ENVIRONMENT = {
+    "cpu_model": BASELINE_CPU,
+    "os_release": BASELINE_OS_RELEASE,
+    "nvidia_driver_version": BASELINE_NVIDIA_DRIVER,
+}
 PINNED_PROVENANCE = {
     "godot_version": "4.7.stable.official.5b4e0cb0f",
     "godot_sha256": "f85bbc6b15e22416c7d797cd60b63286dd67b9cb13498847056c18520ae55a75",
@@ -39,7 +46,7 @@ class PerformanceReportTest(unittest.TestCase):
                 "video_adapter": BASELINE_GPU,
                 **PINNED_PROVENANCE,
             },
-            {"git_revision": "abc123", "cpu_model": BASELINE_CPU},
+            {"git_revision": "abc123", **BASELINE_ENVIRONMENT},
         )
 
         self.assertEqual(report["p95_ms"], 95.0)
@@ -160,17 +167,30 @@ class PerformanceReportTest(unittest.TestCase):
             **PINNED_PROVENANCE,
         }
         with self.assertRaisesRegex(ValueError, "frozen Ryzen 9 7945HX and RTX 4060 Ti"):
-            build_report(raw, {"cpu_model": "AMD Ryzen 5 5600 6-Core Processor"})
+            build_report(raw, BASELINE_ENVIRONMENT | {"cpu_model": "AMD Ryzen 5 5600 6-Core Processor"})
         with self.assertRaisesRegex(ValueError, "frozen Ryzen 9 7945HX and RTX 4060 Ti"):
             build_report(
                 raw | {"video_adapter": "NVIDIA GeForce GTX 1660 SUPER"},
-                {"cpu_model": BASELINE_CPU},
+                BASELINE_ENVIRONMENT,
             )
         with self.assertRaisesRegex(ValueError, "pinned Godot/godot-cpp"):
             build_report(
                 raw | {"godot_sha256": "a" * 64},
-                {"cpu_model": BASELINE_CPU},
+                BASELINE_ENVIRONMENT,
             )
+
+    def test_gate_rejects_wrong_frozen_os_or_nvidia_driver(self):
+        raw = {
+            "samples_ms": [1.0, 2.0],
+            "benchmark_mode": "gate",
+            "video_adapter": BASELINE_GPU,
+            **PINNED_PROVENANCE,
+        }
+
+        with self.assertRaisesRegex(ValueError, "Ubuntu 26.04 LTS and NVIDIA driver 580.159.03"):
+            build_report(raw, BASELINE_ENVIRONMENT | {"os_release": "Ubuntu 24.04.4 LTS"})
+        with self.assertRaisesRegex(ValueError, "Ubuntu 26.04 LTS and NVIDIA driver 580.159.03"):
+            build_report(raw, BASELINE_ENVIRONMENT | {"nvidia_driver_version": "570.133.07"})
 
     def test_comparison_reports_on_off_percentile_deltas(self):
         environment = {"git_revision": "abc123", "cpu_model": "reference"}

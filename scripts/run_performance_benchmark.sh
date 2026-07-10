@@ -78,6 +78,16 @@ if [ "$benchmark_mode" = "gate" ]; then
             ;;
     esac
     required_adapter="NVIDIA GeForce RTX 4060 Ti"
+    os_release="$(awk -F= '$1 == "PRETTY_NAME" {gsub(/^"|"$/, "", $2); print $2; exit}' /etc/os-release 2>/dev/null || true)"
+    if [ "$os_release" != "Ubuntu 26.04 LTS" ]; then
+        echo "gate mode requires frozen Ubuntu 26.04 LTS: ${os_release:-unknown}" >&2
+        exit 2
+    fi
+    nvidia_driver="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1 | xargs || true)"
+    if [ "$nvidia_driver" != "580.159.03" ]; then
+        echo "gate mode requires frozen NVIDIA driver 580.159.03: ${nvidia_driver:-unknown}" >&2
+        exit 2
+    fi
 fi
 
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then

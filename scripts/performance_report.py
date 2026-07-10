@@ -13,6 +13,8 @@ from pathlib import Path
 G0_1_P99_LIMIT_MS = 3.0
 G0_1_BASELINE_CPU = "AMD Ryzen 9 7945HX with Radeon Graphics"
 G0_1_BASELINE_GPU = "NVIDIA GeForce RTX 4060 Ti"
+G0_1_BASELINE_OS_RELEASE = "Ubuntu 26.04 LTS"
+G0_1_BASELINE_NVIDIA_DRIVER = "580.159.03"
 PINNED_GODOT_VERSION = "4.7.stable.official.5b4e0cb0f"
 PINNED_GODOT_BINARY_SHA256 = "f85bbc6b15e22416c7d797cd60b63286dd67b9cb13498847056c18520ae55a75"
 PINNED_GODOT_CPP_REVISION = "ba0edfed90512ec64aba51d4295a3e7e30112f86"
@@ -36,6 +38,8 @@ def _validate_gate_eligibility(raw: dict[str, Any], environment: dict[str, Any])
     cpu_model = str(environment.get("cpu_model", ""))
     video_adapter = str(raw.get("video_adapter", ""))
     cpu_matches = cpu_model == G0_1_BASELINE_CPU or cpu_model.startswith(f"{G0_1_BASELINE_CPU} ")
+    os_matches = environment.get("os_release") == G0_1_BASELINE_OS_RELEASE
+    driver_matches = environment.get("nvidia_driver_version") == G0_1_BASELINE_NVIDIA_DRIVER
     provenance_is_pinned = (
         raw.get("godot_version") == PINNED_GODOT_VERSION
         and raw.get("godot_sha256") == PINNED_GODOT_BINARY_SHA256
@@ -47,9 +51,9 @@ def _validate_gate_eligibility(raw: dict[str, Any], environment: dict[str, Any])
             for key in ("gdextension_sha256", "native_source_sha256")
         )
     )
-    if not cpu_matches or video_adapter != G0_1_BASELINE_GPU or not provenance_is_pinned:
+    if not cpu_matches or video_adapter != G0_1_BASELINE_GPU or not os_matches or not driver_matches or not provenance_is_pinned:
         raise ValueError(
-            "G0.1 gate requires the frozen Ryzen 9 7945HX and RTX 4060 Ti with pinned Godot/godot-cpp provenance"
+            "G0.1 gate requires the frozen Ryzen 9 7945HX and RTX 4060 Ti on Ubuntu 26.04 LTS and NVIDIA driver 580.159.03 with pinned Godot/godot-cpp provenance"
         )
 
 
@@ -187,6 +191,25 @@ def _cpu_model() -> str:
     return platform.processor() or "unknown"
 
 
+def _os_release() -> str:
+    os_release = Path("/etc/os-release")
+    if os_release.is_file():
+        for line in os_release.read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRETTY_NAME="):
+                return line.partition("=")[2].strip().strip('"')
+    return "unknown"
+
+
+def _nvidia_driver_version() -> str:
+    try:
+        return subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+            text=True,
+        ).splitlines()[0].strip()
+    except (OSError, IndexError, subprocess.SubprocessError):
+        return "unknown"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, type=Path)
@@ -206,6 +229,8 @@ def main() -> int:
                 "git_revision": args.git_revision or _git_revision(),
                 "cpu_model": _cpu_model(),
                 "os": platform.platform(),
+                "os_release": _os_release(),
+                "nvidia_driver_version": _nvidia_driver_version(),
             },
         )
         if args.baseline_report:

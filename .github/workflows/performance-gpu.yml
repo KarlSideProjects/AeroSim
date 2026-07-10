@@ -93,6 +93,8 @@ jobs:
               assert report["gate_verdict"] == "pass"
               assert report["reference_only"] is False
               assert report["measurement"]["video_adapter"] == "NVIDIA GeForce RTX 4060 Ti"
+              assert report["environment"]["os_release"] == "Ubuntu 26.04 LTS"
+              assert report["environment"]["nvidia_driver_version"] == "580.159.03"
               assert report["measurement"]["active_effects"] == effects
           PY
 
