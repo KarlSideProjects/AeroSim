@@ -132,6 +132,10 @@ class PerformanceReportTest(unittest.TestCase):
             ]
             with patch.object(sys, "argv", argv), patch(
                 "performance_report._cpu_model", return_value=BASELINE_CPU
+            ), patch(
+                "performance_report._os_release", return_value=BASELINE_OS_RELEASE
+            ), patch(
+                "performance_report._nvidia_driver_version", return_value=BASELINE_NVIDIA_DRIVER
             ):
                 returncode = main()
 
