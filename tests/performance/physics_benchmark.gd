@@ -21,6 +21,11 @@ var _seconds := 60.0
 var _effects := "off"
 var _benchmark_mode := "gate"
 var _required_adapter := "NVIDIA"
+var _godot_version := ""
+var _godot_sha256 := ""
+var _godot_cpp_revision := ""
+var _gdextension_sha256 := ""
+var _native_source_sha256 := ""
 
 
 func _initialize() -> void:
@@ -40,6 +45,9 @@ func _run() -> void:
         return
     if _benchmark_mode != "smoke" and (_warmup_seconds != 10.0 or _seconds != 60.0):
         _fail("gate and reference modes require exactly 10s warmup and 60s measurement")
+        return
+    if _godot_version.is_empty() or _godot_sha256.length() != 64 or _godot_cpp_revision.length() != 40 or _gdextension_sha256.length() != 64 or _native_source_sha256.length() != 64:
+        _fail("complete Godot, godot-cpp, GDExtension, and native source provenance is required")
         return
     if DisplayServer.window_get_vsync_mode() != DisplayServer.VSYNC_DISABLED:
         _fail("VSync could not be disabled")
@@ -117,6 +125,11 @@ func _run() -> void:
         "render_gpu_samples_ms": render_gpu_samples,
         "sampling_source": "EngineProfiler._tick",
         "benchmark_mode": _benchmark_mode,
+        "godot_version": _godot_version,
+        "godot_sha256": _godot_sha256,
+        "godot_cpp_revision": _godot_cpp_revision,
+        "gdextension_sha256": _gdextension_sha256,
+        "native_source_sha256": _native_source_sha256,
         "scenario": "effects_%s" % _effects,
         "physics_engine": ProjectSettings.get_setting("physics/3d/physics_engine"),
         "physics_ticks_per_second": Engine.physics_ticks_per_second,
@@ -163,6 +176,16 @@ func _parse_args() -> void:
                 _effects = args[index + 1]
             "--benchmark-mode":
                 _benchmark_mode = args[index + 1]
+            "--godot-version":
+                _godot_version = args[index + 1]
+            "--godot-sha256":
+                _godot_sha256 = args[index + 1]
+            "--godot-cpp-revision":
+                _godot_cpp_revision = args[index + 1]
+            "--gdextension-sha256":
+                _gdextension_sha256 = args[index + 1]
+            "--native-source-sha256":
+                _native_source_sha256 = args[index + 1]
             "--require-adapter":
                 _required_adapter = args[index + 1]
 

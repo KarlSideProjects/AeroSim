@@ -54,9 +54,15 @@ class PerformanceRunnerTest(unittest.TestCase):
             self.assertFalse(report["gate_eligible"])
             self.assertNotIn("gate_verdict", report)
             self.assertGreater(len(set(report["raw_samples_ms"])), 1)
-            self.assertEqual(report["measurement"]["sampling_source"], "EngineProfiler._tick")
-            self.assertEqual(report["measurement"]["physics_engine"], "Jolt Physics")
-            self.assertEqual(report["measurement"]["vsync_mode"], 0)
+            measurement = report["measurement"]
+            self.assertEqual(measurement["sampling_source"], "EngineProfiler._tick")
+            self.assertEqual(measurement["physics_engine"], "Jolt Physics")
+            self.assertEqual(measurement["vsync_mode"], 0)
+            self.assertIn("4.7", measurement["godot_version"])
+            self.assertRegex(measurement["godot_sha256"], r"^[0-9a-f]{64}$")
+            self.assertRegex(measurement["godot_cpp_revision"], r"^[0-9a-f]{40}$")
+            self.assertRegex(measurement["gdextension_sha256"], r"^[0-9a-f]{64}$")
+            self.assertRegex(measurement["native_source_sha256"], r"^[0-9a-f]{64}$")
 
             candidate_output = Path(directory) / "candidate.json"
             candidate = subprocess.run(
@@ -112,6 +118,32 @@ class PerformanceRunnerTest(unittest.TestCase):
             self.assertEqual(completed.returncode, 2, completed.stderr)
             self.assertIn("reference mode requires exactly 10s warmup and 60s measurement", completed.stderr)
             self.assertFalse(output.exists())
+
+    def test_runner_fails_loudly_without_the_godot_cpp_source_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing_checkout = Path(directory) / "missing-godot-cpp"
+            godot_bin = os.environ.get("GODOT_BIN") or str(next((ROOT / ".deps" / "godot").glob("Godot*")))
+            completed = subprocess.run(
+                [
+                    str(ROOT / "scripts" / "run_performance_benchmark.sh"),
+                    "--mode",
+                    "smoke",
+                    "--seconds",
+                    "0.1",
+                ],
+                cwd=ROOT,
+                env=os.environ | {
+                    "GODOT_BIN": godot_bin,
+                    "GODOT_CPP_DIR": str(missing_checkout),
+                },
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertIn("godot-cpp checkout is required", completed.stderr)
 
 
 if __name__ == "__main__":
