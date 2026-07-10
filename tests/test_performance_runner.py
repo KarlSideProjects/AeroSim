@@ -63,6 +63,7 @@ class PerformanceRunnerTest(unittest.TestCase):
             self.assertRegex(measurement["godot_cpp_revision"], r"^[0-9a-f]{40}$")
             self.assertRegex(measurement["gdextension_sha256"], r"^[0-9a-f]{64}$")
             self.assertRegex(measurement["native_source_sha256"], r"^[0-9a-f]{64}$")
+            self.assertEqual(measurement["active_effects"], [])
 
             candidate_output = Path(directory) / "candidate.json"
             candidate = subprocess.run(
@@ -91,6 +92,10 @@ class PerformanceRunnerTest(unittest.TestCase):
             self.assertEqual(candidate.returncode, 0, candidate.stderr)
             candidate_report = json.loads(candidate_output.read_text(encoding="utf-8"))
             self.assertIn("p99_delta_ms", candidate_report["comparison_to_baseline"])
+            self.assertEqual(
+                candidate_report["measurement"]["active_effects"],
+                ["A3_drag", "A4_ground_effect"],
+            )
 
     def test_reference_mode_rejects_shortened_gate_protocol(self):
         with tempfile.TemporaryDirectory() as directory:

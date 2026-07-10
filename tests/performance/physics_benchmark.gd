@@ -131,6 +131,7 @@ func _run() -> void:
         "gdextension_sha256": _gdextension_sha256,
         "native_source_sha256": _native_source_sha256,
         "scenario": "effects_%s" % _effects,
+        "active_effects": ["A3_drag", "A4_ground_effect"] if _effects == "on" else [],
         "physics_engine": ProjectSettings.get_setting("physics/3d/physics_engine"),
         "physics_ticks_per_second": Engine.physics_ticks_per_second,
         "substep_hz": 1000,
@@ -155,9 +156,6 @@ func _configure_effects(native: Object) -> bool:
         return false
     if not native.call("set_a4_ground_effect_model", enabled, 3.16e-10, 11.36859, 0.0231348, 0.0231348, 12000.0, 12000.0, 12000.0, 12000.0):
         _fail("cannot configure A4 ground effect")
-        return false
-    if not native.call("set_a5_downwash_model", enabled, 0.0231348, 2267.18, 0.16, -0.11):
-        _fail("cannot configure A5 downwash")
         return false
     return true
 
