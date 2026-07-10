@@ -31,6 +31,45 @@ aerosim::Vec3 vec3_value(const Dictionary &dict, const char *key, const aerosim:
     return {value.x, value.y, value.z};
 }
 
+bool per_motor_model_value(const Dictionary &model, aerosim::PerMotorPhysicsConfig &per_motor) {
+    static constexpr const char *required_scalars[] = {
+            "max_thrust_per_motor_newtons",
+            "max_current_per_motor_a",
+            "yaw_torque_per_newton",
+    };
+    if (!model.has("inertia_frd") || model["inertia_frd"].get_type() != Variant::VECTOR3 ||
+            !model.has("position_frd") || model["position_frd"].get_type() != Variant::ARRAY ||
+            !model.has("spin_direction") || model["spin_direction"].get_type() != Variant::ARRAY) {
+        return false;
+    }
+    for (const char *key : required_scalars) {
+        if (!model.has(key) || (model[key].get_type() != Variant::FLOAT && model[key].get_type() != Variant::INT)) {
+            return false;
+        }
+    }
+
+    const Vector3 inertia = model["inertia_frd"];
+    const Array positions = model["position_frd"];
+    const Array spins = model["spin_direction"];
+    if (positions.size() != 4 || spins.size() != 4) {
+        return false;
+    }
+    per_motor.inertia_kg_m2 = {inertia.x, inertia.y, inertia.z};
+    for (std::int32_t index = 0; index < 4; ++index) {
+        if (positions[index].get_type() != Variant::VECTOR3 ||
+                (spins[index].get_type() != Variant::FLOAT && spins[index].get_type() != Variant::INT)) {
+            return false;
+        }
+        const Vector3 position = positions[index];
+        per_motor.position_frd[static_cast<std::size_t>(index)] = {position.x, position.y, position.z};
+        per_motor.spin_direction[static_cast<std::size_t>(index)] = static_cast<double>(spins[index]);
+    }
+    per_motor.max_thrust_per_motor_newtons = static_cast<double>(model["max_thrust_per_motor_newtons"]);
+    per_motor.max_current_per_motor_a = static_cast<double>(model["max_current_per_motor_a"]);
+    per_motor.yaw_torque_per_newton = static_cast<double>(model["yaw_torque_per_newton"]);
+    return true;
+}
+
 Vector3 godot_vec3(const aerosim::Vec3 &value) {
     return {static_cast<real_t>(value.x), static_cast<real_t>(value.y), static_cast<real_t>(value.z)};
 }
@@ -63,6 +102,7 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("set_hardware_telemetry_model", "max_motor_rpm", "battery_remaining_mah"),
             &AeroSimNative::set_hardware_telemetry_model);
+    ClassDB::bind_method(D_METHOD("set_hardware_per_motor_model", "model"), &AeroSimNative::set_hardware_per_motor_model);
     ClassDB::bind_method(D_METHOD("reset_simulation"), &AeroSimNative::reset_simulation);
     ClassDB::bind_method(
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
@@ -76,6 +116,7 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("imu_configuration"), &AeroSimNative::imu_configuration);
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
+    ClassDB::bind_method(D_METHOD("hardware_per_motor_diagnostics"), &AeroSimNative::hardware_per_motor_diagnostics);
     ClassDB::bind_method(D_METHOD("telemetry_snapshot"), &AeroSimNative::telemetry_snapshot);
     ClassDB::bind_method(
             D_METHOD("set_a3_drag_model", "enabled", "coefficient_x", "coefficient_y", "coefficient_z", "motor_0_rpm", "motor_1_rpm", "motor_2_rpm", "motor_3_rpm"),
@@ -151,6 +192,11 @@ bool AeroSimNative::set_hardware_power_model(
 
 bool AeroSimNative::set_hardware_telemetry_model(double max_motor_rpm, double battery_remaining_mah) {
     return hardware_config_.set_telemetry_model(max_motor_rpm, battery_remaining_mah);
+}
+
+bool AeroSimNative::set_hardware_per_motor_model(const Dictionary &model) {
+    aerosim::PerMotorPhysicsConfig per_motor;
+    return per_motor_model_value(model, per_motor) && hardware_config_.set_per_motor_model(per_motor);
 }
 
 void AeroSimNative::reset_simulation() {
@@ -282,6 +328,24 @@ Dictionary AeroSimNative::hardware_power_diagnostics() const {
     diagnostics["max_total_current_a"] = config.max_total_current_a;
     diagnostics["max_motor_rpm"] = config.max_motor_rpm;
     diagnostics["battery_remaining_mah"] = config.battery_remaining_mah;
+    return diagnostics;
+}
+
+Dictionary AeroSimNative::hardware_per_motor_diagnostics() const {
+    const aerosim::PerMotorPhysicsConfig &per_motor = hardware_config_.simulation_config().per_motor;
+    Dictionary diagnostics;
+    Array motor_order;
+    motor_order.append("rear_right");
+    motor_order.append("front_right");
+    motor_order.append("rear_left");
+    motor_order.append("front_left");
+    diagnostics["motor_order"] = motor_order;
+    Array spin_direction;
+    for (double spin : per_motor.spin_direction) {
+        spin_direction.append(spin > 0.0 ? "cw" : "ccw");
+    }
+    diagnostics["spin_direction"] = spin_direction;
+    diagnostics["inertia_frd"] = godot_vec3(per_motor.inertia_kg_m2);
     return diagnostics;
 }
 

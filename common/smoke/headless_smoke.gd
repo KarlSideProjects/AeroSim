@@ -1382,6 +1382,10 @@ func _verify_hardware_config_public_path() -> bool:
         push_error("AeroSimNative must expose hardware power diagnostics for runtime preset verification")
         scene.queue_free()
         return false
+    if not scene.native.has_method("hardware_per_motor_diagnostics"):
+        push_error("AeroSimNative must expose preset-driven per-motor diagnostics")
+        scene.queue_free()
+        return false
     var startup_power: Dictionary = scene.native.call("hardware_power_diagnostics")
     if abs(float(startup_power.mass_kg) - float(preset.aircraft.mass_kg)) > 1e-9:
         push_error("Runtime startup preset must apply aircraft mass to native")
@@ -1393,6 +1397,16 @@ func _verify_hardware_config_public_path() -> bool:
         return false
     if float(startup_power.full_throttle_cap_newtons) >= float(power_model.max_total_thrust_n):
         push_error("Runtime startup preset must apply battery sag to the native thrust cap")
+        scene.queue_free()
+        return false
+    var per_motor: Dictionary = scene.native.call("hardware_per_motor_diagnostics")
+    if per_motor.get("motor_order", []) != preset.motor_order or per_motor.get("spin_direction", []) != preset.spin_direction:
+        push_error("Runtime startup preset must preserve Betaflight Quad-X motor order and spin direction")
+        scene.queue_free()
+        return false
+    var runtime_inertia: Vector3 = per_motor.get("inertia_frd", Vector3.ZERO)
+    if runtime_inertia != Vector3(preset.aircraft.inertia_kg_m2.x, preset.aircraft.inertia_kg_m2.y, preset.aircraft.inertia_kg_m2.z):
+        push_error("Runtime startup preset must apply FRD inertia to the per-motor model")
         scene.queue_free()
         return false
     var native_before: Object = scene.native

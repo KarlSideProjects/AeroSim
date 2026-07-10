@@ -203,6 +203,22 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             last_error = "native runtime rejected derived power model"
             push_error(last_error)
             return false
+        var per_motor_model := derive_per_motor_model(current, power_model)
+        if not per_motor_model.ok:
+            last_ok = false
+            last_error = "per-motor model derivation failed: %s" % per_motor_model.get("error", "unknown")
+            push_error(last_error)
+            return false
+        if not runtime.native.has_method("set_hardware_per_motor_model"):
+            last_ok = false
+            last_error = "native runtime missing set_hardware_per_motor_model"
+            push_error(last_error)
+            return false
+        if not runtime.native.call("set_hardware_per_motor_model", per_motor_model):
+            last_ok = false
+            last_error = "native runtime rejected derived per-motor model"
+            push_error(last_error)
+            return false
         if runtime.native.has_method("set_hardware_telemetry_model") and not runtime.native.call(
                 "set_hardware_telemetry_model",
                 float(power_model.max_motor_rpm),
@@ -215,6 +231,28 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
     runtime.set_meta("hardware_config_version", current.version)
     runtime.set_meta("hardware_config_path", path)
     return true
+
+func derive_per_motor_model(config: Dictionary, power_model: Dictionary) -> Dictionary:
+    if not power_model.ok or float(power_model.k_t_n_per_rpm2) <= 0.0:
+        return {"ok": false, "error": "per-motor model requires a positive thrust coefficient"}
+    var positions: Array = []
+    for value in config.aircraft.motor_layout:
+        positions.append(Vector3(float(value.x), float(value.y), float(value.z)))
+    var spins: Array = []
+    for direction in config.spin_direction:
+        if String(direction) != "cw" and String(direction) != "ccw":
+            return {"ok": false, "error": "spin direction must be cw or ccw"}
+        spins.append(1.0 if String(direction) == "cw" else -1.0)
+    var inertia: Dictionary = config.aircraft.inertia_kg_m2
+    return {
+        "ok": true,
+        "inertia_frd": Vector3(float(inertia.x), float(inertia.y), float(inertia.z)),
+        "position_frd": positions,
+        "spin_direction": spins,
+        "max_thrust_per_motor_newtons": float(power_model.max_total_thrust_n) / float(config.motor.count),
+        "max_current_per_motor_a": float(power_model.max_total_current_a) / float(config.motor.count),
+        "yaw_torque_per_newton": float(power_model.k_q_nm_per_rpm2) / float(power_model.k_t_n_per_rpm2)
+    }
 
 func _fail(error: String) -> Dictionary:
     current = FACTORY_DEFAULT.duplicate(true)
