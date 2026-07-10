@@ -1,8 +1,10 @@
 # Release Delivery SOP
 
-Issue #52 tracks the full private delivery flow. This document is the current
-operator checklist and evidence template. Items marked `not verified` require
-device, GPU, signing, or customer-flow evidence before #52 can close.
+Issue #52 tracks the Windows/Linux/Android private delivery flow. macOS is
+tracked separately by #93 and remains blocked by the Apple build environment
+in #92. This document is the current operator checklist and evidence template.
+Items marked `not verified` require device, GPU, signing, or customer-flow
+evidence before #52 can close.
 
 ## Automated Gates
 
@@ -28,7 +30,6 @@ scripts/export_android_release.sh
 python3 scripts/check_release_artifacts.py \
   build/release/AeroSim-windows.zip \
   build/release/AeroSim-linux.zip \
-  build/release/AeroSim-macos.zip \
   build/release/AeroSim-android.apk
 ```
 
@@ -40,9 +41,13 @@ Each artifact must be `<= 300 MB`.
 | --- | --- | --- | --- |
 | Windows desktop bundle | `build/release/AeroSim-windows.zip` | size <= 300 MB | CI verified |
 | Linux desktop bundle | `build/release/AeroSim-linux.zip` | size <= 300 MB | CI verified |
-| macOS desktop bundle | `build/release/AeroSim-macos.zip` | size <= 300 MB, signed/notarized if distributed outside a trusted channel | not verified |
-| Android sideload APK | `build/release/AeroSim-android.apk` | size <= 300 MB, installs on device | CI-only APK export pending; production signing and device install not verified |
+| Android sideload APK | `build/release/AeroSim-android.apk` | size <= 300 MB, installs on device | CI test-signed export verified; production signing and device install not verified |
 | Third-party notices | `build/THIRD_PARTY_NOTICES.txt` | generated from `third_party/licenses.json` | CI verified |
+
+macOS packaging, Developer ID signing, notarization, and macOS cold-start
+evidence are intentionally excluded from #52. They are acceptance work for
+#93 after #92 provides the Apple build environment; this is a lane split, not
+a change to the frozen G6.1 macOS threshold.
 
 ## Android Sideload
 
@@ -82,7 +87,7 @@ actual delivery channel.
 
 | Gate | Evidence | Result |
 | --- | --- | --- |
-| G6.1/G6.2 artifact sizes | `scripts/check_release_artifacts.py` output | not verified |
+| G6.1/G6.2 Windows/Linux/Android artifact sizes | `scripts/check_release_artifacts.py` output | CI verified |
 | G6.2 Android sideload | device log / screen recording | not verified |
 | G6.3 license scan + NOTICE | CI link + `build/THIRD_PARTY_NOTICES.txt` | not verified |
 | G6.4 cold start | stopwatch/high-speed capture | not verified |
