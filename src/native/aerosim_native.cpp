@@ -70,8 +70,34 @@ bool per_motor_model_value(const Dictionary &model, aerosim::PerMotorPhysicsConf
     return true;
 }
 
+String string_value(const Dictionary &dict, const char *key, const String &fallback) {
+    return dict.has(key) ? static_cast<String>(dict[key]) : fallback;
+}
+
 Vector3 godot_vec3(const aerosim::Vec3 &value) {
     return {static_cast<real_t>(value.x), static_cast<real_t>(value.y), static_cast<real_t>(value.z)};
+}
+
+aerosim::WindConfig preset_config(const String &preset) {
+    if (preset == "light") {
+        return aerosim::wind_preset(aerosim::WindPreset::Light);
+    }
+    if (preset == "moderate") {
+        return aerosim::wind_preset(aerosim::WindPreset::Moderate);
+    }
+    if (preset == "severe") {
+        return aerosim::wind_preset(aerosim::WindPreset::Severe);
+    }
+    return {};
+}
+
+void apply_wind(
+        aerosim::SimulationConfig &config,
+        const aerosim::RigidBodyState &state,
+        const aerosim::SimulationClock &clock,
+        const aerosim::WindField &wind_field) {
+    const double sample_hz = config.substep_hz > 0 ? static_cast<double>(config.substep_hz) : 1.0;
+    config.wind_mps = wind_field.sample(static_cast<double>(clock.total_substeps) / sample_hz, state.position);
 }
 
 Dictionary motor_telemetry_dict(const aerosim::MotorTelemetry &motor) {
@@ -126,6 +152,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("imu_configuration"), &AeroSimNative::imu_configuration);
     ClassDB::bind_method(D_METHOD("imu_sample"), &AeroSimNative::imu_sample);
     ClassDB::bind_method(D_METHOD("refresh_imu_sample"), &AeroSimNative::refresh_imu_sample);
+    ClassDB::bind_method(D_METHOD("configure_wind", "config"), &AeroSimNative::configure_wind);
+    ClassDB::bind_method(D_METHOD("wind_configuration"), &AeroSimNative::wind_configuration);
+    ClassDB::bind_method(D_METHOD("sample_wind", "time_seconds", "position_x", "position_y", "position_z"), &AeroSimNative::sample_wind);
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_per_motor_diagnostics"), &AeroSimNative::hardware_per_motor_diagnostics);
@@ -233,6 +262,7 @@ PackedFloat64Array AeroSimNative::step_simulation(
         simulation_state_.motor_thrust_newtons = {};
     }
     config.a4_ground_effect = a4_ground_effect_config_;
+    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     PackedFloat64Array row;
     const aerosim::TrajectorySample sample = aerosim::step_physics_frame(simulation_state_, simulation_clock_, config);
@@ -483,6 +513,32 @@ aerosim::ImuSample AeroSimNative::sample_imu() {
 
 void AeroSimNative::refresh_imu_sample() {
     sample_imu();
+}
+
+void AeroSimNative::configure_wind(const Dictionary &config) {
+    wind_preset_name_ = string_value(config, "preset", wind_preset_name_);
+    aerosim::WindConfig wind_config = preset_config(wind_preset_name_);
+    wind_config.steady_wind_mps = vec3_value(config, "steady_wind", wind_config.steady_wind_mps);
+    wind_config.shear_enabled = bool_value(config, "shear_enabled", wind_config.shear_enabled);
+    wind_config.seed = static_cast<std::uint32_t>(int_value(config, "seed", static_cast<std::int32_t>(wind_config.seed)));
+    wind_field_.configure(wind_config);
+}
+
+Dictionary AeroSimNative::wind_configuration() const {
+    const aerosim::WindConfig &wind_config = wind_field_.config();
+    Dictionary config;
+    config["preset"] = wind_preset_name_;
+    config["steady_wind"] = godot_vec3(wind_config.steady_wind_mps);
+    config["turbulence_sigma"] = godot_vec3(wind_config.turbulence_sigma_mps);
+    config["reference_airspeed_mps"] = wind_config.reference_airspeed_mps;
+    config["scale_length_m"] = wind_config.scale_length_m;
+    config["shear_enabled"] = wind_config.shear_enabled;
+    config["seed"] = static_cast<std::int32_t>(wind_config.seed);
+    return config;
+}
+
+Vector3 AeroSimNative::sample_wind(double time_seconds, double position_x, double position_y, double position_z) const {
+    return godot_vec3(wind_field_.sample(time_seconds, {position_x, position_y, position_z}));
 }
 
 Dictionary AeroSimNative::flight_control_diagnostics() const {
@@ -742,6 +798,7 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::FlightCommand command;
     command.throttle = throttle;
@@ -788,6 +845,7 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::AcroCommand command;
     command.throttle = throttle;
@@ -846,6 +904,7 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::FlightCommand command;
     command.throttle = throttle;
@@ -915,6 +974,7 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::FlightCommand command;
     command.throttle = throttle;
@@ -966,7 +1026,15 @@ PackedFloat64Array AeroSimNative::simulate_trajectory(
     config.a4_ground_effect = a4_ground_effect_config_;
 
     PackedFloat64Array rows;
-    for (const aerosim::TrajectorySample &sample : aerosim::simulate_trajectory(config)) {
+    if (config.seconds <= 0.0 || config.physics_hz <= 0 || config.substep_hz <= 0 || config.mass_kg <= 0.0) {
+        return rows;
+    }
+    aerosim::RigidBodyState state = config.initial_state;
+    aerosim::SimulationClock clock;
+    const auto physics_frames = static_cast<std::int32_t>(std::ceil(config.seconds * config.physics_hz));
+    for (std::int32_t frame = 0; frame < physics_frames; ++frame) {
+        apply_wind(config, state, clock, wind_field_);
+        const aerosim::TrajectorySample sample = aerosim::step_physics_frame(state, clock, config);
         rows.append(sample.time_seconds);
         rows.append(sample.state.position.x);
         rows.append(sample.state.position.y);
@@ -1012,6 +1080,7 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::AcroCommand command;
     command.throttle = throttle;
@@ -1095,6 +1164,7 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::FlightCommand command;
     command.throttle = throttle;

@@ -28,6 +28,9 @@ const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Exit"
+const WIND_PRESETS := ["light", "moderate", "severe"]
+
+@export var scene_steady_wind_mps := Vector3.ZERO
 
 @onready var fallback_status_label: Label3D = %FallbackStatus
 @onready var drone_body = get_node_or_null("DroneBody")
@@ -685,6 +688,30 @@ func enter_preflight() -> void:
     update_fallback_status()
     _refresh_flight_hud()
 
+func select_map(map_id: String, wind_preset: String) -> void:
+    if native != null:
+        native.call("configure_wind", {
+            "preset": wind_preset,
+            "steady_wind": scene_steady_wind_mps,
+        })
+
+func open_map_menu() -> void:
+    if has_node("MapMenu"):
+        return
+    var layer := CanvasLayer.new()
+    layer.name = "MapMenu"
+    layer.layer = 20
+    add_child(layer)
+    var presets := VBoxContainer.new()
+    presets.name = "WindPresets"
+    layer.add_child(presets)
+    for preset in WIND_PRESETS:
+        var button := Button.new()
+        button.name = preset.capitalize()
+        button.text = preset.capitalize()
+        button.pressed.connect(select_map.bind("smoke", preset))
+        presets.add_child(button)
+
 func respawn() -> void:
     reset_count += 1
     _reset_airsim_flight_state()
@@ -876,6 +903,8 @@ func _build_main_menu() -> void:
         entries.add_child(button)
         if entry == "Quick Fly":
             button.pressed.connect(quick_fly)
+        elif entry == "Map":
+            button.pressed.connect(open_map_menu)
         elif entry == "Controller":
             button.pressed.connect(begin_controller_confirmation)
         elif entry == "Settings":

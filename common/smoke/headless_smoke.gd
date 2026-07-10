@@ -1284,6 +1284,24 @@ func _verify_runtime_actions() -> bool:
         push_error("Cold-start main menu must expose the fixed 3.5.4 first-layer entries")
         scene.queue_free()
         return false
+    if not scene.has_method("open_map_menu") or not scene.has_method("select_map"):
+        push_error("Smoke runtime must expose Map wind preset selection")
+        scene.queue_free()
+        return false
+    scene.open_map_menu()
+    await process_frame
+    var severe_wind_button := scene.get_node_or_null("MapMenu/WindPresets/Severe") as Button
+    if severe_wind_button == null:
+        push_error("Map menu must expose the Severe wind preset")
+        scene.queue_free()
+        return false
+    severe_wind_button.pressed.emit()
+    var wind_config: Dictionary = scene.native.call("wind_configuration")
+    if wind_config.get("preset", "") != "severe" or \
+            not _same_imu_value(wind_config.get("steady_wind", Vector3.ZERO), scene.scene_steady_wind_mps):
+        push_error("Map selection must apply the scene steady wind vector to native wind configuration")
+        scene.queue_free()
+        return false
     var quick_fly_button := scene.get_node_or_null("MainMenu/Entries/QuickFly") as Button
     if quick_fly_button == null or quick_fly_button.text != "Quick Fly":
         push_error("Cold-start main menu must expose an interactive Quick Fly button")

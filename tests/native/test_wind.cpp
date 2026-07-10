@@ -129,17 +129,21 @@ int main() {
         }
     }
 
-    aerosim::SimulationConfig wind_drift_config;
-    wind_drift_config.seconds = 1.0;
-    wind_drift_config.physics_hz = 240;
-    wind_drift_config.substep_hz = 1000;
-    wind_drift_config.total_thrust_newtons = wind_drift_config.mass_kg * wind_drift_config.gravity_mps2;
-    wind_drift_config.wind_mps = {3.0, 0.0, -1.0};
-    const auto wind_drift = aerosim::simulate_trajectory(wind_drift_config);
-    if (wind_drift.empty() ||
-            !near(wind_drift.back().state.position.x, 3.0, 0.01) ||
-            !near(wind_drift.back().state.position.z, -1.0, 0.01)) {
-        return fail("configured wind must perturb the C++ flight trajectory, not only the sampling API");
+    aerosim::SimulationConfig wind_force_config;
+    wind_force_config.seconds = 1.0;
+    wind_force_config.physics_hz = 100;
+    wind_force_config.substep_hz = 1000;
+    wind_force_config.gravity_mps2 = 0.0;
+    wind_force_config.wind_mps = {3.0, 0.0, 0.0};
+    wind_force_config.a3_drag.enabled = true;
+    wind_force_config.a3_drag.coefficient = {1.0e-6, 1.0e-6, 1.2e-6};
+    wind_force_config.a3_drag.motor_rpm = {10000.0, 10000.0, 10000.0, 10000.0};
+    const auto wind_force = aerosim::simulate_trajectory(wind_force_config);
+    if (wind_force.empty() ||
+            wind_force.back().state.velocity.x <= 0.005 ||
+            wind_force.back().state.position.x <= 0.002 ||
+            wind_force.back().state.position.x >= 0.1) {
+        return fail("wind must alter velocity through A3 relative airspeed, not only translate position");
     }
 
     aerosim::DrydenSampler dryden_a(moderate, 100.0);
