@@ -2,6 +2,10 @@
 
 Godot 4.7 + C++ GDExtension 的最小專案骨架。
 
+## 開發決策流程
+
+PRD 從初始規劃到目前的開發決策演進（Mermaid 總覽圖、各決策節點的原計畫／變動／驅動因素／出處、治理機制演進）：見 [docs/development-decision-flow.md](docs/development-decision-flow.md)。PRD 正本為 [PRD_AeroSim.md](PRD_AeroSim.md)（#1 pinned）。
+
 ## 環境需求
 
 - Godot `4.7-stable`
