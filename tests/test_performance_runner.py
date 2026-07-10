@@ -45,6 +45,7 @@ class PerformanceRunnerTest(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             report = json.loads(output.read_text(encoding="utf-8"))
             self.assertFalse(output.with_name("raw.raw.json").exists())
+            self.assertTrue(output.with_suffix(".svg").is_file())
             self.assertTrue(report["raw_samples_ms"])
             self.assertEqual(report["sample_count"], 24)
             self.assertGreater(len(set(report["raw_samples_ms"])), 1)

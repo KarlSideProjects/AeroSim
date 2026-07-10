@@ -53,7 +53,8 @@ fi
 
 mkdir -p "$(dirname "$output_path")" .godot
 raw_path="${output_path%.json}.raw.json"
-rm -f "$raw_path" "$output_path"
+chart_path="${output_path%.json}.svg"
+rm -f "$raw_path" "$output_path" "$chart_path"
 printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .godot/extension_list.cfg
 
 timeout 180s "$godot_bin" --path . --resolution 1280x720 --remote-debug local:// \
@@ -65,7 +66,7 @@ timeout 180s "$godot_bin" --path . --resolution 1280x720 --remote-debug local://
     --require-adapter "$required_adapter"
 
 test -s "$raw_path"
-report_args=(--input "$raw_path" --output "$output_path")
+report_args=(--input "$raw_path" --output "$output_path" --chart-output "$chart_path")
 if [ -n "$baseline_report" ]; then
     report_args+=(--baseline-report "$baseline_report")
 fi

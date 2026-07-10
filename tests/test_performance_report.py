@@ -49,6 +49,7 @@ class PerformanceReportTest(unittest.TestCase):
             directory_path = Path(directory)
             raw_path = directory_path / "raw.json"
             report_path = directory_path / "report.json"
+            chart_path = directory_path / "report.svg"
             raw_path.write_text(json.dumps({"samples_ms": [1.0, 2.0]}), encoding="utf-8")
 
             completed = subprocess.run(
@@ -61,6 +62,8 @@ class PerformanceReportTest(unittest.TestCase):
                     str(report_path),
                     "--git-revision",
                     "abc123",
+                    "--chart-output",
+                    str(chart_path),
                 ],
                 check=False,
                 capture_output=True,
@@ -70,6 +73,7 @@ class PerformanceReportTest(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             report = json.loads(report_path.read_text(encoding="utf-8"))
             self.assertEqual(report["environment"]["git_revision"], "abc123")
+            self.assertIn("G0.1 physics frame time", chart_path.read_text(encoding="utf-8"))
 
     def test_comparison_reports_on_off_percentile_deltas(self):
         environment = {"git_revision": "abc123", "cpu_model": "reference"}

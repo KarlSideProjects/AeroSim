@@ -47,7 +47,7 @@ GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchm
 GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchmark.sh --effects on --baseline-report build/performance-effects-off.json --output build/performance-effects-on.json
 ```
 
-量測固定為 10 秒 warmup + 60 秒模擬時間、240 Hz Jolt + 1 kHz native 子步進、VSync off。報告保存逐 physics-frame 原始樣本、P95/P99、render CPU/GPU 分列、環境與 Git revision；預設要求 NVIDIA headed adapter，可用 `AEROSIM_REQUIRED_GPU_ADAPTER` 指定其他 GPU。
+量測固定為 10 秒 warmup + 60 秒模擬時間、240 Hz Jolt + 1 kHz native 子步進、VSync off。JSON 報告保存逐 physics-frame 原始樣本、P95/P99、render CPU/GPU 分列、環境與 Git revision，並同步輸出 SVG 圖表；預設要求 NVIDIA headed adapter，可用 `AEROSIM_REQUIRED_GPU_ADAPTER` 指定其他 GPU。
 
 ## G0.6a 決定性與重播
 

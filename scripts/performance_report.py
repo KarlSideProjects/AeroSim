@@ -75,6 +75,31 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
     return comparison
 
 
+def write_chart(report: dict[str, Any], path: Path) -> None:
+    plot_x = 150.0
+    plot_width = 440.0
+    maximum = max(float(report["p99_limit_ms"]), float(report["p95_ms"]), float(report["p99_ms"]))
+    scale = plot_width / maximum
+    bars = []
+    for label, key, y, color in (("P95", "p95_ms", 80, "#4c78a8"), ("P99", "p99_ms", 140, "#f58518")):
+        value = float(report[key])
+        bars.append(f'<text x="20" y="{y + 22}" font-size="18">{label} {value:.3f} ms</text>')
+        bars.append(f'<rect x="{plot_x}" y="{y}" width="{value * scale:.2f}" height="32" fill="{color}"/>')
+    limit_x = plot_x + float(report["p99_limit_ms"]) * scale
+    svg = "\n".join([
+        '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="220" viewBox="0 0 640 220">',
+        '<rect width="640" height="220" fill="white"/>',
+        '<text x="20" y="35" font-size="24">G0.1 physics frame time</text>',
+        *bars,
+        f'<line x1="{limit_x:.2f}" y1="65" x2="{limit_x:.2f}" y2="185" stroke="#d62728" stroke-width="3"/>',
+        f'<text x="{limit_x - 70:.2f}" y="205" font-size="16" fill="#d62728">limit {report["p99_limit_ms"]:.1f} ms</text>',
+        '</svg>',
+        '',
+    ])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(svg, encoding="utf-8")
+
+
 def _git_revision() -> str:
     return subprocess.check_output(
         ["git", "rev-parse", "HEAD"],
@@ -98,6 +123,7 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--git-revision")
     parser.add_argument("--baseline-report", type=Path)
+    parser.add_argument("--chart-output", type=Path)
     args = parser.parse_args()
 
     try:
@@ -122,6 +148,8 @@ def main() -> int:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    if args.chart_output:
+        write_chart(report, args.chart_output)
     return 0
 
 
