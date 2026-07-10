@@ -19,6 +19,7 @@ var _output_path := "build/performance_raw.json"
 var _warmup_seconds := 10.0
 var _seconds := 60.0
 var _effects := "off"
+var _benchmark_mode := "gate"
 var _required_adapter := "NVIDIA"
 
 
@@ -31,6 +32,15 @@ func _initialize() -> void:
 func _run() -> void:
     await process_frame
     await process_frame
+    if _benchmark_mode != "gate" and _benchmark_mode != "reference" and _benchmark_mode != "smoke":
+        _fail("benchmark mode must be gate, reference, or smoke")
+        return
+    if not is_finite(_warmup_seconds) or not is_finite(_seconds) or _warmup_seconds < 0.0 or _seconds <= 0.0:
+        _fail("benchmark durations must be finite with non-negative warmup and positive measurement")
+        return
+    if _benchmark_mode != "smoke" and (_warmup_seconds != 10.0 or _seconds != 60.0):
+        _fail("gate and reference modes require exactly 10s warmup and 60s measurement")
+        return
     if DisplayServer.window_get_vsync_mode() != DisplayServer.VSYNC_DISABLED:
         _fail("VSync could not be disabled")
         return
@@ -106,6 +116,7 @@ func _run() -> void:
         "render_cpu_samples_ms": render_cpu_samples,
         "render_gpu_samples_ms": render_gpu_samples,
         "sampling_source": "EngineProfiler._tick",
+        "benchmark_mode": _benchmark_mode,
         "scenario": "effects_%s" % _effects,
         "physics_engine": ProjectSettings.get_setting("physics/3d/physics_engine"),
         "physics_ticks_per_second": Engine.physics_ticks_per_second,
@@ -150,6 +161,8 @@ func _parse_args() -> void:
                 _seconds = args[index + 1].to_float()
             "--effects":
                 _effects = args[index + 1]
+            "--benchmark-mode":
+                _benchmark_mode = args[index + 1]
             "--require-adapter":
                 _required_adapter = args[index + 1]
 

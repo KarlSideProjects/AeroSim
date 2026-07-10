@@ -27,6 +27,8 @@ class PerformanceRunnerTest(unittest.TestCase):
             completed = subprocess.run(
                 [
                     str(ROOT / "scripts" / "run_performance_benchmark.sh"),
+                    "--mode",
+                    "smoke",
                     "--warmup-seconds",
                     "0",
                     "--seconds",
@@ -48,6 +50,9 @@ class PerformanceRunnerTest(unittest.TestCase):
             self.assertTrue(output.with_suffix(".svg").is_file())
             self.assertTrue(report["raw_samples_ms"])
             self.assertEqual(report["sample_count"], 24)
+            self.assertEqual(report["gate"], "smoke")
+            self.assertFalse(report["gate_eligible"])
+            self.assertNotIn("gate_verdict", report)
             self.assertGreater(len(set(report["raw_samples_ms"])), 1)
             self.assertEqual(report["measurement"]["sampling_source"], "EngineProfiler._tick")
             self.assertEqual(report["measurement"]["physics_engine"], "Jolt Physics")
@@ -57,6 +62,8 @@ class PerformanceRunnerTest(unittest.TestCase):
             candidate = subprocess.run(
                 [
                     str(ROOT / "scripts" / "run_performance_benchmark.sh"),
+                    "--mode",
+                    "smoke",
                     "--warmup-seconds",
                     "0",
                     "--seconds",
@@ -78,6 +85,33 @@ class PerformanceRunnerTest(unittest.TestCase):
             self.assertEqual(candidate.returncode, 0, candidate.stderr)
             candidate_report = json.loads(candidate_output.read_text(encoding="utf-8"))
             self.assertIn("p99_delta_ms", candidate_report["comparison_to_baseline"])
+
+    def test_reference_mode_rejects_shortened_gate_protocol(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "report.json"
+            completed = subprocess.run(
+                [
+                    str(ROOT / "scripts" / "run_performance_benchmark.sh"),
+                    "--mode",
+                    "reference",
+                    "--warmup-seconds",
+                    "0",
+                    "--seconds",
+                    "0.1",
+                    "--output",
+                    str(output),
+                ],
+                cwd=ROOT,
+                env=os.environ,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertIn("reference mode requires exactly 10s warmup and 60s measurement", completed.stderr)
+            self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

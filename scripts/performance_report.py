@@ -28,6 +28,9 @@ def _validated_samples(raw: dict[str, Any], key: str) -> list[float]:
 
 
 def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, Any]:
+    benchmark_mode = raw.get("benchmark_mode")
+    if benchmark_mode not in {"gate", "reference", "smoke"}:
+        raise ValueError("benchmark_mode must be gate, reference, or smoke")
     measurements = _validated_samples(raw, "samples_ms")
     render_summaries: dict[str, float] = {}
     for key, prefix in (
@@ -43,19 +46,29 @@ def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, 
         render_summaries[f"{prefix}_p99_ms"] = _percentile(render_samples, 0.99)
 
     p99_ms = _percentile(measurements, 0.99)
+    p99_within_limit = p99_ms <= G0_1_P99_LIMIT_MS
+    gate_eligible = benchmark_mode == "gate"
     report = {
         "schema_version": 1,
-        "gate": "G0.1",
+        "gate": {
+            "gate": "G0.1",
+            "reference": "G0.1-reference",
+            "smoke": "smoke",
+        }[benchmark_mode],
+        "gate_eligible": gate_eligible,
+        "reference_only": benchmark_mode == "reference",
         "scenario": raw.get("scenario", "unspecified"),
         "sample_count": len(measurements),
         "p95_ms": _percentile(measurements, 0.95),
         "p99_ms": p99_ms,
         "p99_limit_ms": G0_1_P99_LIMIT_MS,
-        "p99_within_gate": p99_ms <= G0_1_P99_LIMIT_MS,
+        "p99_within_limit": p99_within_limit,
         "raw_samples_ms": measurements,
         "measurement": {key: value for key, value in raw.items() if key != "samples_ms"},
         "environment": environment,
     }
+    if gate_eligible:
+        report["gate_verdict"] = "pass" if p99_within_limit else "fail"
     report.update(render_summaries)
     return report
 
@@ -150,7 +163,7 @@ def main() -> int:
     args.output.write_text(json.dumps(report, separators=(",", ":")) + "\n", encoding="utf-8")
     if args.chart_output:
         write_chart(report, args.chart_output)
-    return 0
+    return 1 if report.get("gate_verdict") == "fail" else 0
 
 
 if __name__ == "__main__":
