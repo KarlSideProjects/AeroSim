@@ -1077,10 +1077,22 @@ func _verify_runtime_actions() -> bool:
         push_error("Cold-start main menu must expose an interactive Quick Fly button")
         scene.queue_free()
         return false
+    await _press_key(KEY_T)
+    await process_frame
+    if scene.screen != "main_menu" or scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("flight_takeoff must not bypass the Quick Fly state machine from the main menu")
+        scene.queue_free()
+        return false
     quick_fly_button.pressed.emit()
     await process_frame
+    if scene.screen != "fallback_prompt" or not scene.arm_status_label.text.contains("KeyboardProfile") or scene.arm_takeoff_button.text != "USE KEYBOARD FALLBACK":
+        push_error("Quick Fly without a controller must show an actionable KeyboardProfile fallback prompt")
+        scene.queue_free()
+        return false
+    scene.arm_takeoff_button.pressed.emit()
+    await process_frame
     if scene.screen != "preflight" or scene.takeoff_requested or scene.native.call("flight_control_armed"):
-        push_error("Quick Fly button must enter the low-throttle preflight state before arming")
+        push_error("Keyboard fallback confirmation must enter the low-throttle preflight state before arming")
         scene.queue_free()
         return false
     if scene.key_hints_label == null or not scene.key_hints_label.is_visible_in_tree():
@@ -1097,21 +1109,19 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     scene.quick_fly("uncalibrated")
-    if scene.screen != "controller_setup":
-        push_error("Quick Fly with an uncalibrated controller must route to Controller Setup")
+    if scene.screen != "controller_setup" or not scene.arm_status_label.text.contains("Controller setup") or scene.arm_takeoff_button.text != "BACK TO MAIN MENU":
+        push_error("Quick Fly with an uncalibrated controller must show an explicit Controller Setup screen")
         scene.queue_free()
         return false
+    scene.arm_takeoff_button.pressed.emit()
     scene.quick_fly("drone_load_failed")
-    if scene.screen != "error" or scene.last_error_message.is_empty():
+    if scene.screen != "error" or scene.last_error_message.is_empty() or not scene.arm_status_label.text.contains("drone_load_failed") or scene.arm_takeoff_button.text != "BACK TO MAIN MENU":
         push_error("Quick Fly load failures must show an explicit error screen")
         scene.queue_free()
         return false
+    scene.arm_takeoff_button.pressed.emit()
     scene.quick_fly("no_controller")
-    if scene.screen != "fallback_prompt" or not scene.last_error_message.contains("KeyboardProfile"):
-        push_error("Quick Fly without a controller must show an explicit KeyboardProfile fallback prompt")
-        scene.queue_free()
-        return false
-    scene.accept_fallback()
+    scene.arm_takeoff_button.pressed.emit()
     if scene.screen != "preflight" or scene.takeoff_requested:
         push_error("Quick Fly fallback must enter the low-throttle preflight state")
         scene.queue_free()
@@ -1224,19 +1234,19 @@ func _verify_runtime_actions() -> bool:
         push_error("flight_pause action must freeze runtime physics")
         scene.queue_free()
         return false
-    await _press_key(KEY_P)
-    if scene.paused:
-        push_error("flight_pause action must resume runtime physics")
-        scene.queue_free()
-        return false
-
     await _press_key(KEY_R)
-    if scene.reset_count != 1 or not scene.takeoff_requested or not scene.native.call("flight_control_armed"):
-        push_error("flight_respawn action must reset while keeping flight armed and active")
+    if scene.reset_count != 1 or not scene.takeoff_requested or scene.paused:
+        push_error("flight_respawn action must resume from pause and keep flight active")
         scene.queue_free()
         return false
     if scene.drone_body.position.distance_to(Vector3(-1.0, 0.0, 0.0)) > 1e-6 or scene.drone_body.linear_velocity.length() > 1e-6 or scene.drone_body.angular_velocity.length() > 1e-6:
         push_error("flight_respawn action must return to spawn and clear body velocity; position=%s linear=%s angular=%s" % [scene.drone_body.position, scene.drone_body.linear_velocity, scene.drone_body.angular_velocity])
+        scene.queue_free()
+        return false
+    for _frame in range(31):
+        await physics_frame
+    if scene.drone_body.freeze or not scene.native.call("flight_control_armed"):
+        push_error("flight_respawn action must release reset hold and re-arm after pausing")
         scene.queue_free()
         return false
 

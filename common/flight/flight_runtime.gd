@@ -58,7 +58,7 @@ func _ready() -> void:
     _refresh_flight_hud()
 
 func _unhandled_input(event: InputEvent) -> void:
-    if event.is_action_pressed("flight_takeoff"):
+    if event.is_action_pressed("flight_takeoff") and screen in ["preflight", "flight"]:
         arm_and_takeoff()
     elif event.is_action_pressed("flight_pause"):
         set_paused(not paused)
@@ -179,6 +179,7 @@ func arm_and_takeoff() -> void:
     if native == null:
         last_error_message = "Quick Fly cannot arm: native runtime unavailable"
         screen = "error"
+        _refresh_flight_hud()
         return
     if not native.call("flight_control_armed") and not native.call("arm_flight_control", 0.0):
         last_error_message = "Quick Fly cannot arm: %s" % native.call("flight_control_arm_reject_code")
@@ -198,14 +199,17 @@ func quick_fly(entry_state: String = "calibrated") -> void:
     if entry_state == "no_controller":
         last_error_message = InputProfiles.fallback_status([])
         screen = "fallback_prompt"
+        _refresh_flight_hud()
         return
     if entry_state == "uncalibrated":
-        last_error_message = ""
+        last_error_message = "Controller setup is required before Quick Fly"
         screen = "controller_setup"
+        _refresh_flight_hud()
         return
     if entry_state != "calibrated":
         last_error_message = "Quick Fly cannot continue: %s" % entry_state
         screen = "error"
+        _refresh_flight_hud()
         return
     enter_preflight()
 
@@ -215,6 +219,7 @@ func accept_fallback() -> void:
         return
     last_error_message = "No fallback prompt is active"
     screen = "error"
+    _refresh_flight_hud()
 
 func enter_preflight() -> void:
     screen = "preflight"
@@ -231,6 +236,7 @@ func respawn() -> void:
     screen = "flight"
     flight_mode = "ANGLE"
     takeoff_requested = true
+    set_paused(false)
     if native != null:
         native.call("reset_flight")
     update_fallback_status()
@@ -238,6 +244,7 @@ func respawn() -> void:
         _reset_drone_body()
         # ponytail: short reset hold; replace with real throttle input state when controller profiles land.
         reset_hold_frames = 30
+    _refresh_flight_hud()
 
 func update_fallback_status() -> void:
     last_profile_status = InputProfiles.fallback_status(Input.get_connected_joypads())
@@ -276,7 +283,7 @@ func _build_main_menu() -> void:
         button.text = entry
         entries.add_child(button)
         if entry == "Quick Fly":
-            button.pressed.connect(quick_fly.bind("calibrated"))
+            button.pressed.connect(quick_fly.bind(_quick_fly_entry_state()))
 
 func _build_flight_hud() -> void:
     var layer := CanvasLayer.new()
@@ -313,8 +320,7 @@ func _build_flight_hud() -> void:
 
     arm_takeoff_button = Button.new()
     arm_takeoff_button.name = "ArmTakeoff"
-    arm_takeoff_button.text = "ARM / TAKEOFF (T)"
-    arm_takeoff_button.pressed.connect(arm_and_takeoff)
+    arm_takeoff_button.pressed.connect(_handle_primary_action)
     rows.add_child(arm_takeoff_button)
 
 func _build_status_diagram() -> void:
@@ -339,17 +345,43 @@ func _refresh_flight_hud() -> void:
     if flight_hud_layer != null:
         flight_hud_layer.visible = screen != "main_menu"
     key_hints_label.text = KEY_HINTS_TEXT
-    arm_takeoff_button.disabled = not (screen in ["preflight", "flight"])
+    arm_takeoff_button.disabled = screen == "main_menu"
     if screen == "preflight":
         var armed := _flight_control_armed()
         arm_status_label.text = "Throttle LOW -> %s -> press T or ARM" % ["ARMED" if armed else "DISARMED"]
+        arm_takeoff_button.text = "ARM / TAKEOFF (T)"
     elif screen == "flight":
         var armed := _flight_control_armed()
         arm_status_label.text = "%s | %s" % ["ARMED" if armed else "DISARMED", "PAUSED" if paused else "TAKEOFF"]
+        arm_takeoff_button.text = "ARM / TAKEOFF (T)"
+    elif screen == "fallback_prompt":
+        arm_status_label.text = last_error_message
+        arm_takeoff_button.text = "USE KEYBOARD FALLBACK"
+    elif screen == "controller_setup":
+        arm_status_label.text = last_error_message
+        arm_takeoff_button.text = "BACK TO MAIN MENU"
+    elif screen == "error":
+        arm_status_label.text = last_error_message
+        arm_takeoff_button.text = "BACK TO MAIN MENU"
     elif screen == "exit":
         arm_status_label.text = "EXIT requested"
+        arm_takeoff_button.text = "EXIT"
     else:
         arm_status_label.text = "Quick Fly: choose Quick Fly, then arm at low throttle"
+        arm_takeoff_button.text = "ARM / TAKEOFF (T)"
+
+func _quick_fly_entry_state() -> String:
+    return "no_controller" if Input.get_connected_joypads().is_empty() else "calibrated"
+
+func _handle_primary_action() -> void:
+    if screen == "fallback_prompt":
+        accept_fallback()
+    elif screen in ["preflight", "flight"]:
+        arm_and_takeoff()
+    elif screen in ["controller_setup", "error"]:
+        screen = "main_menu"
+        last_error_message = ""
+        _refresh_flight_hud()
 
 func _update_chase_camera() -> void:
     if chase_camera == null or drone_body == null:
