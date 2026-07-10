@@ -26,3 +26,7 @@
 ## 修訂三：#27 SITL 建置授權
 
 維護者授權於 self-hosted runner 上 clone Betaflight 原始碼並建置 SITL target，**僅限開發工具鏈**：產物不得進入 Tier 1 發布掃描範圍（G6.3 仍須 0 GPL）。
+
+## 後續環境決策
+
+本文件的人工驗收簡化不會把缺少 Android/iOS 實機的項目視為通過。自 2026-07-10 起，行動車道的 build-only 範圍與 N/A 規則以 [本機 Ubuntu 基準與行動 build-only 車道](2026-07-10-local-ubuntu-build-only-lanes.md) 為準。

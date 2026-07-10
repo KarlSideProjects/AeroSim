@@ -49,7 +49,7 @@
 |---|---|---|
 | Windows GA（WIN） | 直接提供安裝檔 + 自建授權伺服器啟用（可複用既有 FastAPI 授權架構：註冊 → 簽發 → JWT 驗證） | 主線 |
 | macOS / Linux GA（MAC, LIN） | 同上；**控制器實機閘門（G5.1）須逐 OS 通過，任一 OS 未過僅凍結該 OS Lane**，不得以「Desktop」名義隱含通過 | 主線（可獨立延後） |
-| Android GA | 私下提供 APK（側載），授權驗證同上 | 主線 |
+| Android build-only | 保留 APK export/artifact 與大小檢查；沒有實機驗收，不得宣稱可發行 | **not verified** |
 | iOS | **待商業決策**：私下發行僅有 Ad Hoc（100 台裝置/年）、TestFlight（≤1 萬人，仍須 Apple 審查）兩條路；Enterprise Program 僅限發給自家員工，發給外部客戶違反協議 | 凍結，Phase 0 後決策 |
 | Tier 2 桌面模組 | 隨 Desktop Lane，獨立安裝包 | 附屬 |
 
@@ -284,19 +284,21 @@
 
 **目標**：證明 Godot 4.7 + Jolt + C++ GDExtension 撐得起各 Profile，並凍結 iOS Lane 決策。
 
+**目前環境執行註記（2026-07-10）**：桌面實機驗收以本機 Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX with Radeon Graphics、NVIDIA GeForce RTX 4060 Ti 為唯一基準。Android 與 iOS 是 build-only 車道：保留 export/build smoke、native tests、replay、資產與 renderer/profile 檢查；Android 保留 APK artifact/大小檢查，iOS 實際 Xcode build smoke 在有 macOS/Xcode runner 前為 **not verified**。沒有行動實機時，P99/FPS/Perfetto、OTG、MFi/VirtualJoystick、錄影、安裝、溫度、high-speed latency 與 crash-free 均為 **N/A**，不得標示為通過；這不豁免桌面或 shared-core 的數值、DEV-M、USR、LEG 門檻。
+
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms（基準機 Ryzen 5 5600） | GPU-A | SC |
-| G0.2 | Mobile High 與 Mobile Base 兩 profile 於基準行動裝置：物理 P99 ≤ 5 ms 且整體 ≥ 60 FPS（量測定義同 G0.1；以 Perfetto 拆解物理/渲染占比） | DEV-M→GPU-A | AND, iOS |
+| G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms（凍結本機：Ubuntu 26.04、Ryzen 9 7945HX、RTX 4060 Ti） | GPU-A | SC |
+| G0.2 | Mobile High 與 Mobile Base 兩 profile 於基準行動裝置：物理 P99 ≤ 5 ms 且整體 ≥ 60 FPS（量測定義同 G0.1；以 Perfetto 拆解物理/渲染占比）。目前無實機：**N/A，非 pass**；保留 build-only 檢查 | DEV-M→GPU-A | AND, iOS |
 | G0.3 | 1000/500 Hz 子步進下四元數積分 10 分鐘無 NaN、範數漂移 < 1e-6 | CI-A | SC |
 | G0.4 | 桌面/行動雙渲染管線同場景資產打通 | GPU-A | SC |
-| G0.5 | RadioMaster USB joystick 於 Windows 與 Android OTG 識別 16 通道 | DEV-M | WIN, AND |
+| G0.5 | RadioMaster USB joystick 於 Ubuntu desktop 識別 16 通道；Android OTG 目前 **N/A，非 pass** | DEV-M | LIN, AND |
 | G0.6a | **共用核心決定性**：GDExtension 於 Win / Linux / Android（主線 Lane 平台）建置皆過同一組單元測試——同平台重播 bitwise 一致；跨平台物理量容忍：60 秒標準機動終端姿態差 ≤ 0.5°、位置差 ≤ 5 cm（統一 `-ffp-contract=off` 等旗標） | CI-A | SC |
-| G0.6b | **逐 Lane 建置 smoke**：macOS 建置 + 同組測試（僅擋 MAC Lane）；iOS 建置 + 同組測試（**G0.10 Go 後才啟用**，僅擋 IOS Lane） | CI-A | MAC / IOS |
+| G0.6b | **逐 Lane 建置 smoke**：macOS 建置 + 同組測試（僅擋 MAC Lane）；iOS 建置 + 同組測試（僅擋 IOS Lane；目前無 macOS/Xcode runner，為 **not verified**） | CI-A | MAC / IOS |
 | G0.7 | Linux headless 可無視窗執行完整物理模擬並輸出數據 | CI-A | SC |
 | G0.8 | **碰撞權威切換**（回應 High 6）：四場景各 100 次隨機化重複——(a) 30 m/s 正撞牆、(b) 5° 掠角擦地、(c) 撞桿反彈、(d) 翻滾觸地後恢復。全數：無 NaN、速度/角速度有限、動能不增加（restitution 容忍 +1%）、交接後 0.5 秒內飛控可重新響應輸入、同種子重播結果一致 | CI-A | SC |
 | G0.9 | **Fidelity 等價**：Mobile Base vs Desktop Full 同輸入序列（60 秒標準機動）姿態軌跡 RMSE ≤ 1.5°、位置 RMSE ≤ 15 cm（**僅擋行動 Lane**；Desktop 主線不受此 Gate 阻擋） | CI-A | AND, IOS |
-| G0.P | **可玩垂直切片（Playable Slice，回應審查 C2）**：冷啟動 → 主選單 → Quick Fly → 預設機/預設圖（佔位美術可）→ spawn → 油門低位 → arm → 起飛 → pause → reset → exit 全流程可走通，於 Windows 與 Android 各錄影 + 輸入 log + build hash 存證。**本 Gate 只驗操作性，不驗手感**（PID 粗調可）；此 Gate 未過，Phase 1 之後的深度物理工作不得超過團隊工時 20% | DEV-M | SC |
+| G0.P | **可玩垂直切片（Playable Slice，回應審查 C2）**：冷啟動 → 主選單 → Quick Fly → 預設機/預設圖（佔位美術可）→ spawn → 油門低位 → arm → 起飛 → pause → reset → exit 全流程可走通，於本機 Ubuntu desktop 以維護者操作、輸入 log + build hash 驗收；Android 實機部分目前 **N/A，非 pass**。**本 Gate 只驗操作性，不驗手感**（PID 粗調可）；此 Gate 未過，Phase 1 之後的深度物理工作不得超過團隊工時 20% | DEV-M | SC |
 | G0.10 | iOS Lane 決策文件：Ad Hoc / TestFlight 路線之裝置數、審查風險、成本評估，做出 Go/No-Go 並簽核 | LEG | IOS |
 
 ---
@@ -345,7 +347,7 @@
 | G3.4 | **Dryden（determinism 修正版）**：固定 seed、Welch 法（段長 2¹⁴、50% overlap、Hann 窗）估 PSD，0.1–10 rad/s 各 bin 與理論譜偏差 ≤ 10%（95% 信賴區間內），輕/中/重三檔；同 seed 重跑 bitwise 一致 | CI-A | SC |
 | G3.5 | 風切剖面 vs 軍規模型逐點 ≤ 5% | CI-A | SC |
 | G3.6 | Propwash 雙軌：(a) 機制測試——split-S 出彎擾動注入、強度與油門相關係數 ≥ 0.8、關閉時為 0；(b) **實測殘差**——重播 G1.10 之 propwash 動作 blackbox，擾動頻段（10–80 Hz）陀螺儀 PSD 能量比真機對應值落於 0.5–2.0 倍區間 | CI-A | SC |
-| G3.7 | **效能預算（修正版）**：全效應開啟後，物理 P99 相對 G0 基線增幅 ≤ 20%，且絕對值仍 ≤ 3 ms（桌面）/ 5 ms（行動各 profile） | GPU-A / DEV-M | SC |
+| G3.7 | **效能預算（修正版）**：全效應開啟後，本機 Ubuntu 桌面物理 P99 相對 G0 基線增幅 ≤ 20%，且絕對值仍 ≤ 3 ms；行動各 profile 的 5 ms 實機條件目前 **N/A，非 pass** | GPU-A / DEV-M | DESK |
 | G3.8 | 氣象盲測：飛手盲判無風/中紊流/強陣風，正確率 ≥ 80% | USR | SC |
 
 ---
@@ -354,8 +356,8 @@
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G4.1 | 桌面（GTX 1660S）完整場景全效果 1080p ≥ 120 FPS（P99 ≥ 90） | GPU-A | DESK |
-| G4.2 | 行動基準機同場景 ≥ 60 FPS（P99 ≥ 45），30 分鐘熱節流後 ≥ 50 FPS | DEV-M | AND, IOS |
+| G4.1 | 本機 Ubuntu 桌面（Ryzen 9 7945HX + RTX 4060 Ti）完整場景全效果 1080p ≥ 120 FPS（P99 ≥ 90） | GPU-A | DESK |
+| G4.2 | 行動基準機同場景 ≥ 60 FPS（P99 ≥ 45），30 分鐘熱節流後 ≥ 50 FPS；目前無實機：**N/A，非 pass** | DEV-M | AND, IOS |
 | G4.3 | **分期**：切片階段 ≥1 張 Free Flight 地圖 + reset-to-spawn + exit；**GA 前 ≥3 張完整地圖**（含 ≥1 條 Time Trial 路線：checkpoint 方向箭頭 + finish panel `Retry / Change Map / Exit`）+ 計時/檢查點/重生 QA 清單 100%；地圖卡含 3.5.4 規定資訊；場內方向指示可用 | DEV-M | SC |
 | G4.4 | FPV 攝影機：uptilt/FOV/OSD；桌面含類比雜訊濾鏡 | GPU-A | SC |
 | G4.5 | 雙渲染管線資產同源，人工分支 0 | CI-A | SC |
@@ -387,9 +389,9 @@
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
 | G5.1 | **逐 OS 控制器閘門**：Windows / macOS / Linux 各自——radio 實機（RadioMaster、FrSky 至少各一）+ 通用 gamepad 一款，完成 16 通道映射 + 反向 + 端點校準（依校準合約判定）+ 斷線重連；**任一 OS 未過僅凍結該 OS Lane** | DEV-M | WIN / MAC / LIN |
-| G5.2 | Android OTG joystick 同 G5.1 | DEV-M | AND |
-| G5.3 | iOS（若 Lane 續行）：MFi（SDL3 路徑）+ VirtualJoystick（Fixed/Dynamic 雙模式）可完成 G2.3 姿態保持測試 | DEV-M | IOS |
-| G5.4 | 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）：桌面 ≤ 40 ms、行動 ≤ 60 ms | DEV-M | 各 Lane |
+| G5.2 | Android OTG joystick 同 G5.1；目前無實機：**N/A，非 pass** | DEV-M | AND |
+| G5.3 | iOS（若 Lane 續行）：MFi（SDL3 路徑）+ VirtualJoystick（Fixed/Dynamic 雙模式）可完成 G2.3 姿態保持測試；目前無實機：**N/A，非 pass** | DEV-M | IOS |
+| G5.4 | 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）：桌面 ≤ 40 ms；行動 ≤ 60 ms 的實機條件目前 **N/A，非 pass** | DEV-M | 各 Lane |
 | G5.5 | 輸入映射匯出/匯入、斷線重連不丟設定（校準/映射跨 session 持久化，見範圍排除之界線釐清） | CI-A | SC |
 | G5.6 | **Channel Monitor 一等 UI**：16 通道 live bar / raw / normalized / deadzone / 中心 / 端點全數即時顯示，更新率 ≥ 30 Hz；自動檢核四項提示（油門低位、arm 映射、mode 映射、軸重複）功能驗證 | GPU-A + DEV-M | SC |
 | G5.7 | **斷線 fail loud**：飛行中拔除控制器 → 500 ms 內畫面警示 + 顯示重連狀態；重插後 ≤ 2 秒恢復輸入且校準不丟失（各 20 次） | DEV-M | 各 Lane |
@@ -401,10 +403,10 @@
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
 | G6.1 | Win/macOS/Linux 安裝包 ≤ 300 MB | CI-A | DESK |
-| G6.2 | Android APK ≤ 300 MB，側載安裝流程文件化（含簽章與未知來源指引） | CI-A + DEV-M | AND |
+| G6.2 | Android APK ≤ 300 MB，側載安裝流程文件化（含簽章與未知來源指引）；APK artifact/大小保留，實機側載目前 **N/A，非 pass** | CI-A + DEV-M | AND |
 | G6.3 | 授權掃描：Tier 1 產物 0 GPL/LGPL/AGPL；NOTICE 自動生成 | CI-A | SC |
-| G6.4 | 冷啟動至可飛：桌面 ≤ 15 秒、行動 ≤ 20 秒 | GPU-A / DEV-M | 各 Lane |
-| G6.5 | 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件） | DEV-M | 各 Lane |
+| G6.4 | 冷啟動至可飛：桌面 ≤ 15 秒；行動 ≤ 20 秒的實機條件目前 **N/A，非 pass** | GPU-A / DEV-M | 各 Lane |
+| G6.5 | 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件）；行動實機部分目前 **N/A，非 pass** | DEV-M | 各 Lane |
 | G6.6 | **授權伺服器**：註冊→簽發→JWT 驗證全流程可用；離線寬限期機制（斷網 ≤ 72 小時可玩）；伺服器不可達時明確提示而非靜默鎖死 | CI-A + DEV-M | SC |
 | G6.7 | 交付流程演練：從客戶名單到發送安裝檔+授權金鑰之 SOP 全程演練一次成功，含撤銷授權 | DEV-M | SC |
 | G6.8 | **診斷支援包（回應審查 H10）**：`Settings > Diagnostics > Export Support Bundle` 一鍵匯出——build hash、OS/GPU/裝置資訊、授權狀態、近期 log、控制器 raw 取樣、輸入映射與校準、最後錯誤；**自動化稽核：bundle 內 0 個 secrets / JWT / 個資（遮罩驗證）** | CI-A + DEV-M | SC |
@@ -429,7 +431,7 @@
 0. **CI 平台範圍（修正版）**：Linux headless 僅承擔——數值模擬、頻譜分析、GDExtension 單元測試、資產載入 smoke、選單樹遍歷。渲染/截圖/UI 視覺/效能類 Gate 一律 GPU runner 或實機（DEV-M/GPU-A）。Web 不列入任何目標。
 1. 測試報告：每 Gate 一份，含環境、版本雜湊、原始數據、判定；未過附根因與修改計畫。
 2. 重測循環：修改 → 該 Phase 全 Gate 回歸 → 報告。
-3. 基準機凍結：桌面 Ryzen 5 5600 + GTX 1660S / 16GB；行動 Snapdragon 7 Gen 1、iPhone 13（A15）。不得換更高規格。
+3. 基準機凍結：桌面為本機 Ubuntu 26.04 LTS、Ryzen 9 7945HX + RTX 4060 Ti（driver 580.159.03）。Android/iOS 維持 build-only，沒有實機時不建立替代行動基準，也不得把 N/A 寫成通過。
 4. 盲測規範：受測者不知修改內容；問卷含真機 blackbox 回放錨定題。
 5. 版本鎖定：Godot 4.7 之 patch 版本與 export template hash 記錄於 repo；引擎升級觸發 G0–G3 全量重跑。
 
