@@ -5,18 +5,22 @@ const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
-const TAKEOFF_VELOCITY := Vector3(30.0, 0.0, 0.0)
+const TAKEOFF_VELOCITY := Vector3(0.0, 6.0, 0.0)
 const FLIGHT_THROTTLE := 0.75
 const ACRO_RC_RATE := 1.0
 const ACRO_SUPER_RATE := 13.0 / 18
 const ACRO_EXPO := 0.0
+const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
+const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Exit"
 
 @onready var fallback_status_label: Label3D = %FallbackStatus
 @onready var drone_body = get_node_or_null("DroneBody")
+@onready var chase_camera := get_node_or_null("ChaseCamera") as Camera3D
 
 var native: Object
 var paused := false
 var exit_requested := false
+var quit_on_exit := true
 var takeoff_requested := false
 var reset_count := 0
 var last_profile_status := ""
@@ -31,9 +35,15 @@ var acro_roll_stick := 0.0
 var acro_pitch_stick := 0.0
 var acro_yaw_stick := 0.0
 var status_diagram: CanvasLayer
+var main_menu_layer: CanvasLayer
+var flight_hud_layer: CanvasLayer
+var key_hints_label: Label
+var arm_status_label: Label
+var arm_takeoff_button: Button
 
 func _ready() -> void:
     _build_main_menu()
+    _build_flight_hud()
     _build_status_diagram()
     native = ClassDB.instantiate("AeroSimNative")
     if native == null:
@@ -44,10 +54,12 @@ func _ready() -> void:
         last_error_message = hardware_config.last_error
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
     update_fallback_status()
+    _update_chase_camera()
+    _refresh_flight_hud()
 
 func _unhandled_input(event: InputEvent) -> void:
-    if event.is_action_pressed("flight_takeoff"):
-        request_takeoff()
+    if event.is_action_pressed("flight_takeoff") and screen in ["preflight", "flight"]:
+        arm_and_takeoff()
     elif event.is_action_pressed("flight_pause"):
         set_paused(not paused)
     elif event.is_action_pressed("flight_respawn"):
@@ -55,13 +67,18 @@ func _unhandled_input(event: InputEvent) -> void:
     elif event.is_action_pressed("flight_altitude_hold"):
         toggle_altitude_hold()
     elif event.is_action_pressed("flight_exit"):
-        exit_requested = true
+        request_exit()
+
+func _process(_delta: float) -> void:
+    _update_chase_camera()
+    _refresh_flight_hud()
 
 func _physics_process(_delta: float) -> void:
     if reset_hold_frames > 0:
         reset_hold_frames -= 1
         if reset_hold_frames == 0 and drone_body != null and not paused:
             drone_body.freeze = false
+            drone_body.sleeping = false
         return
     if native == null or paused or not takeoff_requested:
         return
@@ -153,37 +170,73 @@ func request_takeoff() -> void:
     update_fallback_status()
     if drone_body != null:
         drone_body.reset_contact()
-        drone_body.global_position = SPAWN_POSITION
-        drone_body.linear_velocity = TAKEOFF_VELOCITY
-        drone_body.angular_velocity = Vector3.ZERO
+        drone_body.freeze = false
+        drone_body.sleeping = false
+        drone_body.apply_native_state(SPAWN_POSITION, Quaternion.IDENTITY, TAKEOFF_VELOCITY, Vector3.ZERO)
+    _refresh_flight_hud()
+
+func arm_and_takeoff() -> void:
+    if native == null:
+        last_error_message = "Quick Fly cannot arm: native runtime unavailable"
+        screen = "error"
+        _refresh_flight_hud()
+        return
+    if not native.call("flight_control_armed") and not native.call("arm_flight_control", 0.0):
+        last_error_message = "Quick Fly cannot arm: %s" % native.call("flight_control_arm_reject_code")
+        screen = "error"
+        _refresh_flight_hud()
+        return
+    request_takeoff()
+
+func request_exit() -> void:
+    exit_requested = true
+    screen = "exit"
+    _refresh_flight_hud()
+    if quit_on_exit:
+        get_tree().quit()
 
 func quick_fly(entry_state: String = "calibrated") -> void:
     if entry_state == "no_controller":
         last_error_message = InputProfiles.fallback_status([])
         screen = "fallback_prompt"
+        _refresh_flight_hud()
         return
     if entry_state == "uncalibrated":
-        last_error_message = ""
+        last_error_message = "Controller setup is required before Quick Fly"
         screen = "controller_setup"
+        _refresh_flight_hud()
         return
     if entry_state != "calibrated":
         last_error_message = "Quick Fly cannot continue: %s" % entry_state
         screen = "error"
+        _refresh_flight_hud()
         return
-    request_takeoff()
+    enter_preflight()
 
 func accept_fallback() -> void:
     if screen == "fallback_prompt":
-        request_takeoff()
+        enter_preflight()
         return
     last_error_message = "No fallback prompt is active"
     screen = "error"
+    _refresh_flight_hud()
+
+func enter_preflight() -> void:
+    screen = "preflight"
+    flight_mode = "ANGLE"
+    takeoff_requested = false
+    set_paused(false)
+    if drone_body != null:
+        _reset_drone_body()
+    update_fallback_status()
+    _refresh_flight_hud()
 
 func respawn() -> void:
     reset_count += 1
     screen = "flight"
     flight_mode = "ANGLE"
     takeoff_requested = true
+    set_paused(false)
     if native != null:
         native.call("reset_flight")
     update_fallback_status()
@@ -191,6 +244,7 @@ func respawn() -> void:
         _reset_drone_body()
         # ponytail: short reset hold; replace with real throttle input state when controller profiles land.
         reset_hold_frames = 30
+    _refresh_flight_hud()
 
 func update_fallback_status() -> void:
     last_profile_status = InputProfiles.fallback_status(Input.get_connected_joypads())
@@ -210,10 +264,13 @@ func set_paused(value: bool) -> void:
     paused = value
     if drone_body != null:
         drone_body.freeze = value
+        if not value:
+            drone_body.sleeping = false
 
 func _build_main_menu() -> void:
     var layer := CanvasLayer.new()
     layer.name = "MainMenu"
+    main_menu_layer = layer
     add_child(layer)
 
     var entries := VBoxContainer.new()
@@ -226,7 +283,45 @@ func _build_main_menu() -> void:
         button.text = entry
         entries.add_child(button)
         if entry == "Quick Fly":
-            button.pressed.connect(quick_fly.bind("calibrated"))
+            button.pressed.connect(quick_fly.bind(_quick_fly_entry_state()))
+
+func _build_flight_hud() -> void:
+    var layer := CanvasLayer.new()
+    layer.name = "FlightHud"
+    layer.layer = 30
+    flight_hud_layer = layer
+    add_child(layer)
+
+    var margin := MarginContainer.new()
+    margin.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    margin.offset_right = 360.0
+    margin.offset_bottom = 128.0
+    margin.add_theme_constant_override("margin_left", 10)
+    margin.add_theme_constant_override("margin_top", 10)
+    margin.add_theme_constant_override("margin_right", 10)
+    margin.add_theme_constant_override("margin_bottom", 10)
+    layer.add_child(margin)
+
+    var panel := PanelContainer.new()
+    margin.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.add_theme_constant_override("separation", 4)
+    panel.add_child(rows)
+
+    key_hints_label = Label.new()
+    key_hints_label.name = "KeyHints"
+    key_hints_label.text = KEY_HINTS_TEXT
+    rows.add_child(key_hints_label)
+
+    arm_status_label = Label.new()
+    arm_status_label.name = "ArmStatus"
+    rows.add_child(arm_status_label)
+
+    arm_takeoff_button = Button.new()
+    arm_takeoff_button.name = "ArmTakeoff"
+    arm_takeoff_button.pressed.connect(_handle_primary_action)
+    rows.add_child(arm_takeoff_button)
 
 func _build_status_diagram() -> void:
     status_diagram = StatusDiagramDebug.new()
@@ -241,6 +336,62 @@ func _reset_drone_body() -> void:
     drone_body.reset_contact()
     drone_body.apply_native_state(SPAWN_POSITION, Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
     drone_body.freeze = true
+
+func _refresh_flight_hud() -> void:
+    if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
+        return
+    if main_menu_layer != null:
+        main_menu_layer.visible = screen == "main_menu"
+    if flight_hud_layer != null:
+        flight_hud_layer.visible = screen != "main_menu"
+    key_hints_label.text = KEY_HINTS_TEXT
+    arm_takeoff_button.disabled = screen == "main_menu"
+    if screen == "preflight":
+        var armed := _flight_control_armed()
+        arm_status_label.text = "Throttle LOW -> %s -> press T or ARM" % ["ARMED" if armed else "DISARMED"]
+        arm_takeoff_button.text = "ARM / TAKEOFF (T)"
+    elif screen == "flight":
+        var armed := _flight_control_armed()
+        arm_status_label.text = "%s | %s" % ["ARMED" if armed else "DISARMED", "PAUSED" if paused else "TAKEOFF"]
+        arm_takeoff_button.text = "ARM / TAKEOFF (T)"
+    elif screen == "fallback_prompt":
+        arm_status_label.text = last_error_message
+        arm_takeoff_button.text = "USE KEYBOARD FALLBACK"
+    elif screen == "controller_setup":
+        arm_status_label.text = last_error_message
+        arm_takeoff_button.text = "BACK TO MAIN MENU"
+    elif screen == "error":
+        arm_status_label.text = last_error_message
+        arm_takeoff_button.text = "BACK TO MAIN MENU"
+    elif screen == "exit":
+        arm_status_label.text = "EXIT requested"
+        arm_takeoff_button.text = "EXIT"
+    else:
+        arm_status_label.text = "Quick Fly: choose Quick Fly, then arm at low throttle"
+        arm_takeoff_button.text = "ARM / TAKEOFF (T)"
+
+func _quick_fly_entry_state() -> String:
+    return "no_controller" if Input.get_connected_joypads().is_empty() else "calibrated"
+
+func _handle_primary_action() -> void:
+    if screen == "fallback_prompt":
+        accept_fallback()
+    elif screen in ["preflight", "flight"]:
+        arm_and_takeoff()
+    elif screen in ["controller_setup", "error"]:
+        screen = "main_menu"
+        last_error_message = ""
+        _refresh_flight_hud()
+
+func _update_chase_camera() -> void:
+    if chase_camera == null or drone_body == null:
+        return
+    chase_camera.current = true
+    chase_camera.global_position = drone_body.global_position + CHASE_CAMERA_OFFSET
+    chase_camera.look_at(drone_body.global_position, Vector3.UP)
+
+func _flight_control_armed() -> bool:
+    return native != null and bool(native.call("flight_control_armed"))
 
 func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3) -> float:
     return 0.5 * _mass_kg() * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()
