@@ -71,7 +71,9 @@ class PerformanceReportTest(unittest.TestCase):
             )
 
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            report = json.loads(report_path.read_text(encoding="utf-8"))
+            report_text = report_path.read_text(encoding="utf-8")
+            self.assertEqual(report_text.count("\n"), 1)
+            report = json.loads(report_text)
             self.assertEqual(report["environment"]["git_revision"], "abc123")
             self.assertIn("G0.1 physics frame time", chart_path.read_text(encoding="utf-8"))
 

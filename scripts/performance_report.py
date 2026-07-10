@@ -147,7 +147,7 @@ def main() -> int:
         parser.error(str(error))
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(json.dumps(report, separators=(",", ":")) + "\n", encoding="utf-8")
     if args.chart_output:
         write_chart(report, args.chart_output)
     return 0
