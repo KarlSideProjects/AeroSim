@@ -40,6 +40,15 @@ GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts
 
 `scripts/run_headless_smoke.sh` 會以 headless 模式執行 `common/smoke/headless_smoke.gd`，呼叫 `AeroSimNative.probe_value()`，依 `--frames` 或 `--seconds` 跑 physics ticks，並輸出 JSON。
 
+## G0.1 headed 效能量測
+
+```bash
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchmark.sh --effects off --output build/performance-effects-off.json
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchmark.sh --effects on --baseline-report build/performance-effects-off.json --output build/performance-effects-on.json
+```
+
+量測固定為 10 秒 warmup + 60 秒模擬時間、240 Hz Jolt + 1 kHz native 子步進、VSync off。報告保存逐 physics-frame 原始樣本、P95/P99、render CPU/GPU 分列、環境與 Git revision；預設要求 NVIDIA headed adapter，可用 `AEROSIM_REQUIRED_GPU_ADAPTER` 指定其他 GPU。
+
 ## G0.6a 決定性與重播
 
 - `SConstruct` 與 `scripts/test_native.sh` 都關閉 fused multiply-add contraction：GCC/Clang 使用 `-ffp-contract=off`，Windows MSVC GDExtension 使用 `/fp:strict`。
