@@ -73,6 +73,9 @@ jobs:
       - name: License server API test
         run: python3 -m unittest license_server.test_license_server
 
+      - name: Performance report unit test
+        run: python3 tests/test_performance_report.py
+
       - name: Fetch Godot 4.7
         run: |
           godot_dir="$AEROSIM_TOOL_ROOT/godot"
@@ -483,6 +486,12 @@ jobs:
         env:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
         run: scripts/run_headed_acceptance.sh --xvfb
+
+      - name: Performance harness smoke (Xvfb + lavapipe)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+          AEROSIM_REQUIRED_GPU_ADAPTER: llvmpipe
+        run: xvfb-run -a python3 tests/test_performance_runner.py
 
       - name: Store headed screenshots locally
         if: always()

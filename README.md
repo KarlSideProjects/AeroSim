@@ -40,6 +40,19 @@ GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts
 
 `scripts/run_headless_smoke.sh` 會以 headless 模式執行 `common/smoke/headless_smoke.gd`，呼叫 `AeroSimNative.probe_value()`，依 `--frames` 或 `--seconds` 跑 physics ticks，並輸出 JSON。
 
+## G0.1 headed 效能量測
+
+```bash
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchmark.sh --mode reference --effects off --output build/performance-effects-off.json
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchmark.sh --mode reference --effects on --baseline-report build/performance-effects-off.json --output build/performance-effects-on.json
+```
+
+Runner 預設為 reference；只有在凍結的 Ryzen 5 5600 + GTX 1660 SUPER 與鎖定工具鏈上明確指定 `--mode gate`，才會輸出 gate verdict。正式 gate／reference 量測固定為 10 秒 warmup + 60 秒模擬時間、240 Hz Jolt + 1 kHz native 子步進、VSync off；只有明確的 `--mode smoke` 可縮短時間，且 smoke 不會輸出 G0.1 gate verdict。Runner 會先用鎖定的 godot-cpp checkout 重建 debug GDExtension，再把 Godot 版本與 SHA-256、godot-cpp commit、GDExtension SHA-256、native source SHA-256 寫入 JSON。報告另保存逐 physics-frame 原始樣本、P95/P99、render CPU/GPU 分列、環境與 Git revision，並同步輸出 SVG 圖表；reference 預設要求 NVIDIA headed adapter，可用 `AEROSIM_REQUIRED_GPU_ADAPTER` 指定其他 GPU。
+
+目前單機 on/off workload 的 `active_effects` 明列為 A3 drag 與 A4 ground effect；A5 downwash 需要雙機相對位置與逐幀交互作用，未整合前不納入本單機效能差分。
+
+`.github/workflows/performance-gpu.yml` 每日 02:00（Asia/Taipei；18:00 UTC）或手動執行相同的 10+60 秒 reference protocol。它要求真實 NVIDIA adapter、以跨 runner lock 串行化量測，並把 JSON/SVG 存到 self-hosted runner 的 `performance-gpu` local artifact 目錄；Xvfb/lavapipe 只保留在一般 CI 的流程 smoke。
+
 ## G0.6a 決定性與重播
 
 - `SConstruct` 與 `scripts/test_native.sh` 都關閉 fused multiply-add contraction：GCC/Clang 使用 `-ffp-contract=off`，Windows MSVC GDExtension 使用 `/fp:strict`。
