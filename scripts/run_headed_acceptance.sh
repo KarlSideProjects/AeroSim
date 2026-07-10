@@ -36,5 +36,5 @@ mkdir -p "$out_dir"
 mkdir -p .godot
 printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .godot/extension_list.cfg
 rm -f "$out_dir"/*.png "$out_dir/report.json"
-"${launcher[@]}" "$godot_bin" --path . --resolution 1280x720 \
+timeout 60s "${launcher[@]}" "$godot_bin" --path . --resolution 1280x720 \
     --script res://tests/headed/headed_acceptance.gd -- --out-dir "$out_dir"

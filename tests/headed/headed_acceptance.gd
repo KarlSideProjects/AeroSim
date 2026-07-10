@@ -15,23 +15,22 @@ func _run() -> void:
 	root.add_child(runtime)
 	await _settle(30)
 
-	var cold_start_image := await _snapshot("00_cold_start")
+	await _snapshot("00_cold_start")
 	_expect(runtime.native != null, "native runtime is registered")
 	_expect(root.get_camera_3d() != null, "cold start has an active Camera3D")
-	_expect(_max_color_ratio(cold_start_image) < 0.99, "cold start is not a monochrome frame")
 	_expect(runtime.screen == "main_menu", "cold start opens the main menu")
 
 	var quick_fly: Button = runtime.get_node_or_null("MainMenu/Entries/QuickFly")
 	_expect(quick_fly != null, "main menu exposes Quick Fly button")
 	if quick_fly != null:
-		quick_fly.emit_signal("pressed")
+		_click(quick_fly)
 	await _settle(10)
 	await _snapshot("01_quick_fly")
 	if runtime.screen == "fallback_prompt":
 		var fallback_button: Button = runtime.arm_takeoff_button
 		_expect(fallback_button != null and fallback_button.text == "USE KEYBOARD FALLBACK", "Quick Fly exposes the KeyboardProfile fallback control")
 		if fallback_button != null:
-			fallback_button.emit_signal("pressed")
+			_click(fallback_button)
 		await _settle(10)
 		_expect(runtime.screen == "preflight", "KeyboardProfile fallback enters low-throttle preflight")
 
@@ -51,15 +50,12 @@ func _run() -> void:
 	await _snapshot("04_reset")
 	_expect(runtime.reset_count >= 1, "R resets flight after resume")
 
-	if runtime.get("quit_on_exit") != null:
-		runtime.quit_on_exit = false
-	_tap(KEY_ESCAPE)
-	await _settle(10)
 	await _snapshot("05_exit")
-	_expect(runtime.exit_requested, "Esc requests exit")
-
 	_write_report()
-	quit(0 if _failures.is_empty() else 1)
+	if not _failures.is_empty():
+		quit(1)
+		return
+	_tap(KEY_ESCAPE)
 
 func _parse_args() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -76,6 +72,7 @@ func _snapshot(name: String) -> Image:
 	var image := root.get_texture().get_image()
 	if image.save_png("%s/%s.png" % [_out_dir, name]) != OK:
 		_failures.append("cannot save screenshot %s" % name)
+	_expect(_max_color_ratio(image) < 0.99, "%s is not a monochrome frame" % name)
 	return image
 
 func _max_color_ratio(image: Image) -> float:
@@ -94,6 +91,15 @@ func _tap(keycode: Key) -> void:
 		var event := InputEventKey.new()
 		event.keycode = keycode
 		event.physical_keycode = keycode
+		event.pressed = pressed
+		Input.parse_input_event(event)
+
+func _click(control: Control) -> void:
+	var position := control.get_global_rect().get_center()
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = position
+		event.button_index = MOUSE_BUTTON_LEFT
 		event.pressed = pressed
 		Input.parse_input_event(event)
 
