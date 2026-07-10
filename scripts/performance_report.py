@@ -11,8 +11,8 @@ from pathlib import Path
 
 
 G0_1_P99_LIMIT_MS = 3.0
-G0_1_BASELINE_CPU = "AMD Ryzen 5 5600"
-G0_1_BASELINE_GPU = "NVIDIA GeForce GTX 1660 SUPER"
+G0_1_BASELINE_CPU = "AMD Ryzen 9 7945HX with Radeon Graphics"
+G0_1_BASELINE_GPU = "NVIDIA GeForce RTX 4060 Ti"
 PINNED_GODOT_VERSION = "4.7.stable.official.5b4e0cb0f"
 PINNED_GODOT_BINARY_SHA256 = "f85bbc6b15e22416c7d797cd60b63286dd67b9cb13498847056c18520ae55a75"
 PINNED_GODOT_CPP_REVISION = "ba0edfed90512ec64aba51d4295a3e7e30112f86"
@@ -49,7 +49,7 @@ def _validate_gate_eligibility(raw: dict[str, Any], environment: dict[str, Any])
     )
     if not cpu_matches or video_adapter != G0_1_BASELINE_GPU or not provenance_is_pinned:
         raise ValueError(
-            "G0.1 gate requires the frozen Ryzen 5 5600 and GTX 1660 SUPER with pinned Godot/godot-cpp provenance"
+            "G0.1 gate requires the frozen Ryzen 9 7945HX and RTX 4060 Ti with pinned Godot/godot-cpp provenance"
         )
 
 

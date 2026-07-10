@@ -97,7 +97,7 @@ class PerformanceRunnerTest(unittest.TestCase):
                 ["A3_drag", "A4_ground_effect"],
             )
 
-    def test_default_reference_mode_rejects_shortened_gate_protocol(self):
+    def test_default_gate_mode_rejects_shortened_gate_protocol(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "report.json"
             completed = subprocess.run(
@@ -119,7 +119,7 @@ class PerformanceRunnerTest(unittest.TestCase):
             )
 
             self.assertEqual(completed.returncode, 2, completed.stderr)
-            self.assertIn("reference mode requires exactly 10s warmup and 60s measurement", completed.stderr)
+            self.assertIn("gate mode requires exactly 10s warmup and 60s measurement", completed.stderr)
             self.assertFalse(output.exists())
 
     def test_runner_fails_loudly_without_the_godot_cpp_source_checkout(self):

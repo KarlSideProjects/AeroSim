@@ -16,8 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from performance_report import build_report, compare_reports, main
 
 
-BASELINE_CPU = "AMD Ryzen 5 5600 6-Core Processor"
-BASELINE_GPU = "NVIDIA GeForce GTX 1660 SUPER"
+BASELINE_CPU = "AMD Ryzen 9 7945HX with Radeon Graphics"
+BASELINE_GPU = "NVIDIA GeForce RTX 4060 Ti"
 PINNED_PROVENANCE = {
     "godot_version": "4.7.stable.official.5b4e0cb0f",
     "godot_sha256": "f85bbc6b15e22416c7d797cd60b63286dd67b9cb13498847056c18520ae55a75",
@@ -159,11 +159,11 @@ class PerformanceReportTest(unittest.TestCase):
             "video_adapter": BASELINE_GPU,
             **PINNED_PROVENANCE,
         }
-        with self.assertRaisesRegex(ValueError, "frozen Ryzen 5 5600 and GTX 1660 SUPER"):
-            build_report(raw, {"cpu_model": "AMD Ryzen 9 7945HX"})
-        with self.assertRaisesRegex(ValueError, "frozen Ryzen 5 5600 and GTX 1660 SUPER"):
+        with self.assertRaisesRegex(ValueError, "frozen Ryzen 9 7945HX and RTX 4060 Ti"):
+            build_report(raw, {"cpu_model": "AMD Ryzen 5 5600 6-Core Processor"})
+        with self.assertRaisesRegex(ValueError, "frozen Ryzen 9 7945HX and RTX 4060 Ti"):
             build_report(
-                raw | {"video_adapter": "NVIDIA GeForce RTX 4060 Ti"},
+                raw | {"video_adapter": "NVIDIA GeForce GTX 1660 SUPER"},
                 {"cpu_model": BASELINE_CPU},
             )
         with self.assertRaisesRegex(ValueError, "pinned Godot/godot-cpp"):

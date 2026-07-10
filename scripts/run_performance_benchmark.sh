@@ -7,7 +7,7 @@ output_path="build/performance_report.json"
 warmup_seconds=10
 seconds=60
 effects=off
-benchmark_mode=reference
+benchmark_mode=gate
 required_adapter="${AEROSIM_REQUIRED_GPU_ADAPTER:-NVIDIA}"
 baseline_report=""
 
@@ -71,13 +71,13 @@ PY
 if [ "$benchmark_mode" = "gate" ]; then
     cpu_model="$(awk -F ': ' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null || true)"
     case "$cpu_model" in
-        "AMD Ryzen 5 5600"|"AMD Ryzen 5 5600 "*) ;;
+        "AMD Ryzen 9 7945HX with Radeon Graphics") ;;
         *)
-            echo "gate mode requires the frozen AMD Ryzen 5 5600 CPU: ${cpu_model:-unknown}" >&2
+            echo "gate mode requires the frozen AMD Ryzen 9 7945HX with Radeon Graphics CPU: ${cpu_model:-unknown}" >&2
             exit 2
             ;;
     esac
-    required_adapter="NVIDIA GeForce GTX 1660 SUPER"
+    required_adapter="NVIDIA GeForce RTX 4060 Ti"
 fi
 
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
