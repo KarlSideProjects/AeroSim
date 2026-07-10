@@ -26,6 +26,7 @@ struct RigidBodyState {
     Vec3 velocity;
     Quat orientation;
     Vec3 angular_velocity;
+    std::array<double, 4> motor_thrust_newtons = {0.0, 0.0, 0.0, 0.0};
 };
 
 struct A3DragConfig {
@@ -51,6 +52,19 @@ struct A5DownwashConfig {
     double coeff_3 = 0.0;
 };
 
+struct PerMotorPhysicsConfig {
+    Vec3 inertia_kg_m2;
+    std::array<Vec3, 4> position_frd{};
+    std::array<double, 4> spin_direction = {0.0, 0.0, 0.0, 0.0};
+    double max_thrust_per_motor_newtons = 0.0;
+    double max_current_per_motor_a = 0.0;
+    double yaw_torque_per_newton = 0.0;
+};
+
+struct MotorCommands {
+    std::array<double, 4> normalized = {0.0, 0.0, 0.0, 0.0};
+};
+
 struct SimulationConfig {
     double seconds = 1.0;
     std::int32_t physics_hz = 240;
@@ -67,6 +81,7 @@ struct SimulationConfig {
     double battery_remaining_mah = 0.0;
     double max_total_current_a = 0.0;
     double max_motor_rpm = 0.0;
+    PerMotorPhysicsConfig per_motor;
     A3DragConfig a3_drag;
     A4GroundEffectConfig a4_ground_effect;
     RigidBodyState initial_state;
@@ -157,6 +172,8 @@ struct TrajectorySample {
 };
 
 double quat_norm(const Quat &q);
+Vec3 frd_to_y_up(const Vec3 &frd);
+Vec3 y_up_to_frd(const Vec3 &y_up);
 double first_order_motor_response(double current, double target, double tau_s, double dt_s);
 double available_thrust_cap_newtons(const SimulationConfig &config, double throttle);
 TrajectorySample step_physics_frame(
@@ -168,6 +185,11 @@ TrajectorySample step_physics_frame(
         SimulationClock &clock,
         const SimulationConfig &config,
         const std::function<void(double)> &before_substep);
+TrajectorySample step_per_motor_physics_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const MotorCommands &commands);
 std::vector<TrajectorySample> simulate_trajectory(const SimulationConfig &config);
 
 } // namespace aerosim
