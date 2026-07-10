@@ -51,6 +51,8 @@ GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchm
 
 目前單機 on/off workload 的 `active_effects` 明列為 A3 drag 與 A4 ground effect；A5 downwash 需要雙機相對位置與逐幀交互作用，未整合前不納入本單機效能差分。
 
+`.github/workflows/performance-gpu.yml` 每日 02:00（Asia/Taipei；18:00 UTC）或手動執行相同的 10+60 秒 reference protocol。它要求真實 NVIDIA adapter、以跨 runner lock 串行化量測，並把 JSON/SVG 存到 self-hosted runner 的 `performance-gpu` local artifact 目錄；Xvfb/lavapipe 只保留在一般 CI 的流程 smoke。
+
 ## G0.6a 決定性與重播
 
 - `SConstruct` 與 `scripts/test_native.sh` 都關閉 fused multiply-add contraction：GCC/Clang 使用 `-ffp-contract=off`，Windows MSVC GDExtension 使用 `/fp:strict`。

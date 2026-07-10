@@ -1,0 +1,112 @@
+name: GPU Performance Reference
+
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: aerosim-performance-gpu
+  cancel-in-progress: false
+
+jobs:
+  reference:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
+    steps:
+      - name: Clean self-hosted workspace
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
+            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Set job-local tool and artifact paths
+        run: |
+          tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          rm -rf "$tool_root"
+          mkdir -p "$tool_root"
+          repo_key="${GITHUB_REPOSITORY//\//-}"
+          artifact_root="${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}"
+          artifact_run_dir="$artifact_root/$repo_key/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$artifact_run_dir"
+          {
+            echo "AEROSIM_TOOL_ROOT=$tool_root"
+            echo "AEROSIM_CI_ARTIFACT_RUN_DIR=$artifact_run_dir"
+            echo "XDG_CACHE_HOME=$tool_root/xdg-cache"
+            echo "XDG_CONFIG_HOME=$tool_root/xdg-config"
+            echo "XDG_DATA_HOME=$tool_root/xdg-data"
+            echo "GODOT_CPP_DIR=$tool_root/godot-cpp"
+          } >> "$GITHUB_ENV"
+
+      - name: Install build tools
+        run: |
+          python3 -m venv build/scons-venv
+          build/scons-venv/bin/python -m pip install --upgrade pip
+          build/scons-venv/bin/python -m pip install scons
+          echo "$PWD/build/scons-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch pinned Godot 4.7
+        run: |
+          godot_dir="$AEROSIM_TOOL_ROOT/godot"
+          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
+          curl -L -o "$godot_zip" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
+          echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  $godot_zip" | sha256sum -c -
+          unzip -q "$godot_zip" -d "$godot_dir"
+          echo "GODOT_BIN=$(find "$godot_dir" -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
+
+      - name: Fetch pinned godot-cpp
+        run: |
+          git clone https://github.com/godotengine/godot-cpp.git "$GODOT_CPP_DIR"
+          git -C "$GODOT_CPP_DIR" checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
+
+      - name: Run full real-GPU reference protocol
+        env:
+          AEROSIM_REQUIRED_GPU_ADAPTER: NVIDIA
+        run: |
+          mkdir -p build/performance-gpu
+          (
+            flock -w 1800 9
+            scripts/run_performance_benchmark.sh \
+              --mode reference \
+              --effects off \
+              --output build/performance-gpu/effects-off.json
+            scripts/run_performance_benchmark.sh \
+              --mode reference \
+              --effects on \
+              --baseline-report build/performance-gpu/effects-off.json \
+              --output build/performance-gpu/effects-on.json
+          ) 9>"$HOME/.aerosim-performance-gpu.lock"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected_effects = {
+              "off": [],
+              "on": ["A3_drag", "A4_ground_effect"],
+          }
+          for mode, effects in expected_effects.items():
+              report = json.loads(Path(f"build/performance-gpu/effects-{mode}.json").read_text())
+              assert report["sample_count"] == 14_400
+              assert report["gate"] == "G0.1-reference"
+              assert report["gate_eligible"] is False
+              assert report["reference_only"] is True
+              assert report["p99_within_limit"] is True
+              assert "NVIDIA" in report["measurement"]["video_adapter"]
+              assert report["measurement"]["active_effects"] == effects
+          PY
+
+      - name: Store GPU performance artifacts locally
+        if: always()
+        run: |
+          destination="$AEROSIM_CI_ARTIFACT_RUN_DIR/performance-gpu"
+          install -d "$destination"
+          if compgen -G 'build/performance-gpu/*.json' > /dev/null; then
+            cp build/performance-gpu/*.json "$destination/"
+          fi
+          if compgen -G 'build/performance-gpu/*.svg' > /dev/null; then
+            cp build/performance-gpu/*.svg "$destination/"
+          fi
+          echo "::notice::Stored performance-gpu artifacts in $destination"
