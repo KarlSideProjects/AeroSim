@@ -14,6 +14,7 @@ G0_1_P99_LIMIT_MS = 3.0
 G0_1_BASELINE_CPU = "AMD Ryzen 5 5600"
 G0_1_BASELINE_GPU = "NVIDIA GeForce GTX 1660 SUPER"
 PINNED_GODOT_VERSION = "4.7.stable.official.5b4e0cb0f"
+PINNED_GODOT_BINARY_SHA256 = "f85bbc6b15e22416c7d797cd60b63286dd67b9cb13498847056c18520ae55a75"
 PINNED_GODOT_CPP_REVISION = "ba0edfed90512ec64aba51d4295a3e7e30112f86"
 
 
@@ -37,12 +38,13 @@ def _validate_gate_eligibility(raw: dict[str, Any], environment: dict[str, Any])
     cpu_matches = cpu_model == G0_1_BASELINE_CPU or cpu_model.startswith(f"{G0_1_BASELINE_CPU} ")
     provenance_is_pinned = (
         raw.get("godot_version") == PINNED_GODOT_VERSION
+        and raw.get("godot_sha256") == PINNED_GODOT_BINARY_SHA256
         and raw.get("godot_cpp_revision") == PINNED_GODOT_CPP_REVISION
         and all(
             isinstance(raw.get(key), str)
             and len(raw[key]) == 64
             and all(character in "0123456789abcdef" for character in raw[key])
-            for key in ("godot_sha256", "gdextension_sha256", "native_source_sha256")
+            for key in ("gdextension_sha256", "native_source_sha256")
         )
     )
     if not cpu_matches or video_adapter != G0_1_BASELINE_GPU or not provenance_is_pinned:

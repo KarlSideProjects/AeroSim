@@ -20,7 +20,7 @@ BASELINE_CPU = "AMD Ryzen 5 5600 6-Core Processor"
 BASELINE_GPU = "NVIDIA GeForce GTX 1660 SUPER"
 PINNED_PROVENANCE = {
     "godot_version": "4.7.stable.official.5b4e0cb0f",
-    "godot_sha256": "a" * 64,
+    "godot_sha256": "f85bbc6b15e22416c7d797cd60b63286dd67b9cb13498847056c18520ae55a75",
     "godot_cpp_revision": "ba0edfed90512ec64aba51d4295a3e7e30112f86",
     "gdextension_sha256": "b" * 64,
     "native_source_sha256": "c" * 64,
@@ -164,6 +164,11 @@ class PerformanceReportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "frozen Ryzen 5 5600 and GTX 1660 SUPER"):
             build_report(
                 raw | {"video_adapter": "NVIDIA GeForce RTX 4060 Ti"},
+                {"cpu_model": BASELINE_CPU},
+            )
+        with self.assertRaisesRegex(ValueError, "pinned Godot/godot-cpp"):
+            build_report(
+                raw | {"godot_sha256": "a" * 64},
                 {"cpu_model": BASELINE_CPU},
             )
 

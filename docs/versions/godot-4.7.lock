@@ -4,6 +4,7 @@ Godot version: 4.7-stable
 Godot release date: 2026-06-18
 Godot source archive SHA-256: e7acb6b27d6bee2525fdaa12660c602b034c25094e8a2679334601d8878a9e06
 Godot Linux x86_64 editor SHA-256: 0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c
+Godot Linux x86_64 editor binary SHA-256: f85bbc6b15e22416c7d797cd60b63286dd67b9cb13498847056c18520ae55a75
 Godot export templates SHA-256: 9714459dc071907c0f3d5f17d608faf69e7cda21331fc5d39c4503ffa4e99eec
 godot-cpp commit: ba0edfed90512ec64aba51d4295a3e7e30112f86
 
