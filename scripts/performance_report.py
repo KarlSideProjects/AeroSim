@@ -11,6 +11,10 @@ from pathlib import Path
 
 
 G0_1_P99_LIMIT_MS = 3.0
+G0_1_BASELINE_CPU = "AMD Ryzen 5 5600"
+G0_1_BASELINE_GPU = "NVIDIA GeForce GTX 1660 SUPER"
+PINNED_GODOT_VERSION = "4.7.stable.official.5b4e0cb0f"
+PINNED_GODOT_CPP_REVISION = "ba0edfed90512ec64aba51d4295a3e7e30112f86"
 
 
 def _percentile(samples: list[float], fraction: float) -> float:
@@ -27,11 +31,33 @@ def _validated_samples(raw: dict[str, Any], key: str) -> list[float]:
     return [float(sample) for sample in samples]
 
 
+def _validate_gate_eligibility(raw: dict[str, Any], environment: dict[str, Any]) -> None:
+    cpu_model = str(environment.get("cpu_model", ""))
+    video_adapter = str(raw.get("video_adapter", ""))
+    cpu_matches = cpu_model == G0_1_BASELINE_CPU or cpu_model.startswith(f"{G0_1_BASELINE_CPU} ")
+    provenance_is_pinned = (
+        raw.get("godot_version") == PINNED_GODOT_VERSION
+        and raw.get("godot_cpp_revision") == PINNED_GODOT_CPP_REVISION
+        and all(
+            isinstance(raw.get(key), str)
+            and len(raw[key]) == 64
+            and all(character in "0123456789abcdef" for character in raw[key])
+            for key in ("godot_sha256", "gdextension_sha256", "native_source_sha256")
+        )
+    )
+    if not cpu_matches or video_adapter != G0_1_BASELINE_GPU or not provenance_is_pinned:
+        raise ValueError(
+            "G0.1 gate requires the frozen Ryzen 5 5600 and GTX 1660 SUPER with pinned Godot/godot-cpp provenance"
+        )
+
+
 def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, Any]:
     benchmark_mode = raw.get("benchmark_mode")
     if benchmark_mode not in {"gate", "reference", "smoke"}:
         raise ValueError("benchmark_mode must be gate, reference, or smoke")
     measurements = _validated_samples(raw, "samples_ms")
+    if benchmark_mode == "gate":
+        _validate_gate_eligibility(raw, environment)
     render_summaries: dict[str, float] = {}
     for key, prefix in (
         ("render_cpu_samples_ms", "render_cpu"),
@@ -76,6 +102,35 @@ def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, 
 def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, float | None]:
     if baseline.get("environment") != candidate.get("environment"):
         raise ValueError("baseline and candidate environments must match")
+    if baseline.get("scenario") != "effects_off" or candidate.get("scenario") != "effects_on":
+        raise ValueError("comparison requires an effects_off baseline and effects_on candidate")
+    if baseline.get("sample_count") != candidate.get("sample_count"):
+        raise ValueError("incompatible benchmark reports: sample_count differs")
+    baseline_measurement = baseline.get("measurement")
+    candidate_measurement = candidate.get("measurement")
+    if not isinstance(baseline_measurement, dict) or not isinstance(candidate_measurement, dict):
+        raise ValueError("incompatible benchmark reports: measurement metadata is required")
+    invariant_keys = (
+        "benchmark_mode",
+        "warmup_seconds",
+        "measured_seconds",
+        "physics_engine",
+        "physics_ticks_per_second",
+        "substep_hz",
+        "vsync_mode",
+        "video_adapter",
+        "rendering_method",
+        "godot_version",
+        "godot_sha256",
+        "godot_cpp_revision",
+        "gdextension_sha256",
+        "native_source_sha256",
+    )
+    for key in invariant_keys:
+        if key not in baseline_measurement or key not in candidate_measurement:
+            raise ValueError(f"incompatible benchmark reports: {key} is required")
+        if baseline_measurement[key] != candidate_measurement[key]:
+            raise ValueError(f"incompatible benchmark reports: {key} differs")
     comparison: dict[str, float | None] = {}
     for metric in ("p95_ms", "p99_ms", "render_cpu_p95_ms", "render_cpu_p99_ms", "render_gpu_p95_ms", "render_gpu_p99_ms"):
         if metric not in baseline or metric not in candidate:

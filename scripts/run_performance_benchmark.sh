@@ -7,7 +7,7 @@ output_path="build/performance_report.json"
 warmup_seconds=10
 seconds=60
 effects=off
-benchmark_mode=gate
+benchmark_mode=reference
 required_adapter="${AEROSIM_REQUIRED_GPU_ADAPTER:-NVIDIA}"
 baseline_report=""
 
@@ -67,6 +67,18 @@ if warmup_seconds < 0.0 or measured_seconds <= 0.0:
 if mode != "smoke" and (warmup_seconds != 10.0 or measured_seconds != 60.0):
     raise SystemExit(f"{mode} mode requires exactly 10s warmup and 60s measurement")
 PY
+
+if [ "$benchmark_mode" = "gate" ]; then
+    cpu_model="$(awk -F ': ' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null || true)"
+    case "$cpu_model" in
+        "AMD Ryzen 5 5600"|"AMD Ryzen 5 5600 "*) ;;
+        *)
+            echo "gate mode requires the frozen AMD Ryzen 5 5600 CPU: ${cpu_model:-unknown}" >&2
+            exit 2
+            ;;
+    esac
+    required_adapter="NVIDIA GeForce GTX 1660 SUPER"
+fi
 
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
     echo "headed benchmark requires a real DISPLAY or WAYLAND_DISPLAY" >&2

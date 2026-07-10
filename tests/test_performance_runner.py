@@ -97,14 +97,12 @@ class PerformanceRunnerTest(unittest.TestCase):
                 ["A3_drag", "A4_ground_effect"],
             )
 
-    def test_reference_mode_rejects_shortened_gate_protocol(self):
+    def test_default_reference_mode_rejects_shortened_gate_protocol(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "report.json"
             completed = subprocess.run(
                 [
                     str(ROOT / "scripts" / "run_performance_benchmark.sh"),
-                    "--mode",
-                    "reference",
                     "--warmup-seconds",
                     "0",
                     "--seconds",

@@ -49,6 +49,13 @@ func _run() -> void:
     if _godot_version.is_empty() or _godot_sha256.length() != 64 or _godot_cpp_revision.length() != 40 or _gdextension_sha256.length() != 64 or _native_source_sha256.length() != 64:
         _fail("complete Godot, godot-cpp, GDExtension, and native source provenance is required")
         return
+    var adapter := RenderingServer.get_video_adapter_name()
+    if adapter.is_empty():
+        _fail("headed benchmark did not expose a GPU adapter")
+        return
+    if not _required_adapter.is_empty() and not adapter.to_lower().contains(_required_adapter.to_lower()):
+        _fail("required GPU adapter %s was not selected: %s" % [_required_adapter, adapter])
+        return
     if DisplayServer.window_get_vsync_mode() != DisplayServer.VSYNC_DISABLED:
         _fail("VSync could not be disabled")
         return
@@ -105,14 +112,6 @@ func _run() -> void:
             physics_samples.append(physics_profiler.samples_ms[index])
     if physics_samples.size() != frames:
         _fail("per-frame profiler captured %d of %d physics frames" % [physics_samples.size(), frames])
-        return
-
-    var adapter := RenderingServer.get_video_adapter_name()
-    if adapter.is_empty():
-        _fail("headed benchmark did not expose a GPU adapter")
-        return
-    if not _required_adapter.is_empty() and not adapter.to_lower().contains(_required_adapter.to_lower()):
-        _fail("required GPU adapter %s was not selected: %s" % [_required_adapter, adapter])
         return
 
     var output := FileAccess.open(_output_path, FileAccess.WRITE)

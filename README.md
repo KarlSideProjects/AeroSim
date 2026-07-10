@@ -43,11 +43,11 @@ GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts
 ## G0.1 headed 效能量測
 
 ```bash
-GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchmark.sh --effects off --output build/performance-effects-off.json
-GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchmark.sh --effects on --baseline-report build/performance-effects-off.json --output build/performance-effects-on.json
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchmark.sh --mode reference --effects off --output build/performance-effects-off.json
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_performance_benchmark.sh --mode reference --effects on --baseline-report build/performance-effects-off.json --output build/performance-effects-on.json
 ```
 
-正式 gate／reference 量測固定為 10 秒 warmup + 60 秒模擬時間、240 Hz Jolt + 1 kHz native 子步進、VSync off；只有明確的 `--mode smoke` 可縮短時間，且 smoke 不會輸出 G0.1 gate verdict。Runner 會先用鎖定的 godot-cpp checkout 重建 debug GDExtension，再把 Godot 版本與 SHA-256、godot-cpp commit、GDExtension SHA-256、native source SHA-256 寫入 JSON。報告另保存逐 physics-frame 原始樣本、P95/P99、render CPU/GPU 分列、環境與 Git revision，並同步輸出 SVG 圖表；預設要求 NVIDIA headed adapter，可用 `AEROSIM_REQUIRED_GPU_ADAPTER` 指定其他 GPU。
+Runner 預設為 reference；只有在凍結的 Ryzen 5 5600 + GTX 1660 SUPER 與鎖定工具鏈上明確指定 `--mode gate`，才會輸出 gate verdict。正式 gate／reference 量測固定為 10 秒 warmup + 60 秒模擬時間、240 Hz Jolt + 1 kHz native 子步進、VSync off；只有明確的 `--mode smoke` 可縮短時間，且 smoke 不會輸出 G0.1 gate verdict。Runner 會先用鎖定的 godot-cpp checkout 重建 debug GDExtension，再把 Godot 版本與 SHA-256、godot-cpp commit、GDExtension SHA-256、native source SHA-256 寫入 JSON。報告另保存逐 physics-frame 原始樣本、P95/P99、render CPU/GPU 分列、環境與 Git revision，並同步輸出 SVG 圖表；reference 預設要求 NVIDIA headed adapter，可用 `AEROSIM_REQUIRED_GPU_ADAPTER` 指定其他 GPU。
 
 目前單機 on/off workload 的 `active_effects` 明列為 A3 drag 與 A4 ground effect；A5 downwash 需要雙機相對位置與逐幀交互作用，未整合前不納入本單機效能差分。
 
