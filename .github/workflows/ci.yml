@@ -428,7 +428,7 @@ jobs:
 
   headed-smoke:
     runs-on: [self-hosted, Linux, X64]
-    needs: [linux]
+    needs: [linux, windows, android]
     steps:
       - name: Clean self-hosted workspace
         run: |
