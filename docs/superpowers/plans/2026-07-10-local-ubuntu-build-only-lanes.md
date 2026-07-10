@@ -41,10 +41,10 @@ python3 -m unittest tests.test_performance_report tests.test_performance_runner
 1. 將 GPU workflow 的名稱、命令與 artifact 斷言由 reference 改為 gate；明確要求 RTX 4060 Ti，驗證 `gate == "G0.1"`、`gate_eligible == true`、`gate_verdict == "pass"`，並保留 effects-off / effects-on 的比較。
 2. README 的執行範例改為不帶 `--mode reference` 的本機 gate；說明 10/60 秒、3ms、Ryzen 9 7945HX、RTX 4060 Ti 和 headed 顯示需求。
 3. 新增決策紀錄，列出桌面凍結環境、Android/iOS 的 build-only 保留項目，以及所有 N/A 的實機項目；清楚說明 N/A 不是 pass，且這份決策覆寫較早 iOS Ad Hoc 實機路徑在目前環境的可執行性。
-4. 以文字檢查確認舊硬體與 reference 斷言不再出現在 G0.1 執行入口：
+4. 以文字檢查確認舊硬體與顯式 reference 執行命令不再出現在 G0.1 執行入口。`performance_report.py` 可以保留 reference 的非正式診斷輸出，但它不能輸出 gate verdict：
 
 ```bash
-git grep -n -E 'Ryzen 5 5600|GTX 1660 SUPER|--mode reference|G0.1-reference' -- README.md scripts/run_performance_benchmark.sh scripts/performance_report.py .github/workflows/performance-gpu.yml
+git grep -n -E 'Ryzen 5 5600|GTX 1660 SUPER|--mode reference' -- README.md scripts/run_performance_benchmark.sh scripts/performance_report.py .github/workflows/performance-gpu.yml
 ```
 
 5. 執行 workflow 靜態語法檢查（現有 `actionlint` 時）：
