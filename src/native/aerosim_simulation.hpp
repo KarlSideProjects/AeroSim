@@ -98,6 +98,7 @@ struct HardwareConfig {
     double battery_remaining_mah = 0.0;
     double max_total_current_a = 0.0;
     double max_motor_rpm = 0.0;
+    PerMotorPhysicsConfig per_motor;
 
     bool set_mass_kg(double value) {
         if (!std::isfinite(value) || value <= 0.0) {
@@ -144,6 +145,31 @@ struct HardwareConfig {
         return true;
     }
 
+    bool set_per_motor_model(const PerMotorPhysicsConfig &value) {
+        const double scalars[] = {
+                value.inertia_kg_m2.x,
+                value.inertia_kg_m2.y,
+                value.inertia_kg_m2.z,
+                value.max_thrust_per_motor_newtons,
+                value.max_current_per_motor_a,
+                value.yaw_torque_per_newton,
+        };
+        for (double scalar : scalars) {
+            if (!std::isfinite(scalar) || scalar <= 0.0) {
+                return false;
+            }
+        }
+        for (std::size_t index = 0; index < value.position_frd.size(); ++index) {
+            const Vec3 &position = value.position_frd[index];
+            if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
+                    (value.spin_direction[index] != -1.0 && value.spin_direction[index] != 1.0)) {
+                return false;
+            }
+        }
+        per_motor = value;
+        return true;
+    }
+
     SimulationConfig simulation_config() const {
         SimulationConfig config;
         config.mass_kg = mass_kg;
@@ -156,6 +182,7 @@ struct HardwareConfig {
         config.battery_remaining_mah = battery_remaining_mah;
         config.max_total_current_a = max_total_current_a;
         config.max_motor_rpm = max_motor_rpm;
+        config.per_motor = per_motor;
         return config;
     }
 };

@@ -103,5 +103,28 @@ int main() {
         return fail("motor thrust must follow the configured first-order time constant analytically");
     }
 
+    aerosim::PerMotorPhysicsConfig per_motor;
+    per_motor.inertia_kg_m2 = {0.0030, 0.0030, 0.0050};
+    per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    per_motor.max_thrust_per_motor_newtons = unsagged_max_thrust / 4.0;
+    per_motor.max_current_per_motor_a = 27.0;
+    per_motor.yaw_torque_per_newton = 0.01;
+    if (!hardware.set_per_motor_model(per_motor)) {
+        return fail("hardware config must accept a complete Quad-X per-motor model");
+    }
+    config = hardware.simulation_config();
+    if (!near(config.per_motor.inertia_kg_m2.z, per_motor.inertia_kg_m2.z, 1e-12) ||
+            !near(config.per_motor.position_frd[0].y, per_motor.position_frd[0].y, 1e-12) ||
+            !near(config.per_motor.spin_direction[1], -1.0, 1e-12) ||
+            !near(config.per_motor.max_thrust_per_motor_newtons, per_motor.max_thrust_per_motor_newtons, 1e-12)) {
+        return fail("hardware config must preserve the preset-driven per-motor physics model");
+    }
+
     return EXIT_SUCCESS;
 }
