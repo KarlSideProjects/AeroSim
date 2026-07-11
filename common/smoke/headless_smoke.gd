@@ -1,6 +1,7 @@
 extends SceneTree
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const GamepadCalibration = preload("res://common/flight/gamepad_calibration.gd")
 const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
@@ -72,6 +73,9 @@ func _run() -> void:
         quit(1)
         return
     if not _verify_telemetry_snapshot_public_path(native):
+        quit(1)
+        return
+    if not _verify_gamepad_calibration():
         quit(1)
         return
     if _has_arg("--runtime-only"):
@@ -1566,6 +1570,32 @@ func _verify_gamepad_profile_actions() -> bool:
         Input.parse_input_event(event)
         await process_frame
         probe.queue_free()
+    return true
+
+func _verify_gamepad_calibration() -> bool:
+    var calibration := GamepadCalibration.GamepadCalibration.new()
+    for entry in [["roll", 0], ["pitch", 1], ["yaw", 2], ["throttle", 3]]:
+        if not calibration.assign_axis(entry[0], entry[1]):
+            push_error("Gamepad calibration must assign each flight-control axis")
+            return false
+        if not calibration.record_axis_range(entry[0], PackedFloat32Array([-1.0, 1.0])):
+            push_error("Gamepad calibration must accept full endpoint coverage")
+            return false
+        if not calibration.record_stationary_samples(entry[0], PackedFloat32Array([0.0, 0.0, 0.0, 0.0])):
+            push_error("Gamepad calibration must accept centered stationary samples")
+            return false
+        if not calibration.set_axis_direction(entry[0], -1.0 if entry[0] == "pitch" else 1.0):
+            push_error("Gamepad calibration must record each axis direction")
+            return false
+    if not calibration.assign_button("arm", JOY_BUTTON_A) or not calibration.assign_button("mode", JOY_BUTTON_Y):
+        push_error("Gamepad calibration must assign unique arm and mode buttons")
+        return false
+    if not calibration.record_button_press("arm", 1000) or not calibration.throttle_is_low(0.0):
+        push_error("Gamepad calibration must accept the preflight arm state")
+        return false
+    if calibration.finish() == null:
+        push_error("Gamepad calibration must finish a complete profile")
+        return false
     return true
 
 func _output_path() -> String:
