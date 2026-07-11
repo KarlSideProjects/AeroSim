@@ -32,6 +32,10 @@ bool same_sample_bits(const aerosim::TrajectorySample &a, const aerosim::Traject
             same_bits(a.state.angular_velocity.x, b.state.angular_velocity.x) &&
             same_bits(a.state.angular_velocity.y, b.state.angular_velocity.y) &&
             same_bits(a.state.angular_velocity.z, b.state.angular_velocity.z) &&
+            same_bits(a.state.motor_thrust_newtons[0], b.state.motor_thrust_newtons[0]) &&
+            same_bits(a.state.motor_thrust_newtons[1], b.state.motor_thrust_newtons[1]) &&
+            same_bits(a.state.motor_thrust_newtons[2], b.state.motor_thrust_newtons[2]) &&
+            same_bits(a.state.motor_thrust_newtons[3], b.state.motor_thrust_newtons[3]) &&
             a.substeps == b.substeps;
 }
 
@@ -68,17 +72,21 @@ aerosim::RecordedInputSequence standard_maneuver(std::int32_t frames) {
     return recorder.sequence();
 }
 
-bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
+bool write_artifact(const char *path, const std::vector<aerosim::TrajectorySample> &samples) {
     if (path == nullptr || path[0] == '\0') {
         return true;
+    }
+    if (samples.empty()) {
+        return false;
     }
     std::ofstream out(path);
     if (!out) {
         return false;
     }
+    const aerosim::TrajectorySample &sample = samples.back();
     out << std::setprecision(17)
         << "{\n"
-        << "  \"schema_version\": 1,\n"
+        << "  \"schema_version\": 2,\n"
         << "  \"time_seconds\": " << sample.time_seconds << ",\n"
         << "  \"substeps\": " << sample.substeps << ",\n"
         << "  \"position_m\": ["
@@ -89,7 +97,25 @@ bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
         << sample.state.orientation.x << ", "
         << sample.state.orientation.y << ", "
         << sample.state.orientation.z << ", "
-        << sample.state.orientation.w << "]\n"
+        << sample.state.orientation.w << "],\n"
+        << "  \"checkpoints\": [\n";
+    for (std::size_t frame = 0; frame < samples.size(); ++frame) {
+        const aerosim::RigidBodyState &state = samples[frame].state;
+        out << "    {\"frame\": " << frame
+            << ", \"position_m\": [" << state.position.x << ", " << state.position.y << ", " << state.position.z << "]"
+            << ", \"orientation_xyzw\": [" << state.orientation.x << ", " << state.orientation.y << ", "
+            << state.orientation.z << ", " << state.orientation.w << "]"
+            << ", \"angular_velocity_rad_s\": [" << state.angular_velocity.x << ", "
+            << state.angular_velocity.y << ", " << state.angular_velocity.z << "]"
+            << ", \"motor_thrust_newtons\": [" << state.motor_thrust_newtons[0] << ", "
+            << state.motor_thrust_newtons[1] << ", " << state.motor_thrust_newtons[2] << ", "
+            << state.motor_thrust_newtons[3] << "]}";
+        if (frame + 1 < samples.size()) {
+            out << ",";
+        }
+        out << "\n";
+    }
+    out << "  ]\n"
         << "}\n";
     return true;
 }
@@ -148,8 +174,8 @@ int main() {
     if (!aerosim::within_g06a_tolerance(delta)) {
         return fail("G0.6a cross-platform final-state tolerance check rejected the standard maneuver");
     }
-    if (!write_artifact(std::getenv("AEROSIM_REPLAY_ARTIFACT"), platform_run.back())) {
-        return fail("failed to write replay terminal-state artifact");
+    if (!write_artifact(std::getenv("AEROSIM_REPLAY_ARTIFACT"), platform_run)) {
+        return fail("failed to write replay checkpoint artifact");
     }
 
     return EXIT_SUCCESS;
