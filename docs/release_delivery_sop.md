@@ -27,13 +27,17 @@ Release artifact size checks use:
 scripts/export_linux_release.sh
 scripts/export_windows_release.sh
 scripts/export_android_release.sh
+DISPLAY=:0 scripts/measure_linux_cold_start.sh
 python3 scripts/check_release_artifacts.py \
   build/release/AeroSim-windows.zip \
   build/release/AeroSim-linux.zip \
   build/release/AeroSim-android.apk
 ```
 
-Each artifact must be `<= 300 MB`.
+Each artifact must be `<= 300 MB`. `measure_linux_cold_start.sh` launches the
+Linux release on a real local display, enters the safe preflight screen through
+the KeyboardProfile fallback, and writes `build/cold_start/linux.json`; it
+fails above the frozen 15-second G6.4 desktop threshold.
 
 ## Artifact Checklist
 
@@ -41,7 +45,7 @@ Each artifact must be `<= 300 MB`.
 | --- | --- | --- | --- |
 | Windows desktop bundle | `build/release/AeroSim-windows.zip` | size <= 300 MB | CI verified |
 | Linux desktop bundle | `build/release/AeroSim-linux.zip` | size <= 300 MB | CI verified |
-| Android sideload APK | `build/release/AeroSim-android.apk` | size <= 300 MB, installs on device | CI test-signed export verified; production signing and device install not verified |
+| Android sideload APK | `build/release/AeroSim-android-production.apk` | size <= 300 MB, production signature | production-signing CI is configured for `main` push; first signed CI run not verified |
 | Third-party notices | `build/THIRD_PARTY_NOTICES.txt` | generated from `third_party/licenses.json` | CI verified |
 
 macOS packaging, Developer ID signing, notarization, and macOS cold-start
@@ -57,19 +61,40 @@ a change to the frozen G6.1 macOS threshold.
 4. Launch AeroSim and record cold-start time to first flyable screen.
 5. Record device model, Android version, install result, and launch result.
 
-The CI APK is signed with a generated test keystore at the job-local
+Pull request CI APKs are signed with a generated test keystore at the job-local
 `$RUNNER_TEMP/aerosim-tools-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$GITHUB_JOB/aerosim-ci-android.keystore`
 path, or the explicit `AEROSIM_ANDROID_CI_KEYSTORE` path, for artifact
 validation only. Production delivery must replace it with the release keystore
 before sending the APK to a customer. CI stores this test-signed artifact as
 `ci-android-apk` under the self-hosted runner Local Folder artifact root, not as a
-customer-ready release artifact.
+customer-ready release artifact. On a `main` push, CI decodes the repository
+production signing secret only into a job-local keystore, exports
+`release-android/AeroSim-android.apk`, and publishes its public certificate
+fingerprint as `release-android/signing.txt`. The keystore and passwords are
+never stored in the repository or artifact folder.
 
-This is `not verified` until performed on a real device.
+Under `docs/decisions/2026-07-11-linux-primary-acceptance.md`, real-device
+sideload is **N/A (unverified frozen), not pass** in the current environment.
+Keep these steps for a future Android-device lane; they do not block Linux
+acceptance.
 
 ## License Delivery Drill
 
-Use the license server API documented in `docs/license_server.md`.
+Use the license server API documented in `docs/license_server.md`. The local
+rehearsal command exercises registration, activation, revocation, and the
+required post-revocation rejection against a real temporary localhost server:
+
+```bash
+scripts/exercise_delivery_drill.sh \
+  --customer-id CUSTOMER-ID \
+  --device-id CUSTOMER-DEVICE-ID \
+  --artifact build/release/AeroSim-linux.zip
+```
+
+It records the artifact SHA-256 and step outcomes in
+`build/delivery_drill/report.json`, without writing a license key or JWT. It
+does not send an artifact or key through an external customer channel, so it
+does not replace the DEV-M G6.7 delivery acceptance.
 
 1. Start the license server with a secret from a secret store or root-only file.
 2. Register the customer and store the returned license key in the customer record.
@@ -88,7 +113,7 @@ actual delivery channel.
 | Gate | Evidence | Result |
 | --- | --- | --- |
 | G6.1/G6.2 Windows/Linux/Android artifact sizes | `scripts/check_release_artifacts.py` output | CI verified |
-| G6.2 Android sideload | device log / screen recording | not verified |
-| G6.3 license scan + NOTICE | CI link + `build/THIRD_PARTY_NOTICES.txt` | not verified |
-| G6.4 cold start | stopwatch/high-speed capture | not verified |
-| G6.7 delivery drill | dated checklist + license server logs | not verified |
+| G6.2 Android sideload | device log / screen recording | N/A (unverified frozen), not pass |
+| G6.3 license scan + NOTICE | CI link + `build/THIRD_PARTY_NOTICES.txt` | CI verified |
+| G6.4 Linux cold start | `build/cold_start/linux.json` from real-display release probe | automation added; not verified until measured release evidence exists |
+| G6.7 delivery drill | `build/delivery_drill/report.json` + actual delivery-channel record | local rehearsal automated; external delivery not verified |

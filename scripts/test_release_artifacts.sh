@@ -121,3 +121,60 @@ if XDG_CONFIG_HOME="$xdg_config_home" \
 fi
 
 grep -q "missing keytool for Android CI test keystore generation" "$err_file"
+
+if XDG_CONFIG_HOME="$xdg_config_home" \
+    GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
+    AEROSIM_ANDROID_SIGNING_MODE=production \
+    AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
+    scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
+    cat "$out_file"
+    echo "missing production signing configuration unexpectedly passed" >&2
+    exit 1
+fi
+
+grep -q "missing production Android signing configuration" "$err_file"
+
+fake_keystore="$android_test_dir/release.keystore"
+printf 'production-keystore' >"$fake_keystore"
+fake_godot="$android_test_dir/godot"
+cat >"$fake_godot" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+out="${!#}"
+python3 - "$out" "$AEROSIM_ANDROID_RELEASE_LIB" <<'PY'
+from pathlib import Path
+import sys
+from zipfile import ZipFile
+
+out, native_lib = map(Path, sys.argv[1:])
+with ZipFile(out, "w") as archive:
+    archive.write(native_lib, "lib/arm64-v8a/" + native_lib.name)
+PY
+EOF
+chmod +x "$fake_godot"
+cat >"$fake_apksigner" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "verify" ] && [ "${2:-}" = "--print-certs" ]; then
+    printf '%s\n' 'Signer #1 certificate SHA-256 digest: test-fingerprint'
+fi
+EOF
+chmod +x "$fake_apksigner"
+cp export_presets.cfg "$android_test_dir/export_presets.before"
+
+XDG_CONFIG_HOME="$xdg_config_home" \
+RUNNER_TEMP="$runner_temp" \
+ANDROID_HOME="$android_test_dir/sdk" \
+GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
+GODOT_BIN="$fake_godot" \
+AEROSIM_ANDROID_SIGNING_MODE=production \
+AEROSIM_ANDROID_RELEASE_KEYSTORE="$fake_keystore" \
+AEROSIM_ANDROID_RELEASE_KEYSTORE_PASS=test-password \
+AEROSIM_ANDROID_RELEASE_KEY_ALIAS=test-alias \
+AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
+AEROSIM_ANDROID_OUT_APK="$android_test_dir/production.apk" \
+AEROSIM_ANDROID_SIGNING_REPORT="$android_test_dir/production-signing.txt" \
+scripts/export_android_release.sh
+
+cmp "$android_test_dir/export_presets.before" export_presets.cfg
+grep -q '^Signer #1 certificate SHA-256 digest:' "$android_test_dir/production-signing.txt"

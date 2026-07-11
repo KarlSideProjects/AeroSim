@@ -79,6 +79,34 @@ func _ready() -> void:
     update_fallback_status()
     _update_chase_camera()
     _refresh_flight_hud()
+    call_deferred("_run_cold_start_probe")
+
+func _run_cold_start_probe() -> void:
+    var report_path := _cold_start_report_path()
+    if report_path.is_empty():
+        return
+    await get_tree().process_frame
+    quick_fly("no_controller")
+    accept_fallback()
+    var result := {
+        "flyable": native != null and screen == "preflight" and not takeoff_requested and not paused,
+        "screen": screen,
+    }
+    var report := FileAccess.open(report_path, FileAccess.WRITE)
+    if report == null:
+        push_error("Cannot write cold-start report: %s" % report_path)
+        get_tree().quit(1)
+        return
+    report.store_string(JSON.stringify(result))
+    report.close()
+    get_tree().quit(0 if bool(result["flyable"]) else 1)
+
+func _cold_start_report_path() -> String:
+    var args := OS.get_cmdline_user_args()
+    for index in range(args.size() - 1):
+        if args[index] == "--aerosim-cold-start-report":
+            return args[index + 1]
+    return ""
 
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventJoypadButton and _handle_gamepad_button(event):
