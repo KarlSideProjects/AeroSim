@@ -1574,6 +1574,10 @@ func _verify_gamepad_profile_actions() -> bool:
 
 func _verify_gamepad_calibration() -> bool:
     var calibration := GamepadCalibration.GamepadCalibration.new()
+    var stationary_sample_hz := GamepadCalibration.GamepadCalibration.DEFAULT_STATIONARY_SAMPLE_HZ
+    var stationary_samples := PackedFloat32Array()
+    for _sample in range(stationary_sample_hz):
+        stationary_samples.append(0.0)
     for entry in [["roll", 0], ["pitch", 1], ["yaw", 2], ["throttle", 3]]:
         if not calibration.assign_axis(entry[0], entry[1]):
             push_error("Gamepad calibration must assign each flight-control axis")
@@ -1581,7 +1585,7 @@ func _verify_gamepad_calibration() -> bool:
         if not calibration.record_axis_range(entry[0], PackedFloat32Array([-1.0, 1.0])):
             push_error("Gamepad calibration must accept full endpoint coverage")
             return false
-        if not calibration.record_stationary_samples(entry[0], PackedFloat32Array([0.0, 0.0, 0.0, 0.0])):
+        if not calibration.record_stationary_samples(entry[0], stationary_samples, stationary_sample_hz):
             push_error("Gamepad calibration must accept centered stationary samples")
             return false
         if not calibration.set_axis_direction(entry[0], -1.0 if entry[0] == "pitch" else 1.0):

@@ -21,8 +21,11 @@ class CalibrationProfile:
 class GamepadCalibration:
 	const ROLES := ["roll", "pitch", "yaw", "throttle"]
 	const MIN_ENDPOINT_COVERAGE := 0.95
+	const ENDPOINT_COVERAGE_EPSILON := 0.0000001
 	const MAX_CENTER_OFFSET := 0.02
 	const MAX_STATIONARY_RMS := 0.005
+	const DEFAULT_STATIONARY_SAMPLE_HZ := 100
+	const MIN_STATIONARY_DURATION_SECONDS := 1
 	const MAX_DEBOUNCE_MS := 50
 	const MAX_THROTTLE_LOW := 0.02
 
@@ -52,15 +55,18 @@ class GamepadCalibration:
 				return false
 			minimum = minf(minimum, value)
 			maximum = maxf(maximum, value)
-		if maximum < MIN_ENDPOINT_COVERAGE or minimum > -MIN_ENDPOINT_COVERAGE:
+		if maximum < MIN_ENDPOINT_COVERAGE - ENDPOINT_COVERAGE_EPSILON or minimum > -MIN_ENDPOINT_COVERAGE + ENDPOINT_COVERAGE_EPSILON:
 			last_rejection = "endpoint_coverage"
 			return false
 		axis_ranges[role] = {"minimum": minimum, "maximum": maximum}
 		return true
 
-	func record_stationary_samples(role: String, samples: PackedFloat32Array) -> bool:
+	func record_stationary_samples(role: String, samples: PackedFloat32Array, sample_hz: int = DEFAULT_STATIONARY_SAMPLE_HZ) -> bool:
 		if not axis_ranges.has(role) or samples.is_empty():
 			last_rejection = "center_offset"
+			return false
+		if sample_hz <= 0 or samples.size() < sample_hz * MIN_STATIONARY_DURATION_SECONDS:
+			last_rejection = "stationary_noise"
 			return false
 		var center := 0.0
 		for value in samples:
