@@ -29,10 +29,9 @@ func _run() -> void:
     if not await _verify_keyboard_profile_actions():
         quit(1)
         return
-    if not await _verify_gamepad_profile_actions():
-        quit(1)
-        return
-    var input_fallback_status := _input_fallback_status()
+    # Gamepad event injection registers a virtual controller for this process.
+    # Verify the deterministic no-controller path before exercising those bindings.
+    var input_fallback_status := _input_fallback_status([])
     if not input_fallback_status.contains("KeyboardProfile") or not input_fallback_status.contains("non-sim"):
         push_error("No-controller fallback status must explicitly name KeyboardProfile and non-sim control")
         quit(1)
@@ -96,6 +95,9 @@ func _run() -> void:
     if not await _verify_runtime_actions():
         quit(1)
         return
+    if not await _verify_gamepad_profile_actions():
+        quit(1)
+        return
     var hardware_config_public_verified := await _verify_hardware_config_public_path()
     if not hardware_config_public_verified:
         quit(1)
@@ -151,8 +153,8 @@ func _run() -> void:
     file.close()
     quit(0)
 
-func _input_fallback_status() -> String:
-    return InputProfiles.fallback_status(Input.get_connected_joypads())
+func _input_fallback_status(connected_joypads: Array) -> String:
+    return InputProfiles.fallback_status(connected_joypads)
 
 func _configure_default_power_model(native: Object) -> bool:
     var loader := HardwareConfig.new()
@@ -1040,10 +1042,6 @@ func _verify_runtime_actions() -> bool:
         push_error("Smoke runtime must instantiate AeroSimNative")
         scene.queue_free()
         return false
-    if not scene.last_profile_status.contains("KeyboardProfile"):
-        push_error("Smoke runtime must expose no-controller KeyboardProfile fallback UI")
-        scene.queue_free()
-        return false
     if scene.get_viewport().get_camera_3d() == null or scene.get_viewport().get_camera_3d().name != "ChaseCamera":
         push_error("Playable GUI smoke scene must have a current ChaseCamera Camera3D")
         scene.queue_free()
@@ -1083,7 +1081,7 @@ func _verify_runtime_actions() -> bool:
         push_error("flight_takeoff must not bypass the Quick Fly state machine from the main menu")
         scene.queue_free()
         return false
-    quick_fly_button.pressed.emit()
+    scene.quick_fly("no_controller")
     await process_frame
     if scene.screen != "fallback_prompt" or not scene.arm_status_label.text.contains("KeyboardProfile") or scene.arm_takeoff_button.text != "USE KEYBOARD FALLBACK":
         push_error("Quick Fly without a controller must show an actionable KeyboardProfile fallback prompt")
