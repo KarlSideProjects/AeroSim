@@ -17,6 +17,8 @@ constexpr double kAltitudeHoldEstimateTauS = 2.0;
 constexpr double kAltitudeHoldKp = 0.08;
 constexpr double kAltitudeHoldKd = 0.20;
 constexpr double kAltitudeHoldNoiseDeadbandM = 0.15;
+constexpr double kRateKp = 30.0;
+constexpr double kRateKd = 30.0;
 
 double radians(double degrees) {
     return degrees * kPi / 180.0;
@@ -79,11 +81,6 @@ MotorCommands quad_x_commands(
     if (control_dt <= 0.0 || config.per_motor.max_thrust_per_motor_newtons <= 0.0) {
         return commands;
     }
-    const Vec3 torque{
-            config.per_motor.inertia_kg_m2.x * (target_rate_y_up.x - actual_rate_y_up.x) / control_dt,
-            config.per_motor.inertia_kg_m2.y * (target_rate_y_up.y - actual_rate_y_up.y) / control_dt,
-            config.per_motor.inertia_kg_m2.z * (target_rate_y_up.z - actual_rate_y_up.z) / control_dt,
-    };
     double roll_denominator = 0.0;
     double pitch_denominator = 0.0;
     double yaw_denominator = 0.0;
@@ -95,9 +92,34 @@ MotorCommands quad_x_commands(
         yaw_denominator += coefficients[index].y * coefficients[index].y;
         pitch_denominator += coefficients[index].z * coefficients[index].z;
     }
+    const Vec3 raw_torque{
+            config.per_motor.inertia_kg_m2.x * (kRateKp * target_rate_y_up.x - kRateKd * actual_rate_y_up.x),
+            config.per_motor.inertia_kg_m2.y * (kRateKp * target_rate_y_up.y - kRateKd * actual_rate_y_up.y),
+            config.per_motor.inertia_kg_m2.z * (kRateKp * target_rate_y_up.z - kRateKd * actual_rate_y_up.z),
+    };
+    const double base_thrust = collective_thrust / 4.0;
+    double torque_scale = 1.0;
+    for (const Vec3 &coefficient : coefficients) {
+        const double thrust_delta = coefficient.x * raw_torque.x / roll_denominator +
+                coefficient.y * raw_torque.y / yaw_denominator +
+                coefficient.z * raw_torque.z / pitch_denominator;
+        if (thrust_delta > 0.0) {
+            torque_scale = std::min(
+                    torque_scale,
+                    (config.per_motor.max_thrust_per_motor_newtons - base_thrust) / thrust_delta);
+        } else if (thrust_delta < 0.0) {
+            torque_scale = std::min(torque_scale, base_thrust / -thrust_delta);
+        }
+    }
+    torque_scale = std::clamp(torque_scale, 0.0, 1.0);
+    const Vec3 torque{
+            raw_torque.x * torque_scale,
+            raw_torque.y * torque_scale,
+            raw_torque.z * torque_scale,
+    };
     for (std::size_t index = 0; index < commands.normalized.size(); ++index) {
         const Vec3 &coefficient = coefficients[index];
-        const double thrust = collective_thrust / 4.0 +
+        const double thrust = base_thrust +
                 coefficient.x * torque.x / roll_denominator +
                 coefficient.y * torque.y / yaw_denominator +
                 coefficient.z * torque.z / pitch_denominator;

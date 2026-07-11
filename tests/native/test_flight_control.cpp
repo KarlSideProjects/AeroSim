@@ -69,6 +69,29 @@ int main() {
     config.substep_hz = 1000;
     configure_power_model(config);
 
+    aerosim::SimulationConfig saturation_config = config;
+    saturation_config.physics_hz = 1000;
+    aerosim::RigidBodyState saturation_state;
+    aerosim::SimulationClock saturation_clock;
+    aerosim::FlightController saturation_controller;
+    if (!saturation_controller.arm(0.0)) {
+        return fail("rate saturation setup should arm from low throttle");
+    }
+    aerosim::FlightCommand saturation_step;
+    saturation_step.throttle = 0.5;
+    const double half_rate_error = 0.05 * 0.5;
+    aerosim::Quat estimated_rate_error;
+    estimated_rate_error.x = -std::sin(half_rate_error);
+    estimated_rate_error.w = std::cos(half_rate_error);
+    saturation_controller.step_angle_mode(
+            saturation_state, saturation_clock, saturation_config, saturation_step, estimated_rate_error);
+    // The configured zero motor time constant makes first-substep thrust equal the mixer command.
+    for (double thrust : saturation_state.motor_thrust_newtons) {
+        if (thrust <= 0.0 || thrust >= saturation_config.per_motor.max_thrust_per_motor_newtons) {
+            return fail("a one radian-per-second roll-rate error must not saturate a motor in one 1 kHz substep");
+        }
+    }
+
     aerosim::RigidBodyState disarmed_state;
     aerosim::SimulationClock disarmed_clock;
     aerosim::FlightController disarmed_controller;
