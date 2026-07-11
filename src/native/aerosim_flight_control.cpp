@@ -71,6 +71,8 @@ double loaded_voltage_v(const SimulationConfig &config, double throttle) {
                     current_a * config.battery_cell_resistance_ohm * config.battery_cells);
 }
 
+} // namespace
+
 MotorCommands quad_x_commands(
         const SimulationConfig &config,
         double collective_thrust,
@@ -97,36 +99,59 @@ MotorCommands quad_x_commands(
             config.per_motor.inertia_kg_m2.y * (kRateKp * target_rate_y_up.y - kRateKd * actual_rate_y_up.y),
             config.per_motor.inertia_kg_m2.z * (kRateKp * target_rate_y_up.z - kRateKd * actual_rate_y_up.z),
     };
-    const double base_thrust = collective_thrust / 4.0;
-    double torque_scale = 1.0;
-    for (const Vec3 &coefficient : coefficients) {
-        const double thrust_delta = coefficient.x * raw_torque.x / roll_denominator +
-                coefficient.y * raw_torque.y / yaw_denominator +
-                coefficient.z * raw_torque.z / pitch_denominator;
-        if (thrust_delta > 0.0) {
-            torque_scale = std::min(
-                    torque_scale,
-                    (config.per_motor.max_thrust_per_motor_newtons - base_thrust) / thrust_delta);
-        } else if (thrust_delta < 0.0) {
-            torque_scale = std::min(torque_scale, base_thrust / -thrust_delta);
+    const double max_thrust = config.per_motor.max_thrust_per_motor_newtons;
+    const double requested_base_thrust = collective_thrust / 4.0;
+    double base_thrust = std::min(requested_base_thrust, max_thrust);
+    Vec3 torque = raw_torque;
+    if (requested_base_thrust > max_thrust) {
+        double max_thrust_delta = 0.0;
+        double min_thrust_delta = 0.0;
+        for (const Vec3 &coefficient : coefficients) {
+            const double thrust_delta = coefficient.x * raw_torque.x / roll_denominator +
+                    coefficient.y * raw_torque.y / yaw_denominator +
+                    coefficient.z * raw_torque.z / pitch_denominator;
+            max_thrust_delta = std::max(max_thrust_delta, thrust_delta);
+            min_thrust_delta = std::min(min_thrust_delta, thrust_delta);
         }
+        const double torque_range = max_thrust_delta - min_thrust_delta;
+        const double torque_scale = torque_range > 0.0 ? std::min(1.0, max_thrust / torque_range) : 1.0;
+        base_thrust = max_thrust - max_thrust_delta * torque_scale;
+        torque = {
+                raw_torque.x * torque_scale,
+                raw_torque.y * torque_scale,
+                raw_torque.z * torque_scale,
+        };
+    } else {
+        double torque_scale = 1.0;
+        for (const Vec3 &coefficient : coefficients) {
+            const double thrust_delta = coefficient.x * raw_torque.x / roll_denominator +
+                    coefficient.y * raw_torque.y / yaw_denominator +
+                    coefficient.z * raw_torque.z / pitch_denominator;
+            if (thrust_delta > 0.0) {
+                torque_scale = std::min(torque_scale, (max_thrust - base_thrust) / thrust_delta);
+            } else if (thrust_delta < 0.0) {
+                torque_scale = std::min(torque_scale, base_thrust / -thrust_delta);
+            }
+        }
+        torque_scale = std::clamp(torque_scale, 0.0, 1.0);
+        torque = {
+                raw_torque.x * torque_scale,
+                raw_torque.y * torque_scale,
+                raw_torque.z * torque_scale,
+        };
     }
-    torque_scale = std::clamp(torque_scale, 0.0, 1.0);
-    const Vec3 torque{
-            raw_torque.x * torque_scale,
-            raw_torque.y * torque_scale,
-            raw_torque.z * torque_scale,
-    };
     for (std::size_t index = 0; index < commands.normalized.size(); ++index) {
         const Vec3 &coefficient = coefficients[index];
         const double thrust = base_thrust +
                 coefficient.x * torque.x / roll_denominator +
                 coefficient.y * torque.y / yaw_denominator +
                 coefficient.z * torque.z / pitch_denominator;
-        commands.normalized[index] = std::clamp(thrust / config.per_motor.max_thrust_per_motor_newtons, 0.0, 1.0);
+        commands.normalized[index] = std::clamp(thrust / max_thrust, 0.0, 1.0);
     }
     return commands;
 }
+
+namespace {
 
 double total_motor_thrust(const RigidBodyState &state) {
     return std::accumulate(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(), 0.0);

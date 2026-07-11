@@ -4,6 +4,15 @@
 #include <cstdlib>
 #include <iostream>
 
+namespace aerosim {
+MotorCommands quad_x_commands(
+        const SimulationConfig &config,
+        double collective_thrust,
+        const Vec3 &target_rate_y_up,
+        const Vec3 &actual_rate_y_up,
+        double control_dt);
+}
+
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
@@ -90,6 +99,20 @@ int main() {
         if (thrust <= 0.0 || thrust >= saturation_config.per_motor.max_thrust_per_motor_newtons) {
             return fail("a one radian-per-second roll-rate error must not saturate a motor in one 1 kHz substep");
         }
+    }
+
+    const double motor_capacity = 4.0 * config.per_motor.max_thrust_per_motor_newtons;
+    const aerosim::MotorCommands mismatch_commands = aerosim::quad_x_commands(
+            config, motor_capacity * 2.0, {1.0, 0.0, 1.0}, {}, 1.0 / 1000.0);
+    bool has_reduced_motor = false;
+    for (double command : mismatch_commands.normalized) {
+        if (command < 0.0 || command > 1.0) {
+            return fail("capacity-capped Quad-X allocation must keep every motor command in range");
+        }
+        has_reduced_motor = has_reduced_motor || command < 1.0 - 1e-12;
+    }
+    if (!has_reduced_motor) {
+        return fail("capacity-capped Quad-X allocation must retain a legal roll-pitch differential");
     }
 
     aerosim::RigidBodyState disarmed_state;
