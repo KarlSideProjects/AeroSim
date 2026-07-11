@@ -1,6 +1,7 @@
 extends SceneTree
 
 const Calibration = preload("res://common/flight/gamepad_calibration.gd")
+const InputProfiles = preload("res://common/flight/input_profiles.gd")
 
 const STATIONARY_SAMPLE_HZ := 100
 
@@ -15,7 +16,14 @@ func _initialize() -> void:
 	assert(calibration.assign_button("mode", JOY_BUTTON_Y))
 	assert(calibration.record_button_press("arm", 1000))
 	assert(calibration.throttle_is_low(0.0))
-	assert(calibration.finish() != null)
+	var profile := calibration.finish()
+	assert(profile != null)
+	var gamepad := InputProfiles.GamepadProfile.from_calibration(profile)
+	assert(gamepad.axis_for_role == {"roll": 0, "pitch": 1, "yaw": 2, "throttle": 3})
+	assert(gamepad.arm_button == JOY_BUTTON_A)
+	assert(gamepad.mode_button == JOY_BUTTON_Y)
+	assert(gamepad.sticky_throttle)
+	assert(gamepad.profile_schema_version == 1)
 	_test_duplicate_axis()
 	_test_endpoint_coverage()
 	_test_center_offset()
