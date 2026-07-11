@@ -2,7 +2,8 @@
 set -euo pipefail
 
 test -s docs/release_delivery_sop.md
-grep -q "scripts/export_android_release.sh" docs/release_delivery_sop.md
+grep -q "release-android/AeroSim-android.apk" docs/release_delivery_sop.md
+grep -q "must never be delivered" docs/release_delivery_sop.md
 test -x scripts/export_android_release.sh
 grep -q '^textures/vram_compression/import_etc2_astc=true$' project.godot
 
@@ -156,7 +157,7 @@ cat >"$fake_apksigner" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [ "$1" = "verify" ] && [ "${2:-}" = "--print-certs" ]; then
-    printf '%s\n' 'Signer #1 certificate SHA-256 digest: test-fingerprint'
+    printf '%s\n' 'Signer #1 certificate SHA-256 digest: AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA'
 fi
 EOF
 chmod +x "$fake_apksigner"
@@ -171,6 +172,7 @@ AEROSIM_ANDROID_SIGNING_MODE=production \
 AEROSIM_ANDROID_RELEASE_KEYSTORE="$fake_keystore" \
 AEROSIM_ANDROID_RELEASE_KEYSTORE_PASS=test-password \
 AEROSIM_ANDROID_RELEASE_KEY_ALIAS=test-alias \
+AEROSIM_ANDROID_EXPECTED_CERT_SHA256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
 AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
 AEROSIM_ANDROID_OUT_APK="$android_test_dir/production.apk" \
 AEROSIM_ANDROID_SIGNING_REPORT="$android_test_dir/production-signing.txt" \
@@ -178,3 +180,25 @@ scripts/export_android_release.sh
 
 cmp "$android_test_dir/export_presets.before" export_presets.cfg
 grep -q '^Signer #1 certificate SHA-256 digest:' "$android_test_dir/production-signing.txt"
+
+if XDG_CONFIG_HOME="$xdg_config_home" \
+    RUNNER_TEMP="$runner_temp" \
+    ANDROID_HOME="$android_test_dir/sdk" \
+    GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
+    GODOT_BIN="$fake_godot" \
+    AEROSIM_ANDROID_SIGNING_MODE=production \
+    AEROSIM_ANDROID_RELEASE_KEYSTORE="$fake_keystore" \
+    AEROSIM_ANDROID_RELEASE_KEYSTORE_PASS=test-password \
+    AEROSIM_ANDROID_RELEASE_KEY_ALIAS=test-alias \
+    AEROSIM_ANDROID_EXPECTED_CERT_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
+    AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
+    AEROSIM_ANDROID_OUT_APK="$android_test_dir/mismatched-production.apk" \
+    AEROSIM_ANDROID_SIGNING_REPORT="$android_test_dir/mismatched-production-signing.txt" \
+    scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
+    cat "$out_file"
+    echo "mismatched production certificate unexpectedly passed" >&2
+    exit 1
+fi
+
+grep -q "production Android certificate SHA-256 fingerprint mismatch" "$err_file"
+cmp "$android_test_dir/export_presets.before" export_presets.cfg

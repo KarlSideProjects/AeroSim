@@ -442,6 +442,7 @@ jobs:
           ANDROID_RELEASE_KEYSTORE_B64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_B64 }}
           ANDROID_RELEASE_KEYSTORE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASS }}
           ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_CERT_SHA256: ${{ vars.ANDROID_RELEASE_CERT_SHA256 }}
         run: |
           release_keystore="$AEROSIM_TOOL_ROOT/aerosim-release.keystore"
           umask 077
@@ -459,6 +460,7 @@ jobs:
           AEROSIM_ANDROID_RELEASE_KEYSTORE="$release_keystore" \
           AEROSIM_ANDROID_RELEASE_KEYSTORE_PASS="$ANDROID_RELEASE_KEYSTORE_PASS" \
           AEROSIM_ANDROID_RELEASE_KEY_ALIAS="$ANDROID_RELEASE_KEY_ALIAS" \
+          AEROSIM_ANDROID_EXPECTED_CERT_SHA256="$ANDROID_RELEASE_CERT_SHA256" \
           AEROSIM_ANDROID_OUT_APK=build/release/AeroSim-android-production.apk \
           AEROSIM_ANDROID_SIGNING_REPORT=build/release/AeroSim-android-production-signing.txt \
           scripts/export_android_release.sh

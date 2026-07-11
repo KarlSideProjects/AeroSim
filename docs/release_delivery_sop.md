@@ -26,18 +26,17 @@ Release artifact size checks use:
 ```bash
 scripts/export_linux_release.sh
 scripts/export_windows_release.sh
-scripts/export_android_release.sh
 DISPLAY=:0 scripts/measure_linux_cold_start.sh
 python3 scripts/check_release_artifacts.py \
   build/release/AeroSim-windows.zip \
-  build/release/AeroSim-linux.zip \
-  build/release/AeroSim-android.apk
+  build/release/AeroSim-linux.zip
 ```
 
 Each artifact must be `<= 300 MB`. `measure_linux_cold_start.sh` launches the
-Linux release on a real local display, enters the safe preflight screen through
-the KeyboardProfile fallback, and writes `build/cold_start/linux.json`; it
-fails above the frozen 15-second G6.4 desktop threshold.
+Linux release on a real local display, rejects an active Xvfb process, waits
+for `frame_post_draw`, saves a non-monochrome screenshot beside
+`build/cold_start/linux.json`, and keeps the window visible for three seconds.
+It fails above the frozen 15-second G6.4 desktop threshold.
 
 ## Artifact Checklist
 
@@ -45,7 +44,7 @@ fails above the frozen 15-second G6.4 desktop threshold.
 | --- | --- | --- | --- |
 | Windows desktop bundle | `build/release/AeroSim-windows.zip` | size <= 300 MB | CI verified |
 | Linux desktop bundle | `build/release/AeroSim-linux.zip` | size <= 300 MB | CI verified |
-| Android sideload APK | `build/release/AeroSim-android-production.apk` | size <= 300 MB, production signature | production-signing CI is configured for `main` push; first signed CI run not verified |
+| Android sideload APK | successful `main` CI `release-android/AeroSim-android.apk` + `signing.txt` | size <= 300 MB, locked production signature | production-signing CI is configured; first signed CI run not verified |
 | Third-party notices | `build/THIRD_PARTY_NOTICES.txt` | generated from `third_party/licenses.json` | CI verified |
 
 macOS packaging, Developer ID signing, notarization, and macOS cold-start
@@ -55,7 +54,15 @@ a change to the frozen G6.1 macOS threshold.
 
 ## Android Sideload
 
-1. Transfer `build/release/AeroSim-android.apk` to the target device.
+Only download `release-android/AeroSim-android.apk` and
+`release-android/signing.txt` from a **successful `push` to `main`** CI run.
+Before any customer transfer, verify the run SHA is the intended `main` commit,
+then run `apksigner verify --print-certs` on the downloaded APK and confirm its
+SHA-256 signer fingerprint exactly matches `signing.txt`. CI itself rejects a
+production APK unless that fingerprint matches the maintainer-frozen repository
+variable `ANDROID_RELEASE_CERT_SHA256`.
+
+1. Transfer that verified `release-android/AeroSim-android.apk` to the target device.
 2. Enable install from unknown sources for the transfer app.
 3. Install the APK.
 4. Launch AeroSim and record cold-start time to first flyable screen.
@@ -67,11 +74,13 @@ path, or the explicit `AEROSIM_ANDROID_CI_KEYSTORE` path, for artifact
 validation only. Production delivery must replace it with the release keystore
 before sending the APK to a customer. CI stores this test-signed artifact as
 `ci-android-apk` under the self-hosted runner Local Folder artifact root, not as a
-customer-ready release artifact. On a `main` push, CI decodes the repository
+customer-ready release artifact and **must never be delivered to a customer**.
+On a `main` push, CI decodes the repository
 production signing secret only into a job-local keystore, exports
 `release-android/AeroSim-android.apk`, and publishes its public certificate
 fingerprint as `release-android/signing.txt`. The keystore and passwords are
-never stored in the repository or artifact folder.
+never stored in the repository or artifact folder. A missing or mismatched
+`ANDROID_RELEASE_CERT_SHA256` fails the production signing step loudly.
 
 Under `docs/decisions/2026-07-11-linux-primary-acceptance.md`, real-device
 sideload is **N/A (unverified frozen), not pass** in the current environment.

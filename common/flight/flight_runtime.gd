@@ -85,12 +85,19 @@ func _run_cold_start_probe() -> void:
     var report_path := _cold_start_report_path()
     if report_path.is_empty():
         return
-    await get_tree().process_frame
     quick_fly("no_controller")
     accept_fallback()
+    await RenderingServer.frame_post_draw
+    var screenshot_path := _cold_start_arg("--aerosim-cold-start-screenshot")
+    var screenshot := get_viewport().get_texture().get_image()
+    var screenshot_written := not screenshot_path.is_empty() and screenshot.save_png(screenshot_path) == OK
     var result := {
-        "flyable": native != null and screen == "preflight" and not takeoff_requested and not paused,
+        "display_driver": DisplayServer.get_name(),
+        "flyable": native != null and screen == "preflight" and not takeoff_requested and not paused and screenshot_written and _cold_start_frame_is_observable(screenshot),
+        "frame_post_draw": true,
         "screen": screen,
+        "screenshot": screenshot_path,
+        "screenshot_written": screenshot_written,
     }
     var report := FileAccess.open(report_path, FileAccess.WRITE)
     if report == null:
@@ -99,14 +106,32 @@ func _run_cold_start_probe() -> void:
         return
     report.store_string(JSON.stringify(result))
     report.close()
+    if bool(result["flyable"]):
+        await get_tree().create_timer(float(_cold_start_arg("--aerosim-cold-start-visible-seconds", "3"))).timeout
     get_tree().quit(0 if bool(result["flyable"]) else 1)
 
 func _cold_start_report_path() -> String:
+    return _cold_start_arg("--aerosim-cold-start-report")
+
+func _cold_start_arg(name: String, default_value := "") -> String:
     var args := OS.get_cmdline_user_args()
     for index in range(args.size() - 1):
-        if args[index] == "--aerosim-cold-start-report":
+        if args[index] == name:
             return args[index + 1]
-    return ""
+    return default_value
+
+func _cold_start_frame_is_observable(image: Image) -> bool:
+    if image.is_empty():
+        return false
+    image.convert(Image.FORMAT_RGBA8)
+    var counts := {}
+    var max_count := 0
+    var data := image.get_data()
+    for offset in range(0, data.size(), 4):
+        var color := (int(data[offset]) << 16) | (int(data[offset + 1]) << 8) | int(data[offset + 2])
+        counts[color] = int(counts.get(color, 0)) + 1
+        max_count = maxi(max_count, int(counts[color]))
+    return float(max_count) / float(image.get_width() * image.get_height()) < 0.99
 
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventJoypadButton and _handle_gamepad_button(event):

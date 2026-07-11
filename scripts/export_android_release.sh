@@ -82,15 +82,25 @@ else
     java_home="${JAVA_HOME:-}"
 fi
 
-mkdir -p "$tool_root" "$(dirname "$out_apk")" "$(dirname "$signing_keystore")" build .deps
-touch build/.gdignore .deps/.gdignore
-
-preset_backup="$tool_root/export_presets.cfg.bak"
-cp export_presets.cfg "$preset_backup"
-restore_export_presets() {
-    cp "$preset_backup" export_presets.cfg
+mkdir -p "$tool_root" "$(dirname "$out_apk")" "$(dirname "$signing_keystore")"
+export_project="$tool_root/android-export-project"
+rm -rf "$export_project"
+mkdir -p "$export_project"
+for source in "$PWD"/* "$PWD"/.[!.]* "$PWD"/..?*; do
+    [ -e "$source" ] || continue
+    name="$(basename "$source")"
+    case "$name" in
+        .git|.godot|.deps|build|export_presets.cfg)
+            continue
+            ;;
+    esac
+    ln -s "$source" "$export_project/$name"
+done
+cp export_presets.cfg "$export_project/export_presets.cfg"
+cleanup_export_project() {
+    rm -rf "$export_project"
 }
-trap restore_export_presets EXIT
+trap cleanup_export_project EXIT
 
 python3 - "$android_sdk" "$java_home" "$signing_keystore" <<'PY'
 import os
@@ -128,14 +138,14 @@ settings_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 PY
 
 export AEROSIM_ANDROID_PRESET_PASSWORD="$signing_password"
-python3 - "$signing_keystore" "$signing_user" <<'PY'
+python3 - "$signing_keystore" "$signing_user" "$export_project/export_presets.cfg" <<'PY'
 import os
 from pathlib import Path
 import sys
 
-keystore, user = sys.argv[1:]
+keystore, user, preset_path = sys.argv[1:]
 password = os.environ["AEROSIM_ANDROID_PRESET_PASSWORD"]
-path = Path("export_presets.cfg")
+path = Path(preset_path)
 lines = path.read_text(encoding="utf-8").splitlines()
 keys = {
     "keystore/debug": keystore,
@@ -167,7 +177,7 @@ if [ "$signing_mode" = "ci" ] && [ ! -s "$signing_keystore" ]; then
 fi
 
 rm -f "$out_apk"
-"$godot_bin" --headless --path . --export-release "Android" "$out_apk"
+"$godot_bin" --headless --path "$export_project" --export-release "Android" "$out_apk"
 
 notice_file="$tool_root/THIRD_PARTY_NOTICES.txt"
 signed_apk="$tool_root/AeroSim-android-with-notice.apk"
@@ -195,7 +205,32 @@ mv "$signed_apk" "$out_apk"
 unzip -l "$out_apk" | grep -q "lib/arm64-v8a/$(basename "$release_lib")"
 python3 scripts/check_release_artifacts.py "$out_apk"
 
-if [ -n "${AEROSIM_ANDROID_SIGNING_REPORT:-}" ]; then
-    "$apksigner_bin" verify --print-certs "$out_apk" >"$AEROSIM_ANDROID_SIGNING_REPORT"
-    grep -q '^Signer #1 certificate SHA-256 digest:' "$AEROSIM_ANDROID_SIGNING_REPORT"
+signing_report="${AEROSIM_ANDROID_SIGNING_REPORT:-}"
+if [ "$signing_mode" = "production" ] && [ -z "$signing_report" ]; then
+    echo "missing production Android signing report path" >&2
+    exit 1
+fi
+if [ -n "$signing_report" ]; then
+    "$apksigner_bin" verify --print-certs "$out_apk" >"$signing_report"
+    actual_fingerprint="$(awk -F': ' '/^Signer #1 certificate SHA-256 digest:/{print $2; exit}' "$signing_report")"
+    if [ -z "$actual_fingerprint" ]; then
+        echo "missing Android certificate SHA-256 fingerprint" >&2
+        exit 1
+    fi
+    if [ "$signing_mode" = "production" ]; then
+        expected_fingerprint="${AEROSIM_ANDROID_EXPECTED_CERT_SHA256:-}"
+        normalize_fingerprint() {
+            printf '%s' "$1" | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]'
+        }
+        actual_fingerprint="$(normalize_fingerprint "$actual_fingerprint")"
+        expected_fingerprint="$(normalize_fingerprint "$expected_fingerprint")"
+        if ! [[ "$expected_fingerprint" =~ ^[0-9A-F]{64}$ ]]; then
+            echo "missing or invalid expected production Android certificate SHA-256 fingerprint" >&2
+            exit 1
+        fi
+        if [ "$actual_fingerprint" != "$expected_fingerprint" ]; then
+            echo "production Android certificate SHA-256 fingerprint mismatch" >&2
+            exit 1
+        fi
+    fi
 fi
