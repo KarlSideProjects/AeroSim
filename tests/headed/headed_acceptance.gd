@@ -46,25 +46,38 @@ func _run() -> void:
 	await _snapshot("03_roll")
 	_expect(runtime.drone_body.angular_velocity.x > 0.5, "positive gamepad roll axis produces positive true roll")
 
-	_joy_axis(JOY_AXIS_LEFT_X, 0.0)
-	_joy_axis(JOY_AXIS_LEFT_Y, 1.0)
+	_tap(KEY_R)
+	await _settle(10)
+	runtime.flight_mode = "ACRO"
+	runtime.update_fallback_status()
+	_joy_axis(JOY_AXIS_LEFT_X, -1.0)
 	await _settle(60)
-	await _snapshot("04_pitch")
-	_expect(runtime.drone_body.angular_velocity.z > 0.5, "positive gamepad pitch axis produces positive true pitch")
+	await _snapshot("04_left_roll")
+	_expect(runtime.drone_body.angular_velocity.x < -0.5, "left gamepad roll axis produces negative true roll")
+
+	_tap(KEY_R)
+	await _settle(10)
+	runtime.flight_mode = "ACRO"
+	runtime.update_fallback_status()
+	_joy_axis(JOY_AXIS_LEFT_X, 0.0)
+	_joy_axis(JOY_AXIS_LEFT_Y, -1.0)
+	await _settle(60)
+	await _snapshot("05_dive")
+	_expect(runtime.drone_body.angular_velocity.z < -0.5, "upward left gamepad stick produces negative true pitch for a dive")
 	_joy_axis(JOY_AXIS_LEFT_Y, 0.0)
 
 	_tap(KEY_P)
 	await _settle(10)
-	await _snapshot("05_paused")
+	await _snapshot("06_paused")
 	_expect(runtime.paused, "P pauses flight")
 
 	_tap(KEY_P)
 	_tap(KEY_R)
 	await _settle(10)
-	await _snapshot("06_reset")
+	await _snapshot("07_reset")
 	_expect(runtime.reset_count >= 1, "R resets flight after resume")
 
-	await _snapshot("07_exit")
+	await _snapshot("08_exit")
 	_write_report()
 	if not _failures.is_empty():
 		quit(1)
