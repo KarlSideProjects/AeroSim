@@ -16,7 +16,7 @@
 ### 2. Linux 實測序列（固定順序，不得跳關）
 
 1. **自動化**：native 單元測試、headless smoke、CI 全綠。
-2. **Godot headed 測試優先**：#83 harness（截圖序列、active Camera3D、畫面非單色、操作有可觀察回饋）；UI／場景／可玩類證據以 headed 為準，headless 綠燈不得單獨放行（#14 事故教訓）。
+2. **Godot headed 測試優先（2026-07-11 補充：必須本機真實 display 可目視）**：headed 測試必須在本機（G0.1 凍結環境）的**真實 display** 執行，**遊戲畫面實際彈出、維護者能親眼看到，才算 headed 證據**；#83 harness（截圖序列、active Camera3D、畫面非單色、操作有可觀察回饋）在此條件下執行。CI 的 xvfb/lavapipe headed-smoke 僅為自動化輔助回歸，**不得充當 headed 驗收證據**。headless 綠燈不得單獨放行（#14 事故教訓）。
 3. **完成後交 human**：前兩層全過，才 @維護者做遊玩驗收，此為最後一關。不得跳過 headed 直接丟給人工，也不得以人工驗收替代自動化證據。
 
 ### 3. 非 Linux 平台一律「build 能過」為主
