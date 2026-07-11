@@ -14,6 +14,7 @@
 - 可注入的校準樣本處理與 `CalibrationProfile`。
 - 六項校準合約的具名拒絕原因與畫面提示。
 - 只在本次遊戲 session 內將驗證 profile 套用到 Quick Fly。
+- `CalibrationProfile` schema 文件，供 #49 接手跨 session 持久化。
 - 自動化紅綠樣本、Linux headed 證據和維護者遊玩驗收交接。
 
 不包含：
@@ -61,4 +62,4 @@ Linux 實測按固定順序進行：自動化通過後，在本機真實 display
 
 開工前已比對 PR #106：其對 `flight_runtime.gd` 的變更僅限 ACRO 搖桿讀取函式。本票不得修改該區段。若 #106 更新而觸及本設計的 Setup 或 Quick Fly 區段，立即停止平行修改，在 #40 留心跳並依 #56 改選不重疊工作。
 
-完成時開 draft PR 並以 `Closes #40` 關聯。獨立對抗式審查的 Critical/High 發現全部修正後，才可 rebase、等待 CI 全綠並 squash merge；但人工遊玩驗收未確認前，不關閉 issue 或解鎖 #49。
+完成時開 draft PR 並以 `Refs #40` 關聯，禁止使用 `Closes #40` 以免 squash merge 自動關閉尚待遊玩驗收的 issue。獨立對抗式審查的 Critical/High 發現全部修正後，才可 rebase、等待 CI 全綠並 squash merge；人工遊玩驗收通過後由維護者手動關閉 #40，才可解鎖 #49。
