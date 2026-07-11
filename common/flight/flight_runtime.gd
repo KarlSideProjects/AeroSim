@@ -1,6 +1,7 @@
 extends Node3D
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const GamepadSetupPanel = preload("res://common/flight/gamepad_setup_panel.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
@@ -40,6 +41,8 @@ var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
+var gamepad_setup_panel: Control
+var session_gamepad_profile: InputProfiles.GamepadProfile
 
 func _ready() -> void:
     _build_main_menu()
@@ -203,8 +206,7 @@ func quick_fly(entry_state: String = "calibrated") -> void:
         return
     if entry_state == "uncalibrated":
         last_error_message = "Controller setup is required before Quick Fly"
-        screen = "controller_setup"
-        _refresh_flight_hud()
+        begin_controller_setup()
         return
     if entry_state != "calibrated":
         last_error_message = "Quick Fly cannot continue: %s" % entry_state
@@ -212,6 +214,25 @@ func quick_fly(entry_state: String = "calibrated") -> void:
         _refresh_flight_hud()
         return
     enter_preflight()
+
+func begin_controller_setup() -> void:
+    screen = "controller_setup"
+    if gamepad_setup_panel == null:
+        gamepad_setup_panel = GamepadSetupPanel.new()
+        gamepad_setup_panel.completed.connect(complete_controller_setup)
+        gamepad_setup_panel.rejected.connect(_show_setup_rejection)
+        flight_hud_layer.add_child(gamepad_setup_panel)
+    gamepad_setup_panel.show()
+    _refresh_flight_hud()
+
+func complete_controller_setup(profile) -> void:
+    session_gamepad_profile = InputProfiles.GamepadProfile.from_calibration(profile)
+    gamepad_setup_panel.hide()
+    enter_preflight()
+
+func _show_setup_rejection(code: String) -> void:
+    last_error_message = "Controller setup rejected: %s" % code
+    _refresh_flight_hud()
 
 func accept_fallback() -> void:
     if screen == "fallback_prompt":
@@ -284,6 +305,8 @@ func _build_main_menu() -> void:
         entries.add_child(button)
         if entry == "Quick Fly":
             button.pressed.connect(quick_fly.bind(_quick_fly_entry_state()))
+        elif entry == "Controller":
+            button.pressed.connect(begin_controller_setup)
 
 func _build_flight_hud() -> void:
     var layer := CanvasLayer.new()

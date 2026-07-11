@@ -1084,6 +1084,26 @@ func _verify_runtime_actions() -> bool:
         push_error("Cold-start main menu must expose an interactive Quick Fly button")
         scene.queue_free()
         return false
+    var controller_button := scene.get_node_or_null("MainMenu/Entries/Controller") as Button
+    if controller_button == null:
+        push_error("Main menu must expose an interactive Controller entry")
+        scene.queue_free()
+        return false
+    controller_button.pressed.emit()
+    await process_frame
+    if scene.screen != "controller_setup" or scene.gamepad_setup_panel == null:
+        push_error("Controller entry must open the fixed Gamepad Setup Flow")
+        scene.queue_free()
+        return false
+    if scene.gamepad_setup_panel.step_names != [
+        "Detect device", "Live monitor", "Assign axes", "Calibrate endpoints",
+        "Detect reverse", "Map Arm/Mode", "Throttle low", "Hover test"
+    ]:
+        push_error("Gamepad Setup Flow must preserve the PRD fixed step order")
+        scene.queue_free()
+        return false
+    scene.arm_takeoff_button.pressed.emit()
+    await process_frame
     await _press_key(KEY_T)
     await process_frame
     if scene.screen != "main_menu" or scene.takeoff_requested or scene.native.call("flight_control_armed"):
