@@ -45,9 +45,7 @@ jobs:
             echo "::error::self-hosted runner 上找不到 claude CLI。"
             exit 1
           fi
-          claude -p "$(cat .github/prompts/docs-change-analysis.md)
-
-DOCS_DIFF_RANGE=$DOCS_DIFF_RANGE" \
+          claude -p "$(cat .github/prompts/docs-change-analysis.md; printf '\nDOCS_DIFF_RANGE=%s\n' "$DOCS_DIFF_RANGE")" \
             --model opus \
             --allowedTools "Read,Grep,Glob,Write,Edit,Bash(git:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh pr view:*)" \
             --max-turns 40

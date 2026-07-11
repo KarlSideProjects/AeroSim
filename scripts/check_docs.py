@@ -44,6 +44,20 @@ def check_file(root: Path, md: Path) -> list[str]:
     return errors
 
 
+def check_workflows(root: Path) -> list[str]:
+    try:
+        import yaml
+    except ImportError:
+        return ["scripts/check_docs.py: 找不到 PyYAML，無法驗證 workflow YAML（fail loud）"]
+    errors: list[str] = []
+    for wf in sorted((root / ".github" / "workflows").glob("*.yml")):
+        try:
+            yaml.safe_load(wf.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            errors.append(f"{wf.relative_to(root)}: YAML 解析失敗 -> {exc}")
+    return errors
+
+
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
     errors: list[str] = []
@@ -51,6 +65,7 @@ def main() -> int:
     for md in iter_md_files(root):
         count += 1
         errors.extend(check_file(root, md))
+    errors.extend(check_workflows(root))
     if errors:
         print(f"docs 檢查失敗（掃描 {count} 檔）：")
         print("\n".join(errors))
