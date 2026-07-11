@@ -1,0 +1,51 @@
+name: Docs AI Analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      diff_range:
+        description: '分析的 diff 範圍（留空 = HEAD~1..HEAD）'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    paths:
+      - 'PRD_AeroSim.md'
+      - 'docs/decisions/**'
+      - 'docs/development-decision-flow.md'
+      - '.github/TRIAGE.md'
+      - '.out-of-scope/**'
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  analyze:
+    # [docs-ai] commit 本身不再觸發分析，避免迴圈
+    if: ${{ !contains(github.event.head_commit.message, '[docs-ai]') }}
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code headless analysis
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          DOCS_DIFF_RANGE: ${{ github.event_name == 'workflow_dispatch' && (inputs.diff_range || 'HEAD~1..HEAD') || format('{0}..{1}', github.event.before, github.sha) }}
+        run: |
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo "::error::CLAUDE_CODE_OAUTH_TOKEN secret 未設定——AI 分析無法執行（fail loud，非靜默跳過）。請維護者執行 'claude setup-token' 並以 'gh secret set CLAUDE_CODE_OAUTH_TOKEN' 設定。"
+            exit 1
+          fi
+          if ! command -v claude >/dev/null 2>&1; then
+            echo "::error::self-hosted runner 上找不到 claude CLI。"
+            exit 1
+          fi
+          claude -p "$(cat .github/prompts/docs-change-analysis.md)" \
+            --model opus \
+            --allowedTools "Read,Grep,Glob,Write,Edit,Bash(git:*),Bash(gh issue comment:*),Bash(gh pr create:*),Bash(gh issue view:*),Bash(gh pr view:*)" \
+            --max-turns 40
