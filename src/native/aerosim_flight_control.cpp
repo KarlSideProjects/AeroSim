@@ -103,7 +103,7 @@ MotorCommands quad_x_commands(
     const double requested_base_thrust = collective_thrust / 4.0;
     double base_thrust = std::min(requested_base_thrust, max_thrust);
     Vec3 torque = raw_torque;
-    if (requested_base_thrust > max_thrust) {
+    if (requested_base_thrust >= max_thrust) {
         double max_thrust_delta = 0.0;
         double min_thrust_delta = 0.0;
         for (const Vec3 &coefficient : coefficients) {

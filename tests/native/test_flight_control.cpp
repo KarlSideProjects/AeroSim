@@ -114,6 +114,22 @@ int main() {
     if (!has_reduced_motor) {
         return fail("capacity-capped Quad-X allocation must retain a legal roll-pitch differential");
     }
+    for (double roll_rate : {-1.0, 1.0}) {
+        for (double pitch_rate : {-1.0, 1.0}) {
+            const aerosim::MotorCommands exact_capacity_commands = aerosim::quad_x_commands(
+                    config, motor_capacity, {roll_rate, 0.0, pitch_rate}, {}, 1.0 / 1000.0);
+            bool has_exact_capacity_differential = false;
+            for (double command : exact_capacity_commands.normalized) {
+                if (!std::isfinite(command) || command < 0.0 || command > 1.0) {
+                    return fail("exact-capacity Quad-X allocation must keep every motor command in range");
+                }
+                has_exact_capacity_differential = has_exact_capacity_differential || command < 1.0 - 1e-12;
+            }
+            if (!has_exact_capacity_differential) {
+                return fail("exact-capacity Quad-X allocation must retain every signed roll-pitch differential");
+            }
+        }
+    }
 
     aerosim::RigidBodyState disarmed_state;
     aerosim::SimulationClock disarmed_clock;
