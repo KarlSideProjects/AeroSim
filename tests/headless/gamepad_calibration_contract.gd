@@ -20,6 +20,14 @@ func _initialize() -> void:
 	assert(profile != null)
 	var gamepad := InputProfiles.GamepadProfile.from_calibration(profile)
 	assert(gamepad.axis_for_role == {"roll": 0, "pitch": 1, "yaw": 2, "throttle": 3})
+	assert(gamepad.axis_ranges == {
+		"roll": {"minimum": -1.0, "maximum": 1.0, "center": 0.0},
+		"pitch": {"minimum": -1.0, "maximum": 1.0, "center": 0.0},
+		"yaw": {"minimum": -1.0, "maximum": 1.0, "center": 0.0},
+		"throttle": {"minimum": -1.0, "maximum": 1.0, "center": 0.0},
+	})
+	profile.axis_ranges["roll"]["minimum"] = -0.5
+	assert(gamepad.axis_ranges["roll"]["minimum"] == -1.0)
 	assert(gamepad.arm_button == JOY_BUTTON_A)
 	assert(gamepad.mode_button == JOY_BUTTON_Y)
 	assert(gamepad.sticky_throttle)
