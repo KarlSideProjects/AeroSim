@@ -3,12 +3,13 @@
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v3.2（回應 v3.1 對抗式審查：Lane/SC 分流修正、G0.P 可玩垂直切片、校準驗收合約、三種輸入 Profile、Quick Fly/Pause/Reset 狀態機、blackbox holdout 協定、診斷支援包；狀態圖改分期交付並移除無真值之溫度欄位） |
+| 版本 | v3.3（以一般 game 手把取代 RC 遙控器，保留可校準的控制器流程、Quick Fly/Pause/Reset 狀態機與既有驗收原則） |
 | 文件狀態 | 待核准 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
+- v3.3（2026-07-11）：輸入裝置定位改為一般 game 手把；移除 RadioMaster／FrSky、RadioProfile 與 16 通道門檻。Controller Setup、Channel Monitor 與實機閘門改以 Xbox 360 相容手把的可用軸與按鍵為準；鍵盤僅為 fallback。
 - v3.2 修訂（2026-07-11）：**Linux 實測主車道**——Linux 為唯一實測平台，實測序列固定「自動化 → Godot headed 測試 → 維護者遊玩驗收」；Windows/macOS/Android/iOS 降為 build＋CI 自動測試車道，平台實測 gate 標 N/A 凍結（非通過）。門檻數值不變，屬驗收平台範圍調整（PRD 1.4 Lane 獨立結構）。詳 `docs/decisions/2026-07-11-linux-primary-acceptance.md`。
 - v3.2：接受 v3.1 審查 C1–C4、H1–H4、H7–H10；H5 改分期不降級（3 張地圖仍為 GA Must）；H6 分期交付並移除溫度欄位（無熱模型即無真值）；新增已知物理近似邊界聲明。
 - v3.1：接受 v3.0 對抗式審查之操作 UI/UX 發現；新增機體狀態圖需求；明文界定「不做存檔」之範圍。
@@ -32,7 +33,7 @@
 1. 物理擬真第一優先：推力/反扭力、阻力、地面效應、尾流下洗、Propwash、穩態風 + Dryden 紊流 + 風切。
 2. 擬真的根基是**實務硬體參數**（第 3.6 章）：馬達/槳/電池/機架皆以真實產品規格與台架實測數據建模，外界影響（風、氣壓、電量）作用於這些參數而非抽象數值。
 3. 100% 可閉源商用：Tier 1 僅用 MIT/BSD/Zlib/Apache-2.0 依賴；GPL 元件（Betaflight）以獨立行程隔離為 Tier 2，**發布前須法務核准**。
-4. 支援真實遙控器（RadioMaster / FrSky 等 USB joystick 模式）進行 FPV 訓練。
+4. 支援 Xbox 360 相容的一般 USB／藍牙 game 手把進行飛行訓練。
 
 ### 1.3 產品分層（Tier）
 
@@ -159,24 +160,23 @@
 
 **主選單第一層固定五入口**：`Quick Fly`、`Controller`、`Drone`、`Map`、`Settings`。
 - `Quick Fly`：預設機體 + 預設地圖 + 無風直接進場；若控制器未校準，先導入 Controller Setup 而非帶著失控狀態進場。
-- 無任何控制器時，UI 明確提示需要 gamepad/radio，並提供鍵盤/手把 fallback 模式（明示非擬真操控）。
+- 無任何控制器時，UI 明確提示需要一般 game 手把，並提供鍵盤 fallback 模式（明示限制用途）。
 
-**Controller Setup Flow（固定順序）**：偵測裝置 → 16 通道 live monitor → 搖桿指派 → 端點校準 → 反向偵測 → arm / mode switch 映射 → 油門低位安全檢查 → 測試懸停台。
+**Controller Setup Flow（固定順序）**：偵測裝置 → 可用軸／按鍵 live monitor → 四軸指派 → 端點校準 → 反向偵測 → arm / mode 按鍵映射 → 油門低位安全檢查 → 測試懸停台。
 
 **校準驗收合約（Calibration Acceptance Contract，回應審查 C3）**——全數通過才允許寫入 calibrated profile，任一未過即擋存檔並標示原因：
 - 四軸唯一映射，零重複指派。
 - 端點：實測 min/max 覆蓋該軸行程 ≥ 95%；中心偏移 ≤ ±2% 滿量程；deadzone 可配置 0–10%。
 - 靜置抖動 RMS ≤ 0.5% 滿量程（1 秒取樣）。
-- Switch：≥ 2 個穩定狀態、去抖 ≤ 50 ms。
+- Arm／Mode 按鍵：映射不可重複，按下與放開狀態可辨識，去抖 ≤ 50 ms。
 - 油門低位檢查通過為 arm 之前置條件（未低位不得 arm，preflight 面板同步阻擋）。
 - 反向偵測可注入測試（G4B.UI2 之 100% 偵測率以本合約為判定標準）。
 
-**三種輸入 Profile（回應審查 H4，Channel Monitor 依 Profile 呈現）**：
-- `RadioProfile`：16ch live bar / raw / normalized / deadzone / 中心 / 端點 / switch 狀態，完整校準合約。
-- `GamepadProfile`：軸/鍵顯示、sticky throttle 模式（油門不回中語意）、deadzone、鍵位綁定、UI 明示「非擬真操控」。
+**兩種輸入 Profile（Channel Monitor 依 Profile 呈現）**：
+- `GamepadProfile`：所有可用軸／按鍵的 raw / normalized / deadzone / 中心 / 端點與按鍵狀態；支援 sticky throttle 模式（油門不回中語意）、鍵位綁定與完整校準合約。
 - `KeyboardProfile`：離散輸入，僅保證可起飛/暫停/重生/退出，明示限制用途。
 
-**操作 Action Contract（回應審查 H2）**：pause / reset / change spawn / exit / arm / mode 於三種 Profile 各有預設映射、可重綁、衝突偵測、畫面 glyph 提示；**所有飛行中救援動作（reset/pause）必須「手不離主控制器」可達**——radio 按鈕不足時提供組合鍵（chord）或明確提示替代路徑。
+**操作 Action Contract（回應審查 H2）**：pause / reset / change spawn / exit / arm / mode 於兩種 Profile 各有預設映射、可重綁、衝突偵測、畫面 glyph 提示；**所有飛行中救援動作（reset/pause）必須「手不離主控制器」可達**——game 手把按鍵不足時提供組合鍵（chord）或明確提示替代路徑。
 
 **Quick Fly 狀態機（回應審查 H1）**：
 
@@ -184,7 +184,7 @@
 |---|---|
 | 已校準控制器 | → 直接進場 |
 | 未校準 | → Controller Setup（完成→進場；取消→主選單） |
-| 無控制器 | → 提示 + Gamepad/Keyboard fallback 或返回 |
+| 無控制器 | → 提示 + Keyboard fallback 或返回 |
 | 授權不可達 / 離線寬限過期 | → 明確錯誤畫面：Retry / Diagnostics / Exit（禁止靜默鎖死，見 G6.6） |
 | 地圖/機體 JSON 載入失敗 | → 錯誤明示 + 回退出廠預設（factory default）選項 |
 
@@ -293,7 +293,7 @@
 | G0.2 | Mobile High 與 Mobile Base 兩 profile 於基準行動裝置：物理 P99 ≤ 5 ms 且整體 ≥ 60 FPS（量測定義同 G0.1；以 Perfetto 拆解物理/渲染占比）。目前無實機：**N/A，非 pass**；保留 build-only 檢查 | DEV-M→GPU-A | AND, iOS |
 | G0.3 | 1000/500 Hz 子步進下四元數積分 10 分鐘無 NaN、範數漂移 < 1e-6 | CI-A | SC |
 | G0.4 | 桌面/行動雙渲染管線同場景資產打通 | GPU-A | SC |
-| G0.5 | RadioMaster USB joystick 於 Ubuntu desktop 識別 16 通道；Android OTG 目前 **N/A，非 pass** | DEV-M | LIN, AND |
+| G0.5 | Xbox 360 相容 USB game 手把於 Ubuntu desktop 識別必要的類比軸與按鍵；Android OTG 目前 **N/A，非 pass** | DEV-M | LIN, AND |
 | G0.6a | **共用核心決定性**：GDExtension 於 Win / Linux / Android（主線 Lane 平台）建置皆過同一組單元測試——同平台重播 bitwise 一致；跨平台物理量容忍：60 秒標準機動終端姿態差 ≤ 0.5°、位置差 ≤ 5 cm（統一 `-ffp-contract=off` 等旗標） | CI-A | SC |
 | G0.6b | **逐 Lane 建置 smoke**：macOS 建置 + 同組測試（僅擋 MAC Lane）；iOS 建置 + 同組測試（僅擋 IOS Lane；目前無 macOS/Xcode runner，為 **not verified**） | CI-A | MAC / IOS |
 | G0.7 | Linux headless 可無視窗執行完整物理模擬並輸出數據 | CI-A | SC |
@@ -377,7 +377,7 @@
 | G4B.8 | 本地化 zh-TW/en 覆蓋 100%、0 硬編碼字串（CI）；**UI 截斷/溢出稽核於 GPU runner 截圖比對**（headless 不得宣稱涵蓋此項） | CI-A + GPU-A | SC |
 | G4B.9 | UI 動效以 offset transforms 實作、layout 不變（自動斷言）、不阻塞輸入 > 100 ms | GPU-A | SC |
 | G4B.UI1 | **First Fly Flow**：未看說明書之 FPV 玩家——已校準控制器 ≤ 30 秒起飛、未校準 ≤ 90 秒（含完成 Setup Flow）；無控制器時提示與 fallback 可用（樣本 ≥ 10 人，P90） | USR | SC |
-| G4B.UI2 | **Controller Setup**：RadioMaster / FrSky 實機各一完成 3.5.4 全流程；**故意設置之軸反向與端點不足，UI 檢核必須 100% 主動偵測提示**（各 10 次注入測試） | DEV-M | DESK, AND |
+| G4B.UI2 | **Controller Setup**：Xbox 360 相容手把實機完成 3.5.4 全流程；**故意設置之軸反向與端點不足，UI 檢核必須 100% 主動偵測提示**（各 10 次注入測試） | DEV-M | DESK, AND |
 | G4B.UI3 | **Pause Overlay**：固定項全數存在；rates/camera/OSD 修改即時生效不重載（自動斷言）；Reset 至可輸入 ≤ 1.5 秒（P99） | GPU-A | SC |
 | G4B.UI4 | **OSD Presets**：三 preset 於 1080p 與行動橫向、zh-TW/en 四組合下，主飛行視野遮擋率 ≤ 8%，警告訊息不遮擋畫面中央 1/3（自動截圖幾何稽核） | GPU-A | SC |
 | G4B.UI5 | **選擇流程**：Quick Fly 一鍵進預設場；選機/選圖/選模式/選風況/起飛於單層畫面完成，全流程確認次數 ≤ 3 | GPU-A + USR | SC |
@@ -389,12 +389,12 @@
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G5.1 | **逐 OS 控制器閘門**：Windows / macOS / Linux 各自——radio 實機（RadioMaster、FrSky 至少各一）+ 通用 gamepad 一款，完成 16 通道映射 + 反向 + 端點校準（依校準合約判定）+ 斷線重連；**任一 OS 未過僅凍結該 OS Lane** | DEV-M | WIN / MAC / LIN |
-| G5.2 | Android OTG joystick 同 G5.1；目前無實機：**N/A，非 pass** | DEV-M | AND |
+| G5.1 | **逐 OS 控制器閘門**：Windows / macOS / Linux 各自以 Xbox 360 相容 game 手把完成四軸與 Arm／Mode 按鍵映射、反向、端點校準與斷線重連；**任一 OS 未過僅凍結該 OS Lane** | DEV-M | WIN / MAC / LIN |
+| G5.2 | Android OTG game 手把同 G5.1；目前無實機：**N/A，非 pass** | DEV-M | AND |
 | G5.3 | iOS（若 Lane 續行）：MFi（SDL3 路徑）+ VirtualJoystick（Fixed/Dynamic 雙模式）可完成 G2.3 姿態保持測試；目前無實機：**N/A，非 pass** | DEV-M | IOS |
 | G5.4 | 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）：桌面 ≤ 40 ms；行動 ≤ 60 ms 的實機條件目前 **N/A，非 pass** | DEV-M | 各 Lane |
 | G5.5 | 輸入映射匯出/匯入、斷線重連不丟設定（校準/映射跨 session 持久化，見範圍排除之界線釐清） | CI-A | SC |
-| G5.6 | **Channel Monitor 一等 UI**：16 通道 live bar / raw / normalized / deadzone / 中心 / 端點全數即時顯示，更新率 ≥ 30 Hz；自動檢核四項提示（油門低位、arm 映射、mode 映射、軸重複）功能驗證 | GPU-A + DEV-M | SC |
+| G5.6 | **Channel Monitor 一等 UI**：所有可用 game 手把軸／按鍵的 live bar、raw、normalized、deadzone、中心、端點與按鍵狀態即時顯示，更新率 ≥ 30 Hz；自動檢核四項提示（油門低位、arm 映射、mode 映射、軸重複）功能驗證 | GPU-A + DEV-M | SC |
 | G5.7 | **斷線 fail loud**：飛行中拔除控制器 → 500 ms 內畫面警示 + 顯示重連狀態；重插後 ≤ 2 秒恢復輸入且校準不丟失（各 20 次） | DEV-M | 各 Lane |
 
 ---
