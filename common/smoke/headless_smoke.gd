@@ -36,6 +36,11 @@ func _run() -> void:
         push_error("No-controller fallback status must explicitly name KeyboardProfile and non-sim control")
         quit(1)
         return
+    var gamepad_profile_status := _input_fallback_status([0])
+    if not gamepad_profile_status.contains("GamepadProfile") or not gamepad_profile_status.contains("non-sim"):
+        push_error("Connected gamepad status must explicitly name GamepadProfile and non-sim control")
+        quit(1)
+        return
 
     var native: Object = ClassDB.instantiate("AeroSimNative")
     if native == null:
