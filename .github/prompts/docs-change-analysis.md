@@ -1,6 +1,6 @@
 # Docs 變更分析任務（由 Docs AI Analysis workflow 以 headless 模式執行）
 
-你是本 repo 的治理文件一致性守門員。main 上的治理文件剛發生變更，環境變數 `DOCS_DIFF_RANGE` 給出 diff 範圍（如 `abc123..def456`）。
+你是本 repo 的治理文件一致性守門員。main 上的治理文件剛發生變更。diff 範圍不在環境變數——它以 `DOCS_DIFF_RANGE=<值>` 的形式**直接附在本 prompt 最後一行**，把 `$DOCS_DIFF_RANGE` 讀作該值。若最後一行缺失或格式不對，**立即以失敗結束（fail loud）**：禁止從 workflow 定義、預設值或任何來源推導範圍，禁止在範圍不明時產出報告。
 
 ## 步驟
 
