@@ -38,6 +38,8 @@ flowchart TD
         APPLE["Apple 環境：#52 拆出 #93（macOS Lane）<br/>新增 #92 前置・#55 iOS 補列依賴轉 blocked"]
     end
 
+    LINPRI["Linux 實測主車道（2026-07-11）<br/>Linux 唯一實測平台・非 Linux 全降 build-only<br/>headed 驗收須本機真實 display（CI xvfb/lavapipe 僅輔助回歸）"]
+
     NOW["目前狀態（2026-07-11）<br/>#91 in-progress・#27 / #31 / #55 / #93 blocked<br/>#86 / #90 ready-for-agent・#92 ready-for-human"]
 
     PRD --> SPLIT
@@ -53,6 +55,9 @@ flowchart TD
     SITL -->|"發現真依賴，另開 issue"| M91
     IOS -->|"短期無 Mac"| APPLE
     LANES --> APPLE
+    LANES --> LINPRI
+    I14 -.->|"headed 證據真實性收緊（#100）"| LINPRI
+    LINPRI --> NOW
     M91 --> NOW
     APPLE --> NOW
     G34 --> NOW
@@ -64,7 +69,7 @@ flowchart TD
     classDef physics fill:#e6f4ea,stroke:#1e7e34,color:#1f2328
     classDef legal fill:#f3e8fd,stroke:#7b1fa2,color:#1f2328
 
-    class DATA1,LANES,APPLE env
+    class DATA1,LANES,APPLE,LINPRI env
     class IOS,SIMP cost
     class I14,I87 incident
     class G34,M91,SITL physics
@@ -184,6 +189,17 @@ flowchart TD
 - **驅動因素**：環境限制——維護者短期無 Mac。
 - **紀錄位置**：[#52](https://github.com/jhihweijhan/AeroSim/issues/52)（2026-07-10T22:15Z 三選項提問與 22:23Z 裁定留言）、[#92](https://github.com/jhihweijhan/AeroSim/issues/92)、[#93](https://github.com/jhihweijhan/AeroSim/issues/93)、[#55](https://github.com/jhihweijhan/AeroSim/issues/55)。
 
+### 11. Linux 實測主車道：非 Linux 全面 build-only + headed 驗收須真實 display（2026-07-11）
+
+- **原計畫**：節點 5 的 2026-07-10 決策將 build-only 車道限於 Android／iOS 行動平台；headed 測試強制（節點 6）要求 UI／可玩類 gate 驗收含 headed 測試、headless 綠燈不得單獨放行，但**未明訂 headed 證據的執行環境**（CI xvfb-smoke 或本機真實 display）。
+- **變動內容**（`2026-07-11-linux-primary-acceptance.md`，含 2026-07-11 headed 補充裁定 #100）：
+  1. **Linux 為唯一實測平台**：所有 runtime／遊戲性／效能／操作類 gate 的實測證據只在 Linux（G0.1 凍結之本機 Ubuntu）取得；固定序列「自動化 → Godot headed → 維護者遊玩驗收」，不得跳關。
+  2. **非 Linux 平台全面降 build-only**：Windows／macOS／Android／iOS 驗收 = source build／export 成功 ＋ 既有 CI 自動測試；平台專屬實測 gate 一律 **N/A（未驗證凍結）**，不得標 pass——將節點 5 的行動 build-only 邊界推廣至所有非 Linux 平台。
+  3. **headed 驗收須本機真實 display（2026-07-11 補充，#100）**：headed 測試必須在本機真實 display 執行、**遊戲畫面實際彈出、維護者能親眼看到才算 headed 證據**；CI 的 xvfb／lavapipe headed-smoke 僅為自動化輔助回歸，**不得充當 headed 驗收證據**——是節點 6 headed 強制條款在「證據真實性」上的再收緊。
+  - 門檻**數值**一律不變，屬驗收平台範圍與證據形式調整（PRD 1.4 Lane 獨立結構）。
+- **驅動因素**：環境限制（無非 Linux 實機／實測環境）＋ 事故教訓（#14：headless／非目視證據偵測不到視覺問題）。
+- **紀錄位置**：`docs/decisions/2026-07-11-linux-primary-acceptance.md`、PRD 變更紀錄「v3.2 修訂（2026-07-11）」、[#52](https://github.com/jhihweijhan/AeroSim/issues/52)、[#93](https://github.com/jhihweijhan/AeroSim/issues/93)、#100（headed 補充）。
+
 ## 治理機制演進
 
 流程層規則不是一次設計好的，而是被事故逐步鍛鍊出來的：
@@ -213,7 +229,8 @@ flowchart LR
         CI2["2026-07-10：headed 測試強制（#14 事故）<br/>UI/可玩類 issue headless 綠燈不得單獨放行"]
         CI3["2026-07-10：禁止 --auto（#85/#87 事故）<br/>gh pr checks --watch 全綠才 merge + Main CI Guard"]
         CI4["2026-07-11：門檻出處紀律（G2.5 假綠）<br/>非 PRD 數值明標 test-harness bound 並附推導"]
-        CI1 --> CI2 --> CI3 --> CI4
+        CI5["2026-07-11：headed 驗收證據須本機真實 display（#100）<br/>CI xvfb/lavapipe headed-smoke 僅輔助回歸，不充當驗收證據"]
+        CI1 --> CI2 --> CI3 --> CI4 --> CI5
     end
 ```
 
