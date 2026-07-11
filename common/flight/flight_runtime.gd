@@ -12,6 +12,7 @@ const ACRO_SUPER_RATE := 13.0 / 18
 const ACRO_EXPO := 0.0
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Exit"
+const GAMEPAD_AXIS_DEADZONE := 0.05
 
 @onready var fallback_status_label: Label3D = %FallbackStatus
 @onready var drone_body = get_node_or_null("DroneBody")
@@ -405,15 +406,28 @@ func _mass_kg() -> float:
 func _acro_roll_stick() -> float:
     if acro_roll_stick != 0.0:
         return acro_roll_stick
+    var gamepad_axis := _gamepad_axis(JOY_AXIS_LEFT_X)
+    if gamepad_axis != 0.0:
+        return gamepad_axis
     return Input.get_axis("ui_left", "ui_right")
 
 func _acro_pitch_stick() -> float:
     if acro_pitch_stick != 0.0:
         return acro_pitch_stick
+    var gamepad_axis := _gamepad_axis(JOY_AXIS_LEFT_Y)
+    if gamepad_axis != 0.0:
+        return gamepad_axis
     return Input.get_axis("ui_down", "ui_up")
 
 func _acro_yaw_stick() -> float:
-    return acro_yaw_stick
+    return acro_yaw_stick if acro_yaw_stick != 0.0 else _gamepad_axis(JOY_AXIS_RIGHT_X)
+
+func _gamepad_axis(axis: JoyAxis) -> float:
+    for device_value in Input.get_connected_joypads():
+        var value := Input.get_joy_axis(int(device_value), axis)
+        if absf(value) > GAMEPAD_AXIS_DEADZONE:
+            return value
+    return 0.0
 
 func _sync_native_from_drone() -> void:
     var q: Quaternion = drone_body.global_transform.basis.get_rotation_quaternion()

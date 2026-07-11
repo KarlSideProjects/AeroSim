@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numeric>
 
 namespace aerosim {
 namespace {
@@ -66,6 +67,47 @@ double loaded_voltage_v(const SimulationConfig &config, double throttle) {
             0.0,
             config.battery_nominal_voltage_v -
                     current_a * config.battery_cell_resistance_ohm * config.battery_cells);
+}
+
+MotorCommands quad_x_commands(
+        const SimulationConfig &config,
+        double collective_thrust,
+        const Vec3 &target_rate_y_up,
+        const Vec3 &actual_rate_y_up,
+        double control_dt) {
+    MotorCommands commands;
+    if (control_dt <= 0.0 || config.per_motor.max_thrust_per_motor_newtons <= 0.0) {
+        return commands;
+    }
+    const Vec3 torque{
+            config.per_motor.inertia_kg_m2.x * (target_rate_y_up.x - actual_rate_y_up.x) / control_dt,
+            config.per_motor.inertia_kg_m2.y * (target_rate_y_up.y - actual_rate_y_up.y) / control_dt,
+            config.per_motor.inertia_kg_m2.z * (target_rate_y_up.z - actual_rate_y_up.z) / control_dt,
+    };
+    double roll_denominator = 0.0;
+    double pitch_denominator = 0.0;
+    double yaw_denominator = 0.0;
+    std::array<Vec3, 4> coefficients;
+    for (std::size_t index = 0; index < coefficients.size(); ++index) {
+        const Vec3 position = frd_to_y_up(config.per_motor.position_frd[index]);
+        coefficients[index] = {-position.z, -config.per_motor.spin_direction[index] * config.per_motor.yaw_torque_per_newton, position.x};
+        roll_denominator += coefficients[index].x * coefficients[index].x;
+        yaw_denominator += coefficients[index].y * coefficients[index].y;
+        pitch_denominator += coefficients[index].z * coefficients[index].z;
+    }
+    for (std::size_t index = 0; index < commands.normalized.size(); ++index) {
+        const Vec3 &coefficient = coefficients[index];
+        const double thrust = collective_thrust / 4.0 +
+                coefficient.x * torque.x / roll_denominator +
+                coefficient.y * torque.y / yaw_denominator +
+                coefficient.z * torque.z / pitch_denominator;
+        commands.normalized[index] = std::clamp(thrust / config.per_motor.max_thrust_per_motor_newtons, 0.0, 1.0);
+    }
+    return commands;
+}
+
+double total_motor_thrust(const RigidBodyState &state) {
+    return std::accumulate(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(), 0.0);
 }
 
 } // namespace
@@ -165,21 +207,19 @@ void FlightController::maybe_publish_telemetry(
     snapshot.mode = mode;
 
     const double throttle_clamped = armed_ ? std::clamp(throttle, 0.0, 1.0) : 0.0;
-    const double total_thrust = armed_ ? motor_thrust_newtons_ : 0.0;
-    const double per_motor_thrust = total_thrust / static_cast<double>(snapshot.motors.size());
-    const double max_total_thrust = std::max(config.max_total_thrust_newtons, available_thrust_cap_newtons(config, throttle_clamped));
-    const double max_per_motor_thrust = max_total_thrust / static_cast<double>(snapshot.motors.size());
+    const double max_per_motor_thrust = available_thrust_cap_newtons(config, throttle_clamped) /
+            static_cast<double>(snapshot.motors.size());
     const double total_current = armed_ ? config.max_total_current_a * throttle_clamped : 0.0;
     const double max_motor_rpm = config.max_motor_rpm > 0.0 ? config.max_motor_rpm : 0.0;
-    for (MotorTelemetry &motor : snapshot.motors) {
-        motor.thrust_newtons = per_motor_thrust;
+    for (std::size_t index = 0; index < snapshot.motors.size(); ++index) {
+        MotorTelemetry &motor = snapshot.motors[index];
+        motor.thrust_newtons = armed_ ? sample.state.motor_thrust_newtons[index] : 0.0;
         motor.current_a = total_current / static_cast<double>(snapshot.motors.size());
         const double motor_rpm = max_per_motor_thrust > 0.0
-                ? max_motor_rpm * std::sqrt(std::clamp(per_motor_thrust / max_per_motor_thrust, 0.0, 1.0))
+                ? max_motor_rpm * std::sqrt(std::clamp(motor.thrust_newtons / max_per_motor_thrust, 0.0, 1.0))
                 : 0.0;
         motor.speed_rad_s = motor_rpm * kRadiansPerSecondPerRpm;
-        motor.saturated = armed_ && (throttle_clamped >= 1.0 - 1e-9 ||
-                (max_per_motor_thrust > 0.0 && per_motor_thrust >= max_per_motor_thrust - 1e-9));
+        motor.saturated = motor_saturated_since_snapshot_[index];
     }
 
     snapshot.ground_effect_gain = a4_ground_effect_lift_newtons(config.a4_ground_effect, sample.state.position.y);
@@ -196,6 +236,7 @@ void FlightController::maybe_publish_telemetry(
     telemetry_buffers_[write_index] = snapshot;
     telemetry_read_index_ = write_index;
     telemetry_publish_count_ = snapshot.publish_count;
+    motor_saturated_since_snapshot_ = {false, false, false, false};
     if (next_telemetry_publish_s_ <= 0.0) {
         next_telemetry_publish_s_ = 1.0 / kTelemetrySnapshotHz;
     }
@@ -221,41 +262,25 @@ TrajectorySample FlightController::step_angle_mode(
     SimulationConfig frame_config = config;
     const double throttle = std::clamp(command.throttle, 0.0, 1.0);
     pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
-    std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
-    std::array<bool, 3> pid_saturated = {false, false, false};
-    const TrajectorySample sample = step_physics_frame(state, clock, frame_config, [&](double dt) {
-        if (armed_) {
-            const double target_thrust = target_thrust_newtons(frame_config, throttle);
-            motor_thrust_newtons_ = first_order_motor_response(
-                    motor_thrust_newtons_,
-                    target_thrust,
-                    frame_config.motor_tau_s,
-                    dt);
-            frame_config.total_thrust_newtons = motor_thrust_newtons_;
-            const double pitch_output = (radians(command.pitch_degrees) - angle_x(estimated_attitude)) * kAngleModeGain;
-            state.angular_velocity.x = bounded_rate(pitch_output);
-            state.angular_velocity.y = radians(command.yaw_rate_degrees_per_second);
-            const double roll_output = (radians(command.roll_degrees) - angle_z(estimated_attitude)) * kAngleModeGain;
-            state.angular_velocity.z = bounded_rate(roll_output);
-            pid_output = {state.angular_velocity.x, state.angular_velocity.y, state.angular_velocity.z};
-            pid_saturated = {
-                    std::abs(pitch_output) > 6.0,
-                    false,
-                    std::abs(roll_output) > 6.0,
-            };
-        } else {
-            motor_thrust_newtons_ = 0.0;
-            frame_config.total_thrust_newtons = 0.0;
-            state.angular_velocity = {};
-        }
-        const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
-        if (target_dt > 0.0) {
-            pid_timing_stats_.p99_jitter_fraction = std::max(
-                    pid_timing_stats_.p99_jitter_fraction,
-                    std::abs(dt - target_dt) / target_dt);
-            ++pid_timing_stats_.samples;
-        }
-    });
+    const double roll_output = bounded_rate((radians(command.roll_degrees) - angle_x(estimated_attitude)) * kAngleModeGain);
+    const double pitch_output = bounded_rate((radians(command.pitch_degrees) - angle_z(estimated_attitude)) * kAngleModeGain);
+    const Vec3 target_rate = armed_ ? Vec3{roll_output, -radians(command.yaw_rate_degrees_per_second), pitch_output} : Vec3{};
+    const double collective_thrust = armed_ ? target_thrust_newtons(frame_config, throttle) : 0.0;
+    const TrajectorySample sample = step_per_motor_physics_frame(
+            state,
+            clock,
+            frame_config,
+            [&](double control_dt) {
+                return quad_x_commands(frame_config, collective_thrust, target_rate, state.angular_velocity, control_dt);
+            });
+    for (std::size_t index = 0; index < state.motor_saturated.size(); ++index) {
+        motor_saturated_since_snapshot_[index] = motor_saturated_since_snapshot_[index] || state.motor_saturated[index];
+        state.motor_saturated[index] = false;
+    }
+    motor_thrust_newtons_ = total_motor_thrust(sample.state);
+    pid_timing_stats_.samples = sample.substeps;
+    const std::array<double, 3> pid_output = {roll_output, pitch_output, -radians(command.yaw_rate_degrees_per_second)};
+    const std::array<bool, 3> pid_saturated = {std::abs(roll_output) >= 6.0, std::abs(pitch_output) >= 6.0, false};
     maybe_publish_telemetry(sample, frame_config, throttle, pid_output, pid_saturated, "ANGLE");
     return sample;
 }
@@ -268,34 +293,27 @@ TrajectorySample FlightController::step_acro_mode(
     SimulationConfig frame_config = config;
     const double throttle = std::clamp(command.throttle, 0.0, 1.0);
     pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
-    std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
-    std::array<bool, 3> pid_saturated = {false, false, false};
-    const TrajectorySample sample = step_physics_frame(state, clock, frame_config, [&](double dt) {
-        if (armed_) {
-            const double target_thrust = target_thrust_newtons(frame_config, throttle);
-            motor_thrust_newtons_ = first_order_motor_response(
-                    motor_thrust_newtons_,
-                    target_thrust,
-                    frame_config.motor_tau_s,
-                    dt);
-            frame_config.total_thrust_newtons = motor_thrust_newtons_;
-            state.angular_velocity.x = radians(betaflight_rate_degrees_per_second(command.pitch_stick, command.rates));
-            state.angular_velocity.y = radians(betaflight_rate_degrees_per_second(command.yaw_stick, command.rates));
-            state.angular_velocity.z = radians(betaflight_rate_degrees_per_second(command.roll_stick, command.rates));
-            pid_output = {state.angular_velocity.x, state.angular_velocity.y, state.angular_velocity.z};
-        } else {
-            motor_thrust_newtons_ = 0.0;
-            frame_config.total_thrust_newtons = 0.0;
-            state.angular_velocity = {};
-        }
-        const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
-        if (target_dt > 0.0) {
-            pid_timing_stats_.p99_jitter_fraction = std::max(
-                    pid_timing_stats_.p99_jitter_fraction,
-                    std::abs(dt - target_dt) / target_dt);
-            ++pid_timing_stats_.samples;
-        }
-    });
+    const Vec3 target_rate = armed_ ? Vec3{
+            radians(betaflight_rate_degrees_per_second(command.roll_stick, command.rates)),
+            -radians(betaflight_rate_degrees_per_second(command.yaw_stick, command.rates)),
+            radians(betaflight_rate_degrees_per_second(command.pitch_stick, command.rates)),
+    } : Vec3{};
+    const double collective_thrust = armed_ ? target_thrust_newtons(frame_config, throttle) : 0.0;
+    const TrajectorySample sample = step_per_motor_physics_frame(
+            state,
+            clock,
+            frame_config,
+            [&](double control_dt) {
+                return quad_x_commands(frame_config, collective_thrust, target_rate, state.angular_velocity, control_dt);
+            });
+    for (std::size_t index = 0; index < state.motor_saturated.size(); ++index) {
+        motor_saturated_since_snapshot_[index] = motor_saturated_since_snapshot_[index] || state.motor_saturated[index];
+        state.motor_saturated[index] = false;
+    }
+    motor_thrust_newtons_ = total_motor_thrust(sample.state);
+    pid_timing_stats_.samples = sample.substeps;
+    const std::array<double, 3> pid_output = {target_rate.x, target_rate.z, target_rate.y};
+    const std::array<bool, 3> pid_saturated = {false, false, false};
     maybe_publish_telemetry(sample, frame_config, throttle, pid_output, pid_saturated, "ACRO");
     return sample;
 }
@@ -350,40 +368,24 @@ TrajectorySample FlightController::step_altitude_hold_mode(
     }
     const double target_thrust = armed_ ? target_thrust_newtons(frame_config, target_throttle) : 0.0;
     pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
-    std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
-    std::array<bool, 3> pid_saturated = {false, false, false};
-    const TrajectorySample sample = step_physics_frame(state, clock, frame_config, [&](double dt) {
-        if (armed_) {
-            motor_thrust_newtons_ = first_order_motor_response(
-                    motor_thrust_newtons_,
-                    target_thrust,
-                    frame_config.motor_tau_s,
-                    dt);
-            frame_config.total_thrust_newtons = motor_thrust_newtons_;
-            const double pitch_output = (radians(command.pitch_degrees) - angle_x(estimated_attitude)) * kAngleModeGain;
-            state.angular_velocity.x = bounded_rate(pitch_output);
-            state.angular_velocity.y = radians(command.yaw_rate_degrees_per_second);
-            const double roll_output = (radians(command.roll_degrees) - angle_z(estimated_attitude)) * kAngleModeGain;
-            state.angular_velocity.z = bounded_rate(roll_output);
-            pid_output = {state.angular_velocity.x, state.angular_velocity.y, state.angular_velocity.z};
-            pid_saturated = {
-                    std::abs(pitch_output) > 6.0,
-                    target_throttle <= 0.0 || target_throttle >= 1.0,
-                    std::abs(roll_output) > 6.0,
-            };
-        } else {
-            motor_thrust_newtons_ = 0.0;
-            frame_config.total_thrust_newtons = 0.0;
-            state.angular_velocity = {};
-        }
-        const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
-        if (target_dt > 0.0) {
-            pid_timing_stats_.p99_jitter_fraction = std::max(
-                    pid_timing_stats_.p99_jitter_fraction,
-                    std::abs(dt - target_dt) / target_dt);
-            ++pid_timing_stats_.samples;
-        }
-    });
+    const double roll_output = bounded_rate((radians(command.roll_degrees) - angle_x(estimated_attitude)) * kAngleModeGain);
+    const double pitch_output = bounded_rate((radians(command.pitch_degrees) - angle_z(estimated_attitude)) * kAngleModeGain);
+    const Vec3 target_rate = armed_ ? Vec3{roll_output, -radians(command.yaw_rate_degrees_per_second), pitch_output} : Vec3{};
+    const TrajectorySample sample = step_per_motor_physics_frame(
+            state,
+            clock,
+            frame_config,
+            [&](double rate_control_dt) {
+                return quad_x_commands(frame_config, target_thrust, target_rate, state.angular_velocity, rate_control_dt);
+            });
+    for (std::size_t index = 0; index < state.motor_saturated.size(); ++index) {
+        motor_saturated_since_snapshot_[index] = motor_saturated_since_snapshot_[index] || state.motor_saturated[index];
+        state.motor_saturated[index] = false;
+    }
+    motor_thrust_newtons_ = total_motor_thrust(sample.state);
+    pid_timing_stats_.samples = sample.substeps;
+    const std::array<double, 3> pid_output = {roll_output, pitch_output, -radians(command.yaw_rate_degrees_per_second)};
+    const std::array<bool, 3> pid_saturated = {std::abs(roll_output) >= 6.0, std::abs(pitch_output) >= 6.0, target_throttle <= 0.0 || target_throttle >= 1.0};
     maybe_publish_telemetry(sample, frame_config, target_throttle, pid_output, pid_saturated, "ALTITUDE_HOLD");
     return sample;
 }

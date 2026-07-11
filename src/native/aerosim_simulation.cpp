@@ -92,6 +92,8 @@ bool valid_per_motor_config(const PerMotorPhysicsConfig &config) {
             return false;
         }
     }
+    bool has_roll_lever_arm = false;
+    bool has_pitch_lever_arm = false;
     for (std::size_t index = 0; index < config.position_frd.size(); ++index) {
         const Vec3 &position = config.position_frd[index];
         if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
@@ -99,8 +101,10 @@ bool valid_per_motor_config(const PerMotorPhysicsConfig &config) {
                 (config.spin_direction[index] != -1.0 && config.spin_direction[index] != 1.0)) {
             return false;
         }
+        has_roll_lever_arm = has_roll_lever_arm || std::abs(position.y) > 1e-12;
+        has_pitch_lever_arm = has_pitch_lever_arm || std::abs(position.x) > 1e-12;
     }
-    return true;
+    return has_roll_lever_arm && has_pitch_lever_arm;
 }
 
 bool valid_motor_commands(const MotorCommands &commands) {
@@ -139,6 +143,7 @@ void integrate_per_motor(
         const double thrust = first_order_motor_response(
                 state.motor_thrust_newtons[index], target_thrust, config.motor_tau_s, dt);
         state.motor_thrust_newtons[index] = thrust;
+        state.motor_saturated[index] = state.motor_saturated[index] || commands.normalized[index] >= 1.0 - 1e-12;
         const Vec3 force{0.0, thrust, 0.0};
         body_force = body_force + force;
         body_torque = body_torque + cross(frd_to_y_up(config.per_motor.position_frd[index]), force);
@@ -178,11 +183,11 @@ double quat_norm(const Quat &q) {
 }
 
 Vec3 frd_to_y_up(const Vec3 &frd) {
-    return {frd.x, -frd.z, frd.y};
+    return {frd.x, frd.z, -frd.y};
 }
 
 Vec3 y_up_to_frd(const Vec3 &y_up) {
-    return {y_up.x, y_up.z, -y_up.y};
+    return {y_up.x, -y_up.z, y_up.y};
 }
 
 double first_order_motor_response(double current, double target, double tau_s, double dt_s) {
@@ -246,8 +251,20 @@ TrajectorySample step_per_motor_physics_frame(
         SimulationClock &clock,
         const SimulationConfig &config,
         const MotorCommands &commands) {
+    if (!valid_motor_commands(commands)) {
+        return {};
+    }
+    return step_per_motor_physics_frame(
+            state, clock, config, [commands](double) { return commands; });
+}
+
+TrajectorySample step_per_motor_physics_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const std::function<MotorCommands(double)> &commands_for_substep) {
     if (config.physics_hz <= 0 || config.substep_hz <= 0 || config.mass_kg <= 0.0 ||
-            !valid_per_motor_config(config.per_motor) || !valid_motor_commands(commands)) {
+            !valid_per_motor_config(config.per_motor) || !commands_for_substep) {
         return {};
     }
 
@@ -257,6 +274,10 @@ TrajectorySample step_per_motor_physics_frame(
     const auto frame_substeps = static_cast<std::int32_t>(std::floor(clock.substep_accumulator + 1e-12));
     clock.substep_accumulator -= frame_substeps;
     for (std::int32_t step = 0; step < frame_substeps; ++step) {
+        const MotorCommands commands = commands_for_substep(dt);
+        if (!valid_motor_commands(commands)) {
+            return {};
+        }
         integrate_per_motor(state, config, commands, dt);
     }
     clock.total_substeps += static_cast<std::uint64_t>(frame_substeps);

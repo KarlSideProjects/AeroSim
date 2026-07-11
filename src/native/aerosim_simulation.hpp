@@ -27,6 +27,7 @@ struct RigidBodyState {
     Quat orientation;
     Vec3 angular_velocity;
     std::array<double, 4> motor_thrust_newtons = {0.0, 0.0, 0.0, 0.0};
+    std::array<bool, 4> motor_saturated = {false, false, false, false};
 };
 
 struct A3DragConfig {
@@ -159,12 +160,19 @@ struct HardwareConfig {
                 return false;
             }
         }
+        bool has_roll_lever_arm = false;
+        bool has_pitch_lever_arm = false;
         for (std::size_t index = 0; index < value.position_frd.size(); ++index) {
             const Vec3 &position = value.position_frd[index];
             if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
                     (value.spin_direction[index] != -1.0 && value.spin_direction[index] != 1.0)) {
                 return false;
             }
+            has_roll_lever_arm = has_roll_lever_arm || std::abs(position.y) > 1e-12;
+            has_pitch_lever_arm = has_pitch_lever_arm || std::abs(position.x) > 1e-12;
+        }
+        if (!has_roll_lever_arm || !has_pitch_lever_arm) {
+            return false;
         }
         per_motor = value;
         return true;
@@ -217,6 +225,11 @@ TrajectorySample step_per_motor_physics_frame(
         SimulationClock &clock,
         const SimulationConfig &config,
         const MotorCommands &commands);
+TrajectorySample step_per_motor_physics_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const std::function<MotorCommands(double)> &commands_for_substep);
 std::vector<TrajectorySample> simulate_trajectory(const SimulationConfig &config);
 
 } // namespace aerosim

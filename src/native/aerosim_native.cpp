@@ -5,6 +5,7 @@
 #include <cmath>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
 using namespace godot;
@@ -107,6 +108,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
             &AeroSimNative::step_simulation);
+    ClassDB::bind_method(
+            D_METHOD("step_external_motor_outputs", "physics_hz", "substep_hz", "normalized_outputs"),
+            &AeroSimNative::step_external_motor_outputs);
     ClassDB::bind_method(D_METHOD("arm_flight_control", "throttle"), &AeroSimNative::arm_flight_control);
     ClassDB::bind_method(D_METHOD("flight_control_armed"), &AeroSimNative::flight_control_armed);
     ClassDB::bind_method(D_METHOD("flight_control_arm_reject_code"), &AeroSimNative::flight_control_arm_reject_code);
@@ -218,6 +222,52 @@ PackedFloat64Array AeroSimNative::step_simulation(
 
     PackedFloat64Array row;
     const aerosim::TrajectorySample sample = aerosim::step_physics_frame(simulation_state_, simulation_clock_, config);
+    row.append(sample.time_seconds);
+    row.append(sample.state.position.x);
+    row.append(sample.state.position.y);
+    row.append(sample.state.position.z);
+    row.append(sample.state.orientation.x);
+    row.append(sample.state.orientation.y);
+    row.append(sample.state.orientation.z);
+    row.append(sample.state.orientation.w);
+    row.append(sample.state.velocity.x);
+    row.append(sample.state.velocity.y);
+    row.append(sample.state.velocity.z);
+    row.append(static_cast<double>(sample.substeps));
+    return row;
+}
+
+PackedFloat64Array AeroSimNative::step_external_motor_outputs(
+        std::int32_t physics_hz,
+        std::int32_t substep_hz,
+        const PackedFloat64Array &normalized_outputs) {
+    PackedFloat64Array row;
+    if (normalized_outputs.size() != 4) {
+        UtilityFunctions::push_error("step_external_motor_outputs requires exactly four normalized outputs in Betaflight Quad-X order");
+        return row;
+    }
+    aerosim::MotorCommands commands;
+    for (std::int32_t index = 0; index < normalized_outputs.size(); ++index) {
+        const double output = normalized_outputs[index];
+        if (!std::isfinite(output) || output < 0.0 || output > 1.0) {
+            UtilityFunctions::push_error("step_external_motor_outputs accepts only finite normalized outputs in [0, 1]");
+            return row;
+        }
+        commands.normalized[static_cast<std::size_t>(index)] = output;
+    }
+
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    config.physics_hz = physics_hz;
+    config.substep_hz = substep_hz;
+    config.a3_drag = a3_drag_config_;
+    config.a4_ground_effect = a4_ground_effect_config_;
+    const aerosim::TrajectorySample sample = aerosim::step_per_motor_physics_frame(
+            simulation_state_, simulation_clock_, config, commands);
+    if (sample.substeps == 0) {
+        UtilityFunctions::push_error("step_external_motor_outputs rejected invalid physics or per-motor hardware configuration");
+        return row;
+    }
+    flight_mode_ = "EXTERNAL_MOTORS";
     row.append(sample.time_seconds);
     row.append(sample.state.position.x);
     row.append(sample.state.position.y);

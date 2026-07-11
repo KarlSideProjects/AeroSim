@@ -93,6 +93,7 @@ private:
     int telemetry_read_index_ = 0;
     double next_telemetry_publish_s_ = 0.0;
     std::uint64_t telemetry_publish_count_ = 0;
+    std::array<bool, 4> motor_saturated_since_snapshot_ = {false, false, false, false};
 
     void maybe_publish_telemetry(
             const TrajectorySample &sample,

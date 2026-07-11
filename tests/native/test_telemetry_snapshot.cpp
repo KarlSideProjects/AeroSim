@@ -26,6 +26,17 @@ void configure_power_model(aerosim::SimulationConfig &config) {
     config.battery_remaining_mah = 1040.0;
     config.max_total_current_a = 108.0;
     config.max_motor_rpm = 15000.0;
+    config.per_motor.inertia_kg_m2 = {0.0030, 0.0030, 0.0050};
+    config.per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    config.per_motor.max_thrust_per_motor_newtons = config.max_total_thrust_newtons / 4.0;
+    config.per_motor.max_current_per_motor_a = config.max_total_current_a / 4.0;
+    config.per_motor.yaw_torque_per_newton = 0.01;
 }
 
 } // namespace
@@ -104,11 +115,17 @@ int main() {
     aerosim::FlightCommand saturated;
     saturated.throttle = 1.0;
     saturated.pitch_degrees = 90.0;
+    bool saw_motor_saturation = false;
+    bool saw_pitch_pid_saturation = false;
     for (int frame = 0; frame < 20; ++frame) {
         controller.step_angle_mode(state, clock, config, saturated);
+        const aerosim::TelemetrySnapshot &during_saturation = controller.telemetry_snapshot();
+        for (const aerosim::MotorTelemetry &motor : during_saturation.motors) {
+            saw_motor_saturation = saw_motor_saturation || motor.saturated;
+        }
+        saw_pitch_pid_saturation = saw_pitch_pid_saturation || during_saturation.pid[1].saturated;
     }
-    const aerosim::TelemetrySnapshot &saturated_snapshot = controller.telemetry_snapshot();
-    if (!saturated_snapshot.motors[0].saturated || !saturated_snapshot.pid[0].saturated) {
+    if (!saw_motor_saturation || !saw_pitch_pid_saturation) {
         return fail("TelemetrySnapshot must expose motor and PID saturation from native flight control");
     }
 

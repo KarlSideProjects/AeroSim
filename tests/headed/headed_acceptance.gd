@@ -39,18 +39,32 @@ func _run() -> void:
 	await _snapshot("02_takeoff")
 	_expect(runtime.takeoff_requested, "T requests takeoff after Quick Fly")
 
+	runtime.flight_mode = "ACRO"
+	runtime.update_fallback_status()
+	_joy_axis(JOY_AXIS_LEFT_X, 1.0)
+	await _settle(60)
+	await _snapshot("03_roll")
+	_expect(runtime.drone_body.angular_velocity.x > 0.5, "positive gamepad roll axis produces positive true roll")
+
+	_joy_axis(JOY_AXIS_LEFT_X, 0.0)
+	_joy_axis(JOY_AXIS_LEFT_Y, 1.0)
+	await _settle(60)
+	await _snapshot("04_pitch")
+	_expect(runtime.drone_body.angular_velocity.z > 0.5, "positive gamepad pitch axis produces positive true pitch")
+	_joy_axis(JOY_AXIS_LEFT_Y, 0.0)
+
 	_tap(KEY_P)
 	await _settle(10)
-	await _snapshot("03_paused")
+	await _snapshot("05_paused")
 	_expect(runtime.paused, "P pauses flight")
 
 	_tap(KEY_P)
 	_tap(KEY_R)
 	await _settle(10)
-	await _snapshot("04_reset")
+	await _snapshot("06_reset")
 	_expect(runtime.reset_count >= 1, "R resets flight after resume")
 
-	await _snapshot("05_exit")
+	await _snapshot("07_exit")
 	_write_report()
 	if not _failures.is_empty():
 		quit(1)
@@ -93,6 +107,13 @@ func _tap(keycode: Key) -> void:
 		event.physical_keycode = keycode
 		event.pressed = pressed
 		Input.parse_input_event(event)
+
+func _joy_axis(axis: JoyAxis, value: float) -> void:
+	var event := InputEventJoypadMotion.new()
+	event.device = 0
+	event.axis = axis
+	event.axis_value = value
+	Input.parse_input_event(event)
 
 func _click(control: Control) -> void:
 	var position := control.get_global_rect().get_center()

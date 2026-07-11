@@ -29,6 +29,17 @@ void configure_power_model(aerosim::SimulationConfig &config) {
     config.battery_cells = 6.0;
     config.battery_cell_resistance_ohm = 0.0;
     config.max_total_current_a = 1.0;
+    config.per_motor.inertia_kg_m2 = {0.0030, 0.0030, 0.0050};
+    config.per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    config.per_motor.max_thrust_per_motor_newtons = config.max_total_thrust_newtons / 4.0;
+    config.per_motor.max_current_per_motor_a = config.max_total_current_a / 4.0;
+    config.per_motor.yaw_torque_per_newton = 0.01;
 }
 
 struct Stats {

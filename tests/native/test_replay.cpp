@@ -42,6 +42,17 @@ void configure_power_model(aerosim::SimulationConfig &config) {
     config.battery_cells = 6.0;
     config.battery_cell_resistance_ohm = 0.0;
     config.max_total_current_a = 1.0;
+    config.per_motor.inertia_kg_m2 = {0.0030, 0.0030, 0.0050};
+    config.per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    config.per_motor.max_thrust_per_motor_newtons = config.max_total_thrust_newtons / 4.0;
+    config.per_motor.max_current_per_motor_a = config.max_total_current_a / 4.0;
+    config.per_motor.yaw_torque_per_newton = 0.01;
 }
 
 aerosim::RecordedInputSequence standard_maneuver(std::int32_t frames) {
@@ -112,6 +123,13 @@ int main() {
         if (!same_sample_bits(first[i], second[i])) {
             return fail("same-platform replay must be bitwise identical for the same input sequence");
         }
+    }
+    const double replay_motor_thrust = first.back().state.motor_thrust_newtons[0] +
+            first.back().state.motor_thrust_newtons[1] +
+            first.back().state.motor_thrust_newtons[2] +
+            first.back().state.motor_thrust_newtons[3];
+    if (replay_motor_thrust <= 0.0) {
+        return fail("G0.6a replay must exercise the per-motor physics path, not a zero-state no-op");
     }
 
     aerosim::SimulationConfig standard_config;

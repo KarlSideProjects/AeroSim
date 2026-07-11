@@ -54,6 +54,10 @@ public:
             std::int32_t physics_hz,
             std::int32_t substep_hz,
             double total_thrust_newtons);
+    godot::PackedFloat64Array step_external_motor_outputs(
+            std::int32_t physics_hz,
+            std::int32_t substep_hz,
+            const godot::PackedFloat64Array &normalized_outputs);
     bool arm_flight_control(double throttle);
     bool flight_control_armed() const;
     godot::String flight_control_arm_reject_code() const;

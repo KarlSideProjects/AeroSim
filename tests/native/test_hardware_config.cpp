@@ -48,8 +48,24 @@ int main() {
         return fail("angle mode hardware config test must arm from low throttle");
     }
 
-    if (!hardware.set_power_model(mass_kg * config.gravity_mps2 * 4.0, 0.50, 0.0, 22.2, 6.0, 0.0, 1.0)) {
+    const double unsagged_max_thrust = mass_kg * config.gravity_mps2 * 4.0;
+    if (!hardware.set_power_model(unsagged_max_thrust, 0.50, 0.0, 22.2, 6.0, 0.0, 1.0)) {
         return fail("hardware config must accept a no-sag hover power model");
+    }
+    aerosim::PerMotorPhysicsConfig per_motor;
+    per_motor.inertia_kg_m2 = {0.0030, 0.0030, 0.0050};
+    per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    per_motor.max_thrust_per_motor_newtons = unsagged_max_thrust / 4.0;
+    per_motor.max_current_per_motor_a = 27.0;
+    per_motor.yaw_torque_per_newton = 0.01;
+    if (!hardware.set_per_motor_model(per_motor)) {
+        return fail("hardware config must accept a complete Quad-X per-motor model");
     }
     config = hardware.simulation_config();
     aerosim::FlightCommand hover;
@@ -80,7 +96,6 @@ int main() {
         return fail("Angle Mode hover must use derived hover throttle instead of a hardcoded 0.5");
     }
 
-    const double unsagged_max_thrust = mass_kg * config.gravity_mps2 * 4.0;
     if (!hardware.set_power_model(unsagged_max_thrust, 0.25, 0.030, 22.2, 6.0, 0.003, 108.0)) {
         return fail("hardware config must accept a motor time constant");
     }
@@ -103,27 +118,20 @@ int main() {
         return fail("motor thrust must follow the configured first-order time constant analytically");
     }
 
-    aerosim::PerMotorPhysicsConfig per_motor;
-    per_motor.inertia_kg_m2 = {0.0030, 0.0030, 0.0050};
-    per_motor.position_frd = {{
-            {-0.1125, 0.1125, 0.0},
-            {0.1125, 0.1125, 0.0},
-            {-0.1125, -0.1125, 0.0},
-            {0.1125, -0.1125, 0.0},
-    }};
-    per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
-    per_motor.max_thrust_per_motor_newtons = unsagged_max_thrust / 4.0;
-    per_motor.max_current_per_motor_a = 27.0;
-    per_motor.yaw_torque_per_newton = 0.01;
-    if (!hardware.set_per_motor_model(per_motor)) {
-        return fail("hardware config must accept a complete Quad-X per-motor model");
-    }
     config = hardware.simulation_config();
     if (!near(config.per_motor.inertia_kg_m2.z, per_motor.inertia_kg_m2.z, 1e-12) ||
             !near(config.per_motor.position_frd[0].y, per_motor.position_frd[0].y, 1e-12) ||
             !near(config.per_motor.spin_direction[1], -1.0, 1e-12) ||
             !near(config.per_motor.max_thrust_per_motor_newtons, per_motor.max_thrust_per_motor_newtons, 1e-12)) {
         return fail("hardware config must preserve the preset-driven per-motor physics model");
+    }
+
+    aerosim::PerMotorPhysicsConfig degenerate_layout = per_motor;
+    for (aerosim::Vec3 &position : degenerate_layout.position_frd) {
+        position = {};
+    }
+    if (hardware.set_per_motor_model(degenerate_layout)) {
+        return fail("per-motor config must reject a layout without roll or pitch lever arms");
     }
 
     return EXIT_SUCCESS;

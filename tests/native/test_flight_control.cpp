@@ -18,11 +18,11 @@ bool near(double actual, double expected, double tolerance) {
 }
 
 double roll_degrees(const aerosim::Quat &q) {
-    return 2.0 * std::atan2(q.z, q.w) * 180.0 / kPi;
+    return 2.0 * std::atan2(q.x, q.w) * 180.0 / kPi;
 }
 
 double pitch_degrees(const aerosim::Quat &q) {
-    return 2.0 * std::atan2(q.x, q.w) * 180.0 / kPi;
+    return 2.0 * std::atan2(q.z, q.w) * 180.0 / kPi;
 }
 
 void configure_power_model(aerosim::SimulationConfig &config) {
@@ -32,6 +32,17 @@ void configure_power_model(aerosim::SimulationConfig &config) {
     config.battery_cells = 6.0;
     config.battery_cell_resistance_ohm = 0.0;
     config.max_total_current_a = 1.0;
+    config.per_motor.inertia_kg_m2 = {0.0030, 0.0030, 0.0050};
+    config.per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    config.per_motor.max_thrust_per_motor_newtons = config.max_total_thrust_newtons / 4.0;
+    config.per_motor.max_current_per_motor_a = config.max_total_current_a / 4.0;
+    config.per_motor.yaw_torque_per_newton = 0.01;
 }
 
 } // namespace
@@ -219,11 +230,20 @@ int main() {
     acro_roll.throttle = 0.5;
     acro_roll.roll_stick = 1.0;
     acro_roll.rates = {1.0, 0.722222222222, 0.0};
-    const aerosim::TrajectorySample acro_sample =
-            acro_controller.step_acro_mode(acro_state, acro_clock, config, acro_roll);
-    const double roll_rate_degrees_per_second = acro_sample.state.angular_velocity.z * 180.0 / kPi;
-    if (!near(roll_rate_degrees_per_second, 720.0, 720.0 * 0.05)) {
-        return fail("G2.5 Acro full-stick roll must reach 720 degrees per second within 5%");
+    bool reached_rate_target = false;
+    double roll_rate_degrees_per_second = 0.0;
+    // Test-harness bound, not a PRD gate: 17 ms torque-limit spin-up plus 3–4 x 30 ms motor tau.
+    for (int frame = 0; frame < config.physics_hz / 4; ++frame) {
+        const aerosim::TrajectorySample acro_sample =
+                acro_controller.step_acro_mode(acro_state, acro_clock, config, acro_roll);
+        roll_rate_degrees_per_second = acro_sample.state.angular_velocity.x * 180.0 / kPi;
+        if (near(roll_rate_degrees_per_second, 720.0, 720.0 * 0.05)) {
+            reached_rate_target = true;
+            break;
+        }
+    }
+    if (!reached_rate_target) {
+        return fail("G2.5 Acro full-stick roll peak rate must track 720 degrees per second within 5% by the test-harness 250 ms bound");
     }
 
     aerosim::RigidBodyState roll_step_state;

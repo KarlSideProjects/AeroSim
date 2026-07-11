@@ -8,6 +8,12 @@ schema lives in `config/drone_schema.json`; presets live in `config/drones/`.
 - World frame: Godot coordinates, Y-up.
 - Body frame: FRD for physical parameters: +X forward, +Y right, +Z down.
 - Motor positions are body-frame meters relative to center of gravity.
+- The native per-motor boundary is named `frd_to_y_up`: `(forward, right, down)`
+  maps to Godot body coordinates `(x, z, -y)`. Its inverse is only used for
+  round-trip diagnostics; presets, motor order, and telemetry remain FRD.
+- A valid Quad-X layout must have both a non-zero forward/rear lever arm and a
+  non-zero left/right lever arm. The native runtime rejects a degenerate
+  four-motor layout instead of dividing by zero in the mixer.
 
 ## Motor Order
 

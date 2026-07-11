@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -20,6 +21,9 @@ bool near(double actual, double expected, double tolerance) {
 int main() {
     const aerosim::Vec3 frd{2.0, -3.0, 4.0};
     const aerosim::Vec3 y_up = aerosim::frd_to_y_up(frd);
+    if (!near(y_up.x, 2.0, 1e-12) || !near(y_up.y, 4.0, 1e-12) || !near(y_up.z, 3.0, 1e-12)) {
+        return fail("FRD (forward, right, down) must cross the named boundary to Y-up (x, z, -y)");
+    }
     const aerosim::Vec3 round_trip = aerosim::y_up_to_frd(y_up);
     if (!near(round_trip.x, frd.x, 1e-12) ||
             !near(round_trip.y, frd.y, 1e-12) ||
@@ -58,8 +62,32 @@ int main() {
     aerosim::RigidBodyState left_state;
     aerosim::SimulationClock left_clock;
     aerosim::step_per_motor_physics_frame(left_state, left_clock, config, left_commands);
-    if (left_state.angular_velocity.x <= 0.0) {
-        return fail("left-side Quad-X motor differential must create a positive roll torque in Y-up physics");
+    if (left_state.angular_velocity.x >= 0.0) {
+        return fail("left-side Quad-X motor differential must create negative roll in the documented Y-up convention");
+    }
+
+    aerosim::MotorCommands front_commands{{0.0, 1.0, 0.0, 1.0}};
+    aerosim::RigidBodyState front_state;
+    aerosim::SimulationClock front_clock;
+    aerosim::step_per_motor_physics_frame(front_state, front_clock, config, front_commands);
+    if (front_state.angular_velocity.z <= 0.0) {
+        return fail("front-side Quad-X motor differential must create positive pitch in the documented Y-up convention");
+    }
+    aerosim::MotorCommands yaw_commands{{0.0, 1.0, 1.0, 0.0}};
+    aerosim::RigidBodyState yaw_state;
+    aerosim::SimulationClock yaw_clock;
+    aerosim::step_per_motor_physics_frame(yaw_state, yaw_clock, config, yaw_commands);
+    if (yaw_state.angular_velocity.y <= 0.0) {
+        return fail("opposite-spin motor pair must create positive reaction-torque yaw");
+    }
+
+    aerosim::MotorCommands invalid_commands{{0.0, std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0}};
+    aerosim::RigidBodyState invalid_state;
+    aerosim::SimulationClock invalid_clock;
+    const aerosim::TrajectorySample rejected = aerosim::step_per_motor_physics_frame(
+            invalid_state, invalid_clock, config, invalid_commands);
+    if (rejected.substeps != 0 || invalid_clock.total_substeps != 0) {
+        return fail("per-motor core must reject non-finite external commands without advancing state");
     }
 
     return EXIT_SUCCESS;

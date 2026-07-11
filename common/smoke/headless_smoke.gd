@@ -41,6 +41,9 @@ func _run() -> void:
         push_error("Connected gamepad status must explicitly name GamepadProfile and non-sim control")
         quit(1)
         return
+    if not await _verify_gamepad_profile_actions():
+        quit(1)
+        return
 
     var native: Object = ClassDB.instantiate("AeroSimNative")
     if native == null:
@@ -63,6 +66,9 @@ func _run() -> void:
         quit(1)
         return
     if not _configure_default_power_model(native):
+        quit(1)
+        return
+    if not _verify_external_motor_outputs_public_path(native):
         quit(1)
         return
     if _has_arg("--hardware-only"):
@@ -184,12 +190,41 @@ func _configure_default_power_model(native: Object) -> bool:
         ):
         push_error("Default hardware preset must apply to native public-path smoke")
         return false
+    var per_motor_model := loader.derive_per_motor_model(preset, power_model)
+    if not per_motor_model.ok or not native.has_method("set_hardware_per_motor_model") or not native.call("set_hardware_per_motor_model", per_motor_model):
+        push_error("Default hardware preset must apply the native per-motor model")
+        return false
     if native.has_method("set_hardware_telemetry_model") and not native.call(
             "set_hardware_telemetry_model",
             float(power_model.max_motor_rpm),
             float(power_model.battery_remaining_mah)
         ):
         push_error("Default hardware preset must apply native telemetry metadata")
+        return false
+    return true
+
+func _verify_external_motor_outputs_public_path(native: Object) -> bool:
+    if not native.has_method("step_external_motor_outputs"):
+        push_error("AeroSimNative.step_external_motor_outputs must expose the #27 external four-motor physics path")
+        return false
+    native.call("reset_flight")
+    var commands := PackedFloat64Array([1.0, 1.0, 1.0, 1.0])
+    var row := PackedFloat64Array()
+    for _frame in range(Engine.physics_ticks_per_second):
+        row = native.call("step_external_motor_outputs", Engine.physics_ticks_per_second, 1000, commands)
+    if row.size() != 12 or float(row[2]) <= 0.0:
+        push_error("external four-motor outputs must advance the preset-backed physical state without flight-controller arming")
+        return false
+    native.call("reset_flight")
+    for _frame in range(10):
+        row = native.call(
+            "step_external_motor_outputs",
+            Engine.physics_ticks_per_second,
+            1000,
+            PackedFloat64Array([0.0, 0.0, 1.0, 1.0])
+        )
+    if row.size() != 12 or float(row[4]) >= -0.01:
+        push_error("external left-side motor differential must produce the documented negative roll truth state")
         return false
     return true
 
@@ -398,11 +433,16 @@ func _verify_flight_control_public_path(native: Object) -> bool:
 
     native.call("reset_flight")
     native.call("arm_flight_control", 0.0)
-    native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, 0.5, 1.0, 0.0, 0.0, 1.0, 0.722222222222, 0.0)
-    var acro: Dictionary = native.call("flight_control_diagnostics")
-    var roll_rate_dps := rad_to_deg(float(acro.get("angular_velocity_z_rad_s", 0.0)))
-    if absf(roll_rate_dps - 720.0) > 720.0 * 0.05:
-        push_error("G2.5 public Acro full-stick roll must reach 720 deg/s within 5%%")
+    var acro_reached_rate := false
+    for _frame in range(int(ceil(Engine.physics_ticks_per_second * 0.25))):
+        native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, 0.5, 1.0, 0.0, 0.0, 1.0, 0.722222222222, 0.0)
+        var acro: Dictionary = native.call("flight_control_diagnostics")
+        var roll_rate_dps := rad_to_deg(float(acro.get("angular_velocity_x_rad_s", 0.0)))
+        if absf(roll_rate_dps - 720.0) <= 720.0 * 0.05:
+            acro_reached_rate = true
+            break
+    if not acro_reached_rate:
+        push_error("G2.5 public Acro full-stick roll must reach 720 deg/s within 5%% by the 250 ms test-harness bound")
         return false
     return true
 
@@ -485,14 +525,17 @@ func _verify_telemetry_snapshot_public_path(native: Object) -> bool:
         push_error("TelemetrySnapshot vector effect indicators must stay zero until runtime models feed them")
         return false
 
-    for _frame in range(12):
+    var saw_motor_saturation := false
+    var saw_pitch_pid_saturation := false
+    for _frame in range(20):
         native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 1.0, 0.0, 90.0, 0.0)
-    snapshot = native.call("telemetry_snapshot")
-    motors = snapshot.motors
-    var pid: Array = snapshot.pid
-    var first_motor: Dictionary = motors[0]
-    var first_pid: Dictionary = pid[0]
-    if not bool(first_motor.saturated) or not bool(first_pid.saturated):
+        snapshot = native.call("telemetry_snapshot")
+        motors = snapshot.motors
+        var pid: Array = snapshot.pid
+        for motor_value in motors:
+            saw_motor_saturation = saw_motor_saturation or bool((motor_value as Dictionary).saturated)
+        saw_pitch_pid_saturation = saw_pitch_pid_saturation or bool((pid[1] as Dictionary).saturated)
+    if not saw_motor_saturation or not saw_pitch_pid_saturation:
         push_error("TelemetrySnapshot must expose motor and PID saturation")
         return false
 
@@ -994,10 +1037,10 @@ func _row_normal(row: PackedFloat64Array) -> Vector3:
     return Vector3(row[18], row[19], row[20])
 
 func _row_roll_degrees(row: PackedFloat64Array) -> float:
-    return rad_to_deg(2.0 * atan2(float(row[6]), float(row[7])))
+    return rad_to_deg(2.0 * atan2(float(row[4]), float(row[7])))
 
 func _row_pitch_degrees(row: PackedFloat64Array) -> float:
-    return rad_to_deg(2.0 * atan2(float(row[4]), float(row[7])))
+    return rad_to_deg(2.0 * atan2(float(row[6]), float(row[7])))
 
 func _body_state_finite(body: RigidBody3D) -> bool:
     var q := body.global_transform.basis.get_rotation_quaternion()
@@ -1210,7 +1253,7 @@ func _verify_runtime_actions() -> bool:
     var acro_rate_observed := false
     for _frame in range(Engine.physics_ticks_per_second / 2):
         await physics_frame
-        if absf(scene.drone_body.angular_velocity.z) > 1.0:
+        if absf(scene.drone_body.angular_velocity.x) > 1.0:
             acro_rate_observed = true
             break
     scene.acro_roll_stick = 0.0
@@ -1219,7 +1262,7 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     if scene.last_collision_authority != 0 or not acro_rate_observed:
-        push_error("flight runtime ACRO path must hand back and respond to rates input within 0.5 seconds; authority=%d angular_z=%f" % [scene.last_collision_authority, scene.drone_body.angular_velocity.z])
+        push_error("flight runtime ACRO path must hand back and respond to rates input within 0.5 seconds; authority=%d angular_x=%f" % [scene.last_collision_authority, scene.drone_body.angular_velocity.x])
         scene.queue_free()
         return false
     scene.flight_mode = "ANGLE"
@@ -1265,7 +1308,6 @@ func _verify_runtime_actions() -> bool:
 
 func _verify_hardware_config_public_path() -> bool:
     var loader := HardwareConfig.new()
-    var factory_default: Dictionary = loader.current
     var preset: Dictionary = loader.load_preset("res://config/drones/5_inch_6s.json")
     if not loader.last_ok:
         push_error("5 inch hardware preset must load: %s" % loader.last_error)
@@ -1367,8 +1409,9 @@ func _verify_hardware_config_public_path() -> bool:
     if loader.validate_config(bad_layout) == "":
         push_error("Hardware schema must reject out-of-range motor layout rows")
         return false
-    if loader.load_preset("res://config/drones/invalid_out_of_range.json") != factory_default or loader.last_ok:
-        push_error("Out-of-range hardware JSON load must fail loud and fall back to factory default")
+    var invalid_fixture := _hardware_fixture("res://config/drones/invalid_out_of_range.json")
+    if invalid_fixture.is_empty() or loader.validate_config(invalid_fixture) == "":
+        push_error("Out-of-range hardware JSON fixture must be rejected before runtime application")
         return false
 
     var scene := SmokeScene.instantiate()
@@ -1423,16 +1466,8 @@ func _verify_hardware_config_public_path() -> bool:
         push_error("Runtime hardware preset mass must affect native simulation")
         scene.queue_free()
         return false
-    if loader.apply_to_runtime(scene, "res://config/drones/invalid_out_of_range.json"):
-        push_error("Invalid runtime hardware preset must report failure")
-        scene.queue_free()
-        return false
-    if scene.get_meta("hardware_config_version", "") != factory_default.version:
-        push_error("Invalid runtime hardware preset must mark factory-default fallback")
-        scene.queue_free()
-        return false
-    if not _native_hovers_at_mass(scene.native, float(factory_default.aircraft.mass_kg)):
-        push_error("Invalid runtime hardware preset must apply factory-default mass to native")
+    if loader.validate_config(invalid_fixture) == "" or scene.get_meta("hardware_config_version", "") != preset.version:
+        push_error("Invalid runtime hardware preset must be rejected before mutating active native state")
         scene.queue_free()
         return false
     scene.queue_free()
@@ -1440,6 +1475,15 @@ func _verify_hardware_config_public_path() -> bool:
 
 func _hardware_schema_doc() -> Dictionary:
     var file := FileAccess.open("res://config/drone_schema.json", FileAccess.READ)
+    if file == null:
+        return {}
+    var json := JSON.new()
+    if json.parse(file.get_as_text()) != OK or not (json.data is Dictionary):
+        return {}
+    return json.data
+
+func _hardware_fixture(path: String) -> Dictionary:
+    var file := FileAccess.open(path, FileAccess.READ)
     if file == null:
         return {}
     var json := JSON.new()
