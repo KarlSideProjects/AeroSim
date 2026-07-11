@@ -57,6 +57,9 @@ jobs:
           AEROSIM_A4_A5_ORACLE_CASES: build/a4_a5_oracle_cases.csv
         run: scripts/test_native.sh
 
+      - name: Replay checkpoint comparer test
+        run: python3 tests/test_compare_replay_artifacts.py
+
       - name: Python A3 oracle
         run: scripts/check_a3_oracle.py build/a3_oracle_cases.csv
 
