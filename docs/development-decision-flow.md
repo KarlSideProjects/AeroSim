@@ -1,6 +1,6 @@
 # 開發決策流程 — 從 PRD 初始規劃到目前狀態
 
-本文件回答一個問題：**AeroSim 的計畫（PRD v3.2）從 2026-07-08 拆解開工到現在，哪些地方變了、為什麼變、變更記錄在哪裡。**
+本文件回答一個問題：**AeroSim 的計畫（開工基線 PRD v3.2，現行 v3.3）從 2026-07-08 拆解開工到現在，哪些地方變了、為什麼變、變更記錄在哪裡。**
 
 怎麼讀：
 
@@ -39,6 +39,7 @@ flowchart TD
     end
 
     LINPRI["Linux 實測主車道（2026-07-11）<br/>Linux 唯一實測平台・非 Linux 全降 build-only<br/>headed 驗收須本機真實 display（CI xvfb/lavapipe 僅輔助回歸）"]
+    GAMEPAD["2026-07-11 輸入裝置定位<br/>真實 RC 遙控器 → Xbox 360 相容標準手把<br/>移除 RadioProfile／16 通道・裝置定義調整非門檻下修"]
 
     NOW["目前狀態（2026-07-11）<br/>#91 in-progress・#27 / #31 / #55 / #93 blocked<br/>#86 / #90 ready-for-agent・#92 ready-for-human"]
 
@@ -62,6 +63,8 @@ flowchart TD
     APPLE --> NOW
     G34 --> NOW
     I87 --> NOW
+    PRD --> GAMEPAD
+    GAMEPAD --> NOW
 
     classDef env fill:#fff8e1,stroke:#b58900,color:#1f2328
     classDef cost fill:#e8f0fe,stroke:#1a56db,color:#1f2328
@@ -69,7 +72,7 @@ flowchart TD
     classDef physics fill:#e6f4ea,stroke:#1e7e34,color:#1f2328
     classDef legal fill:#f3e8fd,stroke:#7b1fa2,color:#1f2328
 
-    class DATA1,LANES,APPLE,LINPRI env
+    class DATA1,LANES,APPLE,LINPRI,GAMEPAD env
     class IOS,SIMP cost
     class I14,I87 incident
     class G34,M91,SITL physics
@@ -199,6 +202,13 @@ flowchart TD
   - 門檻**數值**一律不變，屬驗收平台範圍與證據形式調整（PRD 1.4 Lane 獨立結構）。
 - **驅動因素**：環境限制（無非 Linux 實機／實測環境）＋ 事故教訓（#14：headless／非目視證據偵測不到視覺問題）。
 - **紀錄位置**：`docs/decisions/2026-07-11-linux-primary-acceptance.md`、PRD 變更紀錄「v3.2 修訂（2026-07-11）」、[#52](https://github.com/jhihweijhan/AeroSim/issues/52)、[#93](https://github.com/jhihweijhan/AeroSim/issues/93)、#100（headed 補充）。
+
+### 12. 輸入裝置定位：真實 RC 遙控器 → Xbox 360 相容標準手把（2026-07-11）
+
+- **原計畫**：PRD 將輸入裝置定為真實 RC 遙控器（RadioMaster／FrSky USB，16 通道），輸入 Profile 含 RadioProfile；G0.5、G4B.UI2、G5.1／G5.2／G5.6 以 16 通道／RC 實機為驗收判準。
+- **變動內容**：輸入裝置定位改為 **Xbox 360 相容的一般 USB／藍牙 game 手把**；移除 RadioProfile 與 16 通道需求，輸入 Profile 縮為 GamepadProfile + KeyboardProfile（鍵盤僅 fallback）。上述各 Gate 改以「Xbox 360 相容手把」判準，**數值門檻不變**（校準時限、延遲 ms、顯示即時性，及 G5.4 端到端延遲桌面 ≤40ms 皆維持原值，量測對象改為標準手把鏈路），變更的是「受測裝置類別」——與 2026-07-11 Linux 實測主車道同屬「驗收範圍／裝置定義調整」，依 PRD 1.4 結構成立，**非門檻數值下修**。RC 遙控器支援若未來出現真實需求（客戶指名＋取得實機），以新增 Profile 方式回補，不需修改既有門檻。
+- **驅動因素**：環境限制（維護者手邊無 RC 遙控器實機，RC 專屬驗收在 Linux 實測主車道下永遠無法誠實取證）＋ 產品定位（目標使用情境即以標準手把遊玩，RC 定位屬過度工程）。
+- **紀錄位置**：`docs/decisions/2026-07-11-standard-gamepad-input.md`、`PRD_AeroSim.md` v3.3 變更紀錄（PR #101）、同步 issues [#1](https://github.com/jhihweijhan/AeroSim/issues/1)／[#8](https://github.com/jhihweijhan/AeroSim/issues/8)／[#40](https://github.com/jhihweijhan/AeroSim/issues/40)／[#41](https://github.com/jhihweijhan/AeroSim/issues/41)／[#48](https://github.com/jhihweijhan/AeroSim/issues/48)／[#56](https://github.com/jhihweijhan/AeroSim/issues/56)。
 
 ## 治理機制演進
 
