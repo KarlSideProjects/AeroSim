@@ -78,7 +78,20 @@ func _run() -> void:
     if not _configure_effects(runtime.native):
         return
 
-    runtime.quick_fly("calibrated")
+    var known_device_id := await _inject_known_gamepad()
+    if known_device_id < 0:
+        _fail("benchmark requires a known virtual SDL controller")
+        return
+    runtime.quick_fly()
+    await process_frame
+    if runtime.screen != "controller_confirmation":
+        _fail("benchmark must enter Xbox default profile confirmation before preflight")
+        return
+    runtime.accept_controller_confirmation()
+    await process_frame
+    if runtime.screen != "preflight" or runtime.session_gamepad_profile == null or runtime.takeoff_requested:
+        _fail("benchmark must confirm the Xbox default profile before entering low-throttle preflight")
+        return
     runtime.arm_and_takeoff()
     var physics_profiler := PhysicsFrameProfiler.new()
     EngineDebugger.register_profiler("aerosim_physics_frame", physics_profiler)
@@ -190,3 +203,16 @@ func _parse_args() -> void:
 func _fail(message: String) -> void:
     push_error(message)
     quit(1)
+
+
+func _inject_known_gamepad() -> int:
+    var event := InputEventJoypadMotion.new()
+    event.device = 0
+    event.axis = JOY_AXIS_LEFT_X
+    event.axis_value = 0.5
+    Input.parse_input_event(event)
+    await process_frame
+    for device_id in Input.get_connected_joypads():
+        if Input.is_joy_known(device_id):
+            return device_id
+    return -1

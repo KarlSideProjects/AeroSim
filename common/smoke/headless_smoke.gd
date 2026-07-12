@@ -1,6 +1,7 @@
 extends SceneTree
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
@@ -16,7 +17,37 @@ class InputProbe:
         if event.is_action_pressed(action):
             pressed = true
 
+class ButtonClock:
+    extends RefCounted
+
+    var milliseconds := 0
+
+    func now_ms() -> int:
+        return milliseconds
+
+class MutableGamepadDeviceState:
+    extends GamepadDeviceState.DeviceState
+
+    var snapshot: Array[int] = []
+    var known_device_ids: Dictionary = {}
+
+    func replace_snapshot(device_ids: Array[int], known_ids: Array[int]) -> void:
+        snapshot = device_ids.duplicate()
+        known_device_ids.clear()
+        for device_id in known_ids:
+            known_device_ids[device_id] = true
+
+    func connected_joypads() -> Array[int]:
+        return snapshot.duplicate()
+
+    func is_joy_known(device_id: int) -> bool:
+        return bool(known_device_ids.get(device_id, false))
+
+    func joy_name(device_id: int) -> String:
+        return "Test controller %d" % device_id
+
 var verified_jolt_collision_trials := 0
+var production_gamepad_device_state := GamepadDeviceState.DeviceState.new()
 
 func _initialize() -> void:
     _run()
@@ -72,6 +103,9 @@ func _run() -> void:
         quit(1)
         return
     if not _verify_telemetry_snapshot_public_path(native):
+        quit(1)
+        return
+    if not _verify_xbox_default_profile():
         quit(1)
         return
     if _has_arg("--runtime-only"):
@@ -1041,6 +1075,8 @@ func _jitter(seed: int, salt: int, low: float, high: float) -> float:
 
 func _verify_runtime_actions() -> bool:
     var scene := SmokeScene.instantiate()
+    var device_state := MutableGamepadDeviceState.new()
+    scene.gamepad_device_state = device_state
     root.add_child(scene)
     await process_frame
     if scene.native == null:
@@ -1080,16 +1116,352 @@ func _verify_runtime_actions() -> bool:
         push_error("Cold-start main menu must expose an interactive Quick Fly button")
         scene.queue_free()
         return false
-    await _press_key(KEY_T)
-    await process_frame
-    if scene.screen != "main_menu" or scene.takeoff_requested or scene.native.call("flight_control_armed"):
-        push_error("flight_takeoff must not bypass the Quick Fly state machine from the main menu")
+    var controller_button := scene.get_node_or_null("MainMenu/Entries/Controller") as Button
+    if controller_button == null:
+        push_error("Main menu must expose an interactive Controller entry")
         scene.queue_free()
         return false
-    scene.quick_fly("no_controller")
+    var known_device_id := await _inject_known_gamepad()
+    if known_device_id < 0:
+        push_error("Virtual SDL gamepad must register as a known controller for confirmation coverage")
+        scene.queue_free()
+        return false
+    device_state.replace_snapshot([known_device_id], [known_device_id])
+    Input.joy_connection_changed.emit(known_device_id, true)
     await process_frame
-    if scene.screen != "fallback_prompt" or not scene.arm_status_label.text.contains("KeyboardProfile") or scene.arm_takeoff_button.text != "USE KEYBOARD FALLBACK":
-        push_error("Quick Fly without a controller must show an actionable KeyboardProfile fallback prompt")
+    var settings_button := scene.get_node_or_null("MainMenu/Entries/Settings") as Button
+    if settings_button == null:
+        push_error("Main menu must expose an interactive Settings entry")
+        scene.queue_free()
+        return false
+    settings_button.pressed.emit()
+    await process_frame
+    if scene.screen != "settings":
+        push_error("Settings entry must open the Settings screen")
+        scene.queue_free()
+        return false
+    var settings_controller_button := scene.get_node_or_null("MainMenu/SettingsPanel/Rows/Controller") as Button
+    if settings_controller_button == null:
+        push_error("Settings must expose a Controller entry")
+        scene.queue_free()
+        return false
+    settings_controller_button.pressed.emit()
+    await process_frame
+    if scene.screen != "controller_settings":
+        push_error("Settings Controller entry must open Controller settings")
+        scene.queue_free()
+        return false
+    var controller_settings := scene.get_node_or_null("MainMenu/ControllerSettingsPanel") as Control
+    var device_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/CurrentDevice") as Label
+    var fixed_mapping_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/FixedMapping") as Label
+    var deadzone_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/Deadzone") as Label
+    var button_status_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ButtonStatus") as Label
+    var reset_button := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ResetXboxDefault") as Button
+    if controller_settings == null or device_label == null or fixed_mapping_label == null or deadzone_label == null or button_status_label == null or reset_button == null:
+        push_error("Controller settings must show device, fixed mapping, deadzone, Arm/Mode state, and Xbox reset action")
+        scene.queue_free()
+        return false
+    if not controller_settings.is_visible_in_tree() or not device_label.text.contains(str(known_device_id)):
+        push_error("Controller settings must show the currently connected device")
+        scene.queue_free()
+        return false
+    for expected_mapping in ["roll -> Axis 0", "pitch -> Axis 1", "yaw -> Axis 2", "throttle -> Axis 3"]:
+        if not fixed_mapping_label.text.contains(expected_mapping):
+            push_error("Controller settings must show the fixed Xbox mapping: %s" % expected_mapping)
+            scene.queue_free()
+            return false
+    if not deadzone_label.text.contains("0.080") or not button_status_label.text.contains("Arm RELEASED") or not button_status_label.text.contains("Mode RELEASED"):
+        push_error("Controller settings must show the fixed deadzone and live Arm/Mode state")
+        scene.queue_free()
+        return false
+    reset_button.pressed.emit()
+    await process_frame
+    if scene.screen != "controller_confirmation":
+        push_error("Reset Xbox default must require confirmation before replacing the session profile")
+        scene.queue_free()
+        return false
+    controller_button.pressed.emit()
+    await process_frame
+    if scene.screen != "controller_confirmation" or scene.controller_confirmation_panel == null:
+        push_error("A known unconfirmed controller must open Xbox default profile confirmation")
+        scene.queue_free()
+        return false
+    var confirmation: Control = scene.controller_confirmation_panel
+    var mapping := confirmation.get_node_or_null("Rows/FixedMapping") as Label
+    var axes := confirmation.get_node_or_null("Rows/LiveAxes") as Label
+    var confirm_button := confirmation.get_node_or_null("Rows/UseXboxDefaultProfile") as Button
+    if mapping == null or axes == null or confirm_button == null:
+        push_error("Controller confirmation must expose fixed mapping, live axes, and confirmation action")
+        scene.queue_free()
+        return false
+    for expected_mapping in ["roll -> Axis 0", "pitch -> Axis 1", "yaw -> Axis 2", "throttle -> Axis 3"]:
+        if not mapping.text.contains(expected_mapping):
+            push_error("Controller confirmation must show the fixed Xbox mapping: %s" % expected_mapping)
+            scene.queue_free()
+            return false
+    for expected_axis in [
+        "roll: Raw +0.500 | Normalized +0.457",
+        "pitch: Raw -0.500 | Normalized -0.457",
+        "yaw: Raw +0.250 | Normalized +0.185",
+        "throttle: Raw -0.750 | Normalized -0.728"
+    ]:
+        if not axes.text.contains(expected_axis):
+            push_error("Controller confirmation must show the expected live axis value: %s" % expected_axis)
+            scene.queue_free()
+            return false
+    for update in [
+        {"axis": JOY_AXIS_LEFT_X, "value": -0.5, "expected": "roll: Raw -0.500 | Normalized -0.457"},
+        {"axis": JOY_AXIS_LEFT_Y, "value": 0.5, "expected": "pitch: Raw +0.500 | Normalized +0.457"},
+        {"axis": JOY_AXIS_RIGHT_X, "value": -0.25, "expected": "yaw: Raw -0.250 | Normalized -0.185"},
+        {"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "throttle: Raw +0.750 | Normalized +0.728"}
+    ]:
+        _inject_joy_axis(known_device_id, update.axis, update.value)
+        await process_frame
+        await process_frame
+        if not axes.text.contains(update.expected):
+            push_error("Controller confirmation must update each live axis value: %s" % update.expected)
+            scene.queue_free()
+            return false
+    confirm_button.pressed.emit()
+    await process_frame
+    if scene.screen != "preflight" or scene.session_gamepad_profile == null or scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("Xbox default profile confirmation must create the session profile then enter low-throttle preflight")
+        scene.queue_free()
+        return false
+    if not scene.has_method("set_gamepad_button_time_source"):
+        push_error("Flight runtime must accept an injected button timestamp source for deterministic debounce tests")
+        scene.queue_free()
+        return false
+    var button_clock := ButtonClock.new()
+    scene.set_gamepad_button_time_source(button_clock.now_ms)
+    for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X]:
+        _inject_joy_axis(known_device_id, axis, 0.04)
+    await process_frame
+    await process_frame
+    if scene._profile_axis("roll") != 0.0 or scene._profile_axis("pitch") != 0.0 or scene._profile_axis("yaw") != 0.0:
+        push_error("Xbox axes inside the profile deadzone must produce zero flight input")
+        scene.queue_free()
+        return false
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.50)
+    await process_frame
+    await process_frame
+    if scene._profile_axis("pitch") >= 0.0:
+        push_error("Positive Xbox pitch raw input must be reversed before flight control")
+        scene.queue_free()
+        return false
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.50)
+    await process_frame
+    await process_frame
+    if scene._profile_axis("pitch") <= 0.0:
+        push_error("Negative Xbox pitch raw input must retain the opposite reversed sign")
+        scene.queue_free()
+        return false
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.75)
+    await process_frame
+    await process_frame
+    if not scene.arm_status_label.text.contains("HIGH"):
+        push_error("Confirmed Xbox profile must show the live high throttle state before arming")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, true)
+    await process_frame
+    if scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("Xbox Arm press must reject a live profile throttle above the fixed low threshold")
+        scene.queue_free()
+        return false
+    if not scene.arm_status_label.text.contains("Arm PRESSED"):
+        push_error("Xbox Arm press state must be observable in the flight HUD")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, false)
+    await process_frame
+    if not scene.arm_status_label.text.contains("Arm RELEASED"):
+        push_error("Xbox Arm release state must be observable in the flight HUD")
+        scene.queue_free()
+        return false
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, -0.75)
+    await process_frame
+    await process_frame
+    if not scene.arm_status_label.text.contains("LOW"):
+        push_error("Xbox preflight HUD must show the live low throttle state")
+        scene.queue_free()
+        return false
+    button_clock.milliseconds = 49
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, true)
+    await process_frame
+    if scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("Xbox Arm press at 49 ms must remain debounced")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, false)
+    await process_frame
+    if not scene.arm_status_label.text.contains("Arm RELEASED"):
+        push_error("Debounced Xbox Arm release must remain observable in the flight HUD")
+        scene.queue_free()
+        return false
+    button_clock.milliseconds = 50
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, true)
+    await process_frame
+    if not scene.takeoff_requested or not scene.native.call("flight_control_armed"):
+        push_error("Xbox Arm press must arm only after the live profile throttle is low")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, false)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.70)
+    for _frame in range(60):
+        await physics_frame
+    var high_profile_thrust := float(scene.native.call("flight_control_diagnostics").get("motor_thrust_newtons", 0.0))
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.20)
+    for _frame in range(60):
+        await physics_frame
+    var low_profile_thrust := float(scene.native.call("flight_control_diagnostics").get("motor_thrust_newtons", 0.0))
+    if high_profile_thrust <= low_profile_thrust:
+        push_error("Xbox throttle axis must change simulated thrust instead of using a fixed runtime throttle")
+        scene.queue_free()
+        return false
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, 0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.25)
+    for _frame in range(30):
+        await physics_frame
+    var angle_rates := Vector3(
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_x_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
+    )
+    if angle_rates.length() <= 0.01:
+        push_error("Xbox roll, pitch, and yaw axes must drive the Angle runtime path")
+        scene.queue_free()
+        return false
+    button_clock.milliseconds = 100
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
+    await process_frame
+    await process_frame
+    if scene.flight_mode != "ALTITUDE_HOLD" or not scene.arm_status_label.text.contains("Mode PRESSED"):
+        push_error("Xbox Mode press must switch flight mode and be observable in the flight HUD")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
+    await process_frame
+    if not scene.arm_status_label.text.contains("Mode RELEASED"):
+        push_error("Xbox Mode release state must be observable in the flight HUD")
+        scene.queue_free()
+        return false
+    button_clock.milliseconds = 149
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
+    await process_frame
+    if scene.flight_mode != "ALTITUDE_HOLD":
+        push_error("Xbox Mode presses inside 50 ms must be debounced")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
+    await process_frame
+    if not scene.arm_status_label.text.contains("Mode RELEASED"):
+        push_error("Debounced Xbox Mode release must remain observable in the flight HUD")
+        scene.queue_free()
+        return false
+    button_clock.milliseconds = 150
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
+    await process_frame
+    if scene.flight_mode != "ANGLE":
+        push_error("Xbox Mode press after the 50 ms debounce window must be accepted")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, -0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, -0.25)
+    await process_frame
+    await process_frame
+    if scene._angle_roll_degrees() >= 0.0 or scene._angle_pitch_degrees() >= 0.0 or scene._angle_yaw_rate_degrees_per_second() >= 0.0:
+        push_error("Altitude Hold must receive the processed Xbox roll, pitch, and yaw profile axes")
+        scene.queue_free()
+        return false
+    scene.flight_mode = "ALTITUDE_HOLD"
+    scene.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+    scene.drone_body.reset_contact()
+    for _frame in range(30):
+        await physics_frame
+    var altitude_hold_rates := Vector3(
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_x_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
+    )
+    if altitude_hold_rates.length() <= 0.01:
+        push_error("Xbox roll, pitch, and yaw axes must drive the Altitude Hold runtime path")
+        scene.queue_free()
+        return false
+    scene.native.call("reset_flight")
+    if not scene.native.call("flight_control_armed"):
+        push_error("ACRO profile-axis test must preserve the armed flight controller after reset")
+        scene.queue_free()
+        return false
+    scene.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+    scene.drone_body.reset_contact()
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, 0.65)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.0)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.0)
+    await process_frame
+    await process_frame
+    if scene._profile_axis("roll") <= 0.0 or scene._profile_axis("pitch") != 0.0 or scene._profile_axis("yaw") != 0.0:
+        push_error("ACRO test must inject a fresh roll-only Xbox profile input")
+        scene.queue_free()
+        return false
+    scene.flight_mode = "ACRO"
+    for _frame in range(30):
+        await physics_frame
+    var acro_rates := Vector3(
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_x_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
+    )
+    if acro_rates.z <= 0.01 or absf(acro_rates.z) <= absf(acro_rates.x) or absf(acro_rates.z) <= absf(acro_rates.y):
+        push_error("Fresh Xbox roll profile input must produce the expected dominant positive ACRO roll response")
+        scene.queue_free()
+        return false
+    scene.queue_free()
+    scene = SmokeScene.instantiate()
+    var replacement_device_state := MutableGamepadDeviceState.new()
+    replacement_device_state.replace_snapshot([known_device_id], [known_device_id])
+    scene.gamepad_device_state = replacement_device_state
+    root.add_child(scene)
+    await process_frame
+    scene.quick_fly()
+    await process_frame
+    if scene.screen != "controller_confirmation" or scene.takeoff_requested:
+        push_error("Quick Fly must re-confirm when the connected controller differs from the session profile device")
+        scene.queue_free()
+        return false
+    var reconfirm_button := scene.get_node_or_null("FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile") as Button
+    if reconfirm_button == null:
+        push_error("Replacement controller confirmation must expose its confirmation action")
+        scene.queue_free()
+        return false
+    reconfirm_button.pressed.emit()
+    await process_frame
+    if scene.screen != "preflight" or scene.takeoff_requested:
+        push_error("Replacement known controller must confirm before returning to preflight")
+        scene.queue_free()
+        return false
+    var unknown_device_id := known_device_id + 1
+    replacement_device_state.replace_snapshot([], [])
+    Input.joy_connection_changed.emit(known_device_id, false)
+    await process_frame
+    if not scene.last_profile_status.contains("No controller"):
+        push_error("Connection handler must refresh fallback status from the injected empty device snapshot")
+        scene.queue_free()
+        return false
+    replacement_device_state.replace_snapshot([unknown_device_id], [])
+    Input.joy_connection_changed.emit(unknown_device_id, true)
+    await process_frame
+    if replacement_device_state.is_joy_known(unknown_device_id) or scene._first_connected_device() != unknown_device_id:
+        push_error("Fallback coverage must replace the confirmed device with a connected unknown SDL device")
+        scene.queue_free()
+        return false
+    scene.quick_fly()
+    await process_frame
+    if scene.screen != "fallback_prompt" or scene.session_gamepad_profile != null or not scene.arm_status_label.text.contains("Unsupported controller") or scene.arm_takeoff_button.text != "USE KEYBOARD FALLBACK":
+        push_error("Quick Fly must block the connected replacement unknown SDL device with an explicit KeyboardProfile fallback")
         scene.queue_free()
         return false
     scene.arm_takeoff_button.pressed.emit()
@@ -1111,25 +1483,6 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly preflight must make throttle-low arm/takeoff state observable")
         scene.queue_free()
         return false
-    scene.quick_fly("uncalibrated")
-    if scene.screen != "controller_setup" or not scene.arm_status_label.text.contains("Controller setup") or scene.arm_takeoff_button.text != "BACK TO MAIN MENU":
-        push_error("Quick Fly with an uncalibrated controller must show an explicit Controller Setup screen")
-        scene.queue_free()
-        return false
-    scene.arm_takeoff_button.pressed.emit()
-    scene.quick_fly("drone_load_failed")
-    if scene.screen != "error" or scene.last_error_message.is_empty() or not scene.arm_status_label.text.contains("drone_load_failed") or scene.arm_takeoff_button.text != "BACK TO MAIN MENU":
-        push_error("Quick Fly load failures must show an explicit error screen")
-        scene.queue_free()
-        return false
-    scene.arm_takeoff_button.pressed.emit()
-    scene.quick_fly("no_controller")
-    scene.arm_takeoff_button.pressed.emit()
-    if scene.screen != "preflight" or scene.takeoff_requested:
-        push_error("Quick Fly fallback must enter the low-throttle preflight state")
-        scene.queue_free()
-        return false
-
     var takeoff_position: Vector3 = scene.drone_body.global_position
     await _press_key(KEY_T)
     var moved_after_takeoff := false
@@ -1262,6 +1615,31 @@ func _verify_runtime_actions() -> bool:
 
     scene.queue_free()
     return true
+
+func _inject_known_gamepad() -> int:
+    _inject_joy_axis(0, JOY_AXIS_LEFT_X, 0.5)
+    _inject_joy_axis(0, JOY_AXIS_LEFT_Y, -0.5)
+    _inject_joy_axis(0, JOY_AXIS_RIGHT_X, 0.25)
+    _inject_joy_axis(0, JOY_AXIS_RIGHT_Y, -0.75)
+    await process_frame
+    for device_id in Input.get_connected_joypads():
+        if InputProfiles.GamepadProfile.is_supported_device(device_id, production_gamepad_device_state):
+            return device_id
+    return -1
+
+func _inject_joy_axis(device_id: int, axis: JoyAxis, value: float) -> void:
+    var event := InputEventJoypadMotion.new()
+    event.device = device_id
+    event.axis = axis
+    event.axis_value = value
+    Input.parse_input_event(event)
+
+func _inject_joy_button(device_id: int, button: JoyButton, pressed: bool) -> void:
+    var event := InputEventJoypadButton.new()
+    event.device = device_id
+    event.button_index = button
+    event.pressed = pressed
+    Input.parse_input_event(event)
 
 func _verify_hardware_config_public_path() -> bool:
     var loader := HardwareConfig.new()
@@ -1512,15 +1890,29 @@ func _verify_keyboard_profile_actions() -> bool:
 
 func _verify_gamepad_profile_actions() -> bool:
     var profile := InputProfiles.GamepadProfile.new()
-    profile.apply_throttle_axis(0.7)
-    profile.apply_throttle_axis(0.0)
-    if not is_equal_approx(profile.throttle, 0.7):
-        push_error("GamepadProfile throttle must be sticky when the stick returns to center")
+    if profile.profile_schema_version != 1:
+        push_error("GamepadProfile must use the fixed Xbox profile schema version")
         return false
-
+    if profile.axis_for_role != {"roll": 0, "pitch": 1, "yaw": 2, "throttle": 3}:
+        push_error("GamepadProfile must freeze the four distinct Xbox axes")
+        return false
+    if profile.arm_button != JOY_BUTTON_A or profile.mode_button != JOY_BUTTON_Y:
+        push_error("GamepadProfile must freeze distinct Xbox Arm and Mode buttons")
+        return false
+    if not profile.sticky_throttle or profile.RAW_AXIS_DEADZONE < 0.08 or profile.RAW_AXIS_DEADZONE > 0.10:
+        push_error("GamepadProfile must retain sticky throttle and a named raw-axis deadzone")
+        return false
+    profile.apply_throttle_axis(0.07)
+    if not is_equal_approx(profile.throttle, 0.0):
+        push_error("GamepadProfile throttle must ignore input inside the fixed deadzone")
+        return false
+    profile.apply_throttle_axis(0.09)
+    if not is_equal_approx(profile.throttle, 0.09):
+        push_error("GamepadProfile throttle must update when raw input exceeds the fixed deadzone")
+        return false
     profile.apply_throttle_axis(0.02)
-    if not is_equal_approx(profile.throttle, 0.7):
-        push_error("GamepadProfile throttle deadzone must ignore small drift")
+    if not is_equal_approx(profile.throttle, 0.09):
+        push_error("GamepadProfile throttle must remain sticky when input returns inside the deadzone")
         return false
 
     var actions := {
@@ -1566,6 +1958,28 @@ func _verify_gamepad_profile_actions() -> bool:
         Input.parse_input_event(event)
         await process_frame
         probe.queue_free()
+    return true
+
+func _verify_xbox_default_profile() -> bool:
+    if InputProfiles.GamepadProfile.is_supported_device(-1, production_gamepad_device_state) != Input.is_joy_known(-1):
+        push_error("GamepadProfile support must use the SDL known-device predicate")
+        return false
+    if InputProfiles.GamepadProfile.xbox_default(-1, production_gamepad_device_state) != null:
+        push_error("An unknown SDL device must not produce an Xbox profile")
+        return false
+    for device_id in Input.get_connected_joypads():
+        if not InputProfiles.GamepadProfile.is_supported_device(device_id, production_gamepad_device_state):
+            continue
+        var profile := InputProfiles.GamepadProfile.xbox_default(device_id, production_gamepad_device_state)
+        if profile == null or profile.profile_schema_version != 1:
+            push_error("A known SDL device must receive the fixed Xbox profile schema")
+            return false
+        if profile.axis_for_role != {"roll": 0, "pitch": 1, "yaw": 2, "throttle": 3}:
+            push_error("A known SDL device must receive four distinct Xbox axes")
+            return false
+        if profile.arm_button == profile.mode_button or not profile.sticky_throttle or profile.RAW_AXIS_DEADZONE < 0.08 or profile.RAW_AXIS_DEADZONE > 0.10:
+            push_error("A known SDL device must receive distinct buttons, sticky throttle, and a raw-axis deadzone")
+            return false
     return true
 
 func _output_path() -> String:
