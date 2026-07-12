@@ -41,6 +41,7 @@ var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
 var session_gamepad_profile: InputProfiles.GamepadProfile
+var session_gamepad_device_id := -1
 var controller_confirmation_panel: Control
 var controller_confirmation_profile: InputProfiles.GamepadProfile
 var controller_confirmation_device_id := -1
@@ -202,17 +203,19 @@ func request_exit() -> void:
     if quit_on_exit:
         get_tree().quit()
 
-func quick_fly(entry_state: String = _quick_fly_entry_state()) -> void:
-    if entry_state == "no_controller":
-        _show_keyboard_fallback(InputProfiles.fallback_status([]))
+func quick_fly() -> void:
+    var device_id := _first_connected_device()
+    var current_profile := InputProfiles.GamepadProfile.xbox_default(device_id)
+    if current_profile == null:
+        session_gamepad_profile = null
+        session_gamepad_device_id = -1
+        if device_id < 0:
+            _show_keyboard_fallback(InputProfiles.fallback_status([]))
+        else:
+            _show_keyboard_fallback("Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)")
         return
-    if entry_state == "controller_detected":
-        begin_controller_confirmation()
-        return
-    if entry_state != "session_profile" or session_gamepad_profile == null:
-        last_error_message = "Quick Fly cannot continue: %s" % entry_state
-        screen = "error"
-        _refresh_flight_hud()
+    if session_gamepad_profile == null or session_gamepad_device_id != device_id:
+        begin_controller_confirmation(device_id)
         return
     enter_preflight()
 
@@ -220,6 +223,7 @@ func begin_controller_confirmation(device_id: int = _first_connected_device()) -
     var profile := InputProfiles.GamepadProfile.xbox_default(device_id)
     if profile == null:
         session_gamepad_profile = null
+        session_gamepad_device_id = -1
         _show_keyboard_fallback("Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)")
         return
     controller_confirmation_device_id = device_id
@@ -235,14 +239,17 @@ func accept_controller_confirmation() -> void:
     var profile := InputProfiles.GamepadProfile.xbox_default(controller_confirmation_device_id)
     if profile == null:
         session_gamepad_profile = null
+        session_gamepad_device_id = -1
         _show_keyboard_fallback("Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)")
         return
     session_gamepad_profile = profile
+    session_gamepad_device_id = controller_confirmation_device_id
     controller_confirmation_panel.hide()
     enter_preflight()
 
 func use_keyboard_fallback() -> void:
     session_gamepad_profile = null
+    session_gamepad_device_id = -1
     if controller_confirmation_panel != null:
         controller_confirmation_panel.hide()
     _show_keyboard_fallback("KeyboardProfile fallback selected (non-sim control)")
@@ -451,11 +458,6 @@ func _refresh_flight_hud() -> void:
     else:
         arm_status_label.text = "Quick Fly: choose Quick Fly, then arm at low throttle"
         arm_takeoff_button.text = "ARM / TAKEOFF (T)"
-
-func _quick_fly_entry_state() -> String:
-    if Input.get_connected_joypads().is_empty():
-        return "no_controller"
-    return "session_profile" if session_gamepad_profile != null else "controller_detected"
 
 func _handle_primary_action() -> void:
     if screen == "fallback_prompt":

@@ -1112,26 +1112,52 @@ func _verify_runtime_actions() -> bool:
             push_error("Controller confirmation must show the fixed Xbox mapping: %s" % expected_mapping)
             scene.queue_free()
             return false
-    if not axes.text.contains("Raw") or not axes.text.contains("Normalized"):
-        push_error("Controller confirmation must show raw and normalized live axis values")
-        scene.queue_free()
-        return false
+    for expected_axis in [
+        "roll: Raw +0.500 | Normalized +0.457",
+        "pitch: Raw -0.500 | Normalized -0.457",
+        "yaw: Raw +0.250 | Normalized +0.185",
+        "throttle: Raw -0.750 | Normalized -0.728"
+    ]:
+        if not axes.text.contains(expected_axis):
+            push_error("Controller confirmation must show the expected live axis value: %s" % expected_axis)
+            scene.queue_free()
+            return false
+    for update in [
+        {"axis": JOY_AXIS_LEFT_X, "value": -0.5, "expected": "roll: Raw -0.500 | Normalized -0.457"},
+        {"axis": JOY_AXIS_LEFT_Y, "value": 0.5, "expected": "pitch: Raw +0.500 | Normalized +0.457"},
+        {"axis": JOY_AXIS_RIGHT_X, "value": -0.25, "expected": "yaw: Raw -0.250 | Normalized -0.185"},
+        {"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "throttle: Raw +0.750 | Normalized +0.728"}
+    ]:
+        _inject_joy_axis(known_device_id, update.axis, update.value)
+        await process_frame
+        await process_frame
+        if not axes.text.contains(update.expected):
+            push_error("Controller confirmation must update each live axis value: %s" % update.expected)
+            scene.queue_free()
+            return false
     confirm_button.pressed.emit()
     await process_frame
     if scene.screen != "preflight" or scene.session_gamepad_profile == null or scene.takeoff_requested or scene.native.call("flight_control_armed"):
         push_error("Xbox default profile confirmation must create the session profile then enter low-throttle preflight")
         scene.queue_free()
         return false
+    scene.session_gamepad_device_id = -1
+    scene.quick_fly()
+    await process_frame
+    if scene.screen != "controller_confirmation" or scene.takeoff_requested:
+        push_error("Quick Fly must re-confirm when the connected controller differs from the session profile device")
+        scene.queue_free()
+        return false
+    confirm_button.pressed.emit()
+    await process_frame
+    if scene.screen != "preflight" or scene.takeoff_requested:
+        push_error("Replacement known controller must confirm before returning to preflight")
+        scene.queue_free()
+        return false
     scene.begin_controller_confirmation(-1)
     await process_frame
     if scene.screen != "fallback_prompt" or scene.session_gamepad_profile != null or not scene.arm_status_label.text.contains("Unsupported controller") or scene.arm_takeoff_button.text != "USE KEYBOARD FALLBACK":
         push_error("Unknown SDL devices must be blocked with an explicit KeyboardProfile fallback")
-        scene.queue_free()
-        return false
-    scene.quick_fly("no_controller")
-    await process_frame
-    if scene.screen != "fallback_prompt" or not scene.arm_status_label.text.contains("KeyboardProfile") or scene.arm_takeoff_button.text != "USE KEYBOARD FALLBACK":
-        push_error("Quick Fly without a controller must show an actionable KeyboardProfile fallback prompt")
         scene.queue_free()
         return false
     scene.arm_takeoff_button.pressed.emit()
@@ -1153,19 +1179,6 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly preflight must make throttle-low arm/takeoff state observable")
         scene.queue_free()
         return false
-    scene.quick_fly("drone_load_failed")
-    if scene.screen != "error" or scene.last_error_message.is_empty() or not scene.arm_status_label.text.contains("drone_load_failed") or scene.arm_takeoff_button.text != "BACK TO MAIN MENU":
-        push_error("Quick Fly load failures must show an explicit error screen")
-        scene.queue_free()
-        return false
-    scene.arm_takeoff_button.pressed.emit()
-    scene.quick_fly("no_controller")
-    scene.arm_takeoff_button.pressed.emit()
-    if scene.screen != "preflight" or scene.takeoff_requested:
-        push_error("Quick Fly fallback must enter the low-throttle preflight state")
-        scene.queue_free()
-        return false
-
     var takeoff_position: Vector3 = scene.drone_body.global_position
     await _press_key(KEY_T)
     var moved_after_takeoff := false
@@ -1300,16 +1313,22 @@ func _verify_runtime_actions() -> bool:
     return true
 
 func _inject_known_gamepad() -> int:
-    var event := InputEventJoypadMotion.new()
-    event.device = 0
-    event.axis = JOY_AXIS_LEFT_X
-    event.axis_value = 0.5
-    Input.parse_input_event(event)
+    _inject_joy_axis(0, JOY_AXIS_LEFT_X, 0.5)
+    _inject_joy_axis(0, JOY_AXIS_LEFT_Y, -0.5)
+    _inject_joy_axis(0, JOY_AXIS_RIGHT_X, 0.25)
+    _inject_joy_axis(0, JOY_AXIS_RIGHT_Y, -0.75)
     await process_frame
     for device_id in Input.get_connected_joypads():
         if InputProfiles.GamepadProfile.is_supported_device(device_id):
             return device_id
     return -1
+
+func _inject_joy_axis(device_id: int, axis: JoyAxis, value: float) -> void:
+    var event := InputEventJoypadMotion.new()
+    event.device = device_id
+    event.axis = axis
+    event.axis_value = value
+    Input.parse_input_event(event)
 
 func _verify_hardware_config_public_path() -> bool:
     var loader := HardwareConfig.new()
