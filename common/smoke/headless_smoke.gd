@@ -1300,6 +1300,23 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox default profile confirmation must create the session profile then enter low-throttle preflight")
         scene.queue_free()
         return false
+    if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null:
+        push_error("Quick Fly preflight must load Industrial Yard as the default Free Flight map")
+        scene.queue_free()
+        return false
+    var spawn := scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
+    if spawn == null or scene.drone_body.global_position.distance_to(spawn.global_position) > 1e-6:
+        push_error("Industrial Yard load must place the drone at SpawnNorth")
+        scene.queue_free()
+        return false
+    if scene.load_map("missing_map") or not scene.last_error_message.contains("missing_map"):
+        push_error("Missing Free Flight maps must fail with the requested map id in the error")
+        scene.queue_free()
+        return false
+    if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null:
+        push_error("Missing map load must not fall back to or replace the active Industrial Yard map")
+        scene.queue_free()
+        return false
     if not scene.has_method("set_gamepad_button_time_source"):
         push_error("Flight runtime must accept an injected button timestamp source for deterministic debounce tests")
         scene.queue_free()
@@ -1667,8 +1684,9 @@ func _verify_runtime_actions() -> bool:
         push_error("flight_respawn action must resume from pause and keep flight active")
         scene.queue_free()
         return false
-    if scene.drone_body.position.distance_to(Vector3(-1.0, 0.0, 0.0)) > 1e-6 or scene.drone_body.linear_velocity.length() > 1e-6 or scene.drone_body.angular_velocity.length() > 1e-6:
-        push_error("flight_respawn action must return to spawn and clear body velocity; position=%s linear=%s angular=%s" % [scene.drone_body.position, scene.drone_body.linear_velocity, scene.drone_body.angular_velocity])
+    spawn = scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
+    if spawn == null or scene.drone_body.global_position.distance_to(spawn.global_position) > 1e-6 or scene.drone_body.linear_velocity.length() > 1e-6 or scene.drone_body.angular_velocity.length() > 1e-6:
+        push_error("flight_respawn action must return to Industrial Yard SpawnNorth and clear body velocity; position=%s linear=%s angular=%s" % [scene.drone_body.global_position, scene.drone_body.linear_velocity, scene.drone_body.angular_velocity])
         scene.queue_free()
         return false
     for _frame in range(31):
@@ -1680,8 +1698,9 @@ func _verify_runtime_actions() -> bool:
 
     scene.quit_on_exit = false
     await _press_key(KEY_ESCAPE)
-    if not scene.exit_requested or scene.screen != "exit":
-        push_error("flight_exit action must request a GUI exit through the runtime exit hook")
+    await process_frame
+    if not scene.exit_requested or scene.screen != "main_menu" or scene.loaded_map != null or scene.get_node_or_null("LoadedMap") != null:
+        push_error("flight_exit action must stop flight, free the map, and return to the main menu stub")
         scene.queue_free()
         return false
 

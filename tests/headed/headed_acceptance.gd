@@ -106,6 +106,11 @@ func _run() -> void:
 		_click(confirm_button)
 	await _settle(10)
 	_expect(runtime.screen == "preflight", "confirmation enters low-throttle preflight")
+	_expect(runtime.loaded_map_id == "industrial_yard" and runtime.loaded_map != null, "Quick Fly preflight loads Industrial Yard")
+	var spawn := runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D if runtime.loaded_map != null else null
+	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6, "Industrial Yard load places the drone at SpawnNorth")
+	_expect(not runtime.load_map("missing_map") and runtime.last_error_message.contains("missing_map"), "missing map load names the missing map explicitly")
+	_expect(runtime.loaded_map_id == "industrial_yard" and runtime.loaded_map != null, "missing map load keeps Industrial Yard active without a smoke fallback")
 
 	var unknown_device_id := known_device_id + 1
 	device_state.replace_snapshot([], [])
@@ -144,15 +149,20 @@ func _run() -> void:
 	await _settle(10)
 	await _snapshot("05_reset")
 	_expect(runtime.reset_count >= 1, "R resets flight after resume")
+	spawn = runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D if runtime.loaded_map != null else null
+	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6 and runtime.drone_body.linear_velocity.length() <= 1e-6 and runtime.drone_body.angular_velocity.length() <= 1e-6, "reset returns to SpawnNorth with cleared velocities")
 
+	runtime.quit_on_exit = false
+	_tap(KEY_ESCAPE)
+	await _settle(2)
 	await _snapshot("06_exit")
+	_expect(runtime.exit_requested and runtime.screen == "main_menu" and runtime.loaded_map == null and runtime.get_node_or_null("LoadedMap") == null, "exit frees the map and returns to the main menu stub")
 	if not _write_report():
 		quit(1)
 		return
 	if not _failures.is_empty():
 		quit(1)
 		return
-	_tap(KEY_ESCAPE)
 
 func _parse_args() -> void:
 	var args := OS.get_cmdline_user_args()
