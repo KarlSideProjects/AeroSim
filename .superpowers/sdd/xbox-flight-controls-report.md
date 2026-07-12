@@ -35,6 +35,8 @@ The discriminating smoke coverage injects a known SDL controller and verifies:
 - Added pitch reversal assertions: raw `+0.50` produces negative processed pitch and raw `-0.50` produces positive processed pitch.
 - Added an Altitude Hold runtime assertion using processed profile roll/pitch/yaw and a non-zero native angular response after resetting the body state.
 - Replaced wall-clock sleeps in debounce coverage with an injected timestamp source. Arm and Mode independently prove accepted press at `0`/`100` ms, rejection at `49`/`149` ms, and acceptance at `50`/`150` ms; release HUD state remains observable after rejected presses.
+- ACRO coverage now resets native flight state and the drone body's linear/angular velocity, injects a fresh roll-only profile input, then proves the dominant positive native roll response. This prevents an Altitude Hold angular-velocity carry-over from satisfying the ACRO assertion.
+- Throttle coverage now proves the three sticky/deadzone transitions directly: `0.07` is ignored inside the fixed deadzone, `0.09` updates the throttle, and a subsequent `0.02` does not overwrite it.
 
 The new deterministic-clock smoke first failed before implementation with:
 

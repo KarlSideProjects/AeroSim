@@ -1312,6 +1312,22 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox roll, pitch, and yaw axes must drive the Altitude Hold runtime path")
         scene.queue_free()
         return false
+    scene.native.call("reset_flight")
+    if not scene.native.call("flight_control_armed"):
+        push_error("ACRO profile-axis test must preserve the armed flight controller after reset")
+        scene.queue_free()
+        return false
+    scene.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+    scene.drone_body.reset_contact()
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, 0.65)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.0)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.0)
+    await process_frame
+    await process_frame
+    if scene._profile_axis("roll") <= 0.0 or scene._profile_axis("pitch") != 0.0 or scene._profile_axis("yaw") != 0.0:
+        push_error("ACRO test must inject a fresh roll-only Xbox profile input")
+        scene.queue_free()
+        return false
     scene.flight_mode = "ACRO"
     for _frame in range(30):
         await physics_frame
@@ -1320,8 +1336,8 @@ func _verify_runtime_actions() -> bool:
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
     )
-    if acro_rates.length() <= 0.01:
-        push_error("Xbox roll, pitch, and yaw axes must drive the ACRO runtime path")
+    if acro_rates.z <= 0.01 or absf(acro_rates.z) <= absf(acro_rates.x) or absf(acro_rates.z) <= absf(acro_rates.y):
+        push_error("Fresh Xbox roll profile input must produce the expected dominant positive ACRO roll response")
         scene.queue_free()
         return false
     scene.queue_free()
@@ -1789,15 +1805,17 @@ func _verify_gamepad_profile_actions() -> bool:
     if not profile.sticky_throttle or profile.RAW_AXIS_DEADZONE < 0.08 or profile.RAW_AXIS_DEADZONE > 0.10:
         push_error("GamepadProfile must retain sticky throttle and a named raw-axis deadzone")
         return false
-    profile.apply_throttle_axis(0.7)
-    profile.apply_throttle_axis(0.0)
-    if not is_equal_approx(profile.throttle, 0.7):
-        push_error("GamepadProfile throttle must be sticky when the stick returns to center")
+    profile.apply_throttle_axis(0.07)
+    if not is_equal_approx(profile.throttle, 0.0):
+        push_error("GamepadProfile throttle must ignore input inside the fixed deadzone")
         return false
-
+    profile.apply_throttle_axis(0.09)
+    if not is_equal_approx(profile.throttle, 0.09):
+        push_error("GamepadProfile throttle must update when raw input exceeds the fixed deadzone")
+        return false
     profile.apply_throttle_axis(0.02)
-    if not is_equal_approx(profile.throttle, 0.7):
-        push_error("GamepadProfile throttle deadzone must ignore small drift")
+    if not is_equal_approx(profile.throttle, 0.09):
+        push_error("GamepadProfile throttle must remain sticky when input returns inside the deadzone")
         return false
 
     var actions := {
