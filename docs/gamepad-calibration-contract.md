@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED（2026-07-12）**：本文件描述的六項校準合約已被 Xbox Default Profile 決策取代（固定映射確認，無校準精靈）——見 `docs/decisions/2026-07-12-xbox-default-profile.md` 與 PRD v3.4。保留本檔僅為審計軌跡，不得作為實作依據。
+
 # 手把校準驗收合約白話說明（G4B.UI2）
 
 本文件解釋 #40（手把 Setup Flow）六項校準合約的意義，供實作與驗收對照。門檻數值出自 PRD G4B.UI2（v3.3 起受測裝置為 Xbox 360 相容標準手把，數值未變——見 `docs/decisions/2026-07-11-standard-gamepad-input.md`「裝置定義調整、非門檻下修」裁定）。
