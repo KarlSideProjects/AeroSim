@@ -1,3 +1,5 @@
+> **SUPERSEDED（2026-07-12）**：本計畫已被 `2026-07-12-xbox-default-profile.md`、PRD v3.4 與 `docs/decisions/2026-07-12-xbox-default-profile.md` 取代。保留本檔僅為審計軌跡，不得作為實作依據。
+
 # Gamepad Setup Flow Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
