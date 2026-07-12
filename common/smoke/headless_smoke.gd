@@ -1251,11 +1251,6 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     scene.complete_controller_setup(valid_profile)
-    scene.quick_fly("calibrated")
-    if scene.screen != "preflight":
-        push_error("A session calibration profile must let Quick Fly enter preflight")
-        scene.queue_free()
-        return false
     scene.begin_controller_setup()
     scene.arm_takeoff_button.pressed.emit()
     await process_frame
@@ -1263,6 +1258,15 @@ func _verify_runtime_actions() -> bool:
     await process_frame
     if scene.screen != "main_menu" or scene.takeoff_requested or scene.native.call("flight_control_armed"):
         push_error("flight_takeoff must not bypass the Quick Fly state machine from the main menu")
+        scene.queue_free()
+        return false
+    if scene.session_gamepad_profile == null:
+        push_error("Controller Setup completion must retain the session GamepadProfile after returning to the main menu")
+        scene.queue_free()
+        return false
+    scene.quick_fly("calibrated")
+    if scene.screen != "preflight":
+        push_error("A retained session calibration profile must let Quick Fly return from the main menu to preflight")
         scene.queue_free()
         return false
     scene.quick_fly("no_controller")
