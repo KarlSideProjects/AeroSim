@@ -1,0 +1,190 @@
+[gd_scene load_steps=17 format=3]
+
+[sub_resource type="StandardMaterial3D" id="MaterialGround"]
+albedo_color = Color(0.16, 0.19, 0.18, 1)
+roughness = 0.92
+
+[sub_resource type="PlaneMesh" id="MeshGround"]
+size = Vector2(80, 80)
+
+[sub_resource type="BoxShape3D" id="ShapeGround"]
+size = Vector3(80, 0.2, 80)
+
+[sub_resource type="StandardMaterial3D" id="MaterialPlatform"]
+albedo_color = Color(0.12, 0.32, 0.42, 1)
+metallic = 0.45
+roughness = 0.45
+
+[sub_resource type="BoxMesh" id="MeshPlatform"]
+size = Vector3(4, 0.3, 4)
+
+[sub_resource type="BoxShape3D" id="ShapePlatform"]
+size = Vector3(4, 0.3, 4)
+
+[sub_resource type="StandardMaterial3D" id="MaterialContainerBlue"]
+albedo_color = Color(0.06, 0.22, 0.48, 1)
+metallic = 0.25
+
+[sub_resource type="StandardMaterial3D" id="MaterialContainerOrange"]
+albedo_color = Color(0.72, 0.22, 0.06, 1)
+metallic = 0.2
+
+[sub_resource type="BoxMesh" id="MeshContainer"]
+size = Vector3(2.5, 2.4, 6)
+
+[sub_resource type="BoxShape3D" id="ShapeContainer"]
+size = Vector3(2.5, 2.4, 6)
+
+[sub_resource type="StandardMaterial3D" id="MaterialGate"]
+albedo_color = Color(0.84, 0.68, 0.08, 1)
+metallic = 0.35
+
+[sub_resource type="BoxMesh" id="MeshGatePost"]
+size = Vector3(0.35, 2.4, 0.35)
+
+[sub_resource type="BoxShape3D" id="ShapeGatePost"]
+size = Vector3(0.35, 2.4, 0.35)
+
+[sub_resource type="BoxMesh" id="MeshGateTop"]
+size = Vector3(3.8, 0.35, 0.35)
+
+[sub_resource type="BoxShape3D" id="ShapeGateTop"]
+size = Vector3(3.8, 0.35, 0.35)
+
+[sub_resource type="StandardMaterial3D" id="MaterialTurn"]
+albedo_color = Color(0.95, 0.82, 0.12, 1)
+emission_enabled = true
+emission = Color(0.42, 0.32, 0.02, 1)
+
+[sub_resource type="BoxMesh" id="MeshTurn"]
+size = Vector3(3.5, 1.1, 0.45)
+
+[sub_resource type="BoxShape3D" id="ShapeTurn"]
+size = Vector3(3.5, 1.1, 0.45)
+
+[sub_resource type="StandardMaterial3D" id="MaterialTower"]
+albedo_color = Color(0.48, 0.5, 0.53, 1)
+metallic = 0.6
+
+[sub_resource type="CylinderMesh" id="MeshTower"]
+top_radius = 0.8
+bottom_radius = 1.1
+height = 11.0
+
+[sub_resource type="CylinderShape3D" id="ShapeTower"]
+radius = 1.1
+height = 11.0
+
+[node name="IndustrialYard" type="Node3D"]
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.9, -0.55, 0)
+light_energy = 1.5
+
+[node name="Ground" type="MeshInstance3D" parent="."]
+mesh = SubResource("MeshGround")
+surface_material_override/0 = SubResource("MaterialGround")
+
+[node name="GroundCollision" type="StaticBody3D" parent="."]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="GroundCollision"]
+position = Vector3(0, -0.1, 0)
+shape = SubResource("ShapeGround")
+
+[node name="SpawnPlatform" type="StaticBody3D" parent="."]
+position = Vector3(0, 0.15, -24)
+
+[node name="Mesh" type="MeshInstance3D" parent="SpawnPlatform"]
+mesh = SubResource("MeshPlatform")
+surface_material_override/0 = SubResource("MaterialPlatform")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SpawnPlatform"]
+shape = SubResource("ShapePlatform")
+
+[node name="SpawnNorth" type="Marker3D" parent="."]
+position = Vector3(0, 0.6, -24)
+
+[node name="DirectionLabel" type="Label3D" parent="SpawnNorth"]
+text = "NORTH SPAWN"
+outline_size = 4
+font_size = 64
+
+[node name="CargoContainers" type="Node3D" parent="."]
+
+[node name="ContainerBlue" type="StaticBody3D" parent="CargoContainers"]
+position = Vector3(-4.5, 1.2, -8)
+
+[node name="Mesh" type="MeshInstance3D" parent="CargoContainers/ContainerBlue"]
+mesh = SubResource("MeshContainer")
+surface_material_override/0 = SubResource("MaterialContainerBlue")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CargoContainers/ContainerBlue"]
+shape = SubResource("ShapeContainer")
+
+[node name="ContainerOrange" type="StaticBody3D" parent="CargoContainers"]
+position = Vector3(4.5, 1.2, -8)
+rotation = Vector3(0, 0.35, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="CargoContainers/ContainerOrange"]
+mesh = SubResource("MeshContainer")
+surface_material_override/0 = SubResource("MaterialContainerOrange")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="CargoContainers/ContainerOrange"]
+shape = SubResource("ShapeContainer")
+
+[node name="LowGate" type="StaticBody3D" parent="."]
+position = Vector3(0, 0, 3)
+
+[node name="LeftPost" type="MeshInstance3D" parent="LowGate"]
+position = Vector3(-1.9, 1.2, 0)
+mesh = SubResource("MeshGatePost")
+surface_material_override/0 = SubResource("MaterialGate")
+
+[node name="RightPost" type="MeshInstance3D" parent="LowGate"]
+position = Vector3(1.9, 1.2, 0)
+mesh = SubResource("MeshGatePost")
+surface_material_override/0 = SubResource("MaterialGate")
+
+[node name="TopBar" type="MeshInstance3D" parent="LowGate"]
+position = Vector3(0, 2.4, 0)
+mesh = SubResource("MeshGateTop")
+surface_material_override/0 = SubResource("MaterialGate")
+
+[node name="LeftPostCollision" type="CollisionShape3D" parent="LowGate"]
+position = Vector3(-1.9, 1.2, 0)
+shape = SubResource("ShapeGatePost")
+
+[node name="RightPostCollision" type="CollisionShape3D" parent="LowGate"]
+position = Vector3(1.9, 1.2, 0)
+shape = SubResource("ShapeGatePost")
+
+[node name="TopBarCollision" type="CollisionShape3D" parent="LowGate"]
+position = Vector3(0, 2.4, 0)
+shape = SubResource("ShapeGateTop")
+
+[node name="TurnMarker" type="StaticBody3D" parent="."]
+position = Vector3(6, 0.55, 9)
+rotation = Vector3(0, 1.5708, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="TurnMarker"]
+mesh = SubResource("MeshTurn")
+surface_material_override/0 = SubResource("MaterialTurn")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TurnMarker"]
+shape = SubResource("ShapeTurn")
+
+[node name="DirectionLabel" type="Label3D" parent="TurnMarker"]
+position = Vector3(0, 1.0, 0)
+text = "TURN 90 DEG"
+outline_size = 4
+font_size = 48
+
+[node name="Tower" type="StaticBody3D" parent="."]
+position = Vector3(8, 5.5, 18)
+
+[node name="Mesh" type="MeshInstance3D" parent="Tower"]
+mesh = SubResource("MeshTower")
+surface_material_override/0 = SubResource("MaterialTower")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Tower"]
+shape = SubResource("ShapeTower")

@@ -1,0 +1,9 @@
+{
+  "id": "industrial_yard",
+  "name": "Industrial Yard",
+  "type": "free_flight",
+  "recommended_aircraft": "5_inch_6s",
+  "wind_preset": "calm",
+  "spawn_count": 1,
+  "mode": "free_flight"
+}
