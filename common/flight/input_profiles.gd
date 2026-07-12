@@ -1,6 +1,7 @@
 class GamepadProfile:
     const SCHEMA_VERSION := 1
     const RAW_AXIS_DEADZONE := 0.08
+    const THROTTLE_LOW_THRESHOLD := RAW_AXIS_DEADZONE
 
     var deadzone := RAW_AXIS_DEADZONE
     var throttle := 0.0
@@ -10,6 +11,8 @@ class GamepadProfile:
     var mode_button := JOY_BUTTON_Y
     var sticky_throttle := true
     var profile_schema_version := SCHEMA_VERSION
+    var arm_pressed := false
+    var mode_pressed := false
 
     static func is_supported_device(device_id: int) -> bool:
         return Input.is_joy_known(device_id)
@@ -28,6 +31,9 @@ class GamepadProfile:
         if absf(value) <= RAW_AXIS_DEADZONE:
             return
         throttle = clampf(value, 0.0, 1.0)
+
+    func throttle_axis_is_low(value: float) -> bool:
+        return value <= THROTTLE_LOW_THRESHOLD
 
 static func fallback_status(connected_joypads: Array) -> String:
     if connected_joypads.is_empty():

@@ -1141,14 +1141,126 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox default profile confirmation must create the session profile then enter low-throttle preflight")
         scene.queue_free()
         return false
-    scene.session_gamepad_device_id = -1
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.75)
+    await process_frame
+    await process_frame
+    if not scene.arm_status_label.text.contains("HIGH"):
+        push_error("Confirmed Xbox profile must show the live high throttle state before arming")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, true)
+    await process_frame
+    if scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("Xbox Arm press must reject a live profile throttle above the fixed low threshold")
+        scene.queue_free()
+        return false
+    if not scene.arm_status_label.text.contains("Arm PRESSED"):
+        push_error("Xbox Arm press state must be observable in the flight HUD")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, false)
+    await process_frame
+    if not scene.arm_status_label.text.contains("Arm RELEASED"):
+        push_error("Xbox Arm release state must be observable in the flight HUD")
+        scene.queue_free()
+        return false
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, -0.75)
+    await process_frame
+    await process_frame
+    if not scene.arm_status_label.text.contains("LOW"):
+        push_error("Xbox preflight HUD must show the live low throttle state")
+        scene.queue_free()
+        return false
+    OS.delay_msec(51)
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, true)
+    await process_frame
+    if not scene.takeoff_requested or not scene.native.call("flight_control_armed"):
+        push_error("Xbox Arm press must arm only after the live profile throttle is low")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, false)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.70)
+    for _frame in range(60):
+        await physics_frame
+    var high_profile_thrust := float(scene.native.call("flight_control_diagnostics").get("motor_thrust_newtons", 0.0))
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.20)
+    for _frame in range(60):
+        await physics_frame
+    var low_profile_thrust := float(scene.native.call("flight_control_diagnostics").get("motor_thrust_newtons", 0.0))
+    if high_profile_thrust <= low_profile_thrust:
+        push_error("Xbox throttle axis must change simulated thrust instead of using a fixed runtime throttle")
+        scene.queue_free()
+        return false
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, 0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.25)
+    for _frame in range(30):
+        await physics_frame
+    var angle_rates := Vector3(
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_x_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
+    )
+    if angle_rates.length() <= 0.01:
+        push_error("Xbox roll, pitch, and yaw axes must drive the Angle runtime path")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
+    await process_frame
+    await process_frame
+    if scene.flight_mode != "ALTITUDE_HOLD" or not scene.arm_status_label.text.contains("Mode PRESSED"):
+        push_error("Xbox Mode press must switch flight mode and be observable in the flight HUD")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
+    await process_frame
+    if not scene.arm_status_label.text.contains("Mode RELEASED"):
+        push_error("Xbox Mode release state must be observable in the flight HUD")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
+    await process_frame
+    if scene.flight_mode != "ALTITUDE_HOLD":
+        push_error("Xbox Mode presses inside 50 ms must be debounced")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
+    await create_timer(0.051).timeout
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
+    await process_frame
+    if scene.flight_mode != "ANGLE":
+        push_error("Xbox Mode press after the 50 ms debounce window must be accepted")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
+    scene.flight_mode = "ACRO"
+    for _frame in range(30):
+        await physics_frame
+    var acro_rates := Vector3(
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_x_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
+    )
+    if acro_rates.length() <= 0.01:
+        push_error("Xbox roll, pitch, and yaw axes must drive the ACRO runtime path")
+        scene.queue_free()
+        return false
+    scene.queue_free()
+    scene = SmokeScene.instantiate()
+    root.add_child(scene)
+    await process_frame
     scene.quick_fly()
     await process_frame
     if scene.screen != "controller_confirmation" or scene.takeoff_requested:
         push_error("Quick Fly must re-confirm when the connected controller differs from the session profile device")
         scene.queue_free()
         return false
-    confirm_button.pressed.emit()
+    var reconfirm_button := scene.get_node_or_null("FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile") as Button
+    if reconfirm_button == null:
+        push_error("Replacement controller confirmation must expose its confirmation action")
+        scene.queue_free()
+        return false
+    reconfirm_button.pressed.emit()
     await process_frame
     if scene.screen != "preflight" or scene.takeoff_requested:
         push_error("Replacement known controller must confirm before returning to preflight")
@@ -1328,6 +1440,13 @@ func _inject_joy_axis(device_id: int, axis: JoyAxis, value: float) -> void:
     event.device = device_id
     event.axis = axis
     event.axis_value = value
+    Input.parse_input_event(event)
+
+func _inject_joy_button(device_id: int, button: JoyButton, pressed: bool) -> void:
+    var event := InputEventJoypadButton.new()
+    event.device = device_id
+    event.button_index = button
+    event.pressed = pressed
     Input.parse_input_event(event)
 
 func _verify_hardware_config_public_path() -> bool:

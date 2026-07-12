@@ -6,10 +6,13 @@ const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd"
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const TAKEOFF_VELOCITY := Vector3(0.0, 6.0, 0.0)
-const FLIGHT_THROTTLE := 0.75
+const KEYBOARD_FLIGHT_THROTTLE := 0.75
 const ACRO_RC_RATE := 1.0
 const ACRO_SUPER_RATE := 13.0 / 18
 const ACRO_EXPO := 0.0
+const ANGLE_MAX_TILT_DEGREES := 30.0
+const ANGLE_MAX_YAW_RATE_DPS := 180.0
+const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Exit"
 
@@ -47,6 +50,8 @@ var controller_confirmation_profile: InputProfiles.GamepadProfile
 var controller_confirmation_device_id := -1
 var confirmation_mapping_label: Label
 var confirmation_axes_label: Label
+var last_arm_button_press_ms := -1000000
+var last_mode_button_press_ms := -1000000
 
 func _ready() -> void:
     _build_main_menu()
@@ -65,6 +70,8 @@ func _ready() -> void:
     _refresh_flight_hud()
 
 func _unhandled_input(event: InputEvent) -> void:
+    if event is InputEventJoypadButton and _handle_gamepad_button(event):
+        return
     if event.is_action_pressed("flight_takeoff") and screen in ["preflight", "flight"]:
         arm_and_takeoff()
     elif event.is_action_pressed("flight_pause"):
@@ -92,6 +99,13 @@ func _physics_process(_delta: float) -> void:
         return
     if not native.call("flight_control_armed"):
         native.call("arm_flight_control", 0.0)
+    var throttle := _flight_throttle()
+    var angle_roll := _angle_roll_degrees()
+    var angle_pitch := _angle_pitch_degrees()
+    var angle_yaw := _angle_yaw_rate_degrees_per_second()
+    var acro_roll := _profile_axis("roll") if _has_active_gamepad_profile() else _acro_roll_stick()
+    var acro_pitch := _profile_axis("pitch") if _has_active_gamepad_profile() else _acro_pitch_stick()
+    var acro_yaw := _profile_axis("yaw") if _has_active_gamepad_profile() else _acro_yaw_stick()
     var row: PackedFloat64Array
     if drone_body != null:
         _sync_native_from_drone()
@@ -101,10 +115,10 @@ func _physics_process(_delta: float) -> void:
                 "step_collision_acro_mode",
                 Engine.physics_ticks_per_second,
                 1000,
-                FLIGHT_THROTTLE,
-                _acro_roll_stick(),
-                _acro_pitch_stick(),
-                _acro_yaw_stick(),
+                throttle,
+                acro_roll,
+                acro_pitch,
+                acro_yaw,
                 ACRO_RC_RATE,
                 ACRO_SUPER_RATE,
                 ACRO_EXPO,
@@ -130,10 +144,10 @@ func _physics_process(_delta: float) -> void:
                 step_method,
                 Engine.physics_ticks_per_second,
                 1000,
-                FLIGHT_THROTTLE,
-                0.0,
-                0.0,
-                0.0,
+                throttle,
+                angle_roll,
+                angle_pitch,
+                angle_yaw,
                 drone_body.contact_seen,
                 drone_body.contact_normal.x,
                 drone_body.contact_normal.y,
@@ -155,10 +169,10 @@ func _physics_process(_delta: float) -> void:
         drone_body.reset_contact()
     else:
         if flight_mode == "ACRO":
-            row = native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, FLIGHT_THROTTLE, _acro_roll_stick(), _acro_pitch_stick(), _acro_yaw_stick(), ACRO_RC_RATE, ACRO_SUPER_RATE, ACRO_EXPO)
+            row = native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, throttle, acro_roll, acro_pitch, acro_yaw, ACRO_RC_RATE, ACRO_SUPER_RATE, ACRO_EXPO)
         else:
             var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
-            row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, FLIGHT_THROTTLE, 0.0, 0.0, 0.0)
+            row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw)
     if row.size() >= 13:
         last_collision_authority = int(row[12])
     if drone_body != null and row.size() >= 17:
@@ -187,6 +201,10 @@ func arm_and_takeoff() -> void:
     if native == null:
         last_error_message = "Quick Fly cannot arm: native runtime unavailable"
         screen = "error"
+        _refresh_flight_hud()
+        return
+    if _has_active_gamepad_profile() and not _profile_throttle_is_low():
+        last_error_message = "Arm blocked: throttle_not_low"
         _refresh_flight_hud()
         return
     if not native.call("flight_control_armed") and not native.call("arm_flight_control", 0.0):
@@ -437,11 +455,11 @@ func _refresh_flight_hud() -> void:
     arm_takeoff_button.disabled = screen == "main_menu"
     if screen == "preflight":
         var armed := _flight_control_armed()
-        arm_status_label.text = "Throttle LOW -> %s -> press T or ARM" % ["ARMED" if armed else "DISARMED"]
+        arm_status_label.text = "%s -> %s -> press T or ARM" % [_profile_input_status(), "ARMED" if armed else "DISARMED"]
         arm_takeoff_button.text = "ARM / TAKEOFF (T)"
     elif screen == "flight":
         var armed := _flight_control_armed()
-        arm_status_label.text = "%s | %s" % ["ARMED" if armed else "DISARMED", "PAUSED" if paused else "TAKEOFF"]
+        arm_status_label.text = "%s | %s | %s" % [_profile_input_status(), "ARMED" if armed else "DISARMED", "PAUSED" if paused else "TAKEOFF"]
         arm_takeoff_button.text = "ARM / TAKEOFF (T)"
     elif screen == "fallback_prompt":
         arm_status_label.text = last_error_message
@@ -496,6 +514,80 @@ func _normalize_gamepad_axis(raw: float, deadzone: float) -> float:
     if absf(raw) <= deadzone:
         return 0.0
     return sign(raw) * (absf(raw) - deadzone) / (1.0 - deadzone)
+
+func _handle_gamepad_button(event: InputEventJoypadButton) -> bool:
+    if not _has_active_gamepad_profile() or event.device != session_gamepad_device_id:
+        return false
+    var profile := session_gamepad_profile
+    var is_arm := event.button_index == profile.arm_button
+    var is_mode := event.button_index == profile.mode_button
+    if not is_arm and not is_mode:
+        return false
+    if is_arm:
+        profile.arm_pressed = event.pressed
+    else:
+        profile.mode_pressed = event.pressed
+    if not event.pressed:
+        _refresh_flight_hud()
+        return true
+    var now_ms := Time.get_ticks_msec()
+    var last_press_ms := last_arm_button_press_ms if is_arm else last_mode_button_press_ms
+    if now_ms - last_press_ms < GAMEPAD_BUTTON_DEBOUNCE_MS:
+        _refresh_flight_hud()
+        return true
+    if is_arm:
+        last_arm_button_press_ms = now_ms
+        if screen in ["preflight", "flight"]:
+            arm_and_takeoff()
+    else:
+        last_mode_button_press_ms = now_ms
+        toggle_altitude_hold()
+    _refresh_flight_hud()
+    return true
+
+func _has_active_gamepad_profile() -> bool:
+    return session_gamepad_profile != null and session_gamepad_device_id >= 0
+
+func _profile_axis(role: String) -> float:
+    if not _has_active_gamepad_profile():
+        return 0.0
+    var axis := int(session_gamepad_profile.axis_for_role[role])
+    var raw := Input.get_joy_axis(session_gamepad_device_id, axis)
+    var normalized := _normalize_gamepad_axis(raw, session_gamepad_profile.deadzone)
+    if session_gamepad_profile.reversed_for_role[role]:
+        normalized = -normalized
+    return normalized
+
+func _profile_throttle_raw() -> float:
+    if not _has_active_gamepad_profile():
+        return 0.0
+    var axis := int(session_gamepad_profile.axis_for_role["throttle"])
+    return Input.get_joy_axis(session_gamepad_device_id, axis)
+
+func _flight_throttle() -> float:
+    if not _has_active_gamepad_profile():
+        return KEYBOARD_FLIGHT_THROTTLE
+    session_gamepad_profile.apply_throttle_axis(_profile_throttle_raw())
+    return session_gamepad_profile.throttle
+
+func _profile_throttle_is_low() -> bool:
+    return _has_active_gamepad_profile() and session_gamepad_profile.throttle_axis_is_low(_profile_throttle_raw())
+
+func _angle_roll_degrees() -> float:
+    return _profile_axis("roll") * ANGLE_MAX_TILT_DEGREES
+
+func _angle_pitch_degrees() -> float:
+    return _profile_axis("pitch") * ANGLE_MAX_TILT_DEGREES
+
+func _angle_yaw_rate_degrees_per_second() -> float:
+    return _profile_axis("yaw") * ANGLE_MAX_YAW_RATE_DPS
+
+func _profile_input_status() -> String:
+    if not _has_active_gamepad_profile():
+        return "Throttle LOW | KeyboardProfile"
+    var throttle := _flight_throttle()
+    var is_low := _profile_throttle_is_low()
+    return "Throttle %d%% %s | Arm %s | Mode %s" % [roundi(throttle * 100.0), "LOW" if is_low else "HIGH", "PRESSED" if session_gamepad_profile.arm_pressed else "RELEASED", "PRESSED" if session_gamepad_profile.mode_pressed else "RELEASED"]
 
 func _update_chase_camera() -> void:
     if chase_camera == null or drone_body == null:
