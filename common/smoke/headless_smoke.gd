@@ -1,6 +1,7 @@
 extends SceneTree
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
@@ -24,7 +25,29 @@ class ButtonClock:
     func now_ms() -> int:
         return milliseconds
 
+class MutableGamepadDeviceState:
+    extends GamepadDeviceState.DeviceState
+
+    var snapshot: Array[int] = []
+    var known_device_ids: Dictionary = {}
+
+    func replace_snapshot(device_ids: Array[int], known_ids: Array[int]) -> void:
+        snapshot = device_ids.duplicate()
+        known_device_ids.clear()
+        for device_id in known_ids:
+            known_device_ids[device_id] = true
+
+    func connected_joypads() -> Array[int]:
+        return snapshot.duplicate()
+
+    func is_joy_known(device_id: int) -> bool:
+        return bool(known_device_ids.get(device_id, false))
+
+    func joy_name(device_id: int) -> String:
+        return "Test controller %d" % device_id
+
 var verified_jolt_collision_trials := 0
+var production_gamepad_device_state := GamepadDeviceState.DeviceState.new()
 
 func _initialize() -> void:
     _run()
@@ -1052,6 +1075,8 @@ func _jitter(seed: int, salt: int, low: float, high: float) -> float:
 
 func _verify_runtime_actions() -> bool:
     var scene := SmokeScene.instantiate()
+    var device_state := MutableGamepadDeviceState.new()
+    scene.gamepad_device_state = device_state
     root.add_child(scene)
     await process_frame
     if scene.native == null:
@@ -1101,6 +1126,9 @@ func _verify_runtime_actions() -> bool:
         push_error("Virtual SDL gamepad must register as a known controller for confirmation coverage")
         scene.queue_free()
         return false
+    device_state.replace_snapshot([known_device_id], [known_device_id])
+    Input.joy_connection_changed.emit(known_device_id, true)
+    await process_frame
     var settings_button := scene.get_node_or_null("MainMenu/Entries/Settings") as Button
     if settings_button == null:
         push_error("Main menu must expose an interactive Settings entry")
@@ -1393,6 +1421,9 @@ func _verify_runtime_actions() -> bool:
         return false
     scene.queue_free()
     scene = SmokeScene.instantiate()
+    var replacement_device_state := MutableGamepadDeviceState.new()
+    replacement_device_state.replace_snapshot([known_device_id], [known_device_id])
+    scene.gamepad_device_state = replacement_device_state
     root.add_child(scene)
     await process_frame
     scene.quick_fly()
@@ -1413,10 +1444,17 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     var unknown_device_id := known_device_id + 1
+    replacement_device_state.replace_snapshot([], [])
     Input.joy_connection_changed.emit(known_device_id, false)
+    await process_frame
+    if not scene.last_profile_status.contains("No controller"):
+        push_error("Connection handler must refresh fallback status from the injected empty device snapshot")
+        scene.queue_free()
+        return false
+    replacement_device_state.replace_snapshot([unknown_device_id], [])
     Input.joy_connection_changed.emit(unknown_device_id, true)
     await process_frame
-    if Input.is_joy_known(unknown_device_id) or scene._first_connected_device() != unknown_device_id:
+    if replacement_device_state.is_joy_known(unknown_device_id) or scene._first_connected_device() != unknown_device_id:
         push_error("Fallback coverage must replace the confirmed device with a connected unknown SDL device")
         scene.queue_free()
         return false
@@ -1585,7 +1623,7 @@ func _inject_known_gamepad() -> int:
     _inject_joy_axis(0, JOY_AXIS_RIGHT_Y, -0.75)
     await process_frame
     for device_id in Input.get_connected_joypads():
-        if InputProfiles.GamepadProfile.is_supported_device(device_id):
+        if InputProfiles.GamepadProfile.is_supported_device(device_id, production_gamepad_device_state):
             return device_id
     return -1
 
@@ -1923,16 +1961,16 @@ func _verify_gamepad_profile_actions() -> bool:
     return true
 
 func _verify_xbox_default_profile() -> bool:
-    if InputProfiles.GamepadProfile.is_supported_device(-1) != Input.is_joy_known(-1):
+    if InputProfiles.GamepadProfile.is_supported_device(-1, production_gamepad_device_state) != Input.is_joy_known(-1):
         push_error("GamepadProfile support must use the SDL known-device predicate")
         return false
-    if InputProfiles.GamepadProfile.xbox_default(-1) != null:
+    if InputProfiles.GamepadProfile.xbox_default(-1, production_gamepad_device_state) != null:
         push_error("An unknown SDL device must not produce an Xbox profile")
         return false
     for device_id in Input.get_connected_joypads():
-        if not InputProfiles.GamepadProfile.is_supported_device(device_id):
+        if not InputProfiles.GamepadProfile.is_supported_device(device_id, production_gamepad_device_state):
             continue
-        var profile := InputProfiles.GamepadProfile.xbox_default(device_id)
+        var profile := InputProfiles.GamepadProfile.xbox_default(device_id, production_gamepad_device_state)
         if profile == null or profile.profile_schema_version != 1:
             push_error("A known SDL device must receive the fixed Xbox profile schema")
             return false

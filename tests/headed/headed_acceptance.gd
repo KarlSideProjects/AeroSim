@@ -1,6 +1,28 @@
 extends SceneTree
 
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
+
+class MutableGamepadDeviceState:
+	extends GamepadDeviceState.DeviceState
+
+	var snapshot: Array[int] = []
+	var known_device_ids: Dictionary = {}
+
+	func replace_snapshot(device_ids: Array[int], known_ids: Array[int]) -> void:
+		snapshot = device_ids.duplicate()
+		known_device_ids.clear()
+		for device_id in known_ids:
+			known_device_ids[device_id] = true
+
+	func connected_joypads() -> Array[int]:
+		return snapshot.duplicate()
+
+	func is_joy_known(device_id: int) -> bool:
+		return bool(known_device_ids.get(device_id, false))
+
+	func joy_name(device_id: int) -> String:
+		return "Test controller %d" % device_id
 
 var _failures: Array[String] = []
 var _out_dir := "build/headed"
@@ -12,6 +34,8 @@ func _run() -> void:
 	_parse_args()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://%s" % _out_dir))
 	var runtime := SmokeScene.instantiate()
+	var device_state := MutableGamepadDeviceState.new()
+	runtime.gamepad_device_state = device_state
 	root.add_child(runtime)
 	await _settle(30)
 
@@ -21,6 +45,9 @@ func _run() -> void:
 	_expect(runtime.screen == "main_menu", "cold start opens the main menu")
 	var known_device_id := await _inject_known_gamepad()
 	_expect(known_device_id >= 0, "virtual SDL gamepad registers as a known controller")
+	device_state.replace_snapshot([known_device_id], [known_device_id])
+	Input.joy_connection_changed.emit(known_device_id, true)
+	await _settle(2)
 	var settings_button: Button = runtime.get_node_or_null("MainMenu/Entries/Settings")
 	_expect(settings_button != null, "main menu exposes Settings")
 	if settings_button != null:
@@ -81,10 +108,14 @@ func _run() -> void:
 	_expect(runtime.screen == "preflight", "confirmation enters low-throttle preflight")
 
 	var unknown_device_id := known_device_id + 1
+	device_state.replace_snapshot([], [])
 	Input.joy_connection_changed.emit(known_device_id, false)
+	await _settle(2)
+	_expect(runtime.last_profile_status.contains("No controller"), "connection handler refreshes fallback status from the empty adapter snapshot")
+	device_state.replace_snapshot([unknown_device_id], [])
 	Input.joy_connection_changed.emit(unknown_device_id, true)
 	await _settle(10)
-	_expect(not Input.is_joy_known(unknown_device_id) and runtime._first_connected_device() == unknown_device_id, "replacement device is connected and lacks an SDL mapping")
+	_expect(not device_state.is_joy_known(unknown_device_id) and runtime._first_connected_device() == unknown_device_id, "replacement device is connected and lacks an SDL mapping")
 	runtime.quick_fly()
 	await _settle(10)
 	_expect(runtime.screen == "fallback_prompt", "Quick Fly blocks the replaced unknown controller at KeyboardProfile fallback")

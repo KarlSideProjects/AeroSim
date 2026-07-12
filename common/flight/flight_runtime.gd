@@ -1,6 +1,7 @@
 extends Node3D
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
@@ -48,7 +49,7 @@ var arm_status_label: Label
 var arm_takeoff_button: Button
 var session_gamepad_profile: InputProfiles.GamepadProfile
 var session_gamepad_device_id := -1
-var connected_gamepad_devices: Array[int] = []
+var gamepad_device_state: GamepadDeviceState.DeviceState = GamepadDeviceState.DeviceState.new()
 var controller_confirmation_panel: Control
 var controller_confirmation_profile: InputProfiles.GamepadProfile
 var controller_confirmation_device_id := -1
@@ -63,8 +64,6 @@ var last_mode_button_press_ms := -1000000
 var gamepad_button_time_source: Callable
 
 func _ready() -> void:
-    for device_id in Input.get_connected_joypads():
-        connected_gamepad_devices.append(device_id)
     Input.joy_connection_changed.connect(_on_joy_connection_changed)
     _build_main_menu()
     _build_flight_hud()
@@ -236,7 +235,7 @@ func request_exit() -> void:
 
 func quick_fly() -> void:
     var device_id := _first_connected_device()
-    var current_profile := InputProfiles.GamepadProfile.xbox_default(device_id)
+    var current_profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)
     if current_profile == null:
         session_gamepad_profile = null
         session_gamepad_device_id = -1
@@ -251,7 +250,7 @@ func quick_fly() -> void:
     enter_preflight()
 
 func begin_controller_confirmation(device_id: int = _first_connected_device()) -> void:
-    var profile := InputProfiles.GamepadProfile.xbox_default(device_id)
+    var profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)
     if profile == null:
         session_gamepad_profile = null
         session_gamepad_device_id = -1
@@ -267,7 +266,7 @@ func begin_controller_confirmation(device_id: int = _first_connected_device()) -
     _refresh_flight_hud()
 
 func accept_controller_confirmation() -> void:
-    var profile := InputProfiles.GamepadProfile.xbox_default(controller_confirmation_device_id)
+    var profile := InputProfiles.GamepadProfile.xbox_default(controller_confirmation_device_id, gamepad_device_state)
     if profile == null:
         session_gamepad_profile = null
         session_gamepad_device_id = -1
@@ -324,7 +323,7 @@ func respawn() -> void:
     _refresh_flight_hud()
 
 func update_fallback_status() -> void:
-    last_profile_status = InputProfiles.fallback_status(Input.get_connected_joypads())
+    last_profile_status = InputProfiles.fallback_status(gamepad_device_state.connected_joypads())
     fallback_status_label.text = "%s | Mode: %s" % [last_profile_status, flight_mode]
 
 func toggle_altitude_hold() -> void:
@@ -610,17 +609,14 @@ func _handle_primary_action() -> void:
         _refresh_flight_hud()
 
 func _first_connected_device() -> int:
-    for device_id in connected_gamepad_devices:
-        if InputProfiles.GamepadProfile.is_supported_device(device_id):
+    var devices := gamepad_device_state.connected_joypads()
+    for device_id in devices:
+        if InputProfiles.GamepadProfile.is_supported_device(device_id, gamepad_device_state):
             return device_id
-    return connected_gamepad_devices[0] if not connected_gamepad_devices.is_empty() else -1
+    return devices[0] if not devices.is_empty() else -1
 
-func _on_joy_connection_changed(device_id: int, connected: bool) -> void:
-    if connected:
-        if not connected_gamepad_devices.has(device_id):
-            connected_gamepad_devices.append(device_id)
-    else:
-        connected_gamepad_devices.erase(device_id)
+func _on_joy_connection_changed(_device_id: int, _connected: bool) -> void:
+    update_fallback_status()
 
 func _refresh_controller_confirmation() -> void:
     if controller_confirmation_panel == null or not controller_confirmation_panel.visible or controller_confirmation_profile == null:
@@ -644,8 +640,8 @@ func _refresh_controller_settings() -> void:
     if device_id < 0:
         controller_settings_device_label.text = "CURRENT DEVICE: none"
     else:
-        var support := "SDL mapped" if InputProfiles.GamepadProfile.is_supported_device(device_id) else "unknown"
-        controller_settings_device_label.text = "CURRENT DEVICE: %d %s (%s)" % [device_id, Input.get_joy_name(device_id), support]
+        var support := "SDL mapped" if InputProfiles.GamepadProfile.is_supported_device(device_id, gamepad_device_state) else "unknown"
+        controller_settings_device_label.text = "CURRENT DEVICE: %d %s (%s)" % [device_id, gamepad_device_state.joy_name(device_id), support]
     var mapping_lines := ["FIXED XBOX MAPPING"]
     for role in ["roll", "pitch", "yaw", "throttle"]:
         var axis := int(profile.axis_for_role[role])

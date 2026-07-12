@@ -14,11 +14,11 @@ class GamepadProfile:
     var arm_pressed := false
     var mode_pressed := false
 
-    static func is_supported_device(device_id: int) -> bool:
-        return Input.is_joy_known(device_id)
+    static func is_supported_device(device_id: int, device_state: Object) -> bool:
+        return device_state.is_joy_known(device_id)
 
-    static func xbox_default(device_id: int) -> GamepadProfile:
-        if not is_supported_device(device_id):
+    static func xbox_default(device_id: int, device_state: Object) -> GamepadProfile:
+        if not is_supported_device(device_id, device_state):
             return null
         var gamepad := GamepadProfile.new()
         gamepad.axis_for_role = {"roll": JOY_AXIS_LEFT_X, "pitch": JOY_AXIS_LEFT_Y, "yaw": JOY_AXIS_RIGHT_X, "throttle": JOY_AXIS_RIGHT_Y}
