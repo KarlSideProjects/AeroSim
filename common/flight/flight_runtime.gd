@@ -52,6 +52,7 @@ var confirmation_mapping_label: Label
 var confirmation_axes_label: Label
 var last_arm_button_press_ms := -1000000
 var last_mode_button_press_ms := -1000000
+var gamepad_button_time_source: Callable
 
 func _ready() -> void:
     _build_main_menu()
@@ -530,7 +531,7 @@ func _handle_gamepad_button(event: InputEventJoypadButton) -> bool:
     if not event.pressed:
         _refresh_flight_hud()
         return true
-    var now_ms := Time.get_ticks_msec()
+    var now_ms := _gamepad_button_now_ms()
     var last_press_ms := last_arm_button_press_ms if is_arm else last_mode_button_press_ms
     if now_ms - last_press_ms < GAMEPAD_BUTTON_DEBOUNCE_MS:
         _refresh_flight_hud()
@@ -544,6 +545,14 @@ func _handle_gamepad_button(event: InputEventJoypadButton) -> bool:
         toggle_altitude_hold()
     _refresh_flight_hud()
     return true
+
+func set_gamepad_button_time_source(time_source: Callable) -> void:
+    gamepad_button_time_source = time_source
+
+func _gamepad_button_now_ms() -> int:
+    if gamepad_button_time_source.is_valid():
+        return int(gamepad_button_time_source.call())
+    return Time.get_ticks_msec()
 
 func _has_active_gamepad_profile() -> bool:
     return session_gamepad_profile != null and session_gamepad_device_id >= 0

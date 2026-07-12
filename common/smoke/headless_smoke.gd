@@ -16,6 +16,14 @@ class InputProbe:
         if event.is_action_pressed(action):
             pressed = true
 
+class ButtonClock:
+    extends RefCounted
+
+    var milliseconds := 0
+
+    func now_ms() -> int:
+        return milliseconds
+
 var verified_jolt_collision_trials := 0
 
 func _initialize() -> void:
@@ -1141,6 +1149,34 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox default profile confirmation must create the session profile then enter low-throttle preflight")
         scene.queue_free()
         return false
+    if not scene.has_method("set_gamepad_button_time_source"):
+        push_error("Flight runtime must accept an injected button timestamp source for deterministic debounce tests")
+        scene.queue_free()
+        return false
+    var button_clock := ButtonClock.new()
+    scene.set_gamepad_button_time_source(button_clock.now_ms)
+    for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X]:
+        _inject_joy_axis(known_device_id, axis, 0.04)
+    await process_frame
+    await process_frame
+    if scene._profile_axis("roll") != 0.0 or scene._profile_axis("pitch") != 0.0 or scene._profile_axis("yaw") != 0.0:
+        push_error("Xbox axes inside the profile deadzone must produce zero flight input")
+        scene.queue_free()
+        return false
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.50)
+    await process_frame
+    await process_frame
+    if scene._profile_axis("pitch") >= 0.0:
+        push_error("Positive Xbox pitch raw input must be reversed before flight control")
+        scene.queue_free()
+        return false
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.50)
+    await process_frame
+    await process_frame
+    if scene._profile_axis("pitch") <= 0.0:
+        push_error("Negative Xbox pitch raw input must retain the opposite reversed sign")
+        scene.queue_free()
+        return false
     _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.75)
     await process_frame
     await process_frame
@@ -1171,7 +1207,20 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox preflight HUD must show the live low throttle state")
         scene.queue_free()
         return false
-    OS.delay_msec(51)
+    button_clock.milliseconds = 49
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, true)
+    await process_frame
+    if scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("Xbox Arm press at 49 ms must remain debounced")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_A, false)
+    await process_frame
+    if not scene.arm_status_label.text.contains("Arm RELEASED"):
+        push_error("Debounced Xbox Arm release must remain observable in the flight HUD")
+        scene.queue_free()
+        return false
+    button_clock.milliseconds = 50
     _inject_joy_button(known_device_id, JOY_BUTTON_A, true)
     await process_frame
     if not scene.takeoff_requested or not scene.native.call("flight_control_armed"):
@@ -1205,6 +1254,7 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox roll, pitch, and yaw axes must drive the Angle runtime path")
         scene.queue_free()
         return false
+    button_clock.milliseconds = 100
     _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
     await process_frame
     await process_frame
@@ -1218,6 +1268,7 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox Mode release state must be observable in the flight HUD")
         scene.queue_free()
         return false
+    button_clock.milliseconds = 149
     _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
     await process_frame
     if scene.flight_mode != "ALTITUDE_HOLD":
@@ -1225,7 +1276,12 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     _inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
-    await create_timer(0.051).timeout
+    await process_frame
+    if not scene.arm_status_label.text.contains("Mode RELEASED"):
+        push_error("Debounced Xbox Mode release must remain observable in the flight HUD")
+        scene.queue_free()
+        return false
+    button_clock.milliseconds = 150
     _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
     await process_frame
     if scene.flight_mode != "ANGLE":
@@ -1233,6 +1289,29 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     _inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, -0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, -0.25)
+    await process_frame
+    await process_frame
+    if scene._angle_roll_degrees() >= 0.0 or scene._angle_pitch_degrees() >= 0.0 or scene._angle_yaw_rate_degrees_per_second() >= 0.0:
+        push_error("Altitude Hold must receive the processed Xbox roll, pitch, and yaw profile axes")
+        scene.queue_free()
+        return false
+    scene.flight_mode = "ALTITUDE_HOLD"
+    scene.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+    scene.drone_body.reset_contact()
+    for _frame in range(30):
+        await physics_frame
+    var altitude_hold_rates := Vector3(
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_x_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
+        float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
+    )
+    if altitude_hold_rates.length() <= 0.01:
+        push_error("Xbox roll, pitch, and yaw axes must drive the Altitude Hold runtime path")
+        scene.queue_free()
+        return false
     scene.flight_mode = "ACRO"
     for _frame in range(30):
         await physics_frame
