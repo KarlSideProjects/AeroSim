@@ -1102,6 +1102,124 @@ func _verify_runtime_actions() -> bool:
         push_error("Gamepad Setup Flow must preserve the PRD fixed step order")
         scene.queue_free()
         return false
+    var setup: Control = scene.gamepad_setup_panel
+    var setup_status := setup.get_node_or_null("Rows/Status") as Label
+    if setup_status == null:
+        push_error("Gamepad Setup must expose a Status label in its UI tree")
+        scene.queue_free()
+        return false
+    if int(setup.get("step_index")) != 0:
+        push_error("Gamepad Setup must begin at Detect device")
+        scene.queue_free()
+        return false
+    if setup.call("submit_hover_test"):
+        push_error("Gamepad Setup must reject Hover test before the preceding steps")
+        scene.queue_free()
+        return false
+    if not setup.call("advance_detect_device") or int(setup.get("step_index")) != 1 or not setup_status.text.contains("Live monitor"):
+        push_error("Gamepad Setup must advance from Detect device to Live monitor")
+        scene.queue_free()
+        return false
+    if setup.call("submit_axis_assignment", "roll", 0):
+        push_error("Gamepad Setup must reject axis assignment before Live monitor completes")
+        scene.queue_free()
+        return false
+    if not setup.call("advance_live_monitor") or int(setup.get("step_index")) != 2 or not setup_status.text.contains("Assign axes"):
+        push_error("Gamepad Setup must advance from Live monitor to Assign axes")
+        scene.queue_free()
+        return false
+    for entry in [["roll", 0], ["pitch", 1], ["yaw", 2], ["throttle", 3]]:
+        if not setup.call("submit_axis_assignment", entry[0], entry[1]):
+            push_error("Gamepad Setup must stage each axis assignment")
+            scene.queue_free()
+            return false
+    if int(setup.get("step_index")) != 3 or not setup_status.text.contains("Calibrate endpoints"):
+        push_error("Gamepad Setup must enter Calibrate endpoints only after all axes are assigned")
+        scene.queue_free()
+        return false
+    var stationary_samples := PackedFloat32Array()
+    for _sample in range(GamepadCalibration.GamepadCalibration.DEFAULT_STATIONARY_SAMPLE_HZ):
+        stationary_samples.append(0.0)
+    if setup.call("submit_axis_endpoints", "roll", PackedFloat32Array([-0.8, 0.8]), stationary_samples):
+        push_error("Gamepad Setup must reject incomplete endpoint coverage")
+        scene.queue_free()
+        return false
+    var staged_calibration: Object = setup.get("calibration")
+    var staged_axes: Dictionary = staged_calibration.get("axis_for_role")
+    if not staged_axes.is_empty():
+        push_error("Gamepad Setup must not replace its core with failed axis candidates")
+        scene.queue_free()
+        return false
+    if not setup_status.text.contains("endpoint_coverage"):
+        push_error("Gamepad Setup must expose an endpoint rejection")
+        scene.queue_free()
+        return false
+    if not setup.call("submit_axis_endpoints", "roll", PackedFloat32Array([-1.0, 1.0]), stationary_samples) or setup_status.text.contains("endpoint_coverage"):
+        push_error("Gamepad Setup must let the same axis retry after corrected samples and clear the rejection")
+        scene.queue_free()
+        return false
+    for role in ["pitch", "yaw", "throttle"]:
+        if not setup.call("submit_axis_endpoints", role, PackedFloat32Array([-1.0, 1.0]), stationary_samples):
+            push_error("Gamepad Setup must stage each axis endpoint calibration")
+            scene.queue_free()
+            return false
+    if int(setup.get("step_index")) != 4 or not setup_status.text.contains("Detect reverse"):
+        push_error("Gamepad Setup must enter Detect reverse only after all endpoint calibrations")
+        scene.queue_free()
+        return false
+    for entry in [["roll", 1.0], ["pitch", -1.0], ["yaw", 1.0], ["throttle", 1.0]]:
+        if not setup.call("submit_axis_direction", entry[0], entry[1]):
+            push_error("Gamepad Setup must stage each axis direction")
+            scene.queue_free()
+            return false
+    if int(setup.get("step_index")) != 5 or not setup_status.text.contains("Map Arm/Mode"):
+        push_error("Gamepad Setup must expose Map Arm/Mode after axis calibration completes")
+        scene.queue_free()
+        return false
+    if setup.call("submit_buttons", JOY_BUTTON_A, JOY_BUTTON_A, 1000, 1100):
+        push_error("Gamepad Setup must reject duplicate Arm and Mode buttons")
+        scene.queue_free()
+        return false
+    var accepted_calibration: Object = setup.get("calibration")
+    var accepted_buttons: Dictionary = accepted_calibration.get("buttons")
+    if not accepted_buttons.is_empty():
+        push_error("Gamepad Setup must not replace its core with failed button candidates")
+        scene.queue_free()
+        return false
+    if not setup_status.text.contains("duplicate_button"):
+        push_error("Gamepad Setup must expose button mapping rejection")
+        scene.queue_free()
+        return false
+    if not setup.call("submit_buttons", JOY_BUTTON_A, JOY_BUTTON_Y, 1000, 1100) or setup_status.text.contains("duplicate_button"):
+        push_error("Gamepad Setup must let button mapping retry after corrected input and clear the rejection")
+        scene.queue_free()
+        return false
+    if int(setup.get("step_index")) != 6 or not setup_status.text.contains("Throttle low"):
+        push_error("Gamepad Setup must advance from Map Arm/Mode to Throttle low")
+        scene.queue_free()
+        return false
+    if setup.call("submit_hover_test"):
+        push_error("Gamepad Setup must reject Hover test before throttle-low validation")
+        scene.queue_free()
+        return false
+    if setup.call("submit_throttle_low", 0.3) or not setup_status.text.contains("throttle_not_low"):
+        push_error("Gamepad Setup must expose throttle-low rejection")
+        scene.queue_free()
+        return false
+    if not setup.call("submit_throttle_low", 0.0) or setup_status.text.contains("throttle_not_low") or int(setup.get("step_index")) != 7 or not setup_status.text.contains("Hover test"):
+        push_error("Gamepad Setup must clear corrected throttle rejection and expose Hover test")
+        scene.queue_free()
+        return false
+    if not setup.call("submit_hover_test"):
+        push_error("Gamepad Setup must complete only through the Hover test operation")
+        scene.queue_free()
+        return false
+    await process_frame
+    if scene.screen != "preflight" or scene.session_gamepad_profile == null:
+        push_error("Hover test completion must create the session GamepadProfile and enter preflight")
+        scene.queue_free()
+        return false
+    scene.begin_controller_setup()
     scene.arm_takeoff_button.pressed.emit()
     await process_frame
     await _press_key(KEY_T)
