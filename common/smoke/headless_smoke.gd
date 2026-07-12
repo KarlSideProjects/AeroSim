@@ -1,7 +1,6 @@
 extends SceneTree
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
-const GamepadCalibration = preload("res://common/flight/gamepad_calibration.gd")
 const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
@@ -75,7 +74,7 @@ func _run() -> void:
     if not _verify_telemetry_snapshot_public_path(native):
         quit(1)
         return
-    if not _verify_gamepad_calibration():
+    if not _verify_xbox_default_profile():
         quit(1)
         return
     if _has_arg("--runtime-only"):
@@ -1092,14 +1091,11 @@ func _verify_runtime_actions() -> bool:
     controller_button.pressed.emit()
     await process_frame
     if scene.screen != "controller_setup" or scene.gamepad_setup_panel == null:
-        push_error("Controller entry must open the fixed Gamepad Setup Flow")
+        push_error("Controller entry must open Xbox controller detection")
         scene.queue_free()
         return false
-    if scene.gamepad_setup_panel.step_names != [
-        "Detect device", "Live monitor", "Assign axes", "Calibrate endpoints",
-        "Detect reverse", "Map Arm/Mode", "Throttle low", "Hover test"
-    ]:
-        push_error("Gamepad Setup Flow must preserve the PRD fixed step order")
+    if scene.gamepad_setup_panel.step_names != ["Detect supported Xbox controller"]:
+        push_error("Controller Setup must only detect supported Xbox controllers")
         scene.queue_free()
         return false
     var setup: Control = scene.gamepad_setup_panel
@@ -1108,165 +1104,22 @@ func _verify_runtime_actions() -> bool:
         push_error("Gamepad Setup must expose a Status label in its UI tree")
         scene.queue_free()
         return false
-    if int(setup.get("step_index")) != 0:
-        push_error("Gamepad Setup must begin at Detect device")
+    if setup.call("advance_detect_device", -1):
+        push_error("Unknown SDL devices must not complete Controller Setup")
         scene.queue_free()
         return false
-    if setup.call("submit_hover_test"):
-        push_error("Gamepad Setup must reject Hover test before the preceding steps")
+    if scene.session_gamepad_profile != null:
+        push_error("Unknown SDL devices must not create a session gamepad profile")
         scene.queue_free()
         return false
-    if not setup.call("advance_detect_device") or int(setup.get("step_index")) != 1 or not setup_status.text.contains("Live monitor"):
-        push_error("Gamepad Setup must advance from Detect device to Live monitor")
-        scene.queue_free()
-        return false
-    if setup.call("submit_axis_assignment", "roll", 0):
-        push_error("Gamepad Setup must reject axis assignment before Live monitor completes")
-        scene.queue_free()
-        return false
-    if not setup.call("advance_live_monitor") or int(setup.get("step_index")) != 2 or not setup_status.text.contains("Assign axes"):
-        push_error("Gamepad Setup must advance from Live monitor to Assign axes")
-        scene.queue_free()
-        return false
-    for entry in [["roll", 0], ["pitch", 1], ["yaw", 2], ["throttle", 3]]:
-        if not setup.call("submit_axis_assignment", entry[0], entry[1]):
-            push_error("Gamepad Setup must stage each axis assignment")
-            scene.queue_free()
-            return false
-    if int(setup.get("step_index")) != 3 or not setup_status.text.contains("Calibrate endpoints"):
-        push_error("Gamepad Setup must enter Calibrate endpoints only after all axes are assigned")
-        scene.queue_free()
-        return false
-    var stationary_samples := PackedFloat32Array()
-    for _sample in range(GamepadCalibration.GamepadCalibration.DEFAULT_STATIONARY_SAMPLE_HZ):
-        stationary_samples.append(0.0)
-    if setup.call("submit_axis_endpoints", "roll", PackedFloat32Array([-0.8, 0.8]), stationary_samples):
-        push_error("Gamepad Setup must reject incomplete endpoint coverage")
-        scene.queue_free()
-        return false
-    var staged_calibration: Object = setup.get("calibration")
-    var staged_axes: Dictionary = staged_calibration.get("axis_for_role")
-    if not staged_axes.is_empty():
-        push_error("Gamepad Setup must not replace its core with failed axis candidates")
-        scene.queue_free()
-        return false
-    if not setup_status.text.contains("endpoint_coverage"):
-        push_error("Gamepad Setup must expose an endpoint rejection")
-        scene.queue_free()
-        return false
-    if not setup.call("submit_axis_endpoints", "roll", PackedFloat32Array([-1.0, 1.0]), stationary_samples) or setup_status.text.contains("endpoint_coverage"):
-        push_error("Gamepad Setup must let the same axis retry after corrected samples and clear the rejection")
-        scene.queue_free()
-        return false
-    for role in ["pitch", "yaw", "throttle"]:
-        if not setup.call("submit_axis_endpoints", role, PackedFloat32Array([-1.0, 1.0]), stationary_samples):
-            push_error("Gamepad Setup must stage each axis endpoint calibration")
-            scene.queue_free()
-            return false
-    if int(setup.get("step_index")) != 4 or not setup_status.text.contains("Detect reverse"):
-        push_error("Gamepad Setup must enter Detect reverse only after all endpoint calibrations")
-        scene.queue_free()
-        return false
-    for entry in [["roll", 1.0], ["pitch", -1.0], ["yaw", 1.0], ["throttle", 1.0]]:
-        if not setup.call("submit_axis_direction", entry[0], entry[1]):
-            push_error("Gamepad Setup must stage each axis direction")
-            scene.queue_free()
-            return false
-    if int(setup.get("step_index")) != 5 or not setup_status.text.contains("Map Arm/Mode"):
-        push_error("Gamepad Setup must expose Map Arm/Mode after axis calibration completes")
-        scene.queue_free()
-        return false
-    if setup.call("submit_buttons", JOY_BUTTON_A, JOY_BUTTON_A, 1000, 1100):
-        push_error("Gamepad Setup must reject duplicate Arm and Mode buttons")
-        scene.queue_free()
-        return false
-    var accepted_calibration: Object = setup.get("calibration")
-    var accepted_buttons: Dictionary = accepted_calibration.get("buttons")
-    if not accepted_buttons.is_empty():
-        push_error("Gamepad Setup must not replace its core with failed button candidates")
-        scene.queue_free()
-        return false
-    if not setup_status.text.contains("duplicate_button"):
-        push_error("Gamepad Setup must expose button mapping rejection")
-        scene.queue_free()
-        return false
-    if not setup.call("submit_buttons", JOY_BUTTON_A, JOY_BUTTON_Y, 1000, 1100) or setup_status.text.contains("duplicate_button"):
-        push_error("Gamepad Setup must let button mapping retry after corrected input and clear the rejection")
-        scene.queue_free()
-        return false
-    if int(setup.get("step_index")) != 6 or not setup_status.text.contains("Throttle low"):
-        push_error("Gamepad Setup must advance from Map Arm/Mode to Throttle low")
-        scene.queue_free()
-        return false
-    if setup.call("submit_hover_test"):
-        push_error("Gamepad Setup must reject Hover test before throttle-low validation")
-        scene.queue_free()
-        return false
-    if setup.call("submit_throttle_low", 0.3) or not setup_status.text.contains("throttle_not_low"):
-        push_error("Gamepad Setup must expose throttle-low rejection")
-        scene.queue_free()
-        return false
-    if not setup.call("submit_throttle_low", 0.0) or setup_status.text.contains("throttle_not_low") or int(setup.get("step_index")) != 7 or not setup_status.text.contains("Hover test"):
-        push_error("Gamepad Setup must clear corrected throttle rejection and expose Hover test")
-        scene.queue_free()
-        return false
-    if not setup.call("submit_hover_test"):
-        push_error("Gamepad Setup must complete only through the Hover test operation")
-        scene.queue_free()
-        return false
-    await process_frame
-    if scene.screen != "preflight" or scene.session_gamepad_profile == null:
-        push_error("Hover test completion must create the session GamepadProfile and enter preflight")
-        scene.queue_free()
-        return false
-    var valid_calibration := GamepadCalibration.GamepadCalibration.new()
-    var valid_stationary_samples := PackedFloat32Array()
-    for _sample in range(GamepadCalibration.GamepadCalibration.DEFAULT_STATIONARY_SAMPLE_HZ):
-        valid_stationary_samples.append(0.0)
-    for entry in [["roll", 0], ["pitch", 1], ["yaw", 2], ["throttle", 3]]:
-        if not valid_calibration.assign_axis(entry[0], entry[1]) \
-                or not valid_calibration.record_axis_range(entry[0], PackedFloat32Array([-1.0, 1.0])) \
-                or not valid_calibration.record_stationary_samples(entry[0], valid_stationary_samples) \
-                or not valid_calibration.set_axis_direction(entry[0], 1.0):
-            push_error("Quick Fly gate smoke must construct a valid calibration profile")
-            scene.queue_free()
-            return false
-    if not valid_calibration.assign_button("arm", JOY_BUTTON_A) \
-            or not valid_calibration.assign_button("mode", JOY_BUTTON_Y) \
-            or not valid_calibration.record_button_press("arm", 1000) \
-            or not valid_calibration.record_button_press("mode", 1100) \
-            or not valid_calibration.throttle_is_low(0.0):
-        push_error("Quick Fly gate smoke must construct a valid calibration profile")
-        scene.queue_free()
-        return false
-    var valid_profile := valid_calibration.finish()
-    if valid_profile == null:
-        push_error("Quick Fly gate smoke must finish a valid calibration profile")
+    if not setup_status.text.contains("unsupported_device"):
+        push_error("Controller Setup must explain unsupported SDL devices")
         scene.queue_free()
         return false
     scene.session_gamepad_profile = null
     scene.quick_fly("calibrated")
-    if scene.screen != "controller_setup" or not scene.arm_status_label.text.contains("Missing session profile") or not scene.arm_status_label.text.contains("valid gamepad calibration"):
-        push_error("A detected but uncalibrated gamepad must route Quick Fly to Setup with a named session-profile explanation")
-        scene.queue_free()
-        return false
-    scene.complete_controller_setup(valid_profile)
-    scene.begin_controller_setup()
-    scene.arm_takeoff_button.pressed.emit()
-    await process_frame
-    await _press_key(KEY_T)
-    await process_frame
-    if scene.screen != "main_menu" or scene.takeoff_requested or scene.native.call("flight_control_armed"):
-        push_error("flight_takeoff must not bypass the Quick Fly state machine from the main menu")
-        scene.queue_free()
-        return false
-    if scene.session_gamepad_profile == null:
-        push_error("Controller Setup completion must retain the session GamepadProfile after returning to the main menu")
-        scene.queue_free()
-        return false
-    scene.quick_fly("calibrated")
-    if scene.screen != "preflight":
-        push_error("A retained session calibration profile must let Quick Fly return from the main menu to preflight")
+    if scene.screen != "controller_setup" or not scene.arm_status_label.text.contains("Missing session profile") or not scene.arm_status_label.text.contains("supported Xbox controller"):
+        push_error("A controller without a supported Xbox profile must route Quick Fly to Setup")
         scene.queue_free()
         return false
     scene.quick_fly("no_controller")
@@ -1695,6 +1548,18 @@ func _verify_keyboard_profile_actions() -> bool:
 
 func _verify_gamepad_profile_actions() -> bool:
     var profile := InputProfiles.GamepadProfile.new()
+    if profile.profile_schema_version != 1:
+        push_error("GamepadProfile must use the fixed Xbox profile schema version")
+        return false
+    if profile.axis_for_role != {"roll": 0, "pitch": 1, "yaw": 2, "throttle": 3}:
+        push_error("GamepadProfile must freeze the four distinct Xbox axes")
+        return false
+    if profile.arm_button != JOY_BUTTON_A or profile.mode_button != JOY_BUTTON_Y:
+        push_error("GamepadProfile must freeze distinct Xbox Arm and Mode buttons")
+        return false
+    if not profile.sticky_throttle or profile.RAW_AXIS_DEADZONE < 0.08 or profile.RAW_AXIS_DEADZONE > 0.10:
+        push_error("GamepadProfile must retain sticky throttle and a named raw-axis deadzone")
+        return false
     profile.apply_throttle_axis(0.7)
     profile.apply_throttle_axis(0.0)
     if not is_equal_approx(profile.throttle, 0.7):
@@ -1751,34 +1616,26 @@ func _verify_gamepad_profile_actions() -> bool:
         probe.queue_free()
     return true
 
-func _verify_gamepad_calibration() -> bool:
-    var calibration := GamepadCalibration.GamepadCalibration.new()
-    var stationary_sample_hz := GamepadCalibration.GamepadCalibration.DEFAULT_STATIONARY_SAMPLE_HZ
-    var stationary_samples := PackedFloat32Array()
-    for _sample in range(stationary_sample_hz):
-        stationary_samples.append(0.0)
-    for entry in [["roll", 0], ["pitch", 1], ["yaw", 2], ["throttle", 3]]:
-        if not calibration.assign_axis(entry[0], entry[1]):
-            push_error("Gamepad calibration must assign each flight-control axis")
-            return false
-        if not calibration.record_axis_range(entry[0], PackedFloat32Array([-1.0, 1.0])):
-            push_error("Gamepad calibration must accept full endpoint coverage")
-            return false
-        if not calibration.record_stationary_samples(entry[0], stationary_samples, stationary_sample_hz):
-            push_error("Gamepad calibration must accept centered stationary samples")
-            return false
-        if not calibration.set_axis_direction(entry[0], -1.0 if entry[0] == "pitch" else 1.0):
-            push_error("Gamepad calibration must record each axis direction")
-            return false
-    if not calibration.assign_button("arm", JOY_BUTTON_A) or not calibration.assign_button("mode", JOY_BUTTON_Y):
-        push_error("Gamepad calibration must assign unique arm and mode buttons")
+func _verify_xbox_default_profile() -> bool:
+    if InputProfiles.GamepadProfile.is_supported_device(-1) != Input.is_joy_known(-1):
+        push_error("GamepadProfile support must use the SDL known-device predicate")
         return false
-    if not calibration.record_button_press("arm", 1000) or not calibration.throttle_is_low(0.0):
-        push_error("Gamepad calibration must accept the preflight arm state")
+    if InputProfiles.GamepadProfile.xbox_default(-1) != null:
+        push_error("An unknown SDL device must not produce an Xbox profile")
         return false
-    if calibration.finish() == null:
-        push_error("Gamepad calibration must finish a complete profile")
-        return false
+    for device_id in Input.get_connected_joypads():
+        if not InputProfiles.GamepadProfile.is_supported_device(device_id):
+            continue
+        var profile := InputProfiles.GamepadProfile.xbox_default(device_id)
+        if profile == null or profile.profile_schema_version != 1:
+            push_error("A known SDL device must receive the fixed Xbox profile schema")
+            return false
+        if profile.axis_for_role != {"roll": 0, "pitch": 1, "yaw": 2, "throttle": 3}:
+            push_error("A known SDL device must receive four distinct Xbox axes")
+            return false
+        if profile.arm_button == profile.mode_button or not profile.sticky_throttle or profile.RAW_AXIS_DEADZONE < 0.08 or profile.RAW_AXIS_DEADZONE > 0.10:
+            push_error("A known SDL device must receive distinct buttons, sticky throttle, and a raw-axis deadzone")
+            return false
     return true
 
 func _output_path() -> String:

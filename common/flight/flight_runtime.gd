@@ -205,7 +205,7 @@ func quick_fly(entry_state: String = _quick_fly_entry_state()) -> void:
         _refresh_flight_hud()
         return
     if entry_state == "uncalibrated" or (entry_state == "calibrated" and session_gamepad_profile == null):
-        last_error_message = "Missing session profile: complete Controller Setup to finish valid gamepad calibration for this game session before Quick Fly."
+        last_error_message = "Missing session profile: connect a supported Xbox controller and complete Controller Setup before Quick Fly."
         begin_controller_setup()
         return
     if entry_state != "calibrated":
@@ -225,8 +225,8 @@ func begin_controller_setup() -> void:
     gamepad_setup_panel.show()
     _refresh_flight_hud()
 
-func complete_controller_setup(profile) -> void:
-    session_gamepad_profile = InputProfiles.GamepadProfile.from_calibration(profile)
+func complete_controller_setup(profile: InputProfiles.GamepadProfile) -> void:
+    session_gamepad_profile = profile
     gamepad_setup_panel.hide()
     enter_preflight()
 

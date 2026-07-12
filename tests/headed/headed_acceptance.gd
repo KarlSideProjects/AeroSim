@@ -25,7 +25,7 @@ func _run() -> void:
 	await _snapshot("01_controller_setup")
 	_expect(runtime.screen == "controller_setup", "uncalibrated gamepad enters visible Controller Setup")
 	_expect(runtime.gamepad_setup_panel != null and runtime.gamepad_setup_panel.is_visible_in_tree(), "Controller Setup panel is visible")
-	_expect(runtime.arm_status_label != null and runtime.arm_status_label.text.contains("Missing session profile") and runtime.arm_status_label.text.contains("valid gamepad calibration"), "Controller Setup names and explains the missing session profile")
+	_expect(runtime.arm_status_label != null and runtime.arm_status_label.text.contains("Missing session profile") and runtime.arm_status_label.text.contains("supported Xbox controller"), "Controller Setup names and explains the missing session profile")
 	if runtime.arm_takeoff_button != null:
 		_click(runtime.arm_takeoff_button)
 	await _settle(10)
@@ -37,7 +37,7 @@ func _run() -> void:
 		_click(quick_fly)
 	await _settle(10)
 	if runtime.screen == "controller_setup":
-		_expect(runtime.gamepad_setup_panel != null and runtime.gamepad_setup_panel.is_visible_in_tree(), "Quick Fly sends an uncalibrated detected gamepad to Controller Setup")
+		_expect(runtime.gamepad_setup_panel != null and runtime.gamepad_setup_panel.is_visible_in_tree(), "Quick Fly sends a controller without a supported profile to Controller Setup")
 		if runtime.arm_takeoff_button != null:
 			_click(runtime.arm_takeoff_button)
 		await _settle(10)

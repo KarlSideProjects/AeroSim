@@ -1,29 +1,31 @@
-const Calibration = preload("res://common/flight/gamepad_calibration.gd")
-
 class GamepadProfile:
-    var deadzone := 0.05
-    var throttle := 0.0
-    var axis_for_role := {}
-    var reversed_for_role := {}
-    var axis_ranges := {}
-    var arm_button := -1
-    var mode_button := -1
-    var sticky_throttle := true
-    var profile_schema_version := 0
+    const SCHEMA_VERSION := 1
+    const RAW_AXIS_DEADZONE := 0.08
 
-    static func from_calibration(profile: Calibration.CalibrationProfile) -> GamepadProfile:
+    var deadzone := RAW_AXIS_DEADZONE
+    var throttle := 0.0
+    var axis_for_role := {"roll": JOY_AXIS_LEFT_X, "pitch": JOY_AXIS_LEFT_Y, "yaw": JOY_AXIS_RIGHT_X, "throttle": JOY_AXIS_RIGHT_Y}
+    var reversed_for_role := {"roll": false, "pitch": true, "yaw": false, "throttle": false}
+    var arm_button := JOY_BUTTON_A
+    var mode_button := JOY_BUTTON_Y
+    var sticky_throttle := true
+    var profile_schema_version := SCHEMA_VERSION
+
+    static func is_supported_device(device_id: int) -> bool:
+        return Input.is_joy_known(device_id)
+
+    static func xbox_default(device_id: int) -> GamepadProfile:
+        if not is_supported_device(device_id):
+            return null
         var gamepad := GamepadProfile.new()
-        gamepad.axis_for_role = profile.axis_for_role.duplicate(true)
-        gamepad.reversed_for_role = profile.reversed_for_role.duplicate(true)
-        gamepad.axis_ranges = profile.axis_ranges.duplicate(true)
-        gamepad.arm_button = profile.arm_button
-        gamepad.mode_button = profile.mode_button
-        gamepad.sticky_throttle = profile.sticky_throttle
-        gamepad.profile_schema_version = profile.SCHEMA_VERSION
+        gamepad.axis_for_role = {"roll": JOY_AXIS_LEFT_X, "pitch": JOY_AXIS_LEFT_Y, "yaw": JOY_AXIS_RIGHT_X, "throttle": JOY_AXIS_RIGHT_Y}
+        gamepad.reversed_for_role = {"roll": false, "pitch": true, "yaw": false, "throttle": false}
+        gamepad.arm_button = JOY_BUTTON_A
+        gamepad.mode_button = JOY_BUTTON_Y
         return gamepad
 
     func apply_throttle_axis(value: float) -> void:
-        if absf(value) <= deadzone:
+        if absf(value) <= RAW_AXIS_DEADZONE:
             return
         throttle = clampf(value, 0.0, 1.0)
 
