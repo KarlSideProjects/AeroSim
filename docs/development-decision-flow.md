@@ -1,6 +1,6 @@
 # 開發決策流程 — 從 PRD 初始規劃到目前狀態
 
-本文件回答一個問題：**AeroSim 的計畫（開工基線 PRD v3.2，現行 v3.3）從 2026-07-08 拆解開工到現在，哪些地方變了、為什麼變、變更記錄在哪裡。**
+本文件回答一個問題：**AeroSim 的計畫（開工基線 PRD v3.2，現行 v3.4）從 2026-07-08 拆解開工到現在，哪些地方變了、為什麼變、變更記錄在哪裡。**
 
 怎麼讀：
 
@@ -40,6 +40,7 @@ flowchart TD
 
     LINPRI["Linux 實測主車道（2026-07-11）<br/>Linux 唯一實測平台・非 Linux 全降 build-only<br/>headed 驗收須本機真實 display（CI xvfb/lavapipe 僅輔助回歸）"]
     GAMEPAD["2026-07-11 輸入裝置定位<br/>真實 RC 遙控器 → Xbox 360 相容標準手把<br/>移除 RadioProfile／16 通道・裝置定義調整非門檻下修"]
+    XBOXDEF["2026-07-12 Xbox Default Profile（PRD v3.4）<br/>固定映射確認取代八步校準精靈<br/>移除端點/中心/RMS 採樣合約與反向注入・比照 G2.8 豁免非下修"]
 
     NOW["目前狀態（2026-07-11）<br/>#91 in-progress・#27 / #31 / #55 / #93 blocked<br/>#86 / #90 ready-for-agent・#92 ready-for-human"]
 
@@ -64,7 +65,8 @@ flowchart TD
     G34 --> NOW
     I87 --> NOW
     PRD --> GAMEPAD
-    GAMEPAD --> NOW
+    GAMEPAD -->|"2026-07-12 校準範圍再縮減"| XBOXDEF
+    XBOXDEF --> NOW
 
     classDef env fill:#fff8e1,stroke:#b58900,color:#1f2328
     classDef cost fill:#e8f0fe,stroke:#1a56db,color:#1f2328
@@ -73,7 +75,7 @@ flowchart TD
     classDef legal fill:#f3e8fd,stroke:#7b1fa2,color:#1f2328
 
     class DATA1,LANES,APPLE,LINPRI,GAMEPAD env
-    class IOS,SIMP cost
+    class IOS,SIMP,XBOXDEF cost
     class I14,I87 incident
     class G34,M91,SITL physics
     class T2 legal
@@ -209,6 +211,13 @@ flowchart TD
 - **變動內容**：輸入裝置定位改為 **Xbox 360 相容的一般 USB／藍牙 game 手把**；移除 RadioProfile 與 16 通道需求，輸入 Profile 縮為 GamepadProfile + KeyboardProfile（鍵盤僅 fallback）。上述各 Gate 改以「Xbox 360 相容手把」判準，**數值門檻不變**（校準時限、延遲 ms、顯示即時性，及 G5.4 端到端延遲桌面 ≤40ms 皆維持原值，量測對象改為標準手把鏈路），變更的是「受測裝置類別」——與 2026-07-11 Linux 實測主車道同屬「驗收範圍／裝置定義調整」，依 PRD 1.4 結構成立，**非門檻數值下修**。RC 遙控器支援若未來出現真實需求（客戶指名＋取得實機），以新增 Profile 方式回補，不需修改既有門檻。
 - **驅動因素**：環境限制（維護者手邊無 RC 遙控器實機，RC 專屬驗收在 Linux 實測主車道下永遠無法誠實取證）＋ 產品定位（目標使用情境即以標準手把遊玩，RC 定位屬過度工程）。
 - **紀錄位置**：`docs/decisions/2026-07-11-standard-gamepad-input.md`、`PRD_AeroSim.md` v3.3 變更紀錄（PR #101）、同步 issues [#1](https://github.com/jhihweijhan/AeroSim/issues/1)／[#8](https://github.com/jhihweijhan/AeroSim/issues/8)／[#40](https://github.com/jhihweijhan/AeroSim/issues/40)／[#41](https://github.com/jhihweijhan/AeroSim/issues/41)／[#48](https://github.com/jhihweijhan/AeroSim/issues/48)／[#56](https://github.com/jhihweijhan/AeroSim/issues/56)。
+
+### 13. Xbox Default Profile：固定映射確認取代校準精靈（PRD v3.4，2026-07-12）
+
+- **原計畫**：延續節點 12（Xbox 360 相容標準手把）後，PRD 3.5.4 仍要求八步 Controller Setup Flow（偵測 → live monitor → 四軸指派 → 端點校準 → 反向偵測 → arm/mode 映射 → 油門低位檢查 → 測試懸停台）與六項「校準驗收合約」（端點覆蓋 ≥95%、中心偏移 ≤±2%、靜置 RMS ≤0.5%、反向可注入測試等），全數通過才寫入 `CalibrationProfile`。
+- **變動內容**：以**固定、版本化的 Xbox 360 相容手把映射**取代八步校準精靈——偵測相容手把（`Input.is_joy_known()`，SDL mapping 存在）→ 確認畫面（顯示固定映射與四軸即時值，漂移肉眼可見）→ 玩家確認 → 建立 session `GamepadProfile` → preflight；unknown 裝置明確提示不支援＋keyboard fallback，禁止套用 Xbox 映射。**移除**端點/中心/RMS 採樣合約、反向注入測試與 `CalibrationProfile` 採樣持久化；**保留**固定 deadzone（具名常數，raw 軸 0.08–0.10 定值，寫入 profile schema）、Arm/Mode 去抖 ≤50 ms、油門低位為 arm 前置、unknown 裝置 100% 擋下（注入測試，取代原反向注入）。PRD G4B.3／G4B.UI1／G4B.UI2／G5.5／G5.6 措辭連動改寫，**門檻數值（30/90 秒、30 Hz、50 ms）不變**；性質為**需求範圍縮減**，比照 G2.8 豁免先例明文記錄，非靜默下修。風險（固定映射不偵測硬體不良：中心漂移/端點磨損/雜訊超標）由維護者接受，緩解為固定 deadzone + 確認畫面即時值 + preflight Throttle low 狀態燈。`docs/gamepad-calibration-contract.md` 標 SUPERSEDED，保留作審計軌跡。
+- **驅動因素**：成本／價值（維護者裁定「需求簡化」——標準手把布局由 SDL mapping 保證唯一性，逐軸校準屬過度工程）＋ 產品定位（延續節點 12，目標即手把玩家）。
+- **紀錄位置**：`docs/decisions/2026-07-12-xbox-default-profile.md`、`PRD_AeroSim.md` v3.4 變更紀錄（PR #112）、`docs/gamepad-calibration-contract.md`（SUPERSEDED 註記）、對應 issues [#40](https://github.com/jhihweijhan/AeroSim/issues/40)（主）／[#41](https://github.com/jhihweijhan/AeroSim/issues/41)／[#49](https://github.com/jhihweijhan/AeroSim/issues/49)。
 
 ## 治理機制演進
 
