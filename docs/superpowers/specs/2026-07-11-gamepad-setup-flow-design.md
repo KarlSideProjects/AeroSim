@@ -1,3 +1,5 @@
+> **SUPERSEDED（2026-07-12）**：本文件已被 `2026-07-12-xbox-default-profile-design.md`、PRD v3.4 與 `docs/decisions/2026-07-12-xbox-default-profile.md` 取代。保留本檔僅為審計軌跡，不得作為實作依據。
+
 # #40 Gamepad Setup Flow 設計
 
 ## 目標
