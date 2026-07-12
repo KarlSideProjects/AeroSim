@@ -1219,6 +1219,43 @@ func _verify_runtime_actions() -> bool:
         push_error("Hover test completion must create the session GamepadProfile and enter preflight")
         scene.queue_free()
         return false
+    var valid_calibration := GamepadCalibration.GamepadCalibration.new()
+    var valid_stationary_samples := PackedFloat32Array()
+    for _sample in range(GamepadCalibration.GamepadCalibration.DEFAULT_STATIONARY_SAMPLE_HZ):
+        valid_stationary_samples.append(0.0)
+    for entry in [["roll", 0], ["pitch", 1], ["yaw", 2], ["throttle", 3]]:
+        if not valid_calibration.assign_axis(entry[0], entry[1]) \
+                or not valid_calibration.record_axis_range(entry[0], PackedFloat32Array([-1.0, 1.0])) \
+                or not valid_calibration.record_stationary_samples(entry[0], valid_stationary_samples) \
+                or not valid_calibration.set_axis_direction(entry[0], 1.0):
+            push_error("Quick Fly gate smoke must construct a valid calibration profile")
+            scene.queue_free()
+            return false
+    if not valid_calibration.assign_button("arm", JOY_BUTTON_A) \
+            or not valid_calibration.assign_button("mode", JOY_BUTTON_Y) \
+            or not valid_calibration.record_button_press("arm", 1000) \
+            or not valid_calibration.record_button_press("mode", 1100) \
+            or not valid_calibration.throttle_is_low(0.0):
+        push_error("Quick Fly gate smoke must construct a valid calibration profile")
+        scene.queue_free()
+        return false
+    var valid_profile := valid_calibration.finish()
+    if valid_profile == null:
+        push_error("Quick Fly gate smoke must finish a valid calibration profile")
+        scene.queue_free()
+        return false
+    scene.session_gamepad_profile = null
+    scene.quick_fly("calibrated")
+    if scene.screen != "controller_setup" or not scene.arm_status_label.text.contains("Missing session profile") or not scene.arm_status_label.text.contains("valid gamepad calibration"):
+        push_error("A detected but uncalibrated gamepad must route Quick Fly to Setup with a named session-profile explanation")
+        scene.queue_free()
+        return false
+    scene.complete_controller_setup(valid_profile)
+    scene.quick_fly("calibrated")
+    if scene.screen != "preflight":
+        push_error("A session calibration profile must let Quick Fly enter preflight")
+        scene.queue_free()
+        return false
     scene.begin_controller_setup()
     scene.arm_takeoff_button.pressed.emit()
     await process_frame
@@ -1254,7 +1291,7 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     scene.quick_fly("uncalibrated")
-    if scene.screen != "controller_setup" or not scene.arm_status_label.text.contains("Controller setup") or scene.arm_takeoff_button.text != "BACK TO MAIN MENU":
+    if scene.screen != "controller_setup" or not scene.arm_status_label.text.contains("Missing session profile") or scene.arm_takeoff_button.text != "BACK TO MAIN MENU":
         push_error("Quick Fly with an uncalibrated controller must show an explicit Controller Setup screen")
         scene.queue_free()
         return false

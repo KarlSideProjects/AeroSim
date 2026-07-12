@@ -198,14 +198,14 @@ func request_exit() -> void:
     if quit_on_exit:
         get_tree().quit()
 
-func quick_fly(entry_state: String = "calibrated") -> void:
+func quick_fly(entry_state: String = _quick_fly_entry_state()) -> void:
     if entry_state == "no_controller":
         last_error_message = InputProfiles.fallback_status([])
         screen = "fallback_prompt"
         _refresh_flight_hud()
         return
-    if entry_state == "uncalibrated":
-        last_error_message = "Controller setup is required before Quick Fly"
+    if entry_state == "uncalibrated" or (entry_state == "calibrated" and session_gamepad_profile == null):
+        last_error_message = "Missing session profile: complete Controller Setup to finish valid gamepad calibration for this game session before Quick Fly."
         begin_controller_setup()
         return
     if entry_state != "calibrated":
@@ -304,7 +304,7 @@ func _build_main_menu() -> void:
         button.text = entry
         entries.add_child(button)
         if entry == "Quick Fly":
-            button.pressed.connect(quick_fly.bind(_quick_fly_entry_state()))
+            button.pressed.connect(quick_fly)
         elif entry == "Controller":
             button.pressed.connect(begin_controller_setup)
 
@@ -394,7 +394,9 @@ func _refresh_flight_hud() -> void:
         arm_takeoff_button.text = "ARM / TAKEOFF (T)"
 
 func _quick_fly_entry_state() -> String:
-    return "no_controller" if Input.get_connected_joypads().is_empty() else "calibrated"
+    if Input.get_connected_joypads().is_empty():
+        return "no_controller"
+    return "calibrated" if session_gamepad_profile != null else "uncalibrated"
 
 func _handle_primary_action() -> void:
     if screen == "fallback_prompt":

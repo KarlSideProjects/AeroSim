@@ -20,19 +20,37 @@ func _run() -> void:
 	_expect(root.get_camera_3d() != null, "cold start has an active Camera3D")
 	_expect(runtime.screen == "main_menu", "cold start opens the main menu")
 
+	runtime.quick_fly("uncalibrated")
+	await _settle(10)
+	await _snapshot("01_controller_setup")
+	_expect(runtime.screen == "controller_setup", "uncalibrated gamepad enters visible Controller Setup")
+	_expect(runtime.gamepad_setup_panel != null and runtime.gamepad_setup_panel.is_visible_in_tree(), "Controller Setup panel is visible")
+	_expect(runtime.arm_status_label != null and runtime.arm_status_label.text.contains("Missing session profile") and runtime.arm_status_label.text.contains("valid gamepad calibration"), "Controller Setup names and explains the missing session profile")
+	if runtime.arm_takeoff_button != null:
+		_click(runtime.arm_takeoff_button)
+	await _settle(10)
+	_expect(runtime.screen == "main_menu", "Controller Setup Back action returns to the main menu")
+
 	var quick_fly: Button = runtime.get_node_or_null("MainMenu/Entries/QuickFly")
 	_expect(quick_fly != null, "main menu exposes Quick Fly button")
 	if quick_fly != null:
 		_click(quick_fly)
 	await _settle(10)
-	await _snapshot("01_quick_fly")
-	if runtime.screen == "fallback_prompt":
-		var fallback_button: Button = runtime.arm_takeoff_button
-		_expect(fallback_button != null and fallback_button.text == "USE KEYBOARD FALLBACK", "Quick Fly exposes the KeyboardProfile fallback control")
-		if fallback_button != null:
-			_click(fallback_button)
+	if runtime.screen == "controller_setup":
+		_expect(runtime.gamepad_setup_panel != null and runtime.gamepad_setup_panel.is_visible_in_tree(), "Quick Fly sends an uncalibrated detected gamepad to Controller Setup")
+		if runtime.arm_takeoff_button != null:
+			_click(runtime.arm_takeoff_button)
 		await _settle(10)
-		_expect(runtime.screen == "preflight", "KeyboardProfile fallback enters low-throttle preflight")
+		runtime.quick_fly("no_controller")
+		await _settle(10)
+	await _snapshot("01_quick_fly")
+	_expect(runtime.screen == "fallback_prompt", "Quick Fly exposes the KeyboardProfile fallback control when no controller is available")
+	var fallback_button: Button = runtime.arm_takeoff_button
+	_expect(fallback_button != null and fallback_button.text == "USE KEYBOARD FALLBACK", "Quick Fly exposes the KeyboardProfile fallback control")
+	if fallback_button != null:
+		_click(fallback_button)
+	await _settle(10)
+	_expect(runtime.screen == "preflight", "KeyboardProfile fallback enters low-throttle preflight")
 
 	_tap(KEY_T)
 	await _settle(60)
