@@ -39,22 +39,33 @@ var acro_pitch_stick := 0.0
 var acro_yaw_stick := 0.0
 var status_diagram: CanvasLayer
 var main_menu_layer: CanvasLayer
+var main_menu_entries_container: VBoxContainer
+var settings_panel: Control
+var controller_settings_panel: Control
 var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
 var session_gamepad_profile: InputProfiles.GamepadProfile
 var session_gamepad_device_id := -1
+var connected_gamepad_devices: Array[int] = []
 var controller_confirmation_panel: Control
 var controller_confirmation_profile: InputProfiles.GamepadProfile
 var controller_confirmation_device_id := -1
 var confirmation_mapping_label: Label
 var confirmation_axes_label: Label
+var controller_settings_device_label: Label
+var controller_settings_mapping_label: Label
+var controller_settings_deadzone_label: Label
+var controller_settings_button_status_label: Label
 var last_arm_button_press_ms := -1000000
 var last_mode_button_press_ms := -1000000
 var gamepad_button_time_source: Callable
 
 func _ready() -> void:
+    for device_id in Input.get_connected_joypads():
+        connected_gamepad_devices.append(device_id)
+    Input.joy_connection_changed.connect(_on_joy_connection_changed)
     _build_main_menu()
     _build_flight_hud()
     _build_status_diagram()
@@ -87,6 +98,7 @@ func _unhandled_input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
     _update_chase_camera()
     _refresh_controller_confirmation()
+    _refresh_controller_settings()
     _refresh_flight_hud()
 
 func _physics_process(_delta: float) -> void:
@@ -340,6 +352,7 @@ func _build_main_menu() -> void:
 
     var entries := VBoxContainer.new()
     entries.name = "Entries"
+    main_menu_entries_container = entries
     layer.add_child(entries)
 
     for entry in main_menu_entries:
@@ -351,6 +364,106 @@ func _build_main_menu() -> void:
             button.pressed.connect(quick_fly)
         elif entry == "Controller":
             button.pressed.connect(begin_controller_confirmation)
+        elif entry == "Settings":
+            button.pressed.connect(show_settings)
+    _build_settings_panel()
+    _build_controller_settings_panel()
+
+func _build_settings_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "SettingsPanel"
+    panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    panel.offset_left = 20.0
+    panel.offset_top = 20.0
+    panel.offset_right = 360.0
+    panel.offset_bottom = 180.0
+    settings_panel = panel
+    main_menu_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+
+    var title := Label.new()
+    title.text = "SETTINGS"
+    rows.add_child(title)
+
+    var controller_button := Button.new()
+    controller_button.name = "Controller"
+    controller_button.text = "CONTROLLER"
+    controller_button.pressed.connect(show_controller_settings)
+    rows.add_child(controller_button)
+
+    var back_button := Button.new()
+    back_button.name = "Back"
+    back_button.text = "BACK"
+    back_button.pressed.connect(show_main_menu)
+    rows.add_child(back_button)
+
+func _build_controller_settings_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "ControllerSettingsPanel"
+    panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    panel.offset_left = 20.0
+    panel.offset_top = 20.0
+    panel.offset_right = 460.0
+    panel.offset_bottom = 360.0
+    controller_settings_panel = panel
+    main_menu_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+
+    var title := Label.new()
+    title.text = "CONTROLLER"
+    rows.add_child(title)
+
+    controller_settings_device_label = Label.new()
+    controller_settings_device_label.name = "CurrentDevice"
+    rows.add_child(controller_settings_device_label)
+
+    controller_settings_mapping_label = Label.new()
+    controller_settings_mapping_label.name = "FixedMapping"
+    rows.add_child(controller_settings_mapping_label)
+
+    controller_settings_deadzone_label = Label.new()
+    controller_settings_deadzone_label.name = "Deadzone"
+    rows.add_child(controller_settings_deadzone_label)
+
+    controller_settings_button_status_label = Label.new()
+    controller_settings_button_status_label.name = "ButtonStatus"
+    rows.add_child(controller_settings_button_status_label)
+
+    var reset_button := Button.new()
+    reset_button.name = "ResetXboxDefault"
+    reset_button.text = "RESET TO XBOX DEFAULT"
+    reset_button.pressed.connect(reset_to_xbox_default)
+    rows.add_child(reset_button)
+
+    var back_button := Button.new()
+    back_button.name = "Back"
+    back_button.text = "BACK"
+    back_button.pressed.connect(show_settings)
+    rows.add_child(back_button)
+
+func show_main_menu() -> void:
+    screen = "main_menu"
+    _refresh_flight_hud()
+
+func show_settings() -> void:
+    screen = "settings"
+    _refresh_flight_hud()
+
+func show_controller_settings() -> void:
+    screen = "controller_settings"
+    _refresh_controller_settings()
+    _refresh_flight_hud()
+
+func reset_to_xbox_default() -> void:
+    begin_controller_confirmation(_first_connected_device())
 
 func _build_controller_confirmation() -> void:
     var panel := PanelContainer.new()
@@ -449,9 +562,15 @@ func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
         return
     if main_menu_layer != null:
-        main_menu_layer.visible = screen == "main_menu"
+        main_menu_layer.visible = screen in ["main_menu", "settings", "controller_settings"]
+    if main_menu_entries_container != null:
+        main_menu_entries_container.visible = screen == "main_menu"
+    if settings_panel != null:
+        settings_panel.visible = screen == "settings"
+    if controller_settings_panel != null:
+        controller_settings_panel.visible = screen == "controller_settings"
     if flight_hud_layer != null:
-        flight_hud_layer.visible = screen != "main_menu"
+        flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings"]
     key_hints_label.text = KEY_HINTS_TEXT
     arm_takeoff_button.disabled = screen == "main_menu"
     if screen == "preflight":
@@ -491,11 +610,17 @@ func _handle_primary_action() -> void:
         _refresh_flight_hud()
 
 func _first_connected_device() -> int:
-    var devices := Input.get_connected_joypads()
-    for device_id in devices:
+    for device_id in connected_gamepad_devices:
         if InputProfiles.GamepadProfile.is_supported_device(device_id):
             return device_id
-    return devices[0] if not devices.is_empty() else -1
+    return connected_gamepad_devices[0] if not connected_gamepad_devices.is_empty() else -1
+
+func _on_joy_connection_changed(device_id: int, connected: bool) -> void:
+    if connected:
+        if not connected_gamepad_devices.has(device_id):
+            connected_gamepad_devices.append(device_id)
+    else:
+        connected_gamepad_devices.erase(device_id)
 
 func _refresh_controller_confirmation() -> void:
     if controller_confirmation_panel == null or not controller_confirmation_panel.visible or controller_confirmation_profile == null:
@@ -510,6 +635,24 @@ func _refresh_controller_confirmation() -> void:
         live_axis_lines.append("%s: Raw %+.3f | Normalized %+.3f" % [role, raw, normalized])
     confirmation_mapping_label.text = "\n".join(mapping_lines)
     confirmation_axes_label.text = "\n".join(live_axis_lines)
+
+func _refresh_controller_settings() -> void:
+    if controller_settings_panel == null or not controller_settings_panel.visible:
+        return
+    var device_id := _first_connected_device()
+    var profile := session_gamepad_profile if _has_active_gamepad_profile() and session_gamepad_device_id == device_id else InputProfiles.GamepadProfile.new()
+    if device_id < 0:
+        controller_settings_device_label.text = "CURRENT DEVICE: none"
+    else:
+        var support := "SDL mapped" if InputProfiles.GamepadProfile.is_supported_device(device_id) else "unknown"
+        controller_settings_device_label.text = "CURRENT DEVICE: %d %s (%s)" % [device_id, Input.get_joy_name(device_id), support]
+    var mapping_lines := ["FIXED XBOX MAPPING"]
+    for role in ["roll", "pitch", "yaw", "throttle"]:
+        var axis := int(profile.axis_for_role[role])
+        mapping_lines.append("%s -> Axis %d%s" % [role, axis, " (reversed)" if profile.reversed_for_role[role] else ""])
+    controller_settings_mapping_label.text = "\n".join(mapping_lines)
+    controller_settings_deadzone_label.text = "DEADZONE: %.3f" % profile.deadzone
+    controller_settings_button_status_label.text = "Arm %s | Mode %s" % ["PRESSED" if profile.arm_pressed else "RELEASED", "PRESSED" if profile.mode_pressed else "RELEASED"]
 
 func _normalize_gamepad_axis(raw: float, deadzone: float) -> float:
     if absf(raw) <= deadzone:

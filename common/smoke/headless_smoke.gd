@@ -1101,6 +1101,57 @@ func _verify_runtime_actions() -> bool:
         push_error("Virtual SDL gamepad must register as a known controller for confirmation coverage")
         scene.queue_free()
         return false
+    var settings_button := scene.get_node_or_null("MainMenu/Entries/Settings") as Button
+    if settings_button == null:
+        push_error("Main menu must expose an interactive Settings entry")
+        scene.queue_free()
+        return false
+    settings_button.pressed.emit()
+    await process_frame
+    if scene.screen != "settings":
+        push_error("Settings entry must open the Settings screen")
+        scene.queue_free()
+        return false
+    var settings_controller_button := scene.get_node_or_null("MainMenu/SettingsPanel/Rows/Controller") as Button
+    if settings_controller_button == null:
+        push_error("Settings must expose a Controller entry")
+        scene.queue_free()
+        return false
+    settings_controller_button.pressed.emit()
+    await process_frame
+    if scene.screen != "controller_settings":
+        push_error("Settings Controller entry must open Controller settings")
+        scene.queue_free()
+        return false
+    var controller_settings := scene.get_node_or_null("MainMenu/ControllerSettingsPanel") as Control
+    var device_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/CurrentDevice") as Label
+    var fixed_mapping_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/FixedMapping") as Label
+    var deadzone_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/Deadzone") as Label
+    var button_status_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ButtonStatus") as Label
+    var reset_button := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ResetXboxDefault") as Button
+    if controller_settings == null or device_label == null or fixed_mapping_label == null or deadzone_label == null or button_status_label == null or reset_button == null:
+        push_error("Controller settings must show device, fixed mapping, deadzone, Arm/Mode state, and Xbox reset action")
+        scene.queue_free()
+        return false
+    if not controller_settings.is_visible_in_tree() or not device_label.text.contains(str(known_device_id)):
+        push_error("Controller settings must show the currently connected device")
+        scene.queue_free()
+        return false
+    for expected_mapping in ["roll -> Axis 0", "pitch -> Axis 1", "yaw -> Axis 2", "throttle -> Axis 3"]:
+        if not fixed_mapping_label.text.contains(expected_mapping):
+            push_error("Controller settings must show the fixed Xbox mapping: %s" % expected_mapping)
+            scene.queue_free()
+            return false
+    if not deadzone_label.text.contains("0.080") or not button_status_label.text.contains("Arm RELEASED") or not button_status_label.text.contains("Mode RELEASED"):
+        push_error("Controller settings must show the fixed deadzone and live Arm/Mode state")
+        scene.queue_free()
+        return false
+    reset_button.pressed.emit()
+    await process_frame
+    if scene.screen != "controller_confirmation":
+        push_error("Reset Xbox default must require confirmation before replacing the session profile")
+        scene.queue_free()
+        return false
     controller_button.pressed.emit()
     await process_frame
     if scene.screen != "controller_confirmation" or scene.controller_confirmation_panel == null:
@@ -1361,10 +1412,18 @@ func _verify_runtime_actions() -> bool:
         push_error("Replacement known controller must confirm before returning to preflight")
         scene.queue_free()
         return false
-    scene.begin_controller_confirmation(-1)
+    var unknown_device_id := known_device_id + 1
+    Input.joy_connection_changed.emit(known_device_id, false)
+    Input.joy_connection_changed.emit(unknown_device_id, true)
+    await process_frame
+    if Input.is_joy_known(unknown_device_id) or scene._first_connected_device() != unknown_device_id:
+        push_error("Fallback coverage must replace the confirmed device with a connected unknown SDL device")
+        scene.queue_free()
+        return false
+    scene.quick_fly()
     await process_frame
     if scene.screen != "fallback_prompt" or scene.session_gamepad_profile != null or not scene.arm_status_label.text.contains("Unsupported controller") or scene.arm_takeoff_button.text != "USE KEYBOARD FALLBACK":
-        push_error("Unknown SDL devices must be blocked with an explicit KeyboardProfile fallback")
+        push_error("Quick Fly must block the connected replacement unknown SDL device with an explicit KeyboardProfile fallback")
         scene.queue_free()
         return false
     scene.arm_takeoff_button.pressed.emit()
