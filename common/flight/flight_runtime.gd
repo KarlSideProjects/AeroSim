@@ -1,7 +1,6 @@
 extends Node3D
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
-const GamepadSetupPanel = preload("res://common/flight/gamepad_setup_panel.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
@@ -41,8 +40,12 @@ var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
-var gamepad_setup_panel: Control
 var session_gamepad_profile: InputProfiles.GamepadProfile
+var controller_confirmation_panel: Control
+var controller_confirmation_profile: InputProfiles.GamepadProfile
+var controller_confirmation_device_id := -1
+var confirmation_mapping_label: Label
+var confirmation_axes_label: Label
 
 func _ready() -> void:
     _build_main_menu()
@@ -74,6 +77,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(_delta: float) -> void:
     _update_chase_camera()
+    _refresh_controller_confirmation()
     _refresh_flight_hud()
 
 func _physics_process(_delta: float) -> void:
@@ -200,38 +204,52 @@ func request_exit() -> void:
 
 func quick_fly(entry_state: String = _quick_fly_entry_state()) -> void:
     if entry_state == "no_controller":
-        last_error_message = InputProfiles.fallback_status([])
-        screen = "fallback_prompt"
-        _refresh_flight_hud()
+        _show_keyboard_fallback(InputProfiles.fallback_status([]))
         return
-    if entry_state == "uncalibrated" or (entry_state == "calibrated" and session_gamepad_profile == null):
-        last_error_message = "Missing session profile: connect a supported Xbox controller and complete Controller Setup before Quick Fly."
-        begin_controller_setup()
+    if entry_state == "controller_detected":
+        begin_controller_confirmation()
         return
-    if entry_state != "calibrated":
+    if entry_state != "session_profile" or session_gamepad_profile == null:
         last_error_message = "Quick Fly cannot continue: %s" % entry_state
         screen = "error"
         _refresh_flight_hud()
         return
     enter_preflight()
 
-func begin_controller_setup() -> void:
-    screen = "controller_setup"
-    if gamepad_setup_panel == null:
-        gamepad_setup_panel = GamepadSetupPanel.new()
-        gamepad_setup_panel.completed.connect(complete_controller_setup)
-        gamepad_setup_panel.rejected.connect(_show_setup_rejection)
-        flight_hud_layer.add_child(gamepad_setup_panel)
-    gamepad_setup_panel.show()
+func begin_controller_confirmation(device_id: int = _first_connected_device()) -> void:
+    var profile := InputProfiles.GamepadProfile.xbox_default(device_id)
+    if profile == null:
+        session_gamepad_profile = null
+        _show_keyboard_fallback("Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)")
+        return
+    controller_confirmation_device_id = device_id
+    controller_confirmation_profile = profile
+    screen = "controller_confirmation"
+    if controller_confirmation_panel == null:
+        _build_controller_confirmation()
+    controller_confirmation_panel.show()
+    _refresh_controller_confirmation()
     _refresh_flight_hud()
 
-func complete_controller_setup(profile: InputProfiles.GamepadProfile) -> void:
+func accept_controller_confirmation() -> void:
+    var profile := InputProfiles.GamepadProfile.xbox_default(controller_confirmation_device_id)
+    if profile == null:
+        session_gamepad_profile = null
+        _show_keyboard_fallback("Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)")
+        return
     session_gamepad_profile = profile
-    gamepad_setup_panel.hide()
+    controller_confirmation_panel.hide()
     enter_preflight()
 
-func _show_setup_rejection(code: String) -> void:
-    last_error_message = "Controller setup rejected: %s" % code
+func use_keyboard_fallback() -> void:
+    session_gamepad_profile = null
+    if controller_confirmation_panel != null:
+        controller_confirmation_panel.hide()
+    _show_keyboard_fallback("KeyboardProfile fallback selected (non-sim control)")
+
+func _show_keyboard_fallback(message: String) -> void:
+    last_error_message = message
+    screen = "fallback_prompt"
     _refresh_flight_hud()
 
 func accept_fallback() -> void:
@@ -306,7 +324,48 @@ func _build_main_menu() -> void:
         if entry == "Quick Fly":
             button.pressed.connect(quick_fly)
         elif entry == "Controller":
-            button.pressed.connect(begin_controller_setup)
+            button.pressed.connect(begin_controller_confirmation)
+
+func _build_controller_confirmation() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "ControllerConfirmation"
+    panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    panel.offset_left = 380.0
+    panel.offset_top = 20.0
+    panel.offset_right = 780.0
+    panel.offset_bottom = 310.0
+    controller_confirmation_panel = panel
+    flight_hud_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+
+    var title := Label.new()
+    title.name = "Title"
+    title.text = "CONFIRM XBOX DEFAULT PROFILE"
+    rows.add_child(title)
+
+    confirmation_mapping_label = Label.new()
+    confirmation_mapping_label.name = "FixedMapping"
+    rows.add_child(confirmation_mapping_label)
+
+    confirmation_axes_label = Label.new()
+    confirmation_axes_label.name = "LiveAxes"
+    rows.add_child(confirmation_axes_label)
+
+    var confirm_button := Button.new()
+    confirm_button.name = "UseXboxDefaultProfile"
+    confirm_button.text = "USE XBOX DEFAULT PROFILE"
+    confirm_button.pressed.connect(accept_controller_confirmation)
+    rows.add_child(confirm_button)
+
+    var fallback_button := Button.new()
+    fallback_button.name = "UseKeyboardFallback"
+    fallback_button.text = "USE KEYBOARD FALLBACK"
+    fallback_button.pressed.connect(use_keyboard_fallback)
+    rows.add_child(fallback_button)
 
 func _build_flight_hud() -> void:
     var layer := CanvasLayer.new()
@@ -380,8 +439,8 @@ func _refresh_flight_hud() -> void:
     elif screen == "fallback_prompt":
         arm_status_label.text = last_error_message
         arm_takeoff_button.text = "USE KEYBOARD FALLBACK"
-    elif screen == "controller_setup":
-        arm_status_label.text = last_error_message
+    elif screen == "controller_confirmation":
+        arm_status_label.text = "Confirm the fixed Xbox mapping or use KeyboardProfile fallback"
         arm_takeoff_button.text = "BACK TO MAIN MENU"
     elif screen == "error":
         arm_status_label.text = last_error_message
@@ -396,17 +455,45 @@ func _refresh_flight_hud() -> void:
 func _quick_fly_entry_state() -> String:
     if Input.get_connected_joypads().is_empty():
         return "no_controller"
-    return "calibrated" if session_gamepad_profile != null else "uncalibrated"
+    return "session_profile" if session_gamepad_profile != null else "controller_detected"
 
 func _handle_primary_action() -> void:
     if screen == "fallback_prompt":
         accept_fallback()
     elif screen in ["preflight", "flight"]:
         arm_and_takeoff()
-    elif screen in ["controller_setup", "error"]:
+    elif screen in ["controller_confirmation", "error"]:
+        if controller_confirmation_panel != null:
+            controller_confirmation_panel.hide()
         screen = "main_menu"
         last_error_message = ""
         _refresh_flight_hud()
+
+func _first_connected_device() -> int:
+    var devices := Input.get_connected_joypads()
+    for device_id in devices:
+        if InputProfiles.GamepadProfile.is_supported_device(device_id):
+            return device_id
+    return devices[0] if not devices.is_empty() else -1
+
+func _refresh_controller_confirmation() -> void:
+    if controller_confirmation_panel == null or not controller_confirmation_panel.visible or controller_confirmation_profile == null:
+        return
+    var mapping_lines := ["FIXED XBOX MAPPING"]
+    var live_axis_lines := ["LIVE AXES"]
+    for role in ["roll", "pitch", "yaw", "throttle"]:
+        var axis := int(controller_confirmation_profile.axis_for_role[role])
+        var raw := Input.get_joy_axis(controller_confirmation_device_id, axis)
+        var normalized := _normalize_gamepad_axis(raw, controller_confirmation_profile.deadzone)
+        mapping_lines.append("%s -> Axis %d%s" % [role, axis, " (reversed)" if controller_confirmation_profile.reversed_for_role[role] else ""])
+        live_axis_lines.append("%s: Raw %+.3f | Normalized %+.3f" % [role, raw, normalized])
+    confirmation_mapping_label.text = "\n".join(mapping_lines)
+    confirmation_axes_label.text = "\n".join(live_axis_lines)
+
+func _normalize_gamepad_axis(raw: float, deadzone: float) -> float:
+    if absf(raw) <= deadzone:
+        return 0.0
+    return sign(raw) * (absf(raw) - deadzone) / (1.0 - deadzone)
 
 func _update_chase_camera() -> void:
     if chase_camera == null or drone_body == null:

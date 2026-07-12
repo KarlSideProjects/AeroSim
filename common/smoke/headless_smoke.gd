@@ -1088,38 +1088,44 @@ func _verify_runtime_actions() -> bool:
         push_error("Main menu must expose an interactive Controller entry")
         scene.queue_free()
         return false
+    var known_device_id := await _inject_known_gamepad()
+    if known_device_id < 0:
+        push_error("Virtual SDL gamepad must register as a known controller for confirmation coverage")
+        scene.queue_free()
+        return false
     controller_button.pressed.emit()
     await process_frame
-    if scene.screen != "controller_setup" or scene.gamepad_setup_panel == null:
-        push_error("Controller entry must open Xbox controller detection")
+    if scene.screen != "controller_confirmation" or scene.controller_confirmation_panel == null:
+        push_error("A known unconfirmed controller must open Xbox default profile confirmation")
         scene.queue_free()
         return false
-    if scene.gamepad_setup_panel.step_names != ["Detect supported Xbox controller"]:
-        push_error("Controller Setup must only detect supported Xbox controllers")
+    var confirmation: Control = scene.controller_confirmation_panel
+    var mapping := confirmation.get_node_or_null("Rows/FixedMapping") as Label
+    var axes := confirmation.get_node_or_null("Rows/LiveAxes") as Label
+    var confirm_button := confirmation.get_node_or_null("Rows/UseXboxDefaultProfile") as Button
+    if mapping == null or axes == null or confirm_button == null:
+        push_error("Controller confirmation must expose fixed mapping, live axes, and confirmation action")
         scene.queue_free()
         return false
-    var setup: Control = scene.gamepad_setup_panel
-    var setup_status := setup.get_node_or_null("Rows/Status") as Label
-    if setup_status == null:
-        push_error("Gamepad Setup must expose a Status label in its UI tree")
+    for expected_mapping in ["roll -> Axis 0", "pitch -> Axis 1", "yaw -> Axis 2", "throttle -> Axis 3"]:
+        if not mapping.text.contains(expected_mapping):
+            push_error("Controller confirmation must show the fixed Xbox mapping: %s" % expected_mapping)
+            scene.queue_free()
+            return false
+    if not axes.text.contains("Raw") or not axes.text.contains("Normalized"):
+        push_error("Controller confirmation must show raw and normalized live axis values")
         scene.queue_free()
         return false
-    if setup.call("advance_detect_device", -1):
-        push_error("Unknown SDL devices must not complete Controller Setup")
+    confirm_button.pressed.emit()
+    await process_frame
+    if scene.screen != "preflight" or scene.session_gamepad_profile == null or scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("Xbox default profile confirmation must create the session profile then enter low-throttle preflight")
         scene.queue_free()
         return false
-    if scene.session_gamepad_profile != null:
-        push_error("Unknown SDL devices must not create a session gamepad profile")
-        scene.queue_free()
-        return false
-    if not setup_status.text.contains("unsupported_device"):
-        push_error("Controller Setup must explain unsupported SDL devices")
-        scene.queue_free()
-        return false
-    scene.session_gamepad_profile = null
-    scene.quick_fly("calibrated")
-    if scene.screen != "controller_setup" or not scene.arm_status_label.text.contains("Missing session profile") or not scene.arm_status_label.text.contains("supported Xbox controller"):
-        push_error("A controller without a supported Xbox profile must route Quick Fly to Setup")
+    scene.begin_controller_confirmation(-1)
+    await process_frame
+    if scene.screen != "fallback_prompt" or scene.session_gamepad_profile != null or not scene.arm_status_label.text.contains("Unsupported controller") or scene.arm_takeoff_button.text != "USE KEYBOARD FALLBACK":
+        push_error("Unknown SDL devices must be blocked with an explicit KeyboardProfile fallback")
         scene.queue_free()
         return false
     scene.quick_fly("no_controller")
@@ -1147,12 +1153,6 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly preflight must make throttle-low arm/takeoff state observable")
         scene.queue_free()
         return false
-    scene.quick_fly("uncalibrated")
-    if scene.screen != "controller_setup" or not scene.arm_status_label.text.contains("Missing session profile") or scene.arm_takeoff_button.text != "BACK TO MAIN MENU":
-        push_error("Quick Fly with an uncalibrated controller must show an explicit Controller Setup screen")
-        scene.queue_free()
-        return false
-    scene.arm_takeoff_button.pressed.emit()
     scene.quick_fly("drone_load_failed")
     if scene.screen != "error" or scene.last_error_message.is_empty() or not scene.arm_status_label.text.contains("drone_load_failed") or scene.arm_takeoff_button.text != "BACK TO MAIN MENU":
         push_error("Quick Fly load failures must show an explicit error screen")
@@ -1298,6 +1298,18 @@ func _verify_runtime_actions() -> bool:
 
     scene.queue_free()
     return true
+
+func _inject_known_gamepad() -> int:
+    var event := InputEventJoypadMotion.new()
+    event.device = 0
+    event.axis = JOY_AXIS_LEFT_X
+    event.axis_value = 0.5
+    Input.parse_input_event(event)
+    await process_frame
+    for device_id in Input.get_connected_joypads():
+        if InputProfiles.GamepadProfile.is_supported_device(device_id):
+            return device_id
+    return -1
 
 func _verify_hardware_config_public_path() -> bool:
     var loader := HardwareConfig.new()
