@@ -83,6 +83,7 @@ else
 fi
 
 mkdir -p "$tool_root" "$(dirname "$out_apk")" "$(dirname "$signing_keystore")"
+out_apk="$(realpath -m "$out_apk")"
 export_project="$tool_root/android-export-project"
 rm -rf "$export_project"
 mkdir -p "$export_project"

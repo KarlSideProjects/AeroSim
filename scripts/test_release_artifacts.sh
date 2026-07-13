@@ -14,7 +14,9 @@ artifact="$(mktemp build/release-artifact.XXXXXX)"
 out_file="$(mktemp)"
 err_file="$(mktemp)"
 android_test_dir="$(mktemp -d build/android-release-test.XXXXXX)"
-trap 'rm -rf "$android_test_dir"; rm -f "$artifact" "$out_file" "$err_file"' EXIT
+relative_production_apk="build/release/android-production-test.apk"
+relative_signing_report="build/release/android-production-test-signing.txt"
+trap 'rm -rf "$android_test_dir"; rm -f "$artifact" "$out_file" "$err_file" "$relative_production_apk" "$relative_signing_report"' EXIT
 xdg_config_home="$android_test_dir/xdg-config"
 xdg_data_home="$android_test_dir/xdg-data"
 runner_temp="$android_test_dir/runner-temp"
@@ -141,7 +143,20 @@ fake_godot="$android_test_dir/godot"
 cat >"$fake_godot" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-out="${!#}"
+project_path=""
+out=""
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--path" ]; then
+        project_path="$2"
+        shift 2
+        continue
+    fi
+    out="$1"
+    shift
+done
+if [ -n "$project_path" ] && [[ "$out" != /* ]]; then
+    out="$project_path/$out"
+fi
 python3 - "$out" "$AEROSIM_ANDROID_RELEASE_LIB" <<'PY'
 from pathlib import Path
 import sys
@@ -174,12 +189,12 @@ AEROSIM_ANDROID_RELEASE_KEYSTORE_PASS=test-password \
 AEROSIM_ANDROID_RELEASE_KEY_ALIAS=test-alias \
 AEROSIM_ANDROID_EXPECTED_CERT_SHA256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
 AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
-AEROSIM_ANDROID_OUT_APK="$android_test_dir/production.apk" \
-AEROSIM_ANDROID_SIGNING_REPORT="$android_test_dir/production-signing.txt" \
+AEROSIM_ANDROID_OUT_APK="$relative_production_apk" \
+AEROSIM_ANDROID_SIGNING_REPORT="$relative_signing_report" \
 scripts/export_android_release.sh
 
 cmp "$android_test_dir/export_presets.before" export_presets.cfg
-grep -q '^Signer #1 certificate SHA-256 digest:' "$android_test_dir/production-signing.txt"
+grep -q '^Signer #1 certificate SHA-256 digest:' "$relative_signing_report"
 
 if XDG_CONFIG_HOME="$xdg_config_home" \
     RUNNER_TEMP="$runner_temp" \
