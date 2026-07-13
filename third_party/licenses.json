@@ -15,6 +15,13 @@
       "notice": "godot-cpp is distributed under the MIT license."
     },
     {
+      "name": "GUT",
+      "version": "aeb5d4f3f7f0a6c9b5e178876d6c99b791fda605",
+      "license": "MIT",
+      "homepage": "https://github.com/bitwes/Gut",
+      "notice": "The MIT License (MIT)\n=====================\n\nCopyright (c) 2018 Tom \"Butch\" Wesley\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
+    },
+    {
       "name": "gym-pybullet-drones",
       "version": "9bc12bc583fa3b28807b2f90a8cadf09fb06e1ff",
       "license": "MIT",
