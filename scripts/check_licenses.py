@@ -5,6 +5,72 @@ from pathlib import Path
 import sys
 
 
+GYM_PYBULLET_DRONES = "gym-pybullet-drones"
+GYM_PYBULLET_DRONES_CONTRACT = (
+    Path(__file__).resolve().parents[1] / "oracles" / "gym_pybullet_drones_contract.json"
+)
+GYM_PYBULLET_DRONES_MIT_NOTICE = """MIT License
+
+Copyright (c) 2020 Jacopo Panerati
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE."""
+
+
+def gym_pybullet_drones_attribution_error(
+    dependencies: list[dict],
+    required: bool,
+) -> str | None:
+    entries = [
+        dependency
+        for dependency in dependencies
+        if dependency.get("name") == GYM_PYBULLET_DRONES
+    ]
+    if not entries:
+        if required:
+            return "required attribution missing: gym-pybullet-drones"
+        return None
+    if len(entries) != 1:
+        return "gym-pybullet-drones attribution invalid: duplicate manifest entries"
+
+    contract = json.loads(GYM_PYBULLET_DRONES_CONTRACT.read_text(encoding="utf-8"))
+    entry = entries[0]
+    scope = entry.get("attribution_scope")
+    required_scope_terms = (
+        "AeroSim source-code/formula ports",
+        "does not claim redistribution rights",
+        "papers/PDFs",
+        "experimental datasets",
+        "constants/parameter tables",
+    )
+    notice = entry.get("notice", "")
+    if (
+        entry.get("license") != "MIT"
+        or entry.get("homepage") != contract["repository_url"]
+        or entry.get("version") != contract["commit"]
+        or not isinstance(scope, str)
+        or not all(term in scope for term in required_scope_terms)
+        or notice != GYM_PYBULLET_DRONES_MIT_NOTICE
+    ):
+        return "gym-pybullet-drones attribution invalid"
+    return None
+
+
 def write_notice(path: str, dependencies: list[dict]) -> None:
     lines = [
         "AeroSim third-party notices",
@@ -20,6 +86,8 @@ def write_notice(path: str, dependencies: list[dict]) -> None:
         ])
         if dependency.get("homepage"):
             lines.append(f"Homepage: {dependency['homepage']}")
+        if dependency.get("attribution_scope"):
+            lines.append(f"Attribution scope: {dependency['attribution_scope']}")
         if dependency.get("notice"):
             lines.extend(["", dependency["notice"]])
         lines.extend(["", "---", ""])
@@ -34,13 +102,23 @@ def main() -> int:
     parser.add_argument("--manifest", default="third_party/licenses.json")
     parser.add_argument("--allowlist", default="config/license_allowlist.json")
     parser.add_argument("--notice-out")
+    parser.add_argument("--allow-missing-gym-pybullet-drones-attribution", action="store_true")
     args = parser.parse_args()
 
     with open(args.allowlist, encoding="utf-8") as file:
         allowed = set(json.load(file)["allowed_licenses"])
 
-    with open(args.manifest, encoding="utf-8") as file:
+    manifest_path = Path(args.manifest).resolve()
+    with open(manifest_path, encoding="utf-8") as file:
         dependencies = json.load(file)["dependencies"]
+
+    attribution_error = gym_pybullet_drones_attribution_error(
+        dependencies,
+        required=not args.allow_missing_gym_pybullet_drones_attribution,
+    )
+    if attribution_error:
+        print(attribution_error, file=sys.stderr)
+        return 1
 
     violations = [
         dependency for dependency in dependencies
