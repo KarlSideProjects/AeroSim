@@ -139,9 +139,22 @@ class CiStrategyTest(unittest.TestCase):
                 self.assertIn(
                     "run: scripts/run_gut_tests.sh --recovery-mode", shadow_job
                 )
-        for job in ("linux", "windows", "android"):
+        for job in ("linux",):
             with self.subTest(contract="not a platform dependency", job=job):
                 self.assertNotIn("gut-recovery-shadow", job_body(self.workflow, job))
+
+    def test_only_ubuntu_jobs_and_checks_are_blocking(self):
+        for job in ("windows", "android", "replay-compare"):
+            with self.subTest(contract="deferred job absent", job=job):
+                self.assertNotRegex(
+                    self.workflow, re.compile(rf"^  {re.escape(job)}:$", re.MULTILINE)
+                )
+        for command in (
+            "python3 tests/test_android_ci_isolation.py",
+            "scripts/test_release_artifacts.sh",
+        ):
+            with self.subTest(contract="deferred check absent", command=command):
+                self.assertNotIn(command, self.workflow)
 
     def test_linux_reuses_its_debug_build_for_headed_runtime_gates(self):
         with self.subTest(contract="no standalone headed job"):

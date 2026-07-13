@@ -72,7 +72,6 @@ GitHub Actions 會執行：
 2. Linux 原生 C++ 單元測試、授權與 API 檢查。
 3. 下載鎖定的 Godot / godot-cpp，建置一次 Linux debug GDExtension。
 4. 阻擋式 GUT 先把關，再以同一份 debug build 執行 headed acceptance、效能 harness smoke 與 headless smoke。
-5. Linux release export，以及 Windows、Android 的原生測試、GDExtension 與 release export。
-6. Linux / Windows / Android replay terminal-state artifacts 互相比對 G0.6a tolerance。
+5. Ubuntu Linux x86_64 release export 與 NOTICE 產物驗證。
 
-一般 PR 仍保留完整平台與 runtime coverage；feature branch push 不再與 PR 重複觸發同一份 CI。`push` 僅用於 `main`，另保留手動 `workflow_dispatch`。同一 PR 的較舊執行會被取消，但 main build 不會被自動取消。
+Windows、macOS、Android 與 iOS CI 已 deferred，不阻擋 Ubuntu 發行。Feature branch push 不再與 PR 重複觸發同一份 CI；`push` 僅用於 `main`，另保留手動 `workflow_dispatch`。同一 PR 的較舊執行會被取消，但 main build 不會被自動取消。
