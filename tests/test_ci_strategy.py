@@ -176,12 +176,13 @@ class CiStrategyTest(unittest.TestCase):
                 self.assertIn(command, step_block)
 
     def test_headed_runner_retains_logs_and_requires_structured_success(self):
-        self._assert_runtime_runner_contract(HEADED_RUNNER)
+        self._assert_runtime_runner_contract(HEADED_RUNNER, reject_console_errors=True)
 
     def test_headless_runner_retains_logs_and_requires_structured_completion(self):
-        self._assert_runtime_runner_contract(HEADLESS_RUNNER)
+        # Headless intentionally exercises HardwareConfig's push_error + fallback path.
+        self._assert_runtime_runner_contract(HEADLESS_RUNNER, reject_console_errors=False)
 
-    def _assert_runtime_runner_contract(self, runner: Path):
+    def _assert_runtime_runner_contract(self, runner: Path, reject_console_errors: bool):
         success_scenarios = (
             ("structured true", "Godot Engine fake\n"),
             ("non-prefix ERROR text", "context: ERROR: expected text\n"),
@@ -196,9 +197,12 @@ class CiStrategyTest(unittest.TestCase):
         scenarios = (
             ("structured false", "false", "Godot Engine fake\n"),
             ("structured missing", "missing", "Godot Engine fake\n"),
-            ("Godot error", "true", "ERROR: synthetic failure\n"),
-            ("script error", "true", "SCRIPT ERROR: synthetic failure\n"),
         )
+        if reject_console_errors:
+            scenarios += (
+                ("Godot error", "true", "ERROR: synthetic failure\n"),
+                ("script error", "true", "SCRIPT ERROR: synthetic failure\n"),
+            )
         for scenario, result, log_text in scenarios:
             completed, logs = self._run_runner(runner, result, log_text)
             with self.subTest(scenario=scenario, contract="non-zero exit"):

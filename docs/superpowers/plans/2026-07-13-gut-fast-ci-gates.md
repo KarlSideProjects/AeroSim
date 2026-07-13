@@ -40,7 +40,7 @@
 
 - [ ] Make headed acceptance fail if `report.json` cannot be written.
 - [ ] Capture headed console output with Godot `--log-file`, require `passed: true`, require the expected screenshots, and reject stable Godot error prefixes.
-- [ ] Capture headless console output, require an explicit completed artifact, reject stable Godot error prefixes, and never silently discard a non-zero process exit.
+- [ ] Capture headless console output, require an explicit completed artifact, and never silently discard a non-zero process exit. Retain the log as evidence but do not generically reject error prefixes: the full smoke intentionally verifies `HardwareConfig`'s production `push_error` plus factory-fallback path. GUT and headed remain zero-error gates.
 - [ ] Extend the contract test first for every runner behavior, then make the smallest runner/script change that passes it.
 
 ## Task 5: Verify and review

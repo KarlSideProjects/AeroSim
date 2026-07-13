@@ -22,6 +22,16 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
+if [[ "$godot_bin" == */* ]]; then
+    if [ ! -x "$godot_bin" ]; then
+        echo "Godot executable is missing or not executable: $godot_bin" >&2
+        exit 1
+    fi
+elif ! command -v "$godot_bin" >/dev/null; then
+    echo "Godot executable was not found on PATH: $godot_bin" >&2
+    exit 1
+fi
+
 if [ "$use_xvfb" -eq 1 ]; then
     lavapipe_icd="${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}"
     test -r "$lavapipe_icd"
@@ -35,6 +45,44 @@ fi
 mkdir -p "$out_dir"
 mkdir -p .godot
 printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .godot/extension_list.cfg
-rm -f "$out_dir"/*.png "$out_dir/report.json"
+log_path="$out_dir/godot.log"
+rm -f "$out_dir"/*.png "$out_dir/report.json" "$log_path"
 timeout 60s "${launcher[@]}" "$godot_bin" --path . --resolution 1280x720 \
+    --log-file "$log_path" \
     --script res://tests/headed/headed_acceptance.gd -- --out-dir "$out_dir"
+
+for required_file in \
+    "$log_path" \
+    "$out_dir/report.json" \
+    "$out_dir/00_cold_start.png" \
+    "$out_dir/01_controller_confirmation.png" \
+    "$out_dir/02_keyboard_fallback.png" \
+    "$out_dir/03_takeoff.png" \
+    "$out_dir/04_paused.png" \
+    "$out_dir/05_reset.png" \
+    "$out_dir/06_exit.png"; do
+    if [ ! -s "$required_file" ]; then
+        echo "required headed acceptance artifact is missing or empty: $required_file" >&2
+        exit 1
+    fi
+done
+
+python3 - "$out_dir/report.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as report_file:
+        report = json.load(report_file)
+except (OSError, json.JSONDecodeError) as error:
+    raise SystemExit(f"invalid headed acceptance report {path}: {error}")
+
+if report.get("passed") is not True:
+    raise SystemExit(f"headed acceptance did not report passed=true: {path}")
+PY
+
+if grep -Eq '^(ERROR:|SCRIPT ERROR:)' "$log_path"; then
+    echo "Godot error found in headed acceptance log: $log_path" >&2
+    exit 1
+fi

@@ -146,7 +146,9 @@ func _run() -> void:
 	_expect(runtime.reset_count >= 1, "R resets flight after resume")
 
 	await _snapshot("06_exit")
-	_write_report()
+	if not _write_report():
+		quit(1)
+		return
 	if not _failures.is_empty():
 		quit(1)
 		return
@@ -220,10 +222,11 @@ func _expect(condition: bool, message: String) -> void:
 	if not condition:
 		_failures.append(message)
 
-func _write_report() -> void:
+func _write_report() -> bool:
 	var report := FileAccess.open("%s/report.json" % _out_dir, FileAccess.WRITE)
 	if report == null:
 		push_error("Cannot write headed acceptance report")
-		return
+		return false
 	report.store_string(JSON.stringify({"failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
+	return true

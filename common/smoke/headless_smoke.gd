@@ -169,6 +169,7 @@ func _run() -> void:
 
     file.store_string(JSON.stringify({
         "schema_version": 1,
+        "completed": true,
         "native_probe": probe_value,
         "physics_ticks_per_second": Engine.physics_ticks_per_second,
         "requested_seconds": float(requested_frames) / float(Engine.physics_ticks_per_second),
