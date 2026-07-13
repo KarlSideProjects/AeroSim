@@ -136,6 +136,28 @@ fi
 rm -f "$out_apk"
 "$godot_bin" --headless --path . --export-release "Android" "$out_apk"
 
+notice_file="$tool_root/THIRD_PARTY_NOTICES.txt"
+signed_apk="$tool_root/AeroSim-android-with-notice.apk"
+python3 scripts/check_licenses.py --notice-out "$notice_file"
+python3 - "$out_apk" "$notice_file" <<'PY'
+from pathlib import Path
+import sys
+from zipfile import ZIP_DEFLATED, ZipFile
+
+apk, notice = map(Path, sys.argv[1:])
+with ZipFile(apk, "a", ZIP_DEFLATED) as archive:
+    archive.write(notice, "assets/THIRD_PARTY_NOTICES.txt")
+PY
+rm -f "$signed_apk"
+"$apksigner_bin" sign \
+    --ks "$ci_keystore" \
+    --ks-pass pass:android \
+    --ks-key-alias aerosim-ci \
+    --key-pass pass:android \
+    --out "$signed_apk" \
+    "$out_apk"
+mv "$signed_apk" "$out_apk"
+
 "$apksigner_bin" verify "$out_apk"
 unzip -l "$out_apk" | grep -q "lib/arm64-v8a/$(basename "$release_lib")"
 python3 scripts/check_release_artifacts.py "$out_apk"

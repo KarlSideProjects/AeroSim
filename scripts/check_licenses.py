@@ -9,7 +9,27 @@ GYM_PYBULLET_DRONES = "gym-pybullet-drones"
 GYM_PYBULLET_DRONES_CONTRACT = (
     Path(__file__).resolve().parents[1] / "oracles" / "gym_pybullet_drones_contract.json"
 )
-DEFAULT_MANIFEST = Path(__file__).resolve().parents[1] / "third_party" / "licenses.json"
+GYM_PYBULLET_DRONES_MIT_NOTICE = """MIT License
+
+Copyright (c) 2020 Jacopo Panerati
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE."""
 
 
 def gym_pybullet_drones_attribution_error(
@@ -45,8 +65,7 @@ def gym_pybullet_drones_attribution_error(
         or entry.get("version") != contract["commit"]
         or not isinstance(scope, str)
         or not all(term in scope for term in required_scope_terms)
-        or "Copyright (c) 2020 Jacopo Panerati" not in notice
-        or "Permission is hereby granted" not in notice
+        or notice != GYM_PYBULLET_DRONES_MIT_NOTICE
     ):
         return "gym-pybullet-drones attribution invalid"
     return None
@@ -83,6 +102,7 @@ def main() -> int:
     parser.add_argument("--manifest", default="third_party/licenses.json")
     parser.add_argument("--allowlist", default="config/license_allowlist.json")
     parser.add_argument("--notice-out")
+    parser.add_argument("--allow-missing-gym-pybullet-drones-attribution", action="store_true")
     args = parser.parse_args()
 
     with open(args.allowlist, encoding="utf-8") as file:
@@ -94,7 +114,7 @@ def main() -> int:
 
     attribution_error = gym_pybullet_drones_attribution_error(
         dependencies,
-        required=manifest_path == DEFAULT_MANIFEST,
+        required=not args.allow_missing_gym_pybullet_drones_attribution,
     )
     if attribution_error:
         print(attribution_error, file=sys.stderr)

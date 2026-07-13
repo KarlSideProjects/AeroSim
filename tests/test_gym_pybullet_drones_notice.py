@@ -13,11 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 LICENSE_SCAN = ROOT / "scripts" / "check_licenses.py"
 MANIFEST = ROOT / "third_party" / "licenses.json"
 CONTRACT = ROOT / "oracles" / "gym_pybullet_drones_contract.json"
-sys.path.insert(0, str(ROOT / "scripts"))
-
-from check_licenses import gym_pybullet_drones_attribution_error
-
-
 NAME = "gym-pybullet-drones"
 SCOPE = (
     "Applies only to AeroSim source-code/formula ports derived from "
@@ -80,10 +75,13 @@ class GymPyBulletDronesNoticeTest(unittest.TestCase):
         self.assertEqual(entry["notice"], MIT_NOTICE)
 
     def test_scan_rejects_a_missing_required_attribution(self):
-        self.assertEqual(
-            gym_pybullet_drones_attribution_error([], required=True),
-            "required attribution missing: gym-pybullet-drones",
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            notice_out = Path(directory) / "THIRD_PARTY_NOTICES.txt"
+            result = self.run_scan([], notice_out)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("required attribution missing: gym-pybullet-drones", result.stderr)
+            self.assertFalse(notice_out.exists())
 
     def test_scan_rejects_scope_or_contract_drift(self):
         invalid_dependencies = []
@@ -101,6 +99,23 @@ class GymPyBulletDronesNoticeTest(unittest.TestCase):
                 result = self.run_scan([dependency])
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("gym-pybullet-drones attribution invalid", result.stderr)
+
+    def test_scan_rejects_a_truncated_mit_notice(self):
+        dependency = self.gym_dependency()
+        dependency["notice"] = MIT_NOTICE.removesuffix(
+            "\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n"
+            "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n"
+            "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n"
+            "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n"
+            "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n"
+            "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n"
+            "SOFTWARE."
+        )
+
+        result = self.run_scan([dependency])
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("gym-pybullet-drones attribution invalid", result.stderr)
 
     def test_generated_notice_includes_scope_and_complete_mit_notice(self):
         with tempfile.TemporaryDirectory() as directory:

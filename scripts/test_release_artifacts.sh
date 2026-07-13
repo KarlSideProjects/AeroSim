@@ -6,6 +6,8 @@ grep -q "scripts/export_android_release.sh" docs/release_delivery_sop.md
 test -x scripts/export_android_release.sh
 grep -q '^textures/vram_compression/import_etc2_astc=true$' project.godot
 
+python3 tests/test_release_notice_artifacts.py
+
 mkdir -p build
 artifact="$(mktemp build/release-artifact.XXXXXX)"
 out_file="$(mktemp)"

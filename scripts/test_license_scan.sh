@@ -19,7 +19,9 @@ out_file="$(mktemp)"
 err_file="$(mktemp)"
 trap 'rm -f "$out_file" "$err_file"' EXIT
 
-if python3 scripts/check_licenses.py --manifest tests/fixtures/gpl_dependency.json >"$out_file" 2>"$err_file"; then
+if python3 scripts/check_licenses.py \
+    --allow-missing-gym-pybullet-drones-attribution \
+    --manifest tests/fixtures/gpl_dependency.json >"$out_file" 2>"$err_file"; then
     cat "$out_file"
     echo "GPL fixture unexpectedly passed" >&2
     exit 1

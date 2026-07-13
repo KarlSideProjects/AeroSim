@@ -27,6 +27,7 @@ mkdir -p "$out_dir" .deps
 touch build/.gdignore .deps/.gdignore
 "$godot_bin" --headless --path . --export-release "Linux Desktop" "$out_dir/AeroSim.x86_64"
 chmod +x "$out_dir/AeroSim.x86_64"
+python3 scripts/check_licenses.py --notice-out "$out_dir/THIRD_PARTY_NOTICES.txt"
 
 python3 - <<'PY'
 from pathlib import Path
