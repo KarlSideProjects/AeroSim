@@ -1,0 +1,2 @@
+# The cache must preserve the pinned upstream bytes, including its whitespace.
+oracles/gym_pybullet_drones_cache/** -whitespace
