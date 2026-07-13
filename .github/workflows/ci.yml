@@ -84,6 +84,9 @@ jobs:
       - name: Delivery drill test
         run: scripts/test_delivery_drill.sh
 
+      - name: Android CI isolation test
+        run: python3 tests/test_android_ci_isolation.py
+
       - name: License server API test
         run: python3 -m unittest license_server.test_license_server
 
@@ -454,6 +457,21 @@ jobs:
             echo "::error::Missing Android production signing secret"
             exit 1
           fi
+          if [ -z "$ANDROID_RELEASE_CERT_SHA256" ]; then
+            echo "::error::Missing Android production certificate fingerprint variable"
+            exit 1
+          fi
+          java_home="${JAVA_HOME:-}"
+          if [ -z "$java_home" ]; then
+            keytool_path="$(command -v keytool || true)"
+            if [ -n "$keytool_path" ]; then
+              java_home="$(dirname "$(dirname "$(readlink -f "$keytool_path")")")"
+            fi
+          fi
+          if [ -z "$java_home" ] || [ ! -d "$java_home" ] || [ ! -x "$java_home/bin/java" ]; then
+            echo "::error::Missing JAVA_HOME for Android production export"
+            exit 1
+          fi
           printf '%s' "$ANDROID_RELEASE_KEYSTORE_B64" | base64 --decode > "$release_keystore"
           if [ ! -s "$release_keystore" ]; then
             echo "::error::Decoded Android production keystore is empty"
@@ -464,6 +482,7 @@ jobs:
           AEROSIM_ANDROID_RELEASE_KEYSTORE_PASS="$ANDROID_RELEASE_KEYSTORE_PASS" \
           AEROSIM_ANDROID_RELEASE_KEY_ALIAS="$ANDROID_RELEASE_KEY_ALIAS" \
           AEROSIM_ANDROID_EXPECTED_CERT_SHA256="$ANDROID_RELEASE_CERT_SHA256" \
+          JAVA_HOME="$java_home" \
           AEROSIM_ANDROID_OUT_APK=build/release/AeroSim-android-production.apk \
           AEROSIM_ANDROID_SIGNING_REPORT=build/release/AeroSim-android-production-signing.txt \
           scripts/export_android_release.sh
