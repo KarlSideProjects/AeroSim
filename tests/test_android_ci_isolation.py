@@ -47,6 +47,21 @@ class AndroidCiIsolationTest(unittest.TestCase):
             production_step.index("base64 --decode"),
         )
 
+    def test_production_export_supplies_java_home_and_fingerprint(self):
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        production_step = workflow.split(
+            "      - name: Export production-signed Android release artifact\n", 1
+        )[1].split(
+            "      - name: Store production-signed Android release artifact locally\n", 1
+        )[0]
+
+        self.assertIn('JAVA_HOME="$java_home"', production_step)
+        self.assertIn('ANDROID_RELEASE_CERT_SHA256', production_step)
+        self.assertIn(
+            'Missing Android production certificate fingerprint variable',
+            production_step,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
