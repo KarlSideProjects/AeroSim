@@ -20,9 +20,13 @@ esac
 
 godot_bin="${GODOT_BIN:-godot}"
 if [[ "$godot_bin" == */* ]]; then
-    test -x "$godot_bin"
-else
-    command -v "$godot_bin" >/dev/null
+    if [ ! -x "$godot_bin" ]; then
+        echo "Godot executable is missing or not executable: $godot_bin" >&2
+        exit 1
+    fi
+elif ! command -v "$godot_bin" >/dev/null; then
+    echo "Godot executable was not found on PATH: $godot_bin" >&2
+    exit 1
 fi
 
 if [ "$recovery_mode" = false ]; then

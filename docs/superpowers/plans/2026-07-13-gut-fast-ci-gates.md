@@ -21,7 +21,7 @@
 - [ ] Vendor only upstream `addons/gut` from the locked commit and retain its MIT license.
 - [ ] Add the GUT dependency to `third_party/licenses.json` and keep the existing license scan green.
 - [ ] Exclude `addons/gut/**` and `tests/gut/**` from release exports so test infrastructure is not shipped.
-- [ ] Add `scripts/run_gut_tests.sh` with headless execution, JUnit output, retained import/test logs, fail-loud prerequisite checks, and an explicit `--recovery-mode` shadow option.
+- [ ] Add `scripts/run_gut_tests.sh` with headless execution, JUnit output, retained import/test logs, fail-loud prerequisite checks, and an explicit `--recovery-mode` shadow option. Recovery mode uses editor recovery only for import, removes the generated `.godot/extension_list.cfg`, then runs the same GUT CLI headlessly without native code; passing recovery mode to the CLI itself leaks Godot resources and is rejected by the console-error gate.
 - [ ] Add focused GUT tests for controller fallback/profile behavior and hardware configuration interpolation/schema rules. Each assertion documents the regression it prevents.
 - [ ] Run `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh`.
 - [ ] Run `scripts/test_license_scan.sh`.
@@ -48,6 +48,6 @@
 - [ ] Run `python3 tests/test_ci_strategy.py` and the existing Python/unit contract tests affected by CI.
 - [ ] Run `scripts/test_native.sh`, `scripts/check_hardcoded_airframe_constants.sh`, and `scripts/test_license_scan.sh`.
 - [ ] Run GUT, a short headless smoke, and headed acceptance with the locked local Godot binary.
-- [ ] Run `git diff --check` and inspect the full diff.
+- [ ] Run `git diff --check -- . ':(exclude)addons/gut'`, require the vendored GUT tree to match the locked upstream tree exactly, and inspect the full diff. Upstream whitespace is not rewritten merely to satisfy the project-owned check.
 - [ ] Request independent specification and code-quality review; fix all High/Critical findings.
 - [ ] Commit the verified implementation on branch `ci/gut-fast-gates` without pushing or merging.
