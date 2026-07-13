@@ -1,6 +1,6 @@
 # 開發決策流程 — 從 PRD 初始規劃到目前狀態
 
-本文件回答一個問題：**AeroSim 的計畫（開工基線 PRD v3.2，現行 v3.4）從 2026-07-08 拆解開工到現在，哪些地方變了、為什麼變、變更記錄在哪裡。**
+本文件回答一個問題：**AeroSim 的計畫（開工基線 PRD v3.2，現行 v3.5）從 2026-07-08 拆解開工到現在，哪些地方變了、為什麼變、變更記錄在哪裡。**
 
 怎麼讀：
 
@@ -41,6 +41,7 @@ flowchart TD
     LINPRI["Linux 實測主車道（2026-07-11）<br/>Linux 唯一實測平台・非 Linux 全降 build-only<br/>headed 驗收須本機真實 display（CI xvfb/lavapipe 僅輔助回歸）"]
     GAMEPAD["2026-07-11 輸入裝置定位<br/>真實 RC 遙控器 → Xbox 360 相容標準手把<br/>移除 RadioProfile／16 通道・裝置定義調整非門檻下修"]
     XBOXDEF["2026-07-12 Xbox Default Profile（PRD v3.4）<br/>固定映射確認取代八步校準精靈<br/>移除端點/中心/RMS 採樣合約與反向注入・比照 G2.8 豁免非下修"]
+    XPHYS["2026-07-13 外部物理來源治理（PRD v3.5）<br/>Formula Port + offline Oracle 正式化<br/>C++ fixed-step core + Godot/Jolt = 唯一 Tier 1 runtime／collision authority<br/>授權查證唯一依 #56・既有架構治理化非門檻調整"]
 
     NOW["目前狀態（2026-07-11）<br/>#91 in-progress・#27 / #31 / #55 / #93 blocked<br/>#86 / #90 ready-for-agent・#92 ready-for-human"]
 
@@ -67,6 +68,9 @@ flowchart TD
     PRD --> GAMEPAD
     GAMEPAD -->|"2026-07-12 校準範圍再縮減"| XBOXDEF
     XBOXDEF --> NOW
+    PRD --> XPHYS
+    SITL -.->|"Tier 1 權威與外部來源邊界正式化"| XPHYS
+    XPHYS --> NOW
 
     classDef env fill:#fff8e1,stroke:#b58900,color:#1f2328
     classDef cost fill:#e8f0fe,stroke:#1a56db,color:#1f2328
@@ -77,7 +81,7 @@ flowchart TD
     class DATA1,LANES,APPLE,LINPRI,GAMEPAD env
     class IOS,SIMP,XBOXDEF cost
     class I14,I87 incident
-    class G34,M91,SITL physics
+    class G34,M91,SITL,XPHYS physics
     class T2 legal
 
     subgraph LEGEND["圖例：驅動因素類型"]
@@ -218,6 +222,18 @@ flowchart TD
 - **變動內容**：以**固定、版本化的 Xbox 360 相容手把映射**取代八步校準精靈——偵測相容手把（`Input.is_joy_known()`，SDL mapping 存在）→ 確認畫面（顯示固定映射與四軸即時值，漂移肉眼可見）→ 玩家確認 → 建立 session `GamepadProfile` → preflight；unknown 裝置明確提示不支援＋keyboard fallback，禁止套用 Xbox 映射。**移除**端點/中心/RMS 採樣合約、反向注入測試與 `CalibrationProfile` 採樣持久化；**保留**固定 deadzone（具名常數，raw 軸 0.08–0.10 定值，寫入 profile schema）、Arm/Mode 去抖 ≤50 ms、油門低位為 arm 前置、unknown 裝置 100% 擋下（注入測試，取代原反向注入）。PRD G4B.3／G4B.UI1／G4B.UI2／G5.5／G5.6 措辭連動改寫，**門檻數值（30/90 秒、30 Hz、50 ms）不變**；性質為**需求範圍縮減**，比照 G2.8 豁免先例明文記錄，非靜默下修。風險（固定映射不偵測硬體不良：中心漂移/端點磨損/雜訊超標）由維護者接受，緩解為固定 deadzone + 確認畫面即時值 + preflight Throttle low 狀態燈。`docs/gamepad-calibration-contract.md` 標 SUPERSEDED，保留作審計軌跡。
 - **驅動因素**：成本／價值（維護者裁定「需求簡化」——標準手把布局由 SDL mapping 保證唯一性，逐軸校準屬過度工程）＋ 產品定位（延續節點 12，目標即手把玩家）。
 - **紀錄位置**：`docs/decisions/2026-07-12-xbox-default-profile.md`、`PRD_AeroSim.md` v3.4 變更紀錄（PR #112）、`docs/gamepad-calibration-contract.md`（SUPERSEDED 註記）、對應 issues [#40](https://github.com/jhihweijhan/AeroSim/issues/40)（主）／[#41](https://github.com/jhihweijhan/AeroSim/issues/41)／[#49](https://github.com/jhihweijhan/AeroSim/issues/49)。
+
+### 14. 外部物理來源治理：Formula Port + offline Oracle 正式化（PRD v3.5，2026-07-13）
+
+- **原計畫**：PRD「氣動公式來源」原僅單列 gym-pybullet-drones 的 drag／ground effect／downwash 移植公式，並以其 Python 原版為 CI 數值 Oracle（即既有 A3–A5 Formula Port + Python Oracle 架構），但**未明文規範外部 simulator 的治理定位**——可否成為 runtime 依賴、第二 collision authority，以及授權／GPL 邊界如何查證，皆無單一真相。
+- **變動內容**（#115 triage 裁定，`2026-07-13-external-physics-source-governance.md`，PR #118；性質為**既有架構治理正式化，非門檻調整**）：
+  1. 外部 simulator（gym-pybullet-drones、RotorPy 等）僅可作 source-file-level Formula Port 來源，及鎖定上游版本、可離線執行的開發／測試 Oracle。
+  2. **AeroSim C++ fixed-step core + Godot/Jolt 為唯一 Tier 1 runtime state 與 collision authority**（自由飛行與接觸權威交接仍依 3.3）；外部 simulator 不得成為 Tier 1 runtime dependency、Python per-frame path，或第二 collision authority。
+  3. Formula Port 須逐一記錄 provenance（source file／upstream commit／header 與其 referenced source／授權 attribution／單位座標轉換／Oracle 或 analytic validation）；授權、GPL 邊界與上游 issue（含 closed）查證**唯一依 #56「參考開源實作」條款**，本決策不建立平行政策；不明授權常數僅可參考思路，repo root 的 MIT 不自動涵蓋常數表或資料。
+  4. `c5d7f0b` 明列為廢棄、不可合併、不可續作的 unmerged governance spec，不構成已簽核決策或工作基線。
+  5. CI 稽核錨點為 pending ownership：#116（NOTICE manifest regression）、#117（Oracle integrity 與 offline cache）、#119（export artifact 無 Python runtime dependency scan）；本 docs PR 未實作，**亦不新增或調整任何數值 gate**。
+- **驅動因素**：物理與統計現實（維持 Tier 1 runtime 固定步進狀態與碰撞權威單一來源、保留 A3–A5 公式與 Python Oracle 的可重現離線驗證能力）＋ 法務／授權（Formula Port 來源與授權可追溯，續遵 #56 開源參考治理）。
+- **紀錄位置**：`docs/decisions/2026-07-13-external-physics-source-governance.md`、`PRD_AeroSim.md` v3.5 變更紀錄與 §3.1.1（PR #118）、[#115](https://github.com/jhihweijhan/AeroSim/issues/115)、CI 錨點 [#116](https://github.com/jhihweijhan/AeroSim/issues/116)／[#117](https://github.com/jhihweijhan/AeroSim/issues/117)／[#119](https://github.com/jhihweijhan/AeroSim/issues/119)。
 
 ## 治理機制演進
 
