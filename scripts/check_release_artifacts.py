@@ -11,6 +11,7 @@ NOTICE_PATHS = {
     "AeroSim-linux.zip": "AeroSim-linux/THIRD_PARTY_NOTICES.txt",
     "AeroSim-windows.zip": "AeroSim-windows/THIRD_PARTY_NOTICES.txt",
     "AeroSim-android.apk": "assets/THIRD_PARTY_NOTICES.txt",
+    "AeroSim-android-production.apk": "assets/THIRD_PARTY_NOTICES.txt",
 }
 REQUIRED_NOTICE_TEXT = (
     "gym-pybullet-drones",

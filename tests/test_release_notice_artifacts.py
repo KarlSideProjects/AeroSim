@@ -53,6 +53,15 @@ class ReleaseNoticeArtifactsTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing THIRD_PARTY_NOTICES.txt", result.stderr)
 
+    def test_checker_rejects_production_android_archive_without_notice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "AeroSim-android-production.apk"
+            self.write_archive(artifact, None)
+            result = self.check(artifact)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing THIRD_PARTY_NOTICES.txt", result.stderr)
+
     def test_checker_rejects_truncated_notice(self):
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "AeroSim-windows.zip"

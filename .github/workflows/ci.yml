@@ -81,6 +81,9 @@ jobs:
       - name: Release artifact checks
         run: scripts/test_release_artifacts.sh
 
+      - name: Delivery drill test
+        run: scripts/test_delivery_drill.sh
+
       - name: License server API test
         run: python3 -m unittest license_server.test_license_server
 
@@ -435,6 +438,44 @@ jobs:
           install -D build/release/AeroSim-android.apk \
             "$AEROSIM_CI_ARTIFACT_RUN_DIR/ci-android-apk/AeroSim-android.apk"
           echo "::notice::Stored ci-android-apk in $AEROSIM_CI_ARTIFACT_RUN_DIR"
+
+      - name: Export production-signed Android release artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          ANDROID_RELEASE_KEYSTORE_B64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_B64 }}
+          ANDROID_RELEASE_KEYSTORE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASS }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_CERT_SHA256: ${{ vars.ANDROID_RELEASE_CERT_SHA256 }}
+        run: |
+          release_keystore="$AEROSIM_TOOL_ROOT/aerosim-release.keystore"
+          trap 'rm -f "$release_keystore"' EXIT
+          umask 077
+          if [ -z "$ANDROID_RELEASE_KEYSTORE_B64" ] || [ -z "$ANDROID_RELEASE_KEYSTORE_PASS" ] || [ -z "$ANDROID_RELEASE_KEY_ALIAS" ]; then
+            echo "::error::Missing Android production signing secret"
+            exit 1
+          fi
+          printf '%s' "$ANDROID_RELEASE_KEYSTORE_B64" | base64 --decode > "$release_keystore"
+          if [ ! -s "$release_keystore" ]; then
+            echo "::error::Decoded Android production keystore is empty"
+            exit 1
+          fi
+          AEROSIM_ANDROID_SIGNING_MODE=production \
+          AEROSIM_ANDROID_RELEASE_KEYSTORE="$release_keystore" \
+          AEROSIM_ANDROID_RELEASE_KEYSTORE_PASS="$ANDROID_RELEASE_KEYSTORE_PASS" \
+          AEROSIM_ANDROID_RELEASE_KEY_ALIAS="$ANDROID_RELEASE_KEY_ALIAS" \
+          AEROSIM_ANDROID_EXPECTED_CERT_SHA256="$ANDROID_RELEASE_CERT_SHA256" \
+          AEROSIM_ANDROID_OUT_APK=build/release/AeroSim-android-production.apk \
+          AEROSIM_ANDROID_SIGNING_REPORT=build/release/AeroSim-android-production-signing.txt \
+          scripts/export_android_release.sh
+
+      - name: Store production-signed Android release artifact locally
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          install -D build/release/AeroSim-android-production.apk \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/release-android/AeroSim-android.apk"
+          install -D build/release/AeroSim-android-production-signing.txt \
+            "$AEROSIM_CI_ARTIFACT_RUN_DIR/release-android/signing.txt"
+          echo "::notice::Stored release-android production-signed APK and certificate fingerprint"
 
   headed-smoke:
     runs-on: [self-hosted, Linux, X64]
