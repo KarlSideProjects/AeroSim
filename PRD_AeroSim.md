@@ -9,7 +9,7 @@
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
-- v3.6（2026-07-13）：**Ubuntu-first 交付範圍**——目前只承諾 Ubuntu Linux x86_64 可安裝、啟動與遊玩；Windows、macOS、Android、iOS 改列為延後平台，不再阻擋本版開發、驗收或發行。G6 發行驗收收斂至 Ubuntu。
+- v3.6（2026-07-13）：**Ubuntu-first 交付範圍**——目前只承諾 Ubuntu Linux x86_64 可安裝、啟動與遊玩；Windows、macOS、Android、iOS 改列為延後平台，不再阻擋本版開發、驗收或發行。G6、行動 Profile、Tier 2 SITL 與 OSD 驗收均收斂或延後，不留下非 Ubuntu 的 blocking Gate。
 - v3.5（2026-07-13）：**外部物理來源治理正式化**——依 `docs/decisions/2026-07-13-external-physics-source-governance.md`，將既有 A3–A5 Formula Port 與 Python Oracle 架構明文化：AeroSim C++ fixed-step core + Godot/Jolt 為唯一 Tier 1 runtime state 與 collision authority；外部 simulator 僅得作檔案級公式來源與固定版本、可離線開發／測試 Oracle。既有門檻數字完全不變，且本次不創造任何新數值 gate。
 - v3.4（2026-07-12）：**Xbox Default Profile**——固定映射確認取代八步校準精靈；移除端點/中心/RMS 採樣合約與反向注入測試（需求範圍縮減，比照 G2.8 豁免先例，非靜默下修）；保留固定 deadzone、Arm/Mode 去抖 ≤50ms、油門低位前置、unknown 裝置擋下。G4B.3／G4B.UI1／G4B.UI2／G5.6 措辭連動，時間/頻率門檻數值不變。驅動因素與風險註記詳 `docs/decisions/2026-07-12-xbox-default-profile.md`。
 - v3.3（2026-07-11）：輸入裝置定位改為一般 game 手把；移除 RadioMaster／FrSky、RadioProfile 與 16 通道門檻。Controller Setup、Channel Monitor 與實機閘門改以 Xbox 360 相容手把的可用軸與按鍵為準；鍵盤僅為 fallback。驅動因素（無 RC 實機＋產品即以手把為目標）與「裝置定義調整、非門檻下修」裁定詳 `docs/decisions/2026-07-11-standard-gamepad-input.md`。
@@ -112,15 +112,13 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 - **授權與上游查證的單一真相**：所有「參考開源實作」的授權、GPL 邊界與上游 issue（含 closed）查證，唯一依 #56 的「參考開源實作」條款執行；本節不建立或重複平行政策。Formula Port 的特有紀錄則必須逐一包含 source file、upstream commit、source-file header 與其 referenced source、license／attribution、unit／frame conversion，以及 Oracle／analytic validation。不明授權的常數或參數依 #56 僅可參考思路，不得當作產品資料；repo root 的 MIT 授權不會自動涵蓋常數表或資料。
 - **CI 稽核錨點（pending implementation）**：#116 負責 NOTICE manifest regression，#117 負責 Oracle integrity 與 offline cache，#119 負責 export artifact 的無 Python runtime dependency scan。上述 CI audit 均待其對應實作票落地；本 docs PR 未實作它們，亦不調整或新增數值 gate。
 
-### 3.2 平台物理 Profile（取代單一硬指標）
+### 3.2 Ubuntu 物理 Profile
 
 | Profile | PID 頻率 | Jolt tick | 氣動效應 | 適用 |
 |---|---|---|---|---|
-| Desktop Full | 1000 Hz | 240 Hz | 全開（A1–A10） | 桌面各 Lane |
-| Mobile High | 1000 Hz | 240 Hz | 全開 | 旗艦行動裝置（執行期偵測） |
-| Mobile Base | 500 Hz + 陀螺儀插值 | 120 Hz | 全開，Dryden 更新降至 100 Hz | 基準行動裝置 |
+| Ubuntu Desktop Full | 1000 Hz | 240 Hz | 全開（A1–A10） | Ubuntu Linux x86_64 |
 
-> **剛性約束 C-4**：Mobile Base 與 Desktop Full 對同一組輸入序列的姿態輸出偏差須通過 G0.9（fidelity 等價 Gate）。Profile 之間**不是**門檻鬆緊，而是兩組各自凍結的門檻。
+> Mobile High、Mobile Base 與跨 Profile fidelity 等價均為 deferred；重新啟用行動平台時再另行定義與驗收，不能阻擋 Ubuntu 交付。
 
 ### 3.3 碰撞權威切換規格（新增，回應審查 High 6）
 
@@ -151,7 +149,7 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 #### 3.5.1 設計原則（凍結後與 Gate 同等剛性）
 1. **Stick-time first**：墜機→重飛迴圈是本品類核心體驗。
 2. **對齊 FPV 社群慣例**：rates 曲線公式與匯入格式和 Betaflight 對齊（RC Rate / Super Rate / Expo 同名同義）。**PID / 濾波器參數標示為 sim profile，明文不保證與真機等價，UI 須顯示免責提示**（回應審查 High 8）。
-3. **雙平台自適應而非縮放**。
+3. **Ubuntu 桌面 UI 優先**：目前不做行動版縮放或觸控自適應。
 4. UI 動效用 Godot 4.7 Control offset transforms，禁止移動實際 layout 做動畫。
 
 #### 3.5.2 競品 UX 參考（僅參考互動流程與資訊架構，禁止複製美術資產）
@@ -305,7 +303,7 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 |---|---|---|---|
 | G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms（凍結本機：Ubuntu 26.04、Ryzen 9 7945HX、RTX 4060 Ti） | GPU-A | SC |
 | G0.2 | Mobile High 與 Mobile Base | deferred，本版不驗收 | — |
-| G0.3 | 1000/500 Hz 子步進下四元數積分 10 分鐘無 NaN、範數漂移 < 1e-6 | CI-A | SC |
+| G0.3 | 1000 Hz 子步進下四元數積分 10 分鐘無 NaN、範數漂移 < 1e-6 | CI-A | SC |
 | G0.4 | Ubuntu 桌面渲染管線與場景資產打通 | GPU-A | SC |
 | G0.5 | Xbox 360 相容 USB game 手把於 Ubuntu desktop 識別必要的類比軸與按鍵 | DEV-M | UBUNTU |
 | G0.6a | **Ubuntu 核心決定性**：GDExtension 於 Ubuntu Linux 建置通過同一組單元測試，同平台重播 bitwise 一致；統一 `-ffp-contract=off` 等旗標 | CI-A | SC |
@@ -348,7 +346,7 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 | G2.6 | Altitude Hold：氣壓計噪音開啟，60 秒高度漂移 ≤ ±15 cm | CI-A | SC |
 | G2.7 | 手感盲測：≥5 名 Betaflight 實機飛手，Acro 盲測均分 ≥ 7.0 且無人 ≤ 4（問卷含真機 blackbox 回放錨定題） | USR | SC |
 | G2.8 | **Blackbox 重播真值**：取 G1.10 真機紀錄之搖桿輸入重播入模擬器，陀螺儀三軸軌跡相關係數 ≥ 0.90、角速度 RMSE ≤ 真機峰值角速度之 8%。**判定一律以 holdout 組為準（標定組結果僅供參考），開迴路（模型辨識）與閉迴路（含飛控）重播分開報告** | CI-A | SC |
-| G2.9 | **SITL 交叉驗證**：同輸入分別餵自研飛控與 Betaflight SITL（開發環境工具，不隨 Tier 1 發布），姿態響應趨勢相關係數 ≥ 0.85（此為自研飛控之健全性檢查，非等價承諾） | CI-A | SC |
+| G2.9 | Betaflight SITL 交叉驗證（Tier 2） | deferred，本版不驗收 | — |
 
 ---
 
@@ -393,9 +391,9 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 | G4B.UI1 | **First Fly Flow**：未看說明書之 FPV 玩家——已確認手把 ≤ 30 秒起飛、未確認 ≤ 90 秒（含完成確認流程）；無控制器時提示與 fallback 可用（樣本 ≥ 10 人，P90） | USR | SC |
 | G4B.UI2 | **Controller 確認流程（v3.4）**：Ubuntu 上 Xbox 360 相容手把（`is_joy_known`）完成固定映射確認即飛；確認畫面顯示四軸即時值；**unknown 裝置 100% 擋下並提示 fallback**（注入測試） | DEV-M | UBUNTU |
 | G4B.UI3 | **Pause Overlay**：固定項全數存在；rates/camera/OSD 修改即時生效不重載（自動斷言）；Reset 至可輸入 ≤ 1.5 秒（P99） | GPU-A | SC |
-| G4B.UI4 | **OSD Presets**：三 preset 於 1080p 與行動橫向、zh-TW/en 四組合下，主飛行視野遮擋率 ≤ 8%，警告訊息不遮擋畫面中央 1/3（自動截圖幾何稽核） | GPU-A | SC |
+| G4B.UI4 | **OSD Presets**：三 preset 於 Ubuntu 1080p、zh-TW/en 兩組合下，主飛行視野遮擋率 ≤ 8%，警告訊息不遮擋畫面中央 1/3（自動截圖幾何稽核） | GPU-A | UBUNTU |
 | G4B.UI5 | **選擇流程**：Quick Fly 一鍵進預設場；選機/選圖/選模式/選風況/起飛於單層畫面完成，全流程確認次數 ≤ 3 | GPU-A + USR | SC |
-| G4B.UI6 | **機體狀態圖**：(a) 真值一致——狀態圖各數值 vs 物理層遙測快照逐項相等（容忍僅顯示取整），A1–A10 任一效應關閉時對應指示歸零（自動化逐效應開關測試）；(b) 更新率 ≥ 30 Hz、資料延遲 ≤ 100 ms；(c) 完整版與迷你版渲染成本合計 ≤ 0.5 ms/幀（各平台 Profile）；(d) 迷你版於 Debug OSD 下不違反 G4B.UI4 遮擋門檻 | CI-A + GPU-A | SC |
+| G4B.UI6 | **機體狀態圖**：(a) 真值一致——狀態圖各數值 vs 物理層遙測快照逐項相等（容忍僅顯示取整），A1–A10 任一效應關閉時對應指示歸零（自動化逐效應開關測試）；(b) 更新率 ≥ 30 Hz、資料延遲 ≤ 100 ms；(c) 完整版與迷你版渲染成本合計 ≤ 0.5 ms/幀（Ubuntu Profile）；(d) 迷你版於 Debug OSD 下不違反 G4B.UI4 遮擋門檻 | CI-A + GPU-A | SC |
 
 ---
 
@@ -454,7 +452,6 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 
 | 風險 | 影響 | 緩解 |
 |---|---|---|
-| Mobile Base profile 仍超預算 | G0.2 | Phase 0 特例程序重定行動 Lane 範圍（總則 4.0-4），門檻數值不動 |
 | 非 Ubuntu 平台需求 | 全平台 Gate | v3.6 先 deferred；待有明確客戶需求與維護資源後再另行啟用 |
 | GPL 語意耦合疑慮 | G7.1 | 法務前置核准；協定文件公開；Configurator 外置 |
 | 台架推力表數據取得 | G1.10 | 優先使用公開馬達台架數據庫；必要時自購測試台實測 |
