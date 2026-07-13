@@ -150,25 +150,46 @@ class CiStrategyTest(unittest.TestCase):
         self.assertNotRegex(
             self.linux_job, re.compile(r"\b(?:windows|android|macos|ios)\b", re.IGNORECASE)
         )
-        notice_step = re.search(
-            r"^      - name: Release NOTICE artifact test\n"
+        audit_step = re.search(
+            r"^      - name: Ubuntu release artifact audit unit test\n"
             r"(?:(?!^      - ).)*(?=^      - |\Z)",
             self.linux_job,
             re.MULTILINE | re.DOTALL,
         )
-        self.assertIsNotNone(notice_step)
-        notice_command = notice_step.group(0)
+        self.assertIsNotNone(audit_step)
+        audit_command = audit_step.group(0)
         for method in (
-            "tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest."
             "test_checker_rejects_archive_without_notice",
-            "tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest."
             "test_checker_rejects_notice_missing_mit_warranty",
-            "tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest."
             "test_checker_accepts_linux_notice_path",
+            "test_checker_rejects_extra_linux_entry_to_keep_python_out_of_release",
+            "test_checker_rejects_missing_linux_native_entry_instead_of_partial_scan",
+            "test_checker_rejects_duplicate_linux_entry_because_shape_must_be_unambiguous",
+            "test_checker_rejects_non_elf_native_payloads_before_runtime_scan",
+            "test_checker_rejects_truncated_linux_zip_without_a_traceback",
+            "test_checker_rejects_crc_corruption_in_native_payload",
+            "test_checker_rejects_encrypted_native_payload_without_password_fallback",
+            "test_checker_rejects_encrypted_notice_without_password_fallback",
+            "test_checker_rejects_unreadable_native_payload_without_skipping_it",
+            "test_checker_rejects_unreadable_notice_without_skipping_it",
+            "test_checker_rejects_libpython_sonames_in_native_payloads",
+            "test_checker_rejects_cpython_lifecycle_and_execution_evidence",
+            "test_checker_rejects_oracle_cache_path_in_native_payload",
+            "test_checker_rejects_complete_base_aviary_source_across_native_payloads",
+            "test_checker_accepts_isolated_cpython_markers_and_boundary_lookalikes",
+            "test_checker_accepts_partial_base_aviary_source_evidence",
+            "test_checker_accepts_python_names_in_notice_and_native_provenance",
         ):
-            self.assertIn(method, notice_command)
-        self.assertIn("python3 -m unittest", notice_command)
-        self.assertNotIn("python3 tests/test_release_notice_artifacts.py", notice_command)
+            self.assertIn(
+                "tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest." + method,
+                audit_command,
+            )
+        self.assertIn("python3 -m unittest", audit_command)
+        self.assertNotIn("python3 tests/test_release_notice_artifacts.py", audit_command)
+        self.assertIn(
+            "python3 scripts/check_release_artifacts.py \"$out_zip\"",
+            (ROOT / "scripts" / "export_linux_release.sh").read_text(encoding="utf-8"),
+        )
 
     def test_linux_reuses_its_debug_build_for_headed_runtime_gates(self):
         with self.subTest(contract="no standalone headed job"):
