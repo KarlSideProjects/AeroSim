@@ -50,6 +50,9 @@ jobs:
           build/scons-venv/bin/python -m pip install scons numpy
           echo "$PWD/build/scons-venv/bin" >> "$GITHUB_PATH"
 
+      - name: Python pinned oracle cache unit test
+        run: python3 tests/test_pinned_oracle.py
+
       - name: Native unit test
         env:
           AEROSIM_REPLAY_ARTIFACT: build/replay_terminal_state.json

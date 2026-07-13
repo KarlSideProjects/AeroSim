@@ -5,7 +5,7 @@ import csv
 import sys
 from pathlib import Path
 
-from check_a3_oracle import load_upstream_oracle
+from pinned_oracle import load_pinned_oracle
 
 
 TOLERANCE = 1e-6
@@ -100,7 +100,7 @@ def main() -> int:
         return 1
 
     try:
-        np, p, BaseAviary = load_upstream_oracle()
+        np, p, BaseAviary = load_pinned_oracle()
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1

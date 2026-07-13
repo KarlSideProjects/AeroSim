@@ -3,85 +3,12 @@
 
 import csv
 import sys
-import types
-import urllib.request
 from pathlib import Path
+
+from pinned_oracle import load_pinned_oracle
 
 
 TOLERANCE = 1e-6
-UPSTREAM_COMMIT = "9bc12bc583fa3b28807b2f90a8cadf09fb06e1ff"
-BASE_AVIARY_URL = (
-    "https://raw.githubusercontent.com/utiasDSL/gym-pybullet-drones/"
-    f"{UPSTREAM_COMMIT}/gym_pybullet_drones/envs/BaseAviary.py"
-)
-
-
-def load_upstream_oracle():
-    try:
-        import numpy as np
-    except Exception as exc:
-        raise RuntimeError("missing numpy required by pinned BaseAviary._drag oracle") from exc
-
-    pybullet = types.ModuleType("pybullet")
-    pybullet.LINK_FRAME = 1
-    pybullet.applyExternalForce = lambda *args, **kwargs: None
-
-    def get_matrix_from_quaternion(q):
-        x, y, z, w = q
-        return (
-            1.0 - 2.0 * (y * y + z * z),
-            2.0 * (x * y - z * w),
-            2.0 * (x * z + y * w),
-            2.0 * (x * y + z * w),
-            1.0 - 2.0 * (x * x + z * z),
-            2.0 * (y * z - x * w),
-            2.0 * (x * z - y * w),
-            2.0 * (y * z + x * w),
-            1.0 - 2.0 * (x * x + y * y),
-        )
-
-    pybullet.getMatrixFromQuaternion = get_matrix_from_quaternion
-
-    gymnasium = types.ModuleType("gymnasium")
-    gymnasium.Env = object
-
-    enum_module = types.ModuleType("gym_pybullet_drones.utils.enums")
-    enum_module.DroneModel = types.SimpleNamespace(CF2X="cf2x", RACE="race")
-    enum_module.Physics = types.SimpleNamespace(PYB="pyb")
-    enum_module.ImageType = types.SimpleNamespace(RGB="rgb", DEP="dep", SEG="seg")
-
-    stubs = {
-        "pkg_resources": types.ModuleType("pkg_resources"),
-        "pybullet": pybullet,
-        "pybullet_data": types.ModuleType("pybullet_data"),
-        "gymnasium": gymnasium,
-        "PIL": types.ModuleType("PIL"),
-        "PIL.Image": types.ModuleType("PIL.Image"),
-        "gym_pybullet_drones": types.ModuleType("gym_pybullet_drones"),
-        "gym_pybullet_drones.utils": types.ModuleType("gym_pybullet_drones.utils"),
-        "gym_pybullet_drones.utils.enums": enum_module,
-    }
-
-    previous = {name: sys.modules.get(name) for name in stubs}
-    sys.modules.update(stubs)
-    try:
-        with urllib.request.urlopen(BASE_AVIARY_URL, timeout=30) as response:
-            source = response.read().decode("utf-8")
-        namespace = {"__name__": "aerosim_pinned_base_aviary"}
-        exec(compile(source, BASE_AVIARY_URL, "exec"), namespace)
-    except Exception as exc:
-        raise RuntimeError(f"failed to load pinned BaseAviary.py from {BASE_AVIARY_URL}") from exc
-    finally:
-        for name, module in previous.items():
-            if module is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = module
-
-    BaseAviary = namespace.get("BaseAviary")
-    if BaseAviary is None or not hasattr(BaseAviary, "_drag"):
-        raise RuntimeError("pinned BaseAviary.py does not expose BaseAviary._drag")
-    return np, pybullet, BaseAviary
 
 
 def python_original_drag(row, np, p, BaseAviary):
@@ -125,7 +52,7 @@ def main() -> int:
         return 1
 
     try:
-        np, p, BaseAviary = load_upstream_oracle()
+        np, p, BaseAviary = load_pinned_oracle()
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 1
