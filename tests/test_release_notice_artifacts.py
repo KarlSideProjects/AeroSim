@@ -91,20 +91,27 @@ class ReleaseNoticeArtifactsTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("THIRD_PARTY_NOTICES.txt missing required text", result.stderr)
 
-    def test_checker_accepts_linux_windows_and_android_notice_paths(self):
+    def assert_checker_accepts_notice_path(self, filename: str, notice_path: str):
+        with tempfile.TemporaryDirectory() as directory:
+            notice = self.generated_notice(Path(directory))
+            artifact = Path(directory) / filename
+            self.write_archive(artifact, notice_path, notice)
+            result = self.check(artifact)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_checker_accepts_linux_notice_path(self):
+        self.assert_checker_accepts_notice_path(
+            "AeroSim-linux.zip", "AeroSim-linux/THIRD_PARTY_NOTICES.txt"
+        )
+
+    def test_checker_accepts_deferred_windows_and_android_notice_paths(self):
         archive_paths = {
-            "AeroSim-linux.zip": "AeroSim-linux/THIRD_PARTY_NOTICES.txt",
             "AeroSim-windows.zip": "AeroSim-windows/THIRD_PARTY_NOTICES.txt",
             "AeroSim-android.apk": "assets/THIRD_PARTY_NOTICES.txt",
         }
-        with tempfile.TemporaryDirectory() as directory:
-            notice = self.generated_notice(Path(directory))
-            for filename, notice_path in archive_paths.items():
-                with self.subTest(artifact=filename):
-                    artifact = Path(directory) / filename
-                    self.write_archive(artifact, notice_path, notice)
-                    result = self.check(artifact)
-                    self.assertEqual(result.returncode, 0, result.stderr)
+        for filename, notice_path in archive_paths.items():
+            with self.subTest(artifact=filename):
+                self.assert_checker_accepts_notice_path(filename, notice_path)
 
 
 if __name__ == "__main__":

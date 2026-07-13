@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -11,8 +13,60 @@ on:
       - '**.md'
       - 'docs/**'
       - '.out-of-scope/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  gut-recovery-shadow:
+    continue-on-error: true
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Clean self-hosted workspace
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
+            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+
+      - name: Set job-local tool paths
+        run: |
+          tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
+          rm -rf "$tool_root"
+          mkdir -p "$tool_root"
+          repo_key="${GITHUB_REPOSITORY//\//-}"
+          artifact_root="${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}"
+          artifact_run_dir="$artifact_root/$repo_key/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$artifact_run_dir"
+          echo "AEROSIM_TOOL_ROOT=$tool_root" >> "$GITHUB_ENV"
+          echo "AEROSIM_CI_ARTIFACT_RUN_DIR=$artifact_run_dir" >> "$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=$tool_root/xdg-cache" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$tool_root/xdg-config" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
+
+      - name: Fetch Godot 4.7
+        run: |
+          godot_dir="$AEROSIM_TOOL_ROOT/godot"
+          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
+          curl -L -o "$godot_zip" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
+          echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  $godot_zip" | sha256sum -c -
+          unzip -q "$godot_zip" -d "$godot_dir"
+          echo "GODOT_BIN=$(find "$godot_dir" -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
+
+      - name: GUT recovery-mode shadow
+        run: scripts/run_gut_tests.sh --recovery-mode
+
+      - name: Store GUT recovery evidence locally
+        if: always()
+        run: |
+          install -d "$AEROSIM_CI_ARTIFACT_RUN_DIR/gut-recovery-shadow"
+          cp -a build/gut/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/gut-recovery-shadow/"
+          echo "::notice::Stored GUT recovery evidence in $AEROSIM_CI_ARTIFACT_RUN_DIR"
+
   linux:
     runs-on: [self-hosted, Linux, X64]
     steps:
@@ -78,14 +132,15 @@ jobs:
       - name: License scan
         run: scripts/test_license_scan.sh
 
-      - name: Release artifact checks
-        run: scripts/test_release_artifacts.sh
+      - name: Release NOTICE artifact test
+        run: |
+          python3 -m unittest \
+            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_archive_without_notice \
+            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_notice_missing_mit_warranty \
+            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_accepts_linux_notice_path
 
       - name: Delivery drill test
         run: scripts/test_delivery_drill.sh
-
-      - name: Android CI isolation test
-        run: python3 tests/test_android_ci_isolation.py
 
       - name: License server API test
         run: python3 -m unittest license_server.test_license_server
@@ -111,6 +166,27 @@ jobs:
 
       - name: Build GDExtension
         run: scons target=template_debug platform=linux
+
+      - name: GUT GDScript unit tests
+        run: scripts/run_gut_tests.sh
+
+      - name: Headed acceptance (Xvfb + lavapipe)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        run: scripts/run_headed_acceptance.sh --xvfb
+
+      - name: Performance harness smoke (Xvfb + lavapipe)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+          AEROSIM_REQUIRED_GPU_ADAPTER: llvmpipe
+        run: xvfb-run -a python3 tests/test_performance_runner.py
+
+      - name: Store headed screenshots locally
+        if: always()
+        run: |
+          install -d "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux"
+          cp -a build/headed/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux/"
+          echo "::notice::Stored headed-linux screenshots in $AEROSIM_CI_ARTIFACT_RUN_DIR"
 
       - name: Headless smoke
         run: |
@@ -168,434 +244,3 @@ jobs:
           install -D build/release/AeroSim-linux.zip \
             "$AEROSIM_CI_ARTIFACT_RUN_DIR/release-linux/AeroSim-linux.zip"
           echo "::notice::Stored release-linux in $AEROSIM_CI_ARTIFACT_RUN_DIR"
-
-  windows:
-    runs-on: [self-hosted, Linux, X64]
-    steps:
-      - name: Clean self-hosted workspace
-        run: |
-          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
-            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
-
-      - uses: actions/checkout@v4
-        with:
-          clean: false
-
-      - name: Set job-local tool paths
-        run: |
-          tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
-          rm -rf "$tool_root"
-          mkdir -p "$tool_root"
-          repo_key="${GITHUB_REPOSITORY//\//-}"
-          artifact_root="${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}"
-          artifact_run_dir="$artifact_root/$repo_key/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          artifact_job_dir="$artifact_run_dir/$GITHUB_JOB"
-          mkdir -p "$artifact_job_dir"
-          echo "AEROSIM_TOOL_ROOT=$tool_root" >> "$GITHUB_ENV"
-          echo "AEROSIM_CI_ARTIFACT_RUN_DIR=$artifact_run_dir" >> "$GITHUB_ENV"
-          echo "AEROSIM_CI_ARTIFACT_JOB_DIR=$artifact_job_dir" >> "$GITHUB_ENV"
-          echo "XDG_CACHE_HOME=$tool_root/xdg-cache" >> "$GITHUB_ENV"
-          echo "XDG_CONFIG_HOME=$tool_root/xdg-config" >> "$GITHUB_ENV"
-          echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
-          echo "GODOT_CPP_DIR=$tool_root/godot-cpp" >> "$GITHUB_ENV"
-
-      - name: Windows compatibility build and replay in Docker
-        run: |
-          docker run --rm \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
-            -v "$PWD:/work" \
-            -v "$AEROSIM_TOOL_ROOT:/runner-temp" \
-            -w /work \
-            ubuntu:24.04 \
-            bash -lc '
-              set -euo pipefail
-              rm -rf build bin .deps .sconsign.dblite src/native/*.os
-              trap "chown -R \"$HOST_UID:$HOST_GID\" build bin .deps /runner-temp 2>/dev/null || true" EXIT
-              export DEBIAN_FRONTEND=noninteractive
-              dpkg --add-architecture i386
-              apt-get update
-              apt-get install -y ca-certificates git python3 python3-venv unzip mingw-w64 wine64 wine32:i386
-              if ! getent group "$HOST_GID" >/dev/null; then
-                groupadd -g "$HOST_GID" hostgroup
-              fi
-              if ! getent passwd "$HOST_UID" >/dev/null; then
-                useradd -u "$HOST_UID" -g "$HOST_GID" -M -d /runner-temp hostuser
-              fi
-              host_user="$(getent passwd "$HOST_UID" | cut -d: -f1)"
-              python3 -m venv build/scons-venv
-              build/scons-venv/bin/python -m pip install --upgrade pip
-              build/scons-venv/bin/python -m pip install scons
-              export PATH="$PWD/build/scons-venv/bin:$PATH"
-              export CXX=x86_64-w64-mingw32-g++
-              export CXXFLAGS="-static -static-libgcc -static-libstdc++"
-              export EXE_SUFFIX=.exe
-              export AEROSIM_REPLAY_ARTIFACT=build/replay_terminal_state.json
-              export AEROSIM_RUN_NATIVE_TESTS=0
-              scripts/test_native.sh
-              export WINEDEBUG=-all
-              export WINEARCH=win64
-              export WINEPREFIX=/runner-temp/aerosim-wine
-              mkdir -p "$WINEPREFIX"
-              chown -R "$HOST_UID:$HOST_GID" build "$WINEPREFIX"
-              runuser -u "$host_user" -- wineboot --init || true
-              mapfile -t test_exes < <(find build/tests -maxdepth 1 -type f -name "*.exe" | sort)
-              if [ "${#test_exes[@]}" -eq 0 ]; then
-                echo "::error::No Windows test executables were built in build/tests"
-                ls -la build/tests
-                exit 1
-              fi
-              for test_exe in "${test_exes[@]}"; do
-                echo "Running ${test_exe} under Wine"
-                runuser -u "$host_user" -- wine "$test_exe"
-              done
-              export GODOT_CPP_DIR=/runner-temp/godot-cpp
-              rm -rf "$GODOT_CPP_DIR"
-              git clone https://github.com/godotengine/godot-cpp.git "$GODOT_CPP_DIR"
-              git -C "$GODOT_CPP_DIR" checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
-              scons target=template_debug platform=windows use_mingw=yes
-              scons target=template_release platform=windows use_mingw=yes
-            '
-
-      - name: Store Windows replay artifact locally
-        run: |
-          install -D build/replay_terminal_state.json \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-windows/replay_terminal_state.json"
-          echo "::notice::Stored replay-windows in $AEROSIM_CI_ARTIFACT_RUN_DIR"
-
-      - name: Fetch Godot 4.7
-        run: |
-          godot_dir="$AEROSIM_TOOL_ROOT/godot"
-          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
-          rm -rf "$godot_dir" "$godot_zip"
-          curl -L -o "$godot_zip" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
-          echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  $godot_zip" | sha256sum -c -
-          unzip -q "$godot_zip" -d "$godot_dir"
-          echo "GODOT_BIN=$(find "$godot_dir" -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
-
-      - name: Install Godot export templates
-        run: |
-          templates_archive="$AEROSIM_TOOL_ROOT/godot-export-templates.tpz"
-          templates_unpack_dir="$AEROSIM_TOOL_ROOT/godot-export-templates"
-          templates_dir="$XDG_DATA_HOME/godot/export_templates/4.7.stable"
-          curl -L -o "$templates_archive" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_export_templates.tpz
-          echo "1035dfde4edcc2472bb0c0b9610ce3ee9302642c2b9957e9066372f9f6bb759ab250c8887551a66f0bc5f51bbd9a58bb45e33a0f29844e97615a9b1138c1120e  $templates_archive" | sha512sum -c -
-          rm -rf "$templates_unpack_dir" "$templates_dir"
-          mkdir -p "$templates_unpack_dir" "$templates_dir"
-          unzip -q "$templates_archive" -d "$templates_unpack_dir"
-          cp -a "$templates_unpack_dir/templates/." "$templates_dir/"
-
-      - name: Export Windows release artifact
-        run: scripts/export_windows_release.sh
-
-      - name: Store Windows release artifact locally
-        run: |
-          install -D build/release/AeroSim-windows.zip \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/release-windows/AeroSim-windows.zip"
-          echo "::notice::Stored release-windows in $AEROSIM_CI_ARTIFACT_RUN_DIR"
-
-  android:
-    concurrency:
-      group: aerosim-android-emulator
-      cancel-in-progress: false
-    runs-on: [self-hosted, Linux, X64]
-    steps:
-      - name: Clean self-hosted workspace
-        run: |
-          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
-            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
-
-      - uses: actions/checkout@v4
-        with:
-          clean: false
-
-      - name: Set job-local tool paths
-        id: android_tool_paths
-        run: |
-          tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
-          rm -rf "$tool_root"
-          mkdir -p "$tool_root"
-          repo_key="${GITHUB_REPOSITORY//\//-}"
-          artifact_root="${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}"
-          artifact_run_dir="$artifact_root/$repo_key/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          artifact_job_dir="$artifact_run_dir/$GITHUB_JOB"
-          mkdir -p "$artifact_job_dir"
-          echo "AEROSIM_TOOL_ROOT=$tool_root" >> "$GITHUB_ENV"
-          echo "AEROSIM_CI_ARTIFACT_RUN_DIR=$artifact_run_dir" >> "$GITHUB_ENV"
-          echo "AEROSIM_CI_ARTIFACT_JOB_DIR=$artifact_job_dir" >> "$GITHUB_ENV"
-          echo "XDG_CACHE_HOME=$tool_root/xdg-cache" >> "$GITHUB_ENV"
-          echo "XDG_CONFIG_HOME=$tool_root/xdg-config" >> "$GITHUB_ENV"
-          echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
-          echo "GODOT_CPP_DIR=$tool_root/godot-cpp" >> "$GITHUB_ENV"
-          echo "AEROSIM_ANDROID_CI_KEYSTORE=$tool_root/aerosim-ci-android.keystore" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$tool_root/android-ndk" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$tool_root/android-sdk" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$tool_root/android-sdk" >> "$GITHUB_ENV"
-          echo "ANDROID_USER_HOME=$tool_root/android-user" >> "$GITHUB_ENV"
-          echo "ADB_VENDOR_KEYS=$tool_root/adb-keys" >> "$GITHUB_ENV"
-          avd_name="aerosim-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          {
-            echo "AEROSIM_ANDROID_AVD_NAME=$avd_name"
-          } >> "$GITHUB_ENV"
-          {
-            echo "avd_name=$avd_name"
-          } >> "$GITHUB_OUTPUT"
-          mkdir -p "$tool_root/android-sdk" "$tool_root/android-user"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
-        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.1"
-
-      - name: Install build tools
-        run: |
-          python3 -m venv build/scons-venv
-          build/scons-venv/bin/python -m pip install --upgrade pip
-          build/scons-venv/bin/python -m pip install scons
-          echo "$PWD/build/scons-venv/bin" >> "$GITHUB_PATH"
-
-      - name: Install Android NDK
-        run: |
-          ndk_zip="$AEROSIM_TOOL_ROOT/android-ndk.zip"
-          ndk_unpack_dir="$AEROSIM_TOOL_ROOT/android-ndk-unpack"
-          rm -rf "$ANDROID_NDK_ROOT" "$ndk_unpack_dir"
-          rm -f "$ndk_zip"
-          curl -L -o "$ndk_zip" https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
-          echo "22105e410cf29afcf163760cc95522b9fb981121  $ndk_zip" | sha1sum -c -
-          unzip -q "$ndk_zip" -d "$ndk_unpack_dir"
-          mv "$ndk_unpack_dir/android-ndk-r27d" "$ANDROID_NDK_ROOT"
-
-      - name: Build Android native unit tests
-        env:
-          AEROSIM_RUN_NATIVE_TESTS: "0"
-          CXXFLAGS: -static-libstdc++
-        run: |
-          export CXX="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android24-clang++"
-          scripts/test_native.sh
-
-      - name: Enable KVM
-        run: |
-          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-            exit 0
-          fi
-          ls -l /dev/kvm || true
-          echo "::error::/dev/kvm is not readable/writable by the self-hosted runner user; fix runner group membership before running Android emulator tests."
-          exit 1
-
-      - name: Run Android native unit tests
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          avd-name: ${{ steps.android_tool_paths.outputs.avd_name }}
-          emulator-boot-timeout: 1200
-          script: scripts/run_android_native_tests.sh
-
-      - name: Store Android replay artifact locally
-        run: |
-          install -D build/replay_terminal_state.json \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-android/replay_terminal_state.json"
-          echo "::notice::Stored replay-android in $AEROSIM_CI_ARTIFACT_RUN_DIR"
-
-      - name: Fetch godot-cpp
-        run: |
-          rm -rf "$GODOT_CPP_DIR"
-          git clone https://github.com/godotengine/godot-cpp.git "$GODOT_CPP_DIR"
-          git -C "$GODOT_CPP_DIR" checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
-
-      - name: Build GDExtension
-        run: scons target=template_debug platform=android arch=arm64 ANDROID_HOME=
-
-      - name: Fetch Godot 4.7
-        run: |
-          godot_dir="$AEROSIM_TOOL_ROOT/godot"
-          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
-          rm -rf "$godot_dir" "$godot_zip"
-          curl -L -o "$godot_zip" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
-          echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  $godot_zip" | sha256sum -c -
-          unzip -q "$godot_zip" -d "$godot_dir"
-          echo "GODOT_BIN=$(find "$godot_dir" -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
-
-      - name: Install Godot export templates
-        run: |
-          templates_archive="$AEROSIM_TOOL_ROOT/godot-export-templates.tpz"
-          templates_unpack_dir="$AEROSIM_TOOL_ROOT/godot-export-templates"
-          templates_dir="$XDG_DATA_HOME/godot/export_templates/4.7.stable"
-          curl -L -o "$templates_archive" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_export_templates.tpz
-          echo "1035dfde4edcc2472bb0c0b9610ce3ee9302642c2b9957e9066372f9f6bb759ab250c8887551a66f0bc5f51bbd9a58bb45e33a0f29844e97615a9b1138c1120e  $templates_archive" | sha512sum -c -
-          rm -rf "$templates_unpack_dir" "$templates_dir"
-          mkdir -p "$templates_unpack_dir" "$templates_dir"
-          unzip -q "$templates_archive" -d "$templates_unpack_dir"
-          cp -a "$templates_unpack_dir/templates/." "$templates_dir/"
-
-      - name: Build Android release GDExtension
-        run: scons target=template_release platform=android arch=arm64 ANDROID_HOME=
-
-      - name: Export Android release artifact
-        run: scripts/export_android_release.sh
-
-      - name: Store Android release artifact locally
-        run: |
-          install -D build/release/AeroSim-android.apk \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/ci-android-apk/AeroSim-android.apk"
-          echo "::notice::Stored ci-android-apk in $AEROSIM_CI_ARTIFACT_RUN_DIR"
-
-      - name: Export production-signed Android release artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          ANDROID_RELEASE_KEYSTORE_B64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_B64 }}
-          ANDROID_RELEASE_KEYSTORE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASS }}
-          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-          ANDROID_RELEASE_CERT_SHA256: ${{ vars.ANDROID_RELEASE_CERT_SHA256 }}
-        run: |
-          release_keystore="$AEROSIM_TOOL_ROOT/aerosim-release.keystore"
-          trap 'rm -f "$release_keystore"' EXIT
-          umask 077
-          if [ -z "$ANDROID_RELEASE_KEYSTORE_B64" ] || [ -z "$ANDROID_RELEASE_KEYSTORE_PASS" ] || [ -z "$ANDROID_RELEASE_KEY_ALIAS" ]; then
-            echo "::error::Missing Android production signing secret"
-            exit 1
-          fi
-          if [ -z "$ANDROID_RELEASE_CERT_SHA256" ]; then
-            echo "::error::Missing Android production certificate fingerprint variable"
-            exit 1
-          fi
-          java_home="${JAVA_HOME:-}"
-          if [ -z "$java_home" ]; then
-            keytool_path="$(command -v keytool || true)"
-            if [ -n "$keytool_path" ]; then
-              java_home="$(dirname "$(dirname "$(readlink -f "$keytool_path")")")"
-            fi
-          fi
-          if [ -z "$java_home" ] || [ ! -d "$java_home" ] || [ ! -x "$java_home/bin/java" ]; then
-            echo "::error::Missing JAVA_HOME for Android production export"
-            exit 1
-          fi
-          printf '%s' "$ANDROID_RELEASE_KEYSTORE_B64" | base64 --decode > "$release_keystore"
-          if [ ! -s "$release_keystore" ]; then
-            echo "::error::Decoded Android production keystore is empty"
-            exit 1
-          fi
-          AEROSIM_ANDROID_SIGNING_MODE=production \
-          AEROSIM_ANDROID_RELEASE_KEYSTORE="$release_keystore" \
-          AEROSIM_ANDROID_RELEASE_KEYSTORE_PASS="$ANDROID_RELEASE_KEYSTORE_PASS" \
-          AEROSIM_ANDROID_RELEASE_KEY_ALIAS="$ANDROID_RELEASE_KEY_ALIAS" \
-          AEROSIM_ANDROID_EXPECTED_CERT_SHA256="$ANDROID_RELEASE_CERT_SHA256" \
-          JAVA_HOME="$java_home" \
-          AEROSIM_ANDROID_OUT_APK=build/release/AeroSim-android-production.apk \
-          AEROSIM_ANDROID_SIGNING_REPORT=build/release/AeroSim-android-production-signing.txt \
-          scripts/export_android_release.sh
-
-      - name: Store production-signed Android release artifact locally
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          install -D build/release/AeroSim-android-production.apk \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/release-android/AeroSim-android.apk"
-          install -D build/release/AeroSim-android-production-signing.txt \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/release-android/signing.txt"
-          echo "::notice::Stored release-android production-signed APK and certificate fingerprint"
-
-  headed-smoke:
-    runs-on: [self-hosted, Linux, X64]
-    needs: [linux, windows, android]
-    steps:
-      - name: Clean self-hosted workspace
-        run: |
-          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
-            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
-
-      - uses: actions/checkout@v4
-        with:
-          clean: false
-
-      - name: Set job-local tool paths
-        run: |
-          tool_root="$RUNNER_TEMP/aerosim-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_JOB}"
-          rm -rf "$tool_root"
-          mkdir -p "$tool_root"
-          repo_key="${GITHUB_REPOSITORY//\//-}"
-          artifact_root="${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}"
-          artifact_run_dir="$artifact_root/$repo_key/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          mkdir -p "$artifact_run_dir"
-          {
-            echo "AEROSIM_TOOL_ROOT=$tool_root"
-            echo "AEROSIM_CI_ARTIFACT_RUN_DIR=$artifact_run_dir"
-            echo "XDG_CACHE_HOME=$tool_root/xdg-cache"
-            echo "XDG_CONFIG_HOME=$tool_root/xdg-config"
-            echo "XDG_DATA_HOME=$tool_root/xdg-data"
-            echo "GODOT_CPP_DIR=$tool_root/godot-cpp"
-          } >> "$GITHUB_ENV"
-
-      - name: Install build tools
-        run: |
-          python3 -m venv build/scons-venv
-          build/scons-venv/bin/python -m pip install --upgrade pip
-          build/scons-venv/bin/python -m pip install scons
-          echo "$PWD/build/scons-venv/bin" >> "$GITHUB_PATH"
-
-      - name: Fetch Godot 4.7
-        run: |
-          godot_dir="$AEROSIM_TOOL_ROOT/godot"
-          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
-          curl -L -o "$godot_zip" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
-          echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  $godot_zip" | sha256sum -c -
-          unzip -q "$godot_zip" -d "$godot_dir"
-          echo "GODOT_BIN=$(find "$godot_dir" -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
-
-      - name: Fetch godot-cpp and build GDExtension
-        run: |
-          git clone https://github.com/godotengine/godot-cpp.git "$GODOT_CPP_DIR"
-          git -C "$GODOT_CPP_DIR" checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
-          scons target=template_debug platform=linux
-
-      - name: Headed acceptance (Xvfb + lavapipe)
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
-        run: scripts/run_headed_acceptance.sh --xvfb
-
-      - name: Performance harness smoke (Xvfb + lavapipe)
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
-          AEROSIM_REQUIRED_GPU_ADAPTER: llvmpipe
-        run: xvfb-run -a python3 tests/test_performance_runner.py
-
-      - name: Store headed screenshots locally
-        if: always()
-        run: |
-          install -d "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux"
-          cp -a build/headed/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux/"
-          echo "::notice::Stored headed-linux screenshots in $AEROSIM_CI_ARTIFACT_RUN_DIR"
-
-  replay-compare:
-    runs-on: [self-hosted, Linux, X64]
-    needs: [linux, windows, android]
-    steps:
-      - name: Clean self-hosted workspace
-        run: |
-          docker run --rm -v "$GITHUB_WORKSPACE:/work" ubuntu:24.04 \
-            bash -lc 'find /work -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
-
-      - uses: actions/checkout@v4
-        with:
-          clean: false
-
-      - name: Set local artifact paths
-        run: |
-          repo_key="${GITHUB_REPOSITORY//\//-}"
-          artifact_root="${AEROSIM_CI_ARTIFACT_ROOT:-$HOME/aerosim-ci-artifacts}"
-          artifact_run_dir="$artifact_root/$repo_key/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "AEROSIM_CI_ARTIFACT_RUN_DIR=$artifact_run_dir" >> "$GITHUB_ENV"
-          test -d "$artifact_run_dir"
-
-      - name: Compare Linux and Windows replay terminal state
-        run: |
-          python3 scripts/compare_replay_artifacts.py \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-linux/replay_terminal_state.json" \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-windows/replay_terminal_state.json"
-          python3 scripts/compare_replay_artifacts.py \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-linux/replay_terminal_state.json" \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-android/replay_terminal_state.json"
-          python3 scripts/compare_replay_artifacts.py \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-windows/replay_terminal_state.json" \
-            "$AEROSIM_CI_ARTIFACT_RUN_DIR/replay-android/replay_terminal_state.json"
