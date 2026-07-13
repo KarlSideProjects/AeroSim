@@ -39,6 +39,7 @@ python3 scripts/check_licenses.py
 scripts/test_license_scan.sh
 python3 -m unittest license_server.test_license_server
 GODOT_CPP_DIR=/path/to/godot-cpp scons target=template_debug platform=linux
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5
 ```
 
@@ -67,12 +68,11 @@ Runner 預設為 G0.1 gate，只接受本機 Ubuntu 26.04 LTS 的 AMD Ryzen 9 79
 
 GitHub Actions 會執行：
 
-1. Linux 原生 C++ 單元測試。
-2. 授權掃描，並確認 GPL fixture 會 fail。
-3. 授權伺服器 API 整合測試。
-4. 下載並驗證 Godot `4.7-stable` Linux editor hash。
-5. 下載鎖定 commit 的 godot-cpp，建置 Linux GDExtension。
-6. headless smoke，確認 GDScript 可呼叫 native probe 並輸出檔案。
-7. Windows 原生 C++ 單元測試與 GDExtension 建置。
-8. Android emulator 執行同一組原生 C++ 單元測試，並建置 Android arm64 GDExtension。
-9. Linux / Windows / Android replay terminal-state artifacts 互相比對 G0.6a tolerance。
+1. 非阻擋 recovery-mode shadow 先執行同一套 GUT，累積未來升級為 pre-build gate 的可靠度證據。
+2. Linux 原生 C++ 單元測試、授權與 API 檢查。
+3. 下載鎖定的 Godot / godot-cpp，建置一次 Linux debug GDExtension。
+4. 阻擋式 GUT 先把關，再以同一份 debug build 執行 headed acceptance、效能 harness smoke 與 headless smoke。
+5. Linux release export，以及 Windows、Android 的原生測試、GDExtension 與 release export。
+6. Linux / Windows / Android replay terminal-state artifacts 互相比對 G0.6a tolerance。
+
+一般 PR 仍保留完整平台與 runtime coverage；feature branch push 不再與 PR 重複觸發同一份 CI。`push` 僅用於 `main`，另保留手動 `workflow_dispatch`。同一 PR 的較舊執行會被取消，但 main build 不會被自動取消。

@@ -92,7 +92,7 @@ class CiStrategyTest(unittest.TestCase):
                 r"^      - name: Build GDExtension\n"
                 r"^        run: scons target=template_debug platform=linux\n"
                 r"\n"
-                r"(?P<gut_step>^      - name: .*GUT.*\n"
+                r"(?P<gut_step>^      - name: [^\n]*GUT[^\n]*\n"
                 r"(?:(?!^      - ).)*(?=^      - |\Z))",
                 re.MULTILINE | re.DOTALL,
             ),
