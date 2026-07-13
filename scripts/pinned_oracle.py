@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = ROOT / "oracles" / "gym_pybullet_drones_contract.json"
 CACHE_ROOT = ROOT / "oracles" / "gym_pybullet_drones_cache"
 REQUIRED_FIELDS = ("repository_url", "commit", "path", "sha256")
+CANONICAL_REPOSITORY_URL = "https://github.com/learnsyslab/gym-pybullet-drones"
 
 
 def load_pinned_oracle(contract_path=CONTRACT_PATH, cache_root=CACHE_ROOT):
@@ -32,6 +33,8 @@ def load_pinned_oracle(contract_path=CONTRACT_PATH, cache_root=CACHE_ROOT):
 
     if not isinstance(contract, dict) or any(not isinstance(contract.get(field), str) for field in REQUIRED_FIELDS):
         raise RuntimeError(f"pinned oracle contract is invalid: {contract_path}")
+    if contract["repository_url"] != CANONICAL_REPOSITORY_URL:
+        raise RuntimeError(f"pinned oracle contract has non-canonical repository URL: {contract_path}")
     if not re.fullmatch(r"[0-9a-f]{40}", contract["commit"]):
         raise RuntimeError(f"pinned oracle contract has invalid commit: {contract_path}")
     if not re.fullmatch(r"[0-9a-f]{64}", contract["sha256"]):
