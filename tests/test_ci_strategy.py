@@ -53,6 +53,7 @@ mode = os.environ["FAKE_GODOT_RESULT"]
 result = {} if mode == "missing" else {result_key: mode == "true"}
 result_path.parent.mkdir(parents=True, exist_ok=True)
 result_path.write_text(json.dumps(result), encoding="utf-8")
+raise SystemExit(int(os.environ.get("FAKE_GODOT_EXIT", "0")))
 """
 
 
@@ -80,7 +81,7 @@ class CiStrategyTest(unittest.TestCase):
             self.workflow,
             re.compile(
                 r"^concurrency:\n"
-                r"^  group: ci-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}\n"
+                r"^  group: ci-\$\{\{ github\.event\.pull_request\.number \|\| github\.run_id \}\}\n"
                 r"^  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$",
                 re.MULTILINE,
             ),
@@ -210,7 +211,15 @@ class CiStrategyTest(unittest.TestCase):
             with self.subTest(scenario=scenario, contract="retained Godot log"):
                 self.assertIn(log_text, logs)
 
-    def _run_runner(self, runner: Path, result: str, log_text: str):
+        completed, logs = self._run_runner(
+            runner, "true", "Godot Engine fake\n", exit_status=7
+        )
+        with self.subTest(scenario="non-zero process", contract="non-zero exit"):
+            self.assertNotEqual(0, completed.returncode)
+        with self.subTest(scenario="non-zero process", contract="retained Godot log"):
+            self.assertIn("Godot Engine fake\n", logs)
+
+    def _run_runner(self, runner: Path, result: str, log_text: str, exit_status: int = 0):
         with tempfile.TemporaryDirectory() as temporary_directory:
             workdir = Path(temporary_directory)
             fake_godot = workdir / "fake_godot.py"
@@ -221,6 +230,7 @@ class CiStrategyTest(unittest.TestCase):
                 GODOT_BIN=str(fake_godot),
                 FAKE_GODOT_RESULT=result,
                 FAKE_GODOT_LOG=log_text,
+                FAKE_GODOT_EXIT=str(exit_status),
             )
             completed = subprocess.run(
                 [str(runner)],

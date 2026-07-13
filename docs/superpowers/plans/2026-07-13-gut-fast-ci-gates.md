@@ -29,7 +29,7 @@
 ## Task 3: Reorder CI without reducing coverage
 
 - [ ] Restrict `push` to `main`, retain `pull_request`, and add `workflow_dispatch`.
-- [ ] Add workflow concurrency keyed by PR number/ref; cancellation is enabled only for PR events.
+- [ ] Add workflow concurrency keyed by PR number for pull requests and unique run ID otherwise; cancellation is enabled only for PR events, and main/manual runs must not replace pending runs.
 - [ ] Run blocking GUT immediately after the Linux debug GDExtension build.
 - [ ] Add a non-blocking `gut-recovery-shadow` job that runs the same suite with `--recovery-mode`; it must retain evidence but must not be a prerequisite for Linux, Windows, or Android.
 - [ ] Run headed acceptance and the existing performance harness from the Linux job after its debug GDExtension build.
