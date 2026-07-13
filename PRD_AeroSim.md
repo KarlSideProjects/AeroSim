@@ -105,7 +105,7 @@
 - **唯一 Tier 1 runtime authority**：AeroSim C++ fixed-step core 與 Godot/Jolt 共同構成唯一 Tier 1 runtime state 與 collision authority；自由飛行與接觸時的權威交接仍依 3.3，由此核心與 Jolt 完成。外部 simulator 不得取代、平行持有或仲裁 runtime state／collision state。
 - **Formula Port + offline Oracle**：gym-pybullet-drones、RotorPy 等外部 simulator 僅可作 source-file-level Formula Port 來源，以及鎖定上游版本、可離線執行的開發／測試 Oracle。它們不得成為 runtime dependency、Python per-frame path，或第二 collision authority。
 - **授權與上游查證的單一真相**：所有「參考開源實作」的授權、GPL 邊界與上游 issue（含 closed）查證，唯一依 #56 的「參考開源實作」條款執行；本節不建立或重複平行政策。Formula Port 的特有紀錄則必須逐一包含 source file、upstream commit、source-file header 與其 referenced source、license／attribution、unit／frame conversion，以及 Oracle／analytic validation。不明授權的常數或參數依 #56 僅可參考思路，不得當作產品資料；repo root 的 MIT 授權不會自動涵蓋常數表或資料。
-- **CI 稽核錨點（pending implementation）**：#116 負責 NOTICE manifest regression，#117 負責 Oracle integrity 與 offline cache；export artifact 的無 Python runtime dependency scan 為必交付 CI audit anchor，須由對應實作票落地。本 docs PR 未實作上述任何 CI audit，亦不調整或新增數值 gate。
+- **CI 稽核錨點（pending implementation）**：#116 負責 NOTICE manifest regression，#117 負責 Oracle integrity 與 offline cache，#119 負責 export artifact 的無 Python runtime dependency scan。上述 CI audit 均待其對應實作票落地；本 docs PR 未實作它們，亦不調整或新增數值 gate。
 
 ### 3.2 平台物理 Profile（取代單一硬指標）
 

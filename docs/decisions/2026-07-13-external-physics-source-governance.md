@@ -29,7 +29,7 @@ Formula Port 必須逐一記錄：
 
 - #116：NOTICE manifest regression。
 - #117：Oracle integrity 與 offline cache。
-- export artifact 無 Python runtime dependency scan：必交付的 CI audit anchor，需由對應實作票落地。
+- #119：export artifact 無 Python runtime dependency scan（必交付的 CI audit anchor）。
 
 上述項目均為 pending ownership；本 docs PR 不實作它們，且不得將 #116 或 #117 表述為已完成。本決策不新增或調整任何數值 gate。
 
