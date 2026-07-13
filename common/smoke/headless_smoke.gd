@@ -1304,6 +1304,10 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly preflight must load Industrial Yard as the default Free Flight map")
         scene.queue_free()
         return false
+    if scene.get_viewport().get_camera_3d() != scene.chase_camera or not scene.chase_camera.current:
+        push_error("Industrial Yard preflight must keep ChaseCamera as the active Camera3D")
+        scene.queue_free()
+        return false
     var spawn := scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
     if spawn == null or scene.drone_body.global_position.distance_to(spawn.global_position) > 1e-6:
         push_error("Industrial Yard load must place the drone at SpawnNorth")
@@ -1687,6 +1691,10 @@ func _verify_runtime_actions() -> bool:
     spawn = scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
     if spawn == null or scene.drone_body.global_position.distance_to(spawn.global_position) > 1e-6 or scene.drone_body.linear_velocity.length() > 1e-6 or scene.drone_body.angular_velocity.length() > 1e-6:
         push_error("flight_respawn action must return to Industrial Yard SpawnNorth and clear body velocity; position=%s linear=%s angular=%s" % [scene.drone_body.global_position, scene.drone_body.linear_velocity, scene.drone_body.angular_velocity])
+        scene.queue_free()
+        return false
+    if scene.get_viewport().get_camera_3d() != scene.chase_camera:
+        push_error("Industrial Yard reset must retain the active ChaseCamera Camera3D")
         scene.queue_free()
         return false
     for _frame in range(31):
