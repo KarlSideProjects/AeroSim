@@ -25,6 +25,11 @@ or mismatched hash fails loudly and identifies the failing artifact.
 upstream source for oracle verification only; it neither completes nor replaces
 #116's attribution boundary.
 
+The `gym-pybullet-drones` MIT attribution applies only to AeroSim
+source-code/formula ports derived from that source. It does not claim a right to
+redistribute upstream papers/PDFs, experimental datasets, or
+constants/parameter tables.
+
 ## A3 Drag
 
 `tests/native/test_aerodynamics.cpp` writes C++ A3 drag cases when

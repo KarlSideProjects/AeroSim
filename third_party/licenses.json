@@ -13,6 +13,14 @@
       "license": "MIT",
       "homepage": "https://github.com/godotengine/godot-cpp",
       "notice": "godot-cpp is distributed under the MIT license."
+    },
+    {
+      "name": "gym-pybullet-drones",
+      "version": "9bc12bc583fa3b28807b2f90a8cadf09fb06e1ff",
+      "license": "MIT",
+      "homepage": "https://github.com/learnsyslab/gym-pybullet-drones",
+      "attribution_scope": "Applies only to AeroSim source-code/formula ports derived from gym-pybullet-drones; it does not claim redistribution rights for upstream papers/PDFs, experimental datasets, or constants/parameter tables.",
+      "notice": "MIT License\n\nCopyright (c) 2020 Jacopo Panerati\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
     }
   ]
 }
