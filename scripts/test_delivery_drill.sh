@@ -25,12 +25,14 @@ scripts/exercise_delivery_drill.sh \
     --artifact "$artifact" \
     --report "$report"
 
-python3 - "$report" <<'PY'
+python3 - "$report" "$artifact" <<'PY'
+import hashlib
 import json
 from pathlib import Path
 import sys
 
 report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+artifact = Path(sys.argv[2])
 assert report["steps"] == [
     "customer_registered",
     "license_issued",
@@ -39,6 +41,8 @@ assert report["steps"] == [
     "revocation_verified",
 ]
 assert report["delivery_channel"] == "not_exercised"
+assert report["artifact"] == str(artifact)
+assert report["artifact_sha256"] == hashlib.sha256(artifact.read_bytes()).hexdigest()
 assert "license_key" not in report
 assert "token" not in report
 PY

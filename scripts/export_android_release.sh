@@ -80,6 +80,10 @@ if [ "$signing_mode" = "ci" ]; then
     java_home="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$keytool_path")")")}"
 else
     java_home="${JAVA_HOME:-}"
+    if [ -z "$java_home" ] || [ ! -d "$java_home" ]; then
+        echo "missing JAVA_HOME for production Android export" >&2
+        exit 1
+    fi
 fi
 
 mkdir -p "$tool_root" "$(dirname "$out_apk")" "$(dirname "$signing_keystore")"

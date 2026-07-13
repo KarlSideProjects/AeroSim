@@ -14,8 +14,8 @@ artifact="$(mktemp build/release-artifact.XXXXXX)"
 out_file="$(mktemp)"
 err_file="$(mktemp)"
 android_test_dir="$(mktemp -d build/android-release-test.XXXXXX)"
-relative_production_apk="build/release/android-production-test.apk"
-relative_signing_report="build/release/android-production-test-signing.txt"
+relative_production_apk="build/release/AeroSim-android-production.apk"
+relative_signing_report="build/release/AeroSim-android-production-signing.txt"
 trap 'rm -rf "$android_test_dir"; rm -f "$artifact" "$out_file" "$err_file" "$relative_production_apk" "$relative_signing_report"' EXIT
 xdg_config_home="$android_test_dir/xdg-config"
 xdg_data_home="$android_test_dir/xdg-data"
@@ -139,6 +139,8 @@ grep -q "missing production Android signing configuration" "$err_file"
 
 fake_keystore="$android_test_dir/release.keystore"
 printf 'production-keystore' >"$fake_keystore"
+java_home="$android_test_dir/java"
+mkdir -p "$java_home"
 fake_godot="$android_test_dir/godot"
 cat >"$fake_godot" <<'EOF'
 #!/usr/bin/env bash
@@ -191,9 +193,33 @@ if [ "$1" = "verify" ] && [ "${2:-}" = "--print-certs" ]; then
 fi
 EOF
 chmod +x "$fake_apksigner"
+
+if env -u JAVA_HOME \
+    XDG_CONFIG_HOME="$xdg_config_home" \
+    RUNNER_TEMP="$runner_temp" \
+    ANDROID_HOME="$android_test_dir/sdk" \
+    GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
+    GODOT_BIN="$fake_godot" \
+    AEROSIM_ANDROID_SIGNING_MODE=production \
+    AEROSIM_ANDROID_RELEASE_KEYSTORE="$fake_keystore" \
+    AEROSIM_ANDROID_RELEASE_KEYSTORE_PASS=test-password \
+    AEROSIM_ANDROID_RELEASE_KEY_ALIAS=test-alias \
+    AEROSIM_ANDROID_EXPECTED_CERT_SHA256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA \
+    AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
+    AEROSIM_ANDROID_OUT_APK="$android_test_dir/missing-java-home.apk" \
+    AEROSIM_ANDROID_SIGNING_REPORT="$android_test_dir/missing-java-home-signing.txt" \
+    AEROSIM_ANDROID_SIGN_ARGS="$android_test_dir/missing-java-home-sign-args.txt" \
+    scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
+    cat "$out_file"
+    echo "production Android export without JAVA_HOME unexpectedly passed" >&2
+    exit 1
+fi
+
+grep -q "missing JAVA_HOME for production Android export" "$err_file"
 cp export_presets.cfg "$android_test_dir/export_presets.before"
 
 XDG_CONFIG_HOME="$xdg_config_home" \
+JAVA_HOME="$java_home" \
 RUNNER_TEMP="$runner_temp" \
 ANDROID_HOME="$android_test_dir/sdk" \
 GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \
@@ -216,6 +242,7 @@ grep -Fx -- 'pass:test-password' "$android_test_dir/sign-args.txt"
 grep -Fx -- 'test-alias' "$android_test_dir/sign-args.txt"
 
 if XDG_CONFIG_HOME="$xdg_config_home" \
+    JAVA_HOME="$java_home" \
     RUNNER_TEMP="$runner_temp" \
     ANDROID_HOME="$android_test_dir/sdk" \
     GODOT_EXPORT_TEMPLATES_DIR="$android_test_dir/templates" \

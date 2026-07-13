@@ -28,6 +28,25 @@ class AndroidCiIsolationTest(unittest.TestCase):
         self.assertNotIn("GITHUB_RUN_ID % 16", android_job)
         self.assertNotIn("emulator-port:", android_job)
 
+    def test_linux_job_runs_delivery_drill(self):
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        linux_job = workflow.split("  linux:\n", 1)[1].split("  windows:\n", 1)[0]
+
+        self.assertIn("run: scripts/test_delivery_drill.sh", linux_job)
+
+    def test_production_keystore_cleanup_is_armed_before_decode(self):
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        production_step = workflow.split(
+            "      - name: Export production-signed Android release artifact\n", 1
+        )[1].split(
+            "      - name: Store production-signed Android release artifact locally\n", 1
+        )[0]
+
+        self.assertLess(
+            production_step.index("trap 'rm -f \"$release_keystore\"' EXIT"),
+            production_step.index("base64 --decode"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

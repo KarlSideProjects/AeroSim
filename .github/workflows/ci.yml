@@ -81,6 +81,9 @@ jobs:
       - name: Release artifact checks
         run: scripts/test_release_artifacts.sh
 
+      - name: Delivery drill test
+        run: scripts/test_delivery_drill.sh
+
       - name: License server API test
         run: python3 -m unittest license_server.test_license_server
 
@@ -445,6 +448,7 @@ jobs:
           ANDROID_RELEASE_CERT_SHA256: ${{ vars.ANDROID_RELEASE_CERT_SHA256 }}
         run: |
           release_keystore="$AEROSIM_TOOL_ROOT/aerosim-release.keystore"
+          trap 'rm -f "$release_keystore"' EXIT
           umask 077
           if [ -z "$ANDROID_RELEASE_KEYSTORE_B64" ] || [ -z "$ANDROID_RELEASE_KEYSTORE_PASS" ] || [ -z "$ANDROID_RELEASE_KEY_ALIAS" ]; then
             echo "::error::Missing Android production signing secret"
@@ -455,7 +459,6 @@ jobs:
             echo "::error::Decoded Android production keystore is empty"
             exit 1
           fi
-          trap 'rm -f "$release_keystore"' EXIT
           AEROSIM_ANDROID_SIGNING_MODE=production \
           AEROSIM_ANDROID_RELEASE_KEYSTORE="$release_keystore" \
           AEROSIM_ANDROID_RELEASE_KEYSTORE_PASS="$ANDROID_RELEASE_KEYSTORE_PASS" \
