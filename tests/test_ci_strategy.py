@@ -139,22 +139,36 @@ class CiStrategyTest(unittest.TestCase):
                 self.assertIn(
                     "run: scripts/run_gut_tests.sh --recovery-mode", shadow_job
                 )
-        for job in ("linux",):
-            with self.subTest(contract="not a platform dependency", job=job):
-                self.assertNotIn("gut-recovery-shadow", job_body(self.workflow, job))
+        self.assertNotIn("gut-recovery-shadow", self.linux_job)
 
     def test_only_ubuntu_jobs_and_checks_are_blocking(self):
-        for job in ("windows", "android", "replay-compare"):
-            with self.subTest(contract="deferred job absent", job=job):
-                self.assertNotRegex(
-                    self.workflow, re.compile(rf"^  {re.escape(job)}:$", re.MULTILINE)
-                )
-        for command in (
-            "python3 tests/test_android_ci_isolation.py",
-            "scripts/test_release_artifacts.sh",
+        jobs = self.workflow.split("jobs:\n", 1)[1]
+        self.assertEqual(
+            {"gut-recovery-shadow", "linux"},
+            set(re.findall(r"^  ([a-z0-9-]+):$", jobs, re.MULTILINE)),
+        )
+        self.assertNotRegex(
+            self.linux_job, re.compile(r"\b(?:windows|android|macos|ios)\b", re.IGNORECASE)
+        )
+        notice_step = re.search(
+            r"^      - name: Release NOTICE artifact test\n"
+            r"(?:(?!^      - ).)*(?=^      - |\Z)",
+            self.linux_job,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(notice_step)
+        notice_command = notice_step.group(0)
+        for method in (
+            "tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest."
+            "test_checker_rejects_archive_without_notice",
+            "tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest."
+            "test_checker_rejects_notice_missing_mit_warranty",
+            "tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest."
+            "test_checker_accepts_linux_notice_path",
         ):
-            with self.subTest(contract="deferred check absent", command=command):
-                self.assertNotIn(command, self.workflow)
+            self.assertIn(method, notice_command)
+        self.assertIn("python3 -m unittest", notice_command)
+        self.assertNotIn("python3 tests/test_release_notice_artifacts.py", notice_command)
 
     def test_linux_reuses_its_debug_build_for_headed_runtime_gates(self):
         with self.subTest(contract="no standalone headed job"):

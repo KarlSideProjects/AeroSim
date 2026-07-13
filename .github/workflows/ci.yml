@@ -133,7 +133,11 @@ jobs:
         run: scripts/test_license_scan.sh
 
       - name: Release NOTICE artifact test
-        run: python3 tests/test_release_notice_artifacts.py
+        run: |
+          python3 -m unittest \
+            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_archive_without_notice \
+            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_notice_missing_mit_warranty \
+            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_accepts_linux_notice_path
 
       - name: Delivery drill test
         run: scripts/test_delivery_drill.sh
