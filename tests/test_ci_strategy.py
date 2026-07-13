@@ -32,6 +32,16 @@ runner_args = args[args.index("--") + 1:] if "--" in args else []
 if "--out-dir" in runner_args:
     result_path = Path(runner_args[runner_args.index("--out-dir") + 1]) / "report.json"
     result_key = "passed"
+    for screenshot in (
+        "00_cold_start.png",
+        "01_controller_confirmation.png",
+        "02_keyboard_fallback.png",
+        "03_takeoff.png",
+        "04_paused.png",
+        "05_reset.png",
+        "06_exit.png",
+    ):
+        (result_path.parent / screenshot).write_bytes(b"fake png")
 else:
     result_path = Path(runner_args[runner_args.index("--output") + 1])
     csv_path = Path(runner_args[runner_args.index("--csv-output") + 1])
@@ -77,18 +87,28 @@ class CiStrategyTest(unittest.TestCase):
         )
 
     def test_blocking_gut_runs_immediately_after_linux_debug_build(self):
-        self.assertRegex(
-            self.linux_job,
+        match = re.search(
             re.compile(
                 r"^      - name: Build GDExtension\n"
                 r"^        run: scons target=template_debug platform=linux\n"
                 r"\n"
-                r"^      - name: .*GUT.*\n"
-                r"(?:(?!^      - ).)*?"
-                r"^        run: scripts/run_gut_tests\.sh$",
+                r"(?P<gut_step>^      - name: .*GUT.*\n"
+                r"(?:(?!^      - ).)*(?=^      - |\Z))",
                 re.MULTILINE | re.DOTALL,
             ),
+            self.linux_job,
         )
+        self.assertIsNotNone(match)
+        gut_step = match.group("gut_step")
+        with self.subTest(contract="blocking command"):
+            self.assertRegex(
+                gut_step,
+                re.compile(r"^        run: scripts/run_gut_tests\.sh$", re.MULTILINE),
+            )
+        with self.subTest(contract="not continue-on-error"):
+            self.assertNotIn("continue-on-error:", gut_step)
+        with self.subTest(contract="unconditional"):
+            self.assertNotRegex(gut_step, re.compile(r"^        if:", re.MULTILINE))
         gut_position = self.linux_job.find("run: scripts/run_gut_tests.sh")
         if gut_position >= 0:
             for later_step in (
@@ -133,6 +153,13 @@ class CiStrategyTest(unittest.TestCase):
         ):
             with self.subTest(contract="after Linux debug build", step=step):
                 self.assertGreater(self.linux_job.find(step), debug_build_position)
+        for command in (
+            "run: scripts/run_headed_acceptance.sh --xvfb",
+            "run: xvfb-run -a python3 tests/test_performance_runner.py",
+            'cp -a build/headed/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux/"',
+        ):
+            with self.subTest(contract="preserved headed command", command=command):
+                self.assertIn(command, self.linux_job)
 
     def test_headed_runner_retains_logs_and_requires_structured_success(self):
         self._assert_runtime_runner_contract(HEADED_RUNNER)
@@ -141,6 +168,15 @@ class CiStrategyTest(unittest.TestCase):
         self._assert_runtime_runner_contract(HEADLESS_RUNNER)
 
     def _assert_runtime_runner_contract(self, runner: Path):
+        success_scenarios = (
+            ("structured true", "Godot Engine fake\n"),
+            ("non-prefix ERROR text", "context: ERROR: expected text\n"),
+        )
+        for scenario, log_text in success_scenarios:
+            completed, _logs = self._run_runner(runner, "true", log_text)
+            with self.subTest(scenario=scenario, contract="zero exit"):
+                self.assertEqual(0, completed.returncode)
+
         scenarios = (
             ("structured false", "false", "Godot Engine fake\n"),
             ("structured missing", "missing", "Godot Engine fake\n"),
