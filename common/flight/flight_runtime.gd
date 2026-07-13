@@ -85,7 +85,7 @@ func _run_cold_start_probe() -> void:
     var report_path := _cold_start_report_path()
     if report_path.is_empty():
         return
-    quick_fly("no_controller")
+    quick_fly()
     accept_fallback()
     await RenderingServer.frame_post_draw
     var screenshot_path := _cold_start_arg("--aerosim-cold-start-screenshot")
