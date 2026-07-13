@@ -15,7 +15,11 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 artifact, notice = map(Path, sys.argv[1:])
 with ZipFile(artifact, "w", ZIP_DEFLATED) as archive:
-    archive.writestr("AeroSim-linux/payload.bin", "delivery-drill-test-artifact")
+    archive.writestr("AeroSim-linux/AeroSim.x86_64", b"\x7fELF delivery-drill-test")
+    archive.writestr(
+        "AeroSim-linux/libaerosim_native.linux.template_release.x86_64.so",
+        b"\x7fELF delivery-drill-test",
+    )
     archive.write(notice, "AeroSim-linux/THIRD_PARTY_NOTICES.txt")
 PY
 

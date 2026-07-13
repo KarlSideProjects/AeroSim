@@ -150,25 +150,25 @@ class CiStrategyTest(unittest.TestCase):
         self.assertNotRegex(
             self.linux_job, re.compile(r"\b(?:windows|android|macos|ios)\b", re.IGNORECASE)
         )
-        notice_step = re.search(
-            r"^      - name: Release NOTICE artifact test\n"
+        audit_step = re.search(
+            r"^      - name: Ubuntu release artifact audit unit test\n"
             r"(?:(?!^      - ).)*(?=^      - |\Z)",
             self.linux_job,
             re.MULTILINE | re.DOTALL,
         )
-        self.assertIsNotNone(notice_step)
-        notice_command = notice_step.group(0)
-        for method in (
-            "tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest."
-            "test_checker_rejects_archive_without_notice",
-            "tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest."
-            "test_checker_rejects_notice_missing_mit_warranty",
-            "tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest."
-            "test_checker_accepts_linux_notice_path",
-        ):
-            self.assertIn(method, notice_command)
-        self.assertIn("python3 -m unittest", notice_command)
-        self.assertNotIn("python3 tests/test_release_notice_artifacts.py", notice_command)
+        self.assertIsNotNone(audit_step)
+        audit_command = audit_step.group(0)
+        audit_class = (
+            "tests.test_release_notice_artifacts.UbuntuReleaseArtifactAuditTest"
+        )
+        self.assertIn("python3 -m unittest " + audit_class, audit_command)
+        self.assertEqual(1, audit_command.count(audit_class))
+        self.assertNotIn(".test_checker_", audit_command)
+        self.assertNotIn("python3 tests/test_release_notice_artifacts.py", audit_command)
+        self.assertIn(
+            "python3 scripts/check_release_artifacts.py \"$out_zip\"",
+            (ROOT / "scripts" / "export_linux_release.sh").read_text(encoding="utf-8"),
+        )
 
     def test_linux_reuses_its_debug_build_for_headed_runtime_gates(self):
         with self.subTest(contract="no standalone headed job"):
