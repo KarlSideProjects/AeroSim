@@ -289,6 +289,9 @@ jobs:
           echo "::notice::Stored release-windows in $AEROSIM_CI_ARTIFACT_RUN_DIR"
 
   android:
+    concurrency:
+      group: aerosim-android-emulator
+      cancel-in-progress: false
     runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Clean self-hosted workspace
@@ -323,21 +326,15 @@ jobs:
           echo "ANDROID_HOME=$tool_root/android-sdk" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$tool_root/android-sdk" >> "$GITHUB_ENV"
           echo "ANDROID_USER_HOME=$tool_root/android-user" >> "$GITHUB_ENV"
-          echo "ANDROID_AVD_HOME=$tool_root/android-avd" >> "$GITHUB_ENV"
           echo "ADB_VENDOR_KEYS=$tool_root/adb-keys" >> "$GITHUB_ENV"
-          adb_port=$((5037 + GITHUB_RUN_ID % 1000))
-          emulator_port=$((5554 + 2 * (GITHUB_RUN_ID % 16)))
           avd_name="aerosim-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           {
-            echo "ADB_SERVER_PORT=$adb_port"
             echo "AEROSIM_ANDROID_AVD_NAME=$avd_name"
-            echo "AEROSIM_ANDROID_EMULATOR_PORT=$emulator_port"
           } >> "$GITHUB_ENV"
           {
             echo "avd_name=$avd_name"
-            echo "emulator_port=$emulator_port"
           } >> "$GITHUB_OUTPUT"
-          mkdir -p "$tool_root/android-sdk" "$tool_root/android-user" "$tool_root/android-avd"
+          mkdir -p "$tool_root/android-sdk" "$tool_root/android-user"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -387,7 +384,6 @@ jobs:
           target: google_apis
           arch: x86_64
           avd-name: ${{ steps.android_tool_paths.outputs.avd_name }}
-          emulator-port: ${{ steps.android_tool_paths.outputs.emulator_port }}
           emulator-boot-timeout: 1200
           script: scripts/run_android_native_tests.sh
 
