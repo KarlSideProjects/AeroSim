@@ -105,8 +105,11 @@ class CiStrategyTest(unittest.TestCase):
                 gut_step,
                 re.compile(r"^        run: scripts/run_gut_tests\.sh$", re.MULTILINE),
             )
-        with self.subTest(contract="not continue-on-error"):
-            self.assertNotIn("continue-on-error:", gut_step)
+        with self.subTest(contract="not continue-on-error true"):
+            self.assertNotRegex(
+                gut_step,
+                re.compile(r"^        continue-on-error: true$", re.MULTILINE),
+            )
         with self.subTest(contract="unconditional"):
             self.assertNotRegex(gut_step, re.compile(r"^        if:", re.MULTILINE))
         gut_position = self.linux_job.find("run: scripts/run_gut_tests.sh")
@@ -146,20 +149,31 @@ class CiStrategyTest(unittest.TestCase):
         with self.subTest(contract="one Linux debug build"):
             self.assertEqual(1, self.linux_job.count(debug_build))
         debug_build_position = self.linux_job.find(debug_build)
-        for step in (
-            "Headed acceptance (Xvfb + lavapipe)",
-            "Performance harness smoke (Xvfb + lavapipe)",
-            "Store headed screenshots locally",
+        for step, command in (
+            (
+                "Headed acceptance (Xvfb + lavapipe)",
+                "run: scripts/run_headed_acceptance.sh --xvfb",
+            ),
+            (
+                "Performance harness smoke (Xvfb + lavapipe)",
+                "run: xvfb-run -a python3 tests/test_performance_runner.py",
+            ),
+            (
+                "Store headed screenshots locally",
+                'cp -a build/headed/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux/"',
+            ),
         ):
+            step_match = re.search(
+                rf"^      - name: {re.escape(step)}\n(?:(?!^      - ).)*(?=^      - |\Z)",
+                self.linux_job,
+                re.MULTILINE | re.DOTALL,
+            )
+            step_block = step_match.group(0) if step_match else ""
+            step_position = step_match.start() if step_match else -1
             with self.subTest(contract="after Linux debug build", step=step):
-                self.assertGreater(self.linux_job.find(step), debug_build_position)
-        for command in (
-            "run: scripts/run_headed_acceptance.sh --xvfb",
-            "run: xvfb-run -a python3 tests/test_performance_runner.py",
-            'cp -a build/headed/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux/"',
-        ):
-            with self.subTest(contract="preserved headed command", command=command):
-                self.assertIn(command, self.linux_job)
+                self.assertGreater(step_position, debug_build_position)
+            with self.subTest(contract="preserved headed command", step=step):
+                self.assertIn(command, step_block)
 
     def test_headed_runner_retains_logs_and_requires_structured_success(self):
         self._assert_runtime_runner_contract(HEADED_RUNNER)
@@ -173,9 +187,11 @@ class CiStrategyTest(unittest.TestCase):
             ("non-prefix ERROR text", "context: ERROR: expected text\n"),
         )
         for scenario, log_text in success_scenarios:
-            completed, _logs = self._run_runner(runner, "true", log_text)
+            completed, logs = self._run_runner(runner, "true", log_text)
             with self.subTest(scenario=scenario, contract="zero exit"):
                 self.assertEqual(0, completed.returncode)
+            with self.subTest(scenario=scenario, contract="retained Godot log"):
+                self.assertIn(log_text, logs)
 
         scenarios = (
             ("structured false", "false", "Godot Engine fake\n"),
