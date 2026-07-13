@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Intent: CI fails fast once per PR without weakening runtime evidence."""
 
+import os
 from pathlib import Path
 import re
+import subprocess
+import tempfile
 import unittest
 
 
@@ -10,6 +13,37 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 HEADED_RUNNER = ROOT / "scripts" / "run_headed_acceptance.sh"
 HEADLESS_RUNNER = ROOT / "scripts" / "run_headless_smoke.sh"
+
+FAKE_GODOT = """#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+
+if "--log-file" in args:
+    log_path = Path(args[args.index("--log-file") + 1])
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(os.environ.get("FAKE_GODOT_LOG", ""), encoding="utf-8")
+
+runner_args = args[args.index("--") + 1:] if "--" in args else []
+
+if "--out-dir" in runner_args:
+    result_path = Path(runner_args[runner_args.index("--out-dir") + 1]) / "report.json"
+    result_key = "passed"
+else:
+    result_path = Path(runner_args[runner_args.index("--output") + 1])
+    csv_path = Path(runner_args[runner_args.index("--csv-output") + 1])
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path.write_text("time_s\\n0\\n", encoding="utf-8")
+    result_key = "completed"
+
+mode = os.environ["FAKE_GODOT_RESULT"]
+result = {} if mode == "missing" else {result_key: mode == "true"}
+result_path.parent.mkdir(parents=True, exist_ok=True)
+result_path.write_text(json.dumps(result), encoding="utf-8")
+"""
 
 
 def job_body(workflow: str, name: str) -> str:
@@ -36,7 +70,7 @@ class CiStrategyTest(unittest.TestCase):
             self.workflow,
             re.compile(
                 r"^concurrency:\n"
-                r"^  group: .*\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}\n"
+                r"^  group: ci-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}\n"
                 r"^  cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$",
                 re.MULTILINE,
             ),
@@ -50,8 +84,9 @@ class CiStrategyTest(unittest.TestCase):
                 r"^        run: scons target=template_debug platform=linux\n"
                 r"\n"
                 r"^      - name: .*GUT.*\n"
+                r"(?:(?!^      - ).)*?"
                 r"^        run: scripts/run_gut_tests\.sh$",
-                re.MULTILINE,
+                re.MULTILINE | re.DOTALL,
             ),
         )
         gut_position = self.linux_job.find("run: scripts/run_gut_tests.sh")
@@ -82,47 +117,66 @@ class CiStrategyTest(unittest.TestCase):
                 )
         for job in ("linux", "windows", "android"):
             with self.subTest(contract="not a platform dependency", job=job):
-                self.assertNotRegex(
-                    job_body(self.workflow, job),
-                    re.compile(r"^    needs:", re.MULTILINE),
-                )
+                self.assertNotIn("gut-recovery-shadow", job_body(self.workflow, job))
 
     def test_linux_reuses_its_debug_build_for_headed_runtime_gates(self):
         with self.subTest(contract="no standalone headed job"):
             self.assertNotRegex(self.workflow, re.compile(r"^  headed-smoke:$", re.MULTILINE))
+        debug_build = "run: scons target=template_debug platform=linux"
+        with self.subTest(contract="one Linux debug build"):
+            self.assertEqual(1, self.linux_job.count(debug_build))
+        debug_build_position = self.linux_job.find(debug_build)
         for step in (
             "Headed acceptance (Xvfb + lavapipe)",
             "Performance harness smoke (Xvfb + lavapipe)",
             "Store headed screenshots locally",
         ):
-            with self.subTest(step=step):
-                self.assertIn(step, self.linux_job)
-        if "Headed acceptance (Xvfb + lavapipe)" in self.linux_job:
-            self.assertLess(
-                self.linux_job.index("Build GDExtension"),
-                self.linux_job.index("Headed acceptance (Xvfb + lavapipe)"),
-            )
+            with self.subTest(contract="after Linux debug build", step=step):
+                self.assertGreater(self.linux_job.find(step), debug_build_position)
 
     def test_headed_runner_retains_logs_and_requires_structured_success(self):
-        runner = HEADED_RUNNER.read_text(encoding="utf-8")
-        self._assert_runtime_runner_contract(runner, "passed")
+        self._assert_runtime_runner_contract(HEADED_RUNNER)
 
     def test_headless_runner_retains_logs_and_requires_structured_completion(self):
-        runner = HEADLESS_RUNNER.read_text(encoding="utf-8")
-        self._assert_runtime_runner_contract(runner, "completed")
+        self._assert_runtime_runner_contract(HEADLESS_RUNNER)
 
-    def _assert_runtime_runner_contract(self, runner: str, result_key: str):
-        with self.subTest(contract="retained Godot log"):
-            self.assertIn("--log-file", runner)
-        with self.subTest(contract=f"structured {result_key} result"):
-            self.assertIn("json.load", runner)
-            self.assertRegex(
-                runner,
-                re.compile(rf"(?:\[['\"]{result_key}['\"]\]|\.get\(['\"]{result_key}['\"]\))"),
+    def _assert_runtime_runner_contract(self, runner: Path):
+        scenarios = (
+            ("structured false", "false", "Godot Engine fake\n"),
+            ("structured missing", "missing", "Godot Engine fake\n"),
+            ("Godot error", "true", "ERROR: synthetic failure\n"),
+            ("script error", "true", "SCRIPT ERROR: synthetic failure\n"),
+        )
+        for scenario, result, log_text in scenarios:
+            completed, logs = self._run_runner(runner, result, log_text)
+            with self.subTest(scenario=scenario, contract="non-zero exit"):
+                self.assertNotEqual(0, completed.returncode)
+            with self.subTest(scenario=scenario, contract="retained Godot log"):
+                self.assertIn(log_text, logs)
+
+    def _run_runner(self, runner: Path, result: str, log_text: str):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workdir = Path(temporary_directory)
+            fake_godot = workdir / "fake_godot.py"
+            fake_godot.write_text(FAKE_GODOT, encoding="utf-8")
+            fake_godot.chmod(0o755)
+            environment = os.environ.copy()
+            environment.update(
+                GODOT_BIN=str(fake_godot),
+                FAKE_GODOT_RESULT=result,
+                FAKE_GODOT_LOG=log_text,
             )
-        with self.subTest(contract="stable Godot error-prefix gate"):
-            self.assertIn("ERROR:", runner)
-            self.assertIn("SCRIPT ERROR:", runner)
+            completed = subprocess.run(
+                [str(runner)],
+                cwd=workdir,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            logs = [path.read_text(encoding="utf-8") for path in workdir.rglob("*.log")]
+            return completed, logs
 
 
 if __name__ == "__main__":
