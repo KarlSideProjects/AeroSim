@@ -193,8 +193,8 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 
 | 進入時狀態 | 出口 |
 |---|---|
-| 已校準控制器 | → 直接進場 |
-| 未校準 | → Controller Setup（完成→進場；取消→主選單） |
+| 已確認固定映射控制器 | → 直接進場 |
+| 未確認固定映射 | → Controller Setup（完成→進場；取消→主選單） |
 | 無控制器 | → 提示 + Keyboard fallback 或返回 |
 | 授權不可達 / 離線寬限過期 | → 明確錯誤畫面：Retry / Diagnostics / Exit（禁止靜默鎖死，見 G6.6） |
 | 地圖/機體 JSON 載入失敗 | → 錯誤明示 + 回退出廠預設（factory default）選項 |
@@ -405,7 +405,7 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 | G5.2 | Android OTG game 手把 | deferred，本版不驗收 | — |
 | G5.3 | iOS MFi / VirtualJoystick | deferred，本版不驗收 | — |
 | G5.4 | Ubuntu 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）≤ 40 ms；行動平台 deferred | DEV-M | UBUNTU |
-| G5.5 | 輸入映射匯出/匯入、斷線重連不丟設定（校準/映射跨 session 持久化，見範圍排除之界線釐清） | CI-A | SC |
+| G5.5 | 輸入映射匯出/匯入、斷線重連不丟設定（已確認固定映射＋schema version 跨 session 持久化，見範圍排除之界線釐清） | CI-A | SC |
 | G5.6 | **Channel Monitor 一等 UI**：固定映射四軸／按鍵的 live bar、raw、normalized、固定 deadzone 與按鍵狀態即時顯示，更新率 ≥ 30 Hz；自動檢核三項提示（油門低位、arm 映射、mode 映射）功能驗證 | GPU-A + DEV-M | SC |
 | G5.7 | **斷線 fail loud**：Ubuntu 飛行中拔除控制器 → 500 ms 內畫面警示 + 顯示重連狀態；重插後 ≤ 2 秒恢復輸入且映射不丟失（各 20 次） | DEV-M | UBUNTU |
 
@@ -422,8 +422,8 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 | G6.5 | Ubuntu 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件） | DEV-M | UBUNTU |
 | G6.6 | **授權伺服器**：註冊→簽發→JWT 驗證全流程可用；離線寬限期機制（斷網 ≤ 72 小時可玩）；伺服器不可達時明確提示而非靜默鎖死 | CI-A + DEV-M | SC |
 | G6.7 | 交付流程演練：從客戶名單到發送安裝檔+授權金鑰之 SOP 全程演練一次成功，含撤銷授權 | DEV-M | SC |
-| G6.8 | **診斷支援包（回應審查 H10）**：`Settings > Diagnostics > Export Support Bundle` 一鍵匯出——build hash、OS/GPU/裝置資訊、授權狀態、近期 log、控制器 raw 取樣、輸入映射與校準、最後錯誤；**自動化稽核：bundle 內 0 個 secrets / JWT / 個資（遮罩驗證）** | CI-A + DEV-M | SC |
-| G6.9 | **設定持久化表（回應審查 H9）**：Persistent（校準/映射/rates/OSD 配置/相機/觸控布局/語言/畫質）與 Volatile（本局 spawn/臨時風況/當場計時與遙測）逐項落地一致；settings schema 含 version；factory reset 可用；匯入失敗回退預設並明示 | CI-A | SC |
+| G6.8 | **診斷支援包（回應審查 H10）**：`Settings > Diagnostics > Export Support Bundle` 一鍵匯出——build hash、OS/GPU/裝置資訊、授權狀態、近期 log、控制器 raw 取樣、已確認固定映射（schema version、axis/button roles、deadzone；不含採樣校準資料）、最後錯誤；**自動化稽核：bundle 內 0 個 secrets / JWT / 個資（遮罩驗證）** | CI-A + DEV-M | SC |
+| G6.9 | **設定持久化表（回應審查 H9）**：Persistent（已確認固定映射與其 schema version、rates、OSD 配置、相機、語言、畫質）與 Volatile（本局 spawn/臨時風況/當場計時與遙測）逐項落地一致；settings schema 含 version；factory reset 可用；匯入失敗回退預設並明示 | CI-A | SC |
 
 ---
 
