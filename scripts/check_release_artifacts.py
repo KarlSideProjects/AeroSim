@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import zlib
 from zipfile import BadZipFile, ZipFile
 
 
@@ -43,7 +44,7 @@ CPYTHON_LIFECYCLE_RE = re.compile(
 )
 CPYTHON_EXECUTION_RE = re.compile(
     rb"(?<![A-Za-z0-9_])"
-    rb"(?:PyRun_[A-Za-z0-9_]+|PyImport_[A-Za-z0-9_]+|"
+    rb"(?:PyRun_[A-Za-z0-9_]{1,255}|PyImport_[A-Za-z0-9_]{1,255}|"
     rb"Py_BytesMain|Py_RunMain|Py_Main|"
     rb"PyEval_EvalCodeEx|PyEval_EvalCode)"
     rb"(?![A-Za-z0-9_])"
@@ -55,6 +56,39 @@ BASE_AVIARY_GROUND_EFFECT_RE = re.compile(
     rb"(?m)^[ \t]+def[ \t]+_groundEffect[ \t]*\("
 )
 BASE_AVIARY_DOWNWASH_RE = re.compile(rb"(?m)^[ \t]+def[ \t]+_downwash[ \t]*\(")
+MAX_NOTICE_BYTES = 1 * 1024**2
+MAX_NATIVE_BYTES = 256 * 1024**2
+MAX_TOTAL_UNCOMPRESSED_BYTES = 300 * 1024**2
+SCAN_CHUNK_BYTES = 1 * 1024**2
+SCAN_OVERLAP_BYTES = 4096
+
+
+def scan_native_payload(archive: ZipFile, name: str) -> tuple[bool, set[str]]:
+    evidence = set()
+    tail = b""
+    first_chunk = True
+    with archive.open(name) as stream:
+        while chunk := stream.read(SCAN_CHUNK_BYTES):
+            if first_chunk:
+                if not chunk.startswith(b"\x7fELF"):
+                    return False, evidence
+                first_chunk = False
+            window = tail + chunk
+            for marker, pattern in (
+                ("libpython", LIBPYTHON_RE),
+                ("lifecycle", CPYTHON_LIFECYCLE_RE),
+                ("execution", CPYTHON_EXECUTION_RE),
+                ("class", BASE_AVIARY_CLASS_RE),
+                ("drag", BASE_AVIARY_DRAG_RE),
+                ("ground_effect", BASE_AVIARY_GROUND_EFFECT_RE),
+                ("downwash", BASE_AVIARY_DOWNWASH_RE),
+            ):
+                if pattern.search(window):
+                    evidence.add(marker)
+            if ORACLE_CACHE_MARKER in window:
+                evidence.add("oracle_cache")
+            tail = window[-SCAN_OVERLAP_BYTES:]
+    return not first_chunk, evidence
 
 
 def required_notice_text() -> tuple[str, ...]:
@@ -78,7 +112,7 @@ def check_notice(path: Path) -> str | None:
             if archive.getinfo(notice_path).flag_bits & 1:
                 return f"{path}: encrypted release archive notice: {notice_path}"
             notice = archive.read(notice_path).decode("utf-8")
-    except (BadZipFile, UnicodeDecodeError) as error:
+    except (BadZipFile, UnicodeDecodeError, zlib.error) as error:
         return f"{path}: invalid release archive notice: {error}"
     except (NotImplementedError, OSError, RuntimeError) as error:
         return f"{path}: unreadable release archive notice: {error}"
@@ -98,36 +132,37 @@ def check_linux_release(path: Path) -> str | None:
             entries = set(names)
             if len(names) != len(entries):
                 return f"{path}: duplicate release archive entry"
+            if NOTICE_PATHS[path.name] not in entries:
+                return f"{path}: missing THIRD_PARTY_NOTICES.txt at {NOTICE_PATHS[path.name]}"
             if entries != LINUX_RELEASE_ENTRIES:
                 return f"{path}: unexpected release archive entries"
-            for info in archive.infolist():
+            infos = {info.filename: info for info in archive.infolist()}
+            if infos[NOTICE_PATHS[path.name]].file_size > MAX_NOTICE_BYTES:
+                return f"{path}: release archive notice exceeds 1 MB"
+            for name in LINUX_NATIVE_ENTRIES:
+                if infos[name].file_size > MAX_NATIVE_BYTES:
+                    return f"{path}: native payload exceeds 256 MB: {name}"
+            if sum(info.file_size for info in infos.values()) > MAX_TOTAL_UNCOMPRESSED_BYTES:
+                return f"{path}: release archive exceeds 300 MB uncompressed"
+            for info in infos.values():
                 if info.flag_bits & 1:
                     return f"{path}: encrypted release archive entry: {info.filename}"
-            native_payloads = tuple(archive.read(name) for name in LINUX_NATIVE_ENTRIES)
-            for name, payload in zip(LINUX_NATIVE_ENTRIES, native_payloads):
-                if not payload.startswith(b"\x7fELF"):
+            evidence = set()
+            for name in LINUX_NATIVE_ENTRIES:
+                is_elf, payload_evidence = scan_native_payload(archive, name)
+                if not is_elf:
                     return f"{path}: native payload is not ELF: {name}"
-            if any(LIBPYTHON_RE.search(payload) for payload in native_payloads):
+                evidence.update(payload_evidence)
+            if "libpython" in evidence:
                 return f"{path}: libpython runtime dependency marker in native payload"
-            if (
-                any(CPYTHON_LIFECYCLE_RE.search(payload) for payload in native_payloads)
-                and any(CPYTHON_EXECUTION_RE.search(payload) for payload in native_payloads)
-            ):
+            if {"lifecycle", "execution"} <= evidence:
                 return f"{path}: CPython lifecycle and execution markers in native payloads"
-            if any(ORACLE_CACHE_MARKER in payload for payload in native_payloads):
+            if "oracle_cache" in evidence:
                 return f"{path}: Oracle cache path marker in native payload"
-            if all(
-                any(marker.search(payload) for payload in native_payloads)
-                for marker in (
-                    BASE_AVIARY_CLASS_RE,
-                    BASE_AVIARY_DRAG_RE,
-                    BASE_AVIARY_GROUND_EFFECT_RE,
-                    BASE_AVIARY_DOWNWASH_RE,
-                )
-            ):
+            if {"class", "drag", "ground_effect", "downwash"} <= evidence:
                 return f"{path}: BaseAviary source markers in native payloads"
-    except BadZipFile as error:
-        return f"{path}: invalid release archive: {error}"
+    except (BadZipFile, zlib.error) as error:
+        return f"{path}: invalid release archive entry (corrupt or malformed): {error}"
     except (NotImplementedError, OSError, RuntimeError) as error:
         return f"{path}: unreadable release archive entry: {error}"
     return None
@@ -155,13 +190,19 @@ def main() -> int:
                 file=sys.stderr,
             )
             ok = False
-        notice_error = check_notice(path)
-        if notice_error:
-            print(notice_error, file=sys.stderr)
-            ok = False
-        linux_error = check_linux_release(path)
-        if linux_error:
-            print(linux_error, file=sys.stderr)
+            continue
+        try:
+            linux_error = check_linux_release(path)
+            if linux_error:
+                print(linux_error, file=sys.stderr)
+                ok = False
+                continue
+            notice_error = check_notice(path)
+            if notice_error:
+                print(notice_error, file=sys.stderr)
+                ok = False
+        except MemoryError:
+            print(f"{path}: resource limit exceeded while checking artifact", file=sys.stderr)
             ok = False
 
     return 0 if ok else 1

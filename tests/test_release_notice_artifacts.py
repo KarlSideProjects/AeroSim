@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Intent: Tier 1 release archives carry the generated third-party notice."""
+"""Intent: release notices ship, and Ubuntu artifacts exclude Python runtime evidence."""
 
 from pathlib import Path
 import json
+import resource
 import subprocess
 import sys
 import tempfile
@@ -20,7 +21,7 @@ LINUX_EXTENSION = "AeroSim-linux/libaerosim_native.linux.template_release.x86_64
 LINUX_NOTICE = "AeroSim-linux/THIRD_PARTY_NOTICES.txt"
 
 
-class ReleaseNoticeArtifactsTest(unittest.TestCase):
+class ReleaseArtifactTestCase(unittest.TestCase):
     def generated_notice(self, directory: Path) -> str:
         notice_path = directory / "THIRD_PARTY_NOTICES.txt"
         result = subprocess.run(
@@ -71,24 +72,55 @@ class ReleaseNoticeArtifactsTest(unittest.TestCase):
             data[header + offset : header + offset + 2] = compression.to_bytes(2, "little")
         path.write_bytes(data)
 
-    def check(self, artifact: Path):
+    def set_central_file_size(self, path: Path, entry: str, size: int):
+        data = bytearray(path.read_bytes())
+        offset = 0
+        while True:
+            header = data.find(b"PK\x01\x02", offset)
+            self.assertNotEqual(header, -1, entry)
+            name_length = int.from_bytes(data[header + 28 : header + 30], "little")
+            name = bytes(data[header + 46 : header + 46 + name_length]).decode()
+            if name == entry:
+                data[header + 24 : header + 28] = size.to_bytes(4, "little")
+                path.write_bytes(data)
+                return
+            offset = header + 46 + name_length
+
+    def corrupt_deflated_entry(self, path: Path, entry: str):
+        with ZipFile(path) as archive:
+            info = archive.getinfo(entry)
+        data = bytearray(path.read_bytes())
+        header = info.header_offset
+        name_length = int.from_bytes(data[header + 26 : header + 28], "little")
+        extra_length = int.from_bytes(data[header + 28 : header + 30], "little")
+        payload = header + 30 + name_length + extra_length
+        data[payload] ^= 0xFF
+        path.write_bytes(data)
+
+    def check(self, artifact: Path, *args: str, memory_limit_mb: int | None = None):
+        preexec_fn = None
+        if memory_limit_mb is not None:
+            limit = memory_limit_mb * 1024 * 1024
+            preexec_fn = lambda: resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
         return subprocess.run(
-            [sys.executable, str(ARTIFACT_CHECK), str(artifact)],
+            [sys.executable, str(ARTIFACT_CHECK), *args, str(artifact)],
             cwd=ROOT,
             capture_output=True,
             text=True,
             check=False,
+            preexec_fn=preexec_fn,
         )
 
-    def test_checker_rejects_archive_without_notice(self):
+    def assert_checker_accepts_notice_path(self, filename: str, notice_path: str):
         with tempfile.TemporaryDirectory() as directory:
-            artifact = Path(directory) / "AeroSim-linux.zip"
-            self.write_archive(artifact, None)
+            notice = self.generated_notice(Path(directory))
+            artifact = Path(directory) / filename
+            self.write_archive(artifact, notice_path, notice)
             result = self.check(artifact)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("missing THIRD_PARTY_NOTICES.txt", result.stderr)
 
+class ReleaseNoticeArtifactsTest(ReleaseArtifactTestCase):
     def test_checker_rejects_production_android_archive_without_notice(self):
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "AeroSim-android-production.apk"
@@ -111,6 +143,17 @@ class ReleaseNoticeArtifactsTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("THIRD_PARTY_NOTICES.txt missing required text", result.stderr)
 
+
+class UbuntuReleaseArtifactAuditTest(ReleaseArtifactTestCase):
+    def test_checker_rejects_archive_without_notice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "AeroSim-linux.zip"
+            self.write_archive(artifact, None)
+            result = self.check(artifact)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("missing THIRD_PARTY_NOTICES.txt", result.stderr)
+
     def test_checker_rejects_notice_missing_mit_warranty(self):
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         entry = next(item for item in manifest["dependencies"] if item["name"] == "gym-pybullet-drones")
@@ -121,19 +164,11 @@ class ReleaseNoticeArtifactsTest(unittest.TestCase):
         ))
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "AeroSim-linux.zip"
-            self.write_archive(artifact, "AeroSim-linux/THIRD_PARTY_NOTICES.txt", truncated_notice)
+            self.write_linux_archive(artifact, truncated_notice)
             result = self.check(artifact)
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("THIRD_PARTY_NOTICES.txt missing required text", result.stderr)
-
-    def assert_checker_accepts_notice_path(self, filename: str, notice_path: str):
-        with tempfile.TemporaryDirectory() as directory:
-            notice = self.generated_notice(Path(directory))
-            artifact = Path(directory) / filename
-            self.write_archive(artifact, notice_path, notice)
-            result = self.check(artifact)
-        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_checker_accepts_linux_notice_path(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -142,6 +177,101 @@ class ReleaseNoticeArtifactsTest(unittest.TestCase):
             self.write_linux_archive(artifact, notice)
             result = self.check(artifact)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_checker_short_circuits_oversized_archive_before_opening_zip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "AeroSim-linux.zip"
+            artifact.write_bytes(b"not a ZIP archive")
+            result = self.check(artifact, "--max-mb", "0")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("artifact too large", result.stderr)
+        self.assertNotIn("release archive", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_checker_rejects_notice_zip_bomb_before_decompression(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base_notice = self.generated_notice(Path(directory)).encode()
+            notice = base_notice + b"x" * (128 * 1024 * 1024 - len(base_notice))
+            artifact = Path(directory) / "AeroSim-linux.zip"
+            self.write_linux_archive(artifact, notice)
+            self.assertLess(artifact.stat().st_size, 1024 * 1024)
+            result = self.check(artifact, memory_limit_mb=96)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("notice exceeds 1 MB", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_checker_accepts_notice_at_one_megabyte_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base_notice = self.generated_notice(Path(directory)).encode()
+            notice = base_notice + b"x" * (1024 * 1024 - len(base_notice))
+            artifact = Path(directory) / "AeroSim-linux.zip"
+            self.write_linux_archive(artifact, notice)
+            result = self.check(artifact)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_checker_rejects_oversized_native_metadata_before_decompression(self):
+        with tempfile.TemporaryDirectory() as directory:
+            notice = self.generated_notice(Path(directory))
+            artifact = Path(directory) / "AeroSim-linux.zip"
+            self.write_linux_archive(artifact, notice)
+            self.set_central_file_size(artifact, LINUX_EXECUTABLE, 256 * 1024**2 + 1)
+            result = self.check(artifact, memory_limit_mb=96)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("native payload exceeds 256 MB", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_checker_rejects_oversized_total_metadata_before_decompression(self):
+        with tempfile.TemporaryDirectory() as directory:
+            notice = self.generated_notice(Path(directory))
+            artifact = Path(directory) / "AeroSim-linux.zip"
+            self.write_linux_archive(artifact, notice)
+            self.set_central_file_size(artifact, LINUX_EXECUTABLE, 200 * 1024**2)
+            self.set_central_file_size(artifact, LINUX_EXTENSION, 101 * 1024**2)
+            result = self.check(artifact, memory_limit_mb=96)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("release archive exceeds 300 MB uncompressed", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_checker_streams_large_native_payload_with_bounded_memory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            notice = self.generated_notice(Path(directory))
+            executable = b"\x7fELF" + b"\x00" * (128 * 1024**2 - 4)
+            artifact = Path(directory) / "AeroSim-linux.zip"
+            self.write_linux_archive(artifact, notice, executable=executable)
+            self.assertLess(artifact.stat().st_size, 1024 * 1024)
+            result = self.check(artifact, memory_limit_mb=96)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_checker_finds_runtime_marker_split_across_scan_chunks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            notice = self.generated_notice(Path(directory))
+            marker = b"libpython3.11.so.1.0\x00"
+            prefix = b"\x7fELF" + b"\x00" * (1024**2 - 4 - 1 - 5) + b"\x00"
+            artifact = Path(directory) / "AeroSim-linux.zip"
+            self.write_linux_archive(artifact, notice, executable=prefix + marker)
+            result = self.check(artifact)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("libpython runtime dependency marker", result.stderr)
+
+    def test_checker_rejects_deflated_corruption_without_zlib_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            notice = self.generated_notice(Path(directory))
+            executable = b"\x7fELF" + bytes(range(256)) * 1024
+            artifact = Path(directory) / "AeroSim-linux.zip"
+            self.write_linux_archive(artifact, notice, executable=executable)
+            self.corrupt_deflated_entry(artifact, LINUX_EXECUTABLE)
+            result = self.check(artifact)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid release archive entry (corrupt or malformed)", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_checker_rejects_extra_linux_entry_to_keep_python_out_of_release(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -214,10 +344,14 @@ class ReleaseNoticeArtifactsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             notice = self.generated_notice(Path(directory))
             artifact = Path(directory) / "AeroSim-linux.zip"
-            self.write_linux_archive(artifact, notice, compression=ZIP_STORED)
-            damaged = artifact.read_bytes().replace(
-                b"\x7fELF executable", b"\x7fELF executablE", 1
+            executable = b"\x7fELF" + b"a" * (1024**2) + b"crc-tail"
+            self.write_linux_archive(
+                artifact,
+                notice,
+                executable=executable,
+                compression=ZIP_STORED,
             )
+            damaged = artifact.read_bytes().replace(b"crc-tail", b"crc-fail", 1)
             self.assertNotEqual(damaged, artifact.read_bytes())
             artifact.write_bytes(damaged)
             result = self.check(artifact)
@@ -443,6 +577,8 @@ class ReleaseNoticeArtifactsTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+
+class DeferredReleaseNoticeArtifactsTest(ReleaseArtifactTestCase):
     def test_checker_accepts_deferred_windows_and_android_notice_paths(self):
         archive_paths = {
             "AeroSim-windows.zip": "AeroSim-windows/THIRD_PARTY_NOTICES.txt",

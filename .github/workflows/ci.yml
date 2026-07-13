@@ -133,28 +133,7 @@ jobs:
         run: scripts/test_license_scan.sh
 
       - name: Ubuntu release artifact audit unit test
-        run: |
-          python3 -m unittest \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_archive_without_notice \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_notice_missing_mit_warranty \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_accepts_linux_notice_path \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_extra_linux_entry_to_keep_python_out_of_release \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_missing_linux_native_entry_instead_of_partial_scan \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_duplicate_linux_entry_because_shape_must_be_unambiguous \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_non_elf_native_payloads_before_runtime_scan \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_truncated_linux_zip_without_a_traceback \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_crc_corruption_in_native_payload \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_encrypted_native_payload_without_password_fallback \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_encrypted_notice_without_password_fallback \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_unreadable_native_payload_without_skipping_it \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_unreadable_notice_without_skipping_it \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_libpython_sonames_in_native_payloads \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_cpython_lifecycle_and_execution_evidence \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_oracle_cache_path_in_native_payload \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_rejects_complete_base_aviary_source_across_native_payloads \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_accepts_isolated_cpython_markers_and_boundary_lookalikes \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_accepts_partial_base_aviary_source_evidence \
-            tests.test_release_notice_artifacts.ReleaseNoticeArtifactsTest.test_checker_accepts_python_names_in_notice_and_native_provenance
+        run: python3 -m unittest tests.test_release_notice_artifacts.UbuntuReleaseArtifactAuditTest
 
       - name: Delivery drill test
         run: scripts/test_delivery_drill.sh
