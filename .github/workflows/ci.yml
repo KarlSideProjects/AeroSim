@@ -84,6 +84,9 @@ jobs:
       - name: Delivery drill test
         run: scripts/test_delivery_drill.sh
 
+      - name: Android CI isolation test
+        run: python3 tests/test_android_ci_isolation.py
+
       - name: License server API test
         run: python3 -m unittest license_server.test_license_server
 
@@ -465,7 +468,7 @@ jobs:
               java_home="$(dirname "$(dirname "$(readlink -f "$keytool_path")")")"
             fi
           fi
-          if [ -z "$java_home" ] || [ ! -d "$java_home" ]; then
+          if [ -z "$java_home" ] || [ ! -d "$java_home" ] || [ ! -x "$java_home/bin/java" ]; then
             echo "::error::Missing JAVA_HOME for Android production export"
             exit 1
           fi

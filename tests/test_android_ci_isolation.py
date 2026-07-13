@@ -33,6 +33,7 @@ class AndroidCiIsolationTest(unittest.TestCase):
         linux_job = workflow.split("  linux:\n", 1)[1].split("  windows:\n", 1)[0]
 
         self.assertIn("run: scripts/test_delivery_drill.sh", linux_job)
+        self.assertIn("run: python3 tests/test_android_ci_isolation.py", linux_job)
 
     def test_production_keystore_cleanup_is_armed_before_decode(self):
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
@@ -57,9 +58,24 @@ class AndroidCiIsolationTest(unittest.TestCase):
 
         self.assertIn('JAVA_HOME="$java_home"', production_step)
         self.assertIn('ANDROID_RELEASE_CERT_SHA256', production_step)
+        self.assertIn('keytool_path="$(command -v keytool || true)"', production_step)
+        self.assertIn('readlink -f "$keytool_path"', production_step)
+        self.assertIn('[ ! -x "$java_home/bin/java" ]', production_step)
+        self.assertIn(
+            'AEROSIM_ANDROID_EXPECTED_CERT_SHA256="$ANDROID_RELEASE_CERT_SHA256"',
+            production_step,
+        )
         self.assertIn(
             'Missing Android production certificate fingerprint variable',
             production_step,
+        )
+        self.assertLess(
+            production_step.index("Missing Android production certificate fingerprint variable"),
+            production_step.index("base64 --decode"),
+        )
+        self.assertLess(
+            production_step.index('JAVA_HOME="$java_home"'),
+            production_step.index("scripts/export_android_release.sh"),
         )
 
 
