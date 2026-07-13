@@ -3,12 +3,13 @@
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v3.5（外部物理來源採 Formula Port + offline Oracle 治理；Tier 1 runtime 權威與既有驗收門檻不變） |
+| 版本 | v3.6（收斂為 Ubuntu Linux x86_64 優先交付；其他平台延後，不阻擋 Ubuntu 發行） |
 | 文件狀態 | 待核准 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
+- v3.6（2026-07-13）：**Ubuntu-first 交付範圍**——目前只承諾 Ubuntu Linux x86_64 可安裝、啟動與遊玩；Windows、macOS、Android、iOS 改列為延後平台，不再阻擋本版開發、驗收或發行。G6 發行驗收收斂至 Ubuntu。
 - v3.5（2026-07-13）：**外部物理來源治理正式化**——依 `docs/decisions/2026-07-13-external-physics-source-governance.md`，將既有 A3–A5 Formula Port 與 Python Oracle 架構明文化：AeroSim C++ fixed-step core + Godot/Jolt 為唯一 Tier 1 runtime state 與 collision authority；外部 simulator 僅得作檔案級公式來源與固定版本、可離線開發／測試 Oracle。既有門檻數字完全不變，且本次不創造任何新數值 gate。
 - v3.4（2026-07-12）：**Xbox Default Profile**——固定映射確認取代八步校準精靈；移除端點/中心/RMS 採樣合約與反向注入測試（需求範圍縮減，比照 G2.8 豁免先例，非靜默下修）；保留固定 deadzone、Arm/Mode 去抖 ≤50ms、油門低位前置、unknown 裝置擋下。G4B.3／G4B.UI1／G4B.UI2／G5.6 措辭連動，時間/頻率門檻數值不變。驅動因素與風險註記詳 `docs/decisions/2026-07-12-xbox-default-profile.md`。
 - v3.3（2026-07-11）：輸入裝置定位改為一般 game 手把；移除 RadioMaster／FrSky、RadioProfile 與 16 通道門檻。Controller Setup、Channel Monitor 與實機閘門改以 Xbox 360 相容手把的可用軸與按鍵為準；鍵盤僅為 fallback。驅動因素（無 RC 實機＋產品即以手把為目標）與「裝置定義調整、非門檻下修」裁定詳 `docs/decisions/2026-07-11-standard-gamepad-input.md`。
@@ -23,6 +24,12 @@
 以下**不列入**本產品需求：玩家進度/成就存檔、訓練課程系統、自動更新/回滾/簽章驗證、線上幽靈/排行榜/UGC 分享。
 
 **界線釐清**：「不做存檔」指玩家進度資料。**裝置與設定持久化（控制器映射確認、rates、觸控布局、OSD preset 選擇）屬系統設定，必須跨 session 保留**——否則 G4B.UI1（已確認 ≤30 秒）、G5.5、G4B.7 無法成立。單場飛行內的暫態（當場 spawn 點、當場風況選擇）為 volatile，不持久化。
+
+### 目前交付範圍（Ubuntu-first）
+
+本版本唯一承諾的平台是 **Ubuntu Linux x86_64**。完成定義只有：在 Ubuntu 上能建置、啟動、使用 Xbox 360 相容 game 手把進入 Quick Fly、起飛、暫停、重置、退出，並可交付給客戶安裝遊玩。
+
+Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，但不屬於本版本交付物，也不阻擋 Ubuntu 的 Gate、CI、驗收或發行；相關平台 Gate 一律視為 deferred，不得把 build-only 或 N/A 寫成通過。
 
 ---
 
@@ -41,9 +48,9 @@
 
 | 層級 | 平台 | 飛控 | 授權狀態 |
 |---|---|---|---|
-| **Tier 1 基礎版（本 PRD 主體）** | Win / macOS / Linux / Android /（iOS 待決策，見 1.4） | 自研高頻 PID 飛控（C++ GDExtension） | 全 MIT/BSD，完全閉源 |
-| **Tier 2 專業模組（桌面限定）** | Win / macOS / Linux | Betaflight SITL 獨立行程橋接 | GPL-3.0，隔離發布，**須法務核准** |
-| **Tier 3 工業選配（後期評估）** | Win / Linux | PX4 SIH | BSD 3-Clause |
+| **Tier 1 基礎版（本 PRD 主體）** | Ubuntu Linux x86_64 | 自研高頻 PID 飛控（C++ GDExtension） | 全 MIT/BSD，完全閉源 |
+| **Tier 2 專業模組（延後）** | Ubuntu Linux x86_64 | Betaflight SITL 獨立行程橋接 | GPL-3.0，隔離發布，**須法務核准** |
+| **Tier 3 工業選配（後期評估）** | Ubuntu Linux x86_64 | PX4 SIH | BSD 3-Clause |
 
 ### 1.4 發布通道（Release Lanes）— 取代單一全平台閘門
 
@@ -51,11 +58,9 @@
 
 | Lane | 發行方式 | 狀態 |
 |---|---|---|
-| Windows GA（WIN） | 直接提供安裝檔 + 自建授權伺服器啟用（可複用既有 FastAPI 授權架構：註冊 → 簽發 → JWT 驗證） | 主線 |
-| macOS / Linux GA（MAC, LIN） | 同上；**控制器實機閘門（G5.1）須逐 OS 通過，任一 OS 未過僅凍結該 OS Lane**，不得以「Desktop」名義隱含通過 | 主線（可獨立延後） |
-| Android build-only | 保留 APK export/artifact 與大小檢查；沒有實機驗收，不得宣稱可發行 | **not verified** |
-| iOS | **待商業決策**：私下發行僅有 Ad Hoc（100 台裝置/年）、TestFlight（≤1 萬人，仍須 Apple 審查）兩條路；Enterprise Program 僅限發給自家員工，發給外部客戶違反協議 | 凍結，Phase 0 後決策 |
-| Tier 2 桌面模組 | 隨 Desktop Lane，獨立安裝包 | 附屬 |
+| Ubuntu Linux GA（UBUNTU） | 直接提供 Ubuntu 安裝包 + 自建授權伺服器啟用（可複用既有 FastAPI 授權架構：註冊 → 簽發 → JWT 驗證） | 主線 |
+| Windows / macOS / Android / iOS | 未來平台；本版本不建置交付物、不做平台實機驗收 | deferred |
+| Tier 2 桌面模組 | 隨 Ubuntu Lane，獨立安裝包；另案啟用 | 延後 |
 
 > **剛性約束 C-1**：iOS 禁止 spawn subprocess，任何 GPL 韌體嵌入即構成傳染。Tier 2 / Tier 3 永久禁止進入 iOS / Android。
 > **剛性約束 C-2**：Tier 1 依賴授權不屬 MIT/BSD/Zlib/Apache-2.0/公有領域者不得合入；CI 授權掃描違規即 build fail。
@@ -281,6 +286,7 @@
 | LEG（法務/授權審查） | 法務書面核准 | 核准函 |
 
    可自動化者**必須**自動化（CI-A/GPU-A）；不可自動化者必須依協定留存證據與簽核。
+   `deferred` 代表不納入本版本驗收，未來若要支援該平台須另行改版啟用；不視為通過。
 3. **阻擋範圍（Blocking scope）**：每個 Gate 標註 SC（shared core，阻擋所有 Lane）或平台代號（僅阻擋該 Lane）。任一 SC Gate 未過，所有 Lane 停止進入下一 Phase；平台 Gate 未過僅凍結該 Lane。
 4. **Phase 0 特例**：Phase 0 是 Spike，其結論**允許**重定平台範圍與 Profile 歸屬（例如將某效應移出 Mobile Base），但既定 Profile 內的門檻數值不得修改；重定範圍須全體核准人簽字並記入變更紀錄。Phase 1 起無此特例。
 5. 豁免程序（預期使用次數為零）：書面技術論證 + 兩名外部飛手/工程師背書 + 全體核准人簽字。
@@ -291,24 +297,24 @@
 
 ### Phase 0 — 技術可行性驗證（Spike）
 
-**目標**：證明 Godot 4.7 + Jolt + C++ GDExtension 撐得起各 Profile，並凍結 iOS Lane 決策。
+**目標**：證明 Godot 4.7 + Jolt + C++ GDExtension 在 Ubuntu Linux x86_64 撐得起目前交付 Profile；其他平台不屬於本版驗收。
 
-**目前環境執行註記（2026-07-10）**：桌面實機驗收以本機 Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX with Radeon Graphics、NVIDIA GeForce RTX 4060 Ti 為唯一基準。Android 與 iOS 是 build-only 車道：保留 export/build smoke、native tests、replay、資產與 renderer/profile 檢查；Android 保留 APK artifact/大小檢查，iOS 實際 Xcode build smoke 在有 macOS/Xcode runner 前為 **not verified**。沒有行動實機時，P99/FPS/Perfetto、OTG、MFi/VirtualJoystick、錄影、安裝、溫度、high-speed latency 與 crash-free 均為 **N/A**，不得標示為通過；這不豁免桌面或 shared-core 的數值、DEV-M、USR、LEG 門檻。
+**目前環境執行註記（2026-07-10）**：桌面實機驗收以本機 Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX with Radeon Graphics、NVIDIA GeForce RTX 4060 Ti 為唯一基準。Windows、macOS、Android 與 iOS 本版不做 build-only 或實機驗收；未來若重新列入範圍，須另行建立平台 Gate 與驗收環境。
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
 | G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms（凍結本機：Ubuntu 26.04、Ryzen 9 7945HX、RTX 4060 Ti） | GPU-A | SC |
-| G0.2 | Mobile High 與 Mobile Base 兩 profile 於基準行動裝置：物理 P99 ≤ 5 ms 且整體 ≥ 60 FPS（量測定義同 G0.1；以 Perfetto 拆解物理/渲染占比）。目前無實機：**N/A，非 pass**；保留 build-only 檢查 | DEV-M→GPU-A | AND, iOS |
+| G0.2 | Mobile High 與 Mobile Base | deferred，本版不驗收 | — |
 | G0.3 | 1000/500 Hz 子步進下四元數積分 10 分鐘無 NaN、範數漂移 < 1e-6 | CI-A | SC |
-| G0.4 | 桌面/行動雙渲染管線同場景資產打通 | GPU-A | SC |
-| G0.5 | Xbox 360 相容 USB game 手把於 Ubuntu desktop 識別必要的類比軸與按鍵；Android OTG 目前 **N/A，非 pass** | DEV-M | LIN, AND |
-| G0.6a | **共用核心決定性**：GDExtension 於 Win / Linux / Android（主線 Lane 平台）建置皆過同一組單元測試——同平台重播 bitwise 一致；跨平台物理量容忍：60 秒標準機動終端姿態差 ≤ 0.5°、位置差 ≤ 5 cm（統一 `-ffp-contract=off` 等旗標） | CI-A | SC |
-| G0.6b | **逐 Lane 建置 smoke**：macOS 建置 + 同組測試（僅擋 MAC Lane）；iOS 建置 + 同組測試（僅擋 IOS Lane；目前無 macOS/Xcode runner，為 **not verified**） | CI-A | MAC / IOS |
+| G0.4 | Ubuntu 桌面渲染管線與場景資產打通 | GPU-A | SC |
+| G0.5 | Xbox 360 相容 USB game 手把於 Ubuntu desktop 識別必要的類比軸與按鍵 | DEV-M | UBUNTU |
+| G0.6a | **Ubuntu 核心決定性**：GDExtension 於 Ubuntu Linux 建置通過同一組單元測試，同平台重播 bitwise 一致；統一 `-ffp-contract=off` 等旗標 | CI-A | SC |
+| G0.6b | Windows / macOS / Android / iOS 平台建置 smoke | deferred，本版不驗收 | — |
 | G0.7 | Linux headless 可無視窗執行完整物理模擬並輸出數據 | CI-A | SC |
 | G0.8 | **碰撞權威切換**（回應 High 6）：四場景各 100 次隨機化重複——(a) 30 m/s 正撞牆、(b) 5° 掠角擦地、(c) 撞桿反彈、(d) 翻滾觸地後恢復。全數：無 NaN、速度/角速度有限、動能不增加（restitution 容忍 +1%）、交接後 0.5 秒內飛控可重新響應輸入、同種子重播結果一致 | CI-A | SC |
-| G0.9 | **Fidelity 等價**：Mobile Base vs Desktop Full 同輸入序列（60 秒標準機動）姿態軌跡 RMSE ≤ 1.5°、位置 RMSE ≤ 15 cm（**僅擋行動 Lane**；Desktop 主線不受此 Gate 阻擋） | CI-A | AND, IOS |
-| G0.P | **可玩垂直切片（Playable Slice，回應審查 C2）**：冷啟動 → 主選單 → Quick Fly → 預設機/預設圖（佔位美術可）→ spawn → 油門低位 → arm → 起飛 → pause → reset → exit 全流程可走通，於本機 Ubuntu desktop 以維護者操作、輸入 log + build hash 驗收；Android 實機部分目前 **N/A，非 pass**。**本 Gate 只驗操作性，不驗手感**（PID 粗調可）；此 Gate 未過，Phase 1 之後的深度物理工作不得超過團隊工時 20% | DEV-M | SC |
-| G0.10 | iOS Lane 決策文件：Ad Hoc / TestFlight 路線之裝置數、審查風險、成本評估，做出 Go/No-Go 並簽核 | LEG | IOS |
+| G0.9 | Mobile Base vs Desktop Full fidelity 等價 | deferred，本版不驗收 | — |
+| G0.P | **可玩垂直切片（Playable Slice，回應審查 C2）**：冷啟動 → 主選單 → Quick Fly → 預設機/預設圖（佔位美術可）→ spawn → 油門低位 → arm → 起飛 → pause → reset → exit 全流程可走通，於本機 Ubuntu desktop 以維護者操作、輸入 log + build hash 驗收。**本 Gate 只驗操作性，不驗手感**（PID 粗調可）；此 Gate 未過，Phase 1 之後的深度物理工作不得超過團隊工時 20% | DEV-M | SC |
+| G0.10 | iOS Lane 決策文件 | deferred，本版不驗收 | — |
 
 ---
 
@@ -356,7 +362,7 @@
 | G3.4 | **Dryden（determinism 修正版）**：固定 seed、Welch 法（段長 2¹⁴、50% overlap、Hann 窗）估 PSD，0.1–10 rad/s 各 bin 與理論譜偏差 ≤ 10%（95% 信賴區間內），輕/中/重三檔；同 seed 重跑 bitwise 一致 | CI-A | SC |
 | G3.5 | 風切剖面 vs 軍規模型逐點 ≤ 5% | CI-A | SC |
 | G3.6 | Propwash 雙軌：(a) 機制測試——split-S 出彎擾動注入、強度與油門相關係數 ≥ 0.8、關閉時為 0；(b) **實測殘差**——重播 G1.10 之 propwash 動作 blackbox，擾動頻段（10–80 Hz）陀螺儀 PSD 能量比真機對應值落於 0.5–2.0 倍區間 | CI-A | SC |
-| G3.7 | **效能預算（修正版）**：全效應開啟後，本機 Ubuntu 桌面物理 P99 相對 G0 基線增幅 ≤ 20%，且絕對值仍 ≤ 3 ms；行動各 profile 的 5 ms 實機條件目前 **N/A，非 pass** | GPU-A / DEV-M | DESK |
+| G3.7 | **效能預算（修正版）**：全效應開啟後，本機 Ubuntu 桌面物理 P99 相對 G0 基線增幅 ≤ 20%，且絕對值仍 ≤ 3 ms | GPU-A / DEV-M | UBUNTU |
 | G3.8 | 氣象盲測：飛手盲判無風/中紊流/強陣風，正確率 ≥ 80% | USR | SC |
 
 ---
@@ -365,8 +371,8 @@
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G4.1 | 本機 Ubuntu 桌面（Ryzen 9 7945HX + RTX 4060 Ti）完整場景全效果 1080p ≥ 120 FPS（P99 ≥ 90） | GPU-A | DESK |
-| G4.2 | 行動基準機同場景 ≥ 60 FPS（P99 ≥ 45），30 分鐘熱節流後 ≥ 50 FPS；目前無實機：**N/A，非 pass** | DEV-M | AND, IOS |
+| G4.1 | 本機 Ubuntu 桌面（Ryzen 9 7945HX + RTX 4060 Ti）完整場景全效果 1080p ≥ 120 FPS（P99 ≥ 90） | GPU-A | UBUNTU |
+| G4.2 | 行動基準機效能 | deferred，本版不驗收 | — |
 | G4.3 | **分期**：切片階段 ≥1 張 Free Flight 地圖 + reset-to-spawn + exit；**GA 前 ≥3 張完整地圖**（含 ≥1 條 Time Trial 路線：checkpoint 方向箭頭 + finish panel `Retry / Change Map / Exit`）+ 計時/檢查點/重生 QA 清單 100%；地圖卡含 3.5.4 規定資訊；場內方向指示可用 | DEV-M | SC |
 | G4.4 | FPV 攝影機：uptilt/FOV/OSD；桌面含類比雜訊濾鏡 | GPU-A | SC |
 | G4.5 | 雙渲染管線資產同源，人工分支 0 | CI-A | SC |
@@ -375,17 +381,17 @@
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G4B.1 | 首次啟動至起飛 ≤ 90 秒（行動觸控 ≤ 60 秒），未接觸過產品之 FPV 玩家 ≥ 10 人，P90 | USR | SC |
+| G4B.1 | Ubuntu 首次啟動至起飛 ≤ 90 秒，未接觸過產品之 FPV 玩家 ≥ 10 人，P90 | USR | UBUNTU |
 | G4B.2 | 墜機→重飛 ≤ 1.5 秒（P99，重生鍵至油門可輸入） | GPU-A | SC |
-| G4B.3 | 確認流程無協助完成率 ≥ 90% | USR | DESK, AND |
-| G4B.4 | SUS ≥ 75（≥10 人，含 ≥3 行動端） | USR | SC |
+| G4B.3 | 確認流程無協助完成率 ≥ 90% | USR | UBUNTU |
+| G4B.4 | Ubuntu SUS ≥ 75（≥10 人） | USR | UBUNTU |
 | G4B.5 | 選單深度 ≤ 3 層，自動遍歷驗證 | CI-A | SC |
 | G4B.6 | Rates 介面與 Betaflight 曲線公式一致、即時預覽、JSON 與 Betaflight diff 可逐項核對；**PID/濾波顯示 sim profile 免責提示**（3.5.1 原則 2） | GPU-A | SC |
-| G4B.7 | 觸控布局可自訂持久化，誤觸率 ≤ 1%/分鐘 | USR | AND, IOS |
+| G4B.7 | 觸控布局可自訂持久化，誤觸率 ≤ 1%/分鐘 | deferred，本版不驗收 | — |
 | G4B.8 | 本地化 zh-TW/en 覆蓋 100%、0 硬編碼字串（CI）；**UI 截斷/溢出稽核於 GPU runner 截圖比對**（headless 不得宣稱涵蓋此項） | CI-A + GPU-A | SC |
 | G4B.9 | UI 動效以 offset transforms 實作、layout 不變（自動斷言）、不阻塞輸入 > 100 ms | GPU-A | SC |
 | G4B.UI1 | **First Fly Flow**：未看說明書之 FPV 玩家——已確認手把 ≤ 30 秒起飛、未確認 ≤ 90 秒（含完成確認流程）；無控制器時提示與 fallback 可用（樣本 ≥ 10 人，P90） | USR | SC |
-| G4B.UI2 | **Controller 確認流程（v3.4）**：Xbox 360 相容手把（`is_joy_known`）完成固定映射確認即飛；確認畫面顯示四軸即時值；**unknown 裝置 100% 擋下並提示 fallback**（注入測試） | DEV-M | DESK, AND |
+| G4B.UI2 | **Controller 確認流程（v3.4）**：Ubuntu 上 Xbox 360 相容手把（`is_joy_known`）完成固定映射確認即飛；確認畫面顯示四軸即時值；**unknown 裝置 100% 擋下並提示 fallback**（注入測試） | DEV-M | UBUNTU |
 | G4B.UI3 | **Pause Overlay**：固定項全數存在；rates/camera/OSD 修改即時生效不重載（自動斷言）；Reset 至可輸入 ≤ 1.5 秒（P99） | GPU-A | SC |
 | G4B.UI4 | **OSD Presets**：三 preset 於 1080p 與行動橫向、zh-TW/en 四組合下，主飛行視野遮擋率 ≤ 8%，警告訊息不遮擋畫面中央 1/3（自動截圖幾何稽核） | GPU-A | SC |
 | G4B.UI5 | **選擇流程**：Quick Fly 一鍵進預設場；選機/選圖/選模式/選風況/起飛於單層畫面完成，全流程確認次數 ≤ 3 | GPU-A + USR | SC |
@@ -397,13 +403,13 @@
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G5.1 | **逐 OS 控制器閘門**：Windows / macOS / Linux 各自以 Xbox 360 相容 game 手把完成四軸與 Arm／Mode 按鍵映射、反向、端點校準與斷線重連；**任一 OS 未過僅凍結該 OS Lane** | DEV-M | WIN / MAC / LIN |
-| G5.2 | Android OTG game 手把同 G5.1；目前無實機：**N/A，非 pass** | DEV-M | AND |
-| G5.3 | iOS（若 Lane 續行）：MFi（SDL3 路徑）+ VirtualJoystick（Fixed/Dynamic 雙模式）可完成 G2.3 姿態保持測試；目前無實機：**N/A，非 pass** | DEV-M | IOS |
-| G5.4 | 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）：桌面 ≤ 40 ms；行動 ≤ 60 ms 的實機條件目前 **N/A，非 pass** | DEV-M | 各 Lane |
+| G5.1 | **Ubuntu 控制器閘門**：Ubuntu Linux 以 Xbox 360 相容 game 手把完成四軸與 Arm／Mode 按鍵映射、固定映射確認與斷線重連 | DEV-M | UBUNTU |
+| G5.2 | Android OTG game 手把 | deferred，本版不驗收 | — |
+| G5.3 | iOS MFi / VirtualJoystick | deferred，本版不驗收 | — |
+| G5.4 | Ubuntu 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）≤ 40 ms；行動平台 deferred | DEV-M | UBUNTU |
 | G5.5 | 輸入映射匯出/匯入、斷線重連不丟設定（校準/映射跨 session 持久化，見範圍排除之界線釐清） | CI-A | SC |
 | G5.6 | **Channel Monitor 一等 UI**：固定映射四軸／按鍵的 live bar、raw、normalized、固定 deadzone 與按鍵狀態即時顯示，更新率 ≥ 30 Hz；自動檢核三項提示（油門低位、arm 映射、mode 映射）功能驗證 | GPU-A + DEV-M | SC |
-| G5.7 | **斷線 fail loud**：飛行中拔除控制器 → 500 ms 內畫面警示 + 顯示重連狀態；重插後 ≤ 2 秒恢復輸入且校準不丟失（各 20 次） | DEV-M | 各 Lane |
+| G5.7 | **斷線 fail loud**：Ubuntu 飛行中拔除控制器 → 500 ms 內畫面警示 + 顯示重連狀態；重插後 ≤ 2 秒恢復輸入且映射不丟失（各 20 次） | DEV-M | UBUNTU |
 
 ---
 
@@ -411,11 +417,11 @@
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G6.1 | Win/macOS/Linux 安裝包 ≤ 300 MB | CI-A | DESK |
-| G6.2 | Android APK ≤ 300 MB，側載安裝流程文件化（含簽章與未知來源指引）；APK artifact/大小保留，實機側載目前 **N/A，非 pass** | CI-A + DEV-M | AND |
+| G6.1 | Ubuntu Linux x86_64 安裝包 ≤ 300 MB | CI-A | UBUNTU |
+| G6.2 | Android APK 與側載文件 | deferred，本版不驗收 | — |
 | G6.3 | 授權掃描：Tier 1 產物 0 GPL/LGPL/AGPL；NOTICE 自動生成 | CI-A | SC |
-| G6.4 | 冷啟動至可飛：桌面 ≤ 15 秒；行動 ≤ 20 秒的實機條件目前 **N/A，非 pass** | GPU-A / DEV-M | 各 Lane |
-| G6.5 | 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件）；行動實機部分目前 **N/A，非 pass** | DEV-M | 各 Lane |
+| G6.4 | Ubuntu Linux 冷啟動至可飛 ≤ 15 秒 | GPU-A / DEV-M | UBUNTU |
+| G6.5 | Ubuntu 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件） | DEV-M | UBUNTU |
 | G6.6 | **授權伺服器**：註冊→簽發→JWT 驗證全流程可用；離線寬限期機制（斷網 ≤ 72 小時可玩）；伺服器不可達時明確提示而非靜默鎖死 | CI-A + DEV-M | SC |
 | G6.7 | 交付流程演練：從客戶名單到發送安裝檔+授權金鑰之 SOP 全程演練一次成功，含撤銷授權 | DEV-M | SC |
 | G6.8 | **診斷支援包（回應審查 H10）**：`Settings > Diagnostics > Export Support Bundle` 一鍵匯出——build hash、OS/GPU/裝置資訊、授權狀態、近期 log、控制器 raw 取樣、輸入映射與校準、最後錯誤；**自動化稽核：bundle 內 0 個 secrets / JWT / 個資（遮罩驗證）** | CI-A + DEV-M | SC |
@@ -437,10 +443,10 @@
 
 ## 5. 驗收方法學
 
-0. **CI 平台範圍（修正版）**：Linux headless 僅承擔——數值模擬、頻譜分析、GDExtension 單元測試、資產載入 smoke、選單樹遍歷。渲染/截圖/UI 視覺/效能類 Gate 一律 GPU runner 或實機（DEV-M/GPU-A）。Web 不列入任何目標。
+0. **CI 平台範圍（Ubuntu-first）**：Ubuntu Linux headless 承擔數值模擬、頻譜分析、GDExtension 單元測試、資產載入 smoke、選單樹遍歷；Ubuntu 真實 display/GPU 承擔渲染、截圖、UI 視覺與效能 Gate。Windows、macOS、Android、iOS 不列入本版本 CI 或交付驗收。
 1. 測試報告：每 Gate 一份，含環境、版本雜湊、原始數據、判定；未過附根因與修改計畫。
 2. 重測循環：修改 → 該 Phase 全 Gate 回歸 → 報告。
-3. 基準機凍結：桌面為本機 Ubuntu 26.04 LTS、Ryzen 9 7945HX + RTX 4060 Ti（driver 580.159.03）。Android/iOS 維持 build-only，沒有實機時不建立替代行動基準，也不得把 N/A 寫成通過。
+3. 基準機凍結：Ubuntu 26.04 LTS、Ryzen 9 7945HX + RTX 4060 Ti（driver 580.159.03）。其他平台不建立替代基準，也不列為本版本驗收項目。
 4. 盲測規範：受測者不知修改內容；問卷含真機 blackbox 回放錨定題。
 5. 版本鎖定：Godot 4.7 之 patch 版本與 export template hash 記錄於 repo；引擎升級觸發 G0–G3 全量重跑。
 
@@ -449,7 +455,7 @@
 | 風險 | 影響 | 緩解 |
 |---|---|---|
 | Mobile Base profile 仍超預算 | G0.2 | Phase 0 特例程序重定行動 Lane 範圍（總則 4.0-4），門檻數值不動 |
-| iOS 私下發行法律路徑受限 | G0.10 | Phase 0 完成 Go/No-Go；No-Go 則 iOS Lane 關閉，資源轉桌面/Android |
+| 非 Ubuntu 平台需求 | 全平台 Gate | v3.6 先 deferred；待有明確客戶需求與維護資源後再另行啟用 |
 | GPL 語意耦合疑慮 | G7.1 | 法務前置核准；協定文件公開；Configurator 外置 |
 | 台架推力表數據取得 | G1.10 | 優先使用公開馬達台架數據庫；必要時自購測試台實測 |
 | Shi/Forster 參數為 Crazyflie 尺度 | G3.1–G3.3 | 公式結構不變、以 5 吋機資料包重擬合係數（Phase 1 交付） |
