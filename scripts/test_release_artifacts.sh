@@ -171,6 +171,21 @@ chmod +x "$fake_godot"
 cat >"$fake_apksigner" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "$1" = "sign" ]; then
+    printf '%s\n' "$@" >"${AEROSIM_ANDROID_SIGN_ARGS:?}"
+    input="${!#}"
+    output=""
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = "--out" ]; then
+            output="$2"
+            shift 2
+            continue
+        fi
+        shift
+    done
+    cp "$input" "$output"
+    exit 0
+fi
 if [ "$1" = "verify" ] && [ "${2:-}" = "--print-certs" ]; then
     printf '%s\n' 'Signer #1 certificate SHA-256 digest: AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA'
 fi
@@ -191,10 +206,14 @@ AEROSIM_ANDROID_EXPECTED_CERT_SHA256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
 AEROSIM_ANDROID_OUT_APK="$relative_production_apk" \
 AEROSIM_ANDROID_SIGNING_REPORT="$relative_signing_report" \
+AEROSIM_ANDROID_SIGN_ARGS="$android_test_dir/sign-args.txt" \
 scripts/export_android_release.sh
 
 cmp "$android_test_dir/export_presets.before" export_presets.cfg
 grep -q '^Signer #1 certificate SHA-256 digest:' "$relative_signing_report"
+grep -Fx -- "$fake_keystore" "$android_test_dir/sign-args.txt"
+grep -Fx -- 'pass:test-password' "$android_test_dir/sign-args.txt"
+grep -Fx -- 'test-alias' "$android_test_dir/sign-args.txt"
 
 if XDG_CONFIG_HOME="$xdg_config_home" \
     RUNNER_TEMP="$runner_temp" \
@@ -209,6 +228,7 @@ if XDG_CONFIG_HOME="$xdg_config_home" \
     AEROSIM_ANDROID_RELEASE_LIB="$fake_lib" \
     AEROSIM_ANDROID_OUT_APK="$android_test_dir/mismatched-production.apk" \
     AEROSIM_ANDROID_SIGNING_REPORT="$android_test_dir/mismatched-production-signing.txt" \
+    AEROSIM_ANDROID_SIGN_ARGS="$android_test_dir/mismatched-sign-args.txt" \
     scripts/export_android_release.sh >"$out_file" 2>"$err_file"; then
     cat "$out_file"
     echo "mismatched production certificate unexpectedly passed" >&2

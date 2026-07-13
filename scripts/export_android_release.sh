@@ -194,10 +194,10 @@ with ZipFile(apk, "a", ZIP_DEFLATED) as archive:
 PY
 rm -f "$signed_apk"
 "$apksigner_bin" sign \
-    --ks "$ci_keystore" \
-    --ks-pass pass:android \
-    --ks-key-alias aerosim-ci \
-    --key-pass pass:android \
+    --ks "$signing_keystore" \
+    --ks-pass "pass:$signing_password" \
+    --ks-key-alias "$signing_user" \
+    --key-pass "pass:$signing_password" \
     --out "$signed_apk" \
     "$out_apk"
 mv "$signed_apk" "$out_apk"

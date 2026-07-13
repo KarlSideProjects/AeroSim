@@ -6,7 +6,18 @@ tmp_dir="$(mktemp -d build/delivery-drill-test.XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 artifact="$tmp_dir/AeroSim-linux.zip"
 report="$tmp_dir/report.json"
-printf 'delivery-drill-test-artifact' >"$artifact"
+notice="$tmp_dir/THIRD_PARTY_NOTICES.txt"
+python3 scripts/check_licenses.py --notice-out "$notice"
+python3 - "$artifact" "$notice" <<'PY'
+from pathlib import Path
+import sys
+from zipfile import ZIP_DEFLATED, ZipFile
+
+artifact, notice = map(Path, sys.argv[1:])
+with ZipFile(artifact, "w", ZIP_DEFLATED) as archive:
+    archive.writestr("AeroSim-linux/payload.bin", "delivery-drill-test-artifact")
+    archive.write(notice, "AeroSim-linux/THIRD_PARTY_NOTICES.txt")
+PY
 
 scripts/exercise_delivery_drill.sh \
     --customer-id delivery-drill-test \
