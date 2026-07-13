@@ -3,12 +3,13 @@
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v3.3（以一般 game 手把取代 RC 遙控器，保留可校準的控制器流程、Quick Fly/Pause/Reset 狀態機與既有驗收原則） |
+| 版本 | v3.5（外部物理來源採 Formula Port + offline Oracle 治理；Tier 1 runtime 權威與既有驗收門檻不變） |
 | 文件狀態 | 待核准 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
+- v3.5（2026-07-13）：**外部物理來源治理正式化**——依 `docs/decisions/2026-07-13-external-physics-source-governance.md`，將既有 A3–A5 Formula Port 與 Python Oracle 架構明文化：AeroSim C++ fixed-step core + Godot/Jolt 為唯一 Tier 1 runtime state 與 collision authority；外部 simulator 僅得作檔案級公式來源與固定版本、可離線開發／測試 Oracle。既有門檻數字完全不變，且本次不創造任何新數值 gate。
 - v3.4（2026-07-12）：**Xbox Default Profile**——固定映射確認取代八步校準精靈；移除端點/中心/RMS 採樣合約與反向注入測試（需求範圍縮減，比照 G2.8 豁免先例，非靜默下修）；保留固定 deadzone、Arm/Mode 去抖 ≤50ms、油門低位前置、unknown 裝置擋下。G4B.3／G4B.UI1／G4B.UI2／G5.6 措辭連動，時間/頻率門檻數值不變。驅動因素與風險註記詳 `docs/decisions/2026-07-12-xbox-default-profile.md`。
 - v3.3（2026-07-11）：輸入裝置定位改為一般 game 手把；移除 RadioMaster／FrSky、RadioProfile 與 16 通道門檻。Controller Setup、Channel Monitor 與實機閘門改以 Xbox 360 相容手把的可用軸與按鍵為準；鍵盤僅為 fallback。驅動因素（無 RC 實機＋產品即以手把為目標）與「裝置定義調整、非門檻下修」裁定詳 `docs/decisions/2026-07-11-standard-gamepad-input.md`。
 - v3.2 修訂（2026-07-11）：**Linux 實測主車道**——Linux 為唯一實測平台，實測序列固定「自動化 → Godot headed 測試 → 維護者遊玩驗收」；Windows/macOS/Android/iOS 降為 build＋CI 自動測試車道，平台實測 gate 標 N/A 凍結（非通過）。門檻數值不變，屬驗收平台範圍調整（PRD 1.4 Lane 獨立結構）。詳 `docs/decisions/2026-07-11-linux-primary-acceptance.md`。
@@ -72,7 +73,7 @@
 | 桌面渲染 | Forward+（Vulkan）+ SDFGI + Volumetric Fog | MIT | 無 |
 | 行動渲染 | Mobile Renderer + LightmapGI 烘焙光照 | MIT | 無 |
 | 行動觸控輸入 | Godot 4.7 內建 VirtualJoystick（Fixed/Dynamic/Following）；iOS 控制器經 SDL3 | MIT | 無 |
-| 氣動公式來源 | gym-pybullet-drones 之 drag / ground effect / downwash（移植公式並以其 Python 原版為 CI 數值 Oracle） | MIT | 無 |
+| 氣動公式來源與 Oracle | gym-pybullet-drones、RotorPy 等外部 simulator 僅作檔案級 Formula Port 來源及固定版本、可離線開發／測試 Oracle；不得成為 Tier 1 runtime dependency、Python per-frame path 或第二 collision authority | 依 #56「參考開源實作」條款逐一查證；Formula Port 另依 3.1.1 記錄 provenance | 不得將 repo root MIT 視為常數表或資料的自動授權 |
 | 風場 / 紊流 | Dryden（MIL-F-8785C）+ 穩態風 + 風切，自研 C++ 實作 | 公開軍規標準 | 無 |
 | 自研飛控 | C++ 串級 PID（角速度內環 + 角度外環）+ 互補濾波 / Mahony | 自有 | 無 |
 | Tier 2 飛控 | Betaflight SITL（獨立行程、UDP、無共享記憶體、無連結） | **GPL-3.0** | **發布前須法務核准**（見 G7.1） |
@@ -98,6 +99,13 @@
 
 - 語言分層：飛控核心 + 氣動 + 風場 + 硬體參數模型 = C++ GDExtension；遊戲邏輯/UI/關卡 = GDScript。禁止在 GDScript 實作逐子步進物理。
 - Tier 1 同行程零 IPC 延遲；Tier 2 換 SITL 獨立行程，UDP 封包協定與 Tier 1 內部介面同構，確保可插拔。
+
+#### 3.1.1 Tier 1 runtime 與外部物理來源治理（v3.5）
+
+- **唯一 Tier 1 runtime authority**：AeroSim C++ fixed-step core 與 Godot/Jolt 共同構成唯一 Tier 1 runtime state 與 collision authority；自由飛行與接觸時的權威交接仍依 3.3，由此核心與 Jolt 完成。外部 simulator 不得取代、平行持有或仲裁 runtime state／collision state。
+- **Formula Port + offline Oracle**：gym-pybullet-drones、RotorPy 等外部 simulator 僅可作 source-file-level Formula Port 來源，以及鎖定上游版本、可離線執行的開發／測試 Oracle。它們不得成為 runtime dependency、Python per-frame path，或第二 collision authority。
+- **授權與上游查證的單一真相**：所有「參考開源實作」的授權、GPL 邊界與上游 issue（含 closed）查證，唯一依 #56 的「參考開源實作」條款執行；本節不建立或重複平行政策。Formula Port 的特有紀錄則必須逐一包含 source file、upstream commit、source-file header 與其 referenced source、license／attribution、unit／frame conversion，以及 Oracle／analytic validation。不明授權的常數或參數依 #56 僅可參考思路，不得當作產品資料；repo root 的 MIT 授權不會自動涵蓋常數表或資料。
+- **CI 稽核錨點（pending implementation）**：#116 負責 NOTICE manifest regression，#117 負責 Oracle integrity 與 offline cache；export artifact 的無 Python runtime dependency scan 為必交付 CI audit anchor，須由對應實作票落地。本 docs PR 未實作上述任何 CI audit，亦不調整或新增數值 gate。
 
 ### 3.2 平台物理 Profile（取代單一硬指標）
 
