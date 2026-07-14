@@ -7,6 +7,7 @@ The #35 slice preserves one renderer-shared `industrial_yard.tscn`, validates it
 Validation results:
 
 - `scripts/test_shared_map_assets.sh` and `scripts/check_shared_map_assets.sh`: pass.
+- `GODOT_BIN=... scripts/test_industrial_yard_renderers.sh`: pass for both `forward_plus` and `mobile` scene loading.
 - `scripts/test_native.sh`: pass.
 - `scripts/check_hardcoded_airframe_constants.sh`: pass.
 - `scripts/test_license_scan.sh`: pass.

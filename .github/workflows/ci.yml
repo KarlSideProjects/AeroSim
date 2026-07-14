@@ -128,6 +128,7 @@ jobs:
         run: |
           scripts/test_shared_map_assets.sh
           scripts/check_shared_map_assets.sh
+          scripts/test_industrial_yard_renderers.sh
 
       - name: Store Linux replay artifact locally
         run: |
