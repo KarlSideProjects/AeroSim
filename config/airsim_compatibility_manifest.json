@@ -1,0 +1,42 @@
+{
+  "manifest_version": 1,
+  "airsim_client": "1.8.1",
+  "transport": "msgpack-rpc",
+  "bind": {
+    "address": "127.0.0.1",
+    "default_port": 41451,
+    "remote_addresses": "unsupported"
+  },
+  "supported_api": [
+    "ping",
+    "getServerVersion",
+    "getMinRequiredClientVersion",
+    "getSettingsString",
+    "simPause",
+    "simIsPaused",
+    "simContinueForTime",
+    "simContinueForFrames",
+    "reset"
+  ],
+  "settings": {
+    "root": [
+      "SettingsVersion",
+      "SimMode",
+      "ClockType",
+      "ClockSpeed",
+      "ApiServerPort",
+      "RpcEnabled",
+      "OriginGeopoint",
+      "Vehicles",
+      "SubWindows",
+      "Recording"
+    ],
+    "origin_geopoint": ["Latitude", "Longitude", "Altitude"],
+    "vehicle": ["VehicleType", "Cameras", "Sensors"],
+    "camera": ["X", "Y", "Z", "Roll", "Pitch", "Yaw", "Gimbal", "CaptureSettings", "NoiseSettings"],
+    "sensor": ["SensorType", "Enabled", "X", "Y", "Z", "Roll", "Pitch", "Yaw", "DrawDebugPoints", "DataFrame", "Parameters"],
+    "subwindow": ["WindowID", "ImageType", "Visible", "CameraName", "CameraID", "VehicleName", "External"],
+    "recording": ["RecordOnMove", "RecordInterval", "Folder", "Enabled"]
+  },
+  "unsupported_policy": "Unknown methods, settings, versions, types, vehicles, and non-loopback binds fail explicitly."
+}
