@@ -89,6 +89,40 @@ func test_rejects_unknown_nested_camera_field() -> void:
     assert_string_contains(result.error, "FutureField")
 
 
+func test_rejects_unknown_nested_capture_field() -> void:
+    var result := AirSimSettings.validate({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {
+            "Drone1": {
+                "VehicleType": "SimpleFlight",
+                "Cameras": {"front_center": {"CaptureSettings": [{"FutureField": true}]}}
+            }
+        }
+    })
+
+    assert_false(result.ok)
+    assert_string_contains(result.error, "FutureField")
+
+
+func test_rejects_invalid_nested_noise_and_sensor_parameter_types() -> void:
+    var result := AirSimSettings.validate({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {
+            "Drone1": {
+                "VehicleType": "SimpleFlight",
+                "Cameras": {"front_center": {"NoiseSettings": [{"Enabled": "yes"}]}},
+                "Sensors": {"imu": {"SensorType": 6, "Parameters": {"NoiseSigma": "nope"}}}
+            }
+        }
+    })
+
+    assert_false(result.ok)
+    assert_string_contains(result.error, "NoiseSettings")
+    assert_string_contains(result.error, "Parameters")
+
+
 func test_rejects_invalid_subwindow_and_recording_types() -> void:
     var result := AirSimSettings.validate({
         "SettingsVersion": 1.2,

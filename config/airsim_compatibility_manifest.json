@@ -34,7 +34,10 @@
     "origin_geopoint": ["Latitude", "Longitude", "Altitude"],
     "vehicle": ["VehicleType", "Cameras", "Sensors"],
     "camera": ["X", "Y", "Z", "Roll", "Pitch", "Yaw", "Gimbal", "CaptureSettings", "NoiseSettings"],
-    "sensor": ["SensorType", "Enabled", "X", "Y", "Z", "Roll", "Pitch", "Yaw", "DrawDebugPoints", "DataFrame", "Parameters"],
+    "gimbal": ["Stabilization", "Pitch", "Roll", "Yaw"],
+    "capture_settings": ["ImageType", "Width", "Height", "FOV_Degrees", "AutoExposureSpeed", "AutoExposureBias", "AutoExposureMaxBrightness", "AutoExposureMinBrightness", "MotionBlurAmount", "TargetGamma", "ProjectionMode", "OrthoWidth"],
+    "noise_settings": ["Enabled", "ImageType", "RandContrib", "RandSpeed", "RandSize", "RandDensity", "HorzWaveContrib", "HorzWaveStrength", "HorzWaveVertSize", "HorzWaveScreenSize", "HorzNoiseLinesContrib", "HorzNoiseLinesDensityY", "HorzNoiseLinesDensityXY", "HorzDistortionContrib", "HorzDistortionStrength"],
+    "sensor": ["SensorType", "Enabled", "X", "Y", "Z", "Roll", "Pitch", "Yaw", "DrawDebugPoints", "DataFrame"],
     "subwindow": ["WindowID", "ImageType", "Visible", "CameraName", "CameraID", "VehicleName", "External"],
     "recording": ["RecordOnMove", "RecordInterval", "Folder", "Enabled"]
   },
