@@ -175,18 +175,65 @@ func derive_power_model(config: Dictionary) -> Dictionary:
         "inertia_source": "preset_override"
     }
 
+func derive_per_motor_model(config: Dictionary, power_model: Dictionary) -> Dictionary:
+    if not power_model.get("ok", false):
+        return {"ok": false, "error": "per-motor model requires a valid power model"}
+
+    var motor: Dictionary = config.get("motor", {})
+    var aircraft: Dictionary = config.get("aircraft", {})
+    var layout: Array = aircraft.get("motor_layout", [])
+    var spin_direction: Array = config.get("spin_direction", [])
+    var motor_count := int(motor.get("count", 0))
+    if motor_count != 4 or layout.size() != 4 or spin_direction.size() != 4:
+        return {"ok": false, "error": "per-motor model requires four ordered motors"}
+
+    var position_frd: Array[Vector3] = []
+    var spin_values: Array[float] = []
+    for index in range(4):
+        var position: Dictionary = layout[index]
+        var direction := str(spin_direction[index])
+        if direction != "cw" and direction != "ccw":
+            return {"ok": false, "error": "spin direction must be cw or ccw"}
+        position_frd.append(Vector3(float(position.get("x", NAN)), float(position.get("y", NAN)), float(position.get("z", NAN))))
+        spin_values.append(1.0 if direction == "cw" else -1.0)
+
+    var inertia: Dictionary = aircraft.get("inertia_kg_m2", {})
+    var max_thrust_total := float(power_model.get("max_total_thrust_n", 0.0))
+    var max_current_total := float(power_model.get("max_total_current_a", 0.0))
+    if max_thrust_total <= 0.0 or max_current_total <= 0.0:
+        return {"ok": false, "error": "power model has no usable per-motor limits"}
+    return {
+        "ok": true,
+        "inertia_frd": Vector3(float(inertia.get("x", NAN)), float(inertia.get("y", NAN)), float(inertia.get("z", NAN))),
+        "position_frd": position_frd,
+        "spin_direction": spin_values,
+        "max_thrust_per_motor_newtons": max_thrust_total / float(motor_count),
+        "max_current_per_motor_a": max_current_total / float(motor_count),
+        "yaw_torque_per_newton": float(power_model.get("k_q_nm_per_rpm2", 0.0)) / float(power_model.get("k_t_n_per_rpm2", 0.0))
+    }
+
 func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
     if runtime.get("native") != null:
-        runtime.native.call("set_hardware_mass_kg", float(current.aircraft.mass_kg))
         var power_model := derive_power_model(current)
         if not power_model.ok:
             last_ok = false
             last_error = "power model derivation failed: %s" % power_model.get("error", "unknown")
             push_error(last_error)
             return false
-        if not runtime.native.has_method("set_hardware_power_model"):
+        var per_motor_model := derive_per_motor_model(current, power_model)
+        if not per_motor_model.ok:
             last_ok = false
-            last_error = "native runtime missing set_hardware_power_model"
+            last_error = "per-motor model derivation failed: %s" % per_motor_model.get("error", "unknown")
+            push_error(last_error)
+            return false
+        if not runtime.native.has_method("set_hardware_power_model") or not runtime.native.has_method("set_hardware_per_motor_model"):
+            last_ok = false
+            last_error = "native runtime missing hardware model setters"
+            push_error(last_error)
+            return false
+        if not runtime.native.call("set_hardware_mass_kg", float(current.aircraft.mass_kg)):
+            last_ok = false
+            last_error = "native runtime rejected aircraft mass"
             push_error(last_error)
             return false
         if not runtime.native.call(
@@ -201,6 +248,11 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             ):
             last_ok = false
             last_error = "native runtime rejected derived power model"
+            push_error(last_error)
+            return false
+        if not runtime.native.call("set_hardware_per_motor_model", per_motor_model):
+            last_ok = false
+            last_error = "native runtime rejected derived per-motor model"
             push_error(last_error)
             return false
         if runtime.native.has_method("set_hardware_telemetry_model") and not runtime.native.call(

@@ -206,6 +206,10 @@ func _configure_default_power_model(native: Object) -> bool:
     if not power_model.ok:
         push_error("Default hardware preset must derive native public-path power: %s" % power_model.get("error", "unknown"))
         return false
+    var per_motor_model: Dictionary = loader.derive_per_motor_model(preset, power_model)
+    if not per_motor_model.ok:
+        push_error("Default hardware preset must derive native public-path per-motor model: %s" % per_motor_model.get("error", "unknown"))
+        return false
     native.call("set_hardware_mass_kg", float(preset.aircraft.mass_kg))
     if not native.call(
             "set_hardware_power_model",
@@ -218,6 +222,9 @@ func _configure_default_power_model(native: Object) -> bool:
             float(power_model.max_total_current_a)
         ):
         push_error("Default hardware preset must apply to native public-path smoke")
+        return false
+    if not native.has_method("set_hardware_per_motor_model") or not native.call("set_hardware_per_motor_model", per_motor_model):
+        push_error("Default hardware preset must apply native per-motor model")
         return false
     if native.has_method("set_hardware_telemetry_model") and not native.call(
             "set_hardware_telemetry_model",
@@ -1761,6 +1768,10 @@ func _verify_hardware_config_public_path() -> bool:
         push_error("AeroSimNative must expose hardware power diagnostics for runtime preset verification")
         scene.queue_free()
         return false
+    if not scene.native.has_method("hardware_per_motor_diagnostics"):
+        push_error("AeroSimNative must expose per-motor diagnostics for runtime preset verification")
+        scene.queue_free()
+        return false
     var startup_power: Dictionary = scene.native.call("hardware_power_diagnostics")
     if abs(float(startup_power.mass_kg) - float(preset.aircraft.mass_kg)) > 1e-9:
         push_error("Runtime startup preset must apply aircraft mass to native")
@@ -1772,6 +1783,15 @@ func _verify_hardware_config_public_path() -> bool:
         return false
     if float(startup_power.full_throttle_cap_newtons) >= float(power_model.max_total_thrust_n):
         push_error("Runtime startup preset must apply battery sag to the native thrust cap")
+        scene.queue_free()
+        return false
+    var startup_per_motor: Dictionary = scene.native.call("hardware_per_motor_diagnostics")
+    if startup_per_motor.get("spin_direction", []) != preset.spin_direction:
+        push_error("Runtime startup preset must apply the declared motor spin order")
+        scene.queue_free()
+        return false
+    if abs(float(startup_per_motor.get("max_thrust_per_motor_newtons", 0.0)) - float(power_model.max_total_thrust_n) / 4.0) > 1e-9:
+        push_error("Runtime startup preset must apply per-motor thrust derived from the prop model")
         scene.queue_free()
         return false
     var native_before: Object = scene.native
