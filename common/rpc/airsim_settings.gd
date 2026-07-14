@@ -145,10 +145,10 @@ static func validate(raw: Dictionary) -> Dictionary:
     _validate_sim_mode(raw, errors, _manifest_enum(schema, "SimMode"))
     _validate_clock(raw, errors, _manifest_enum(schema, "ClockType"))
     _validate_rpc(raw, errors)
-    _validate_origin(raw, errors, _manifest_keys(manifest, "origin_geopoint"))
+    _validate_origin(raw, errors, _manifest_keys(manifest, "origin_geopoint"), manifest)
     _validate_vehicles(raw, errors, manifest)
-    _validate_subwindows(raw, errors, _manifest_keys(manifest, "subwindow"))
-    _validate_recording(raw, errors, _manifest_keys(manifest, "recording"))
+    _validate_subwindows(raw, errors, _manifest_keys(manifest, "subwindow"), manifest)
+    _validate_recording(raw, errors, _manifest_keys(manifest, "recording"), manifest)
 
     var result := {
         "ok": errors.is_empty(),
@@ -261,7 +261,7 @@ static func _validate_rpc(raw: Dictionary, errors: Array[String]) -> void:
             errors.append("ApiServerPort must be an integer from 1 to 65535")
 
 
-static func _validate_origin(raw: Dictionary, errors: Array[String], allowed: Dictionary) -> void:
+static func _validate_origin(raw: Dictionary, errors: Array[String], allowed: Dictionary, manifest: Dictionary) -> void:
     if not raw.has("OriginGeopoint"):
         return
     if typeof(raw["OriginGeopoint"]) != TYPE_DICTIONARY:
@@ -269,6 +269,7 @@ static func _validate_origin(raw: Dictionary, errors: Array[String], allowed: Di
         return
     var origin: Dictionary = raw["OriginGeopoint"]
     _reject_unknown_keys(origin, allowed, "OriginGeopoint", errors)
+    _validate_manifest_entry_types(origin, manifest["schema"], "origin_geopoint", "OriginGeopoint", errors)
     for key in allowed:
         if not origin.has(key) or not _is_finite_number(origin[key]):
             errors.append("OriginGeopoint.%s must be numeric" % key)
@@ -294,6 +295,7 @@ static func _validate_vehicles(raw: Dictionary, errors: Array[String], manifest:
             continue
         var vehicle_dict: Dictionary = vehicle
         _reject_unknown_keys(vehicle_dict, _manifest_keys(manifest, "vehicle"), "vehicle %s" % vehicle_name, errors)
+        _validate_manifest_entry_types(vehicle_dict, manifest["schema"], "vehicle", "Vehicles.%s" % vehicle_name, errors)
         if not vehicle_dict.has("VehicleType") or typeof(vehicle_dict["VehicleType"]) != TYPE_STRING or not supported_vehicle_types.has(vehicle_dict["VehicleType"]):
             errors.append("Vehicles.%s.VehicleType must be one of %s" % [vehicle_name, ", ".join(supported_vehicle_types)])
         for collection_name in ["Cameras", "Sensors"]:
@@ -395,7 +397,7 @@ static func _is_integer_number(value: Variant) -> bool:
     return _is_finite_number(value) and is_equal_approx(float(value), roundf(float(value)))
 
 
-static func _validate_subwindows(raw: Dictionary, errors: Array[String], allowed: Dictionary) -> void:
+static func _validate_subwindows(raw: Dictionary, errors: Array[String], allowed: Dictionary, manifest: Dictionary) -> void:
     if not raw.has("SubWindows"):
         return
     if typeof(raw["SubWindows"]) != TYPE_ARRAY:
@@ -408,6 +410,7 @@ static func _validate_subwindows(raw: Dictionary, errors: Array[String], allowed
             continue
         var value: Dictionary = subwindow
         _reject_unknown_keys(value, allowed, "SubWindows[%d]" % index, errors)
+        _validate_manifest_entry_types(value, manifest["schema"], "subwindow", "SubWindows[%d]" % index, errors)
         if value.has("WindowID") and not _is_integer_number(value["WindowID"]):
             errors.append("SubWindows[%d].WindowID must be an integer" % index)
         if value.has("ImageType") and not _is_integer_number(value["ImageType"]):
@@ -422,7 +425,7 @@ static func _validate_subwindows(raw: Dictionary, errors: Array[String], allowed
             errors.append("SubWindows[%d].CameraID must be an integer" % index)
 
 
-static func _validate_recording(raw: Dictionary, errors: Array[String], allowed: Dictionary) -> void:
+static func _validate_recording(raw: Dictionary, errors: Array[String], allowed: Dictionary, manifest: Dictionary) -> void:
     if not raw.has("Recording"):
         return
     if typeof(raw["Recording"]) != TYPE_DICTIONARY:
@@ -430,6 +433,7 @@ static func _validate_recording(raw: Dictionary, errors: Array[String], allowed:
         return
     var recording: Dictionary = raw["Recording"]
     _reject_unknown_keys(recording, allowed, "Recording", errors)
+    _validate_manifest_entry_types(recording, manifest["schema"], "recording", "Recording", errors)
     for key in ["RecordOnMove", "Enabled"]:
         if recording.has(key) and typeof(recording[key]) != TYPE_BOOL:
             errors.append("Recording.%s must be boolean" % key)

@@ -42,6 +42,12 @@ func test_duration_step_is_deterministic_and_rejects_invalid_duration() -> void:
     assert_false(non_finite.ok)
     assert_string_contains(non_finite.error, "duration step")
 
+    var overlap_started: Dictionary = session.continue_for_frames(2)
+    assert_true(overlap_started.ok)
+    var overlap: Dictionary = session.continue_for_time(0.01)
+    assert_false(overlap.ok)
+    assert_string_contains(overlap.error, "already in progress")
+
 
 func test_reset_restores_the_initial_clock_state() -> void:
     var session := AirSimSession.new(240)
