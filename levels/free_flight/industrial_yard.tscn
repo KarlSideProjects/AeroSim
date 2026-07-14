@@ -188,3 +188,41 @@ surface_material_override/0 = SubResource("MaterialTower")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Tower"]
 shape = SubResource("ShapeTower")
+
+[node name="TimeTrial" type="Node3D" parent="."]
+
+[node name="Checkpoint01" type="Marker3D" parent="TimeTrial"]
+position = Vector3(0, 1.2, -14)
+
+[node name="DirectionArrow" type="Label3D" parent="TimeTrial/Checkpoint01"]
+position = Vector3(0, 1.2, 0)
+text = "▼ CHECKPOINT 1"
+outline_size = 6
+font_size = 52
+
+[node name="Checkpoint02" type="Marker3D" parent="TimeTrial"]
+position = Vector3(0, 1.2, 0)
+
+[node name="DirectionArrow" type="Label3D" parent="TimeTrial/Checkpoint02"]
+position = Vector3(0, 1.2, 0)
+text = "▼ CHECKPOINT 2"
+outline_size = 6
+font_size = 52
+
+[node name="Checkpoint03" type="Marker3D" parent="TimeTrial"]
+position = Vector3(6, 1.2, 9)
+
+[node name="DirectionArrow" type="Label3D" parent="TimeTrial/Checkpoint03"]
+position = Vector3(0, 1.2, 0)
+text = "→ CHECKPOINT 3"
+outline_size = 6
+font_size = 52
+
+[node name="Finish" type="Marker3D" parent="TimeTrial"]
+position = Vector3(8, 3, 18)
+
+[node name="FinishLabel" type="Label3D" parent="TimeTrial/Finish"]
+position = Vector3(0, 1.5, 0)
+text = "★ FINISH ★"
+outline_size = 8
+font_size = 64

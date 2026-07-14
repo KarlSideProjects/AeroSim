@@ -57,6 +57,26 @@ func test_default_port_is_the_frozen_airsim_port() -> void:
     assert_eq(AirSimRpcServer.MAX_CLIENT_BUFFER_BYTES, 1_048_576)
 
 
+func test_reset_vehicle_control_state_clears_api_and_armed_latches() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41459,
+        "RpcEnabled": false,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    server._api_control["Drone1"] = true
+    server._armed["Drone1"] = true
+
+    server.reset_vehicle_control_state()
+
+    assert_false(server._api_control["Drone1"])
+    assert_false(server._armed["Drone1"])
+
+
 func test_non_loopback_start_is_rejected_before_listening() -> void:
     var server := AirSimRpcServer.new()
     autofree(server)

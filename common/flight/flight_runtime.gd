@@ -9,6 +9,7 @@ const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
 const AirSimCoordinateContract = preload("res://common/rpc/airsim_coordinate_contract.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
+const TimeTrialController = preload("res://common/flight/time_trial.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const DEFAULT_FREE_FLIGHT_MAP_ID := "industrial_yard"
 const MAP_SCENE_PATHS := {
@@ -37,6 +38,7 @@ var airsim_sensor_suite: AirSimSensorSuite
 var airsim_stop_file := ""
 var loaded_map: Node3D
 var loaded_map_id := ""
+var time_trial: TimeTrialController
 var paused := false
 var exit_requested := false
 var quit_on_exit := true
@@ -62,6 +64,10 @@ var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
+var time_trial_status_label: Label
+var pause_panel: Control
+var finish_panel: Control
+var finish_summary_label: Label
 var session_gamepad_profile: InputProfiles.GamepadProfile
 var session_gamepad_device_id := -1
 var gamepad_device_state: GamepadDeviceState.DeviceState = GamepadDeviceState.DeviceState.new()
@@ -236,7 +242,7 @@ func _unhandled_input(event: InputEvent) -> void:
         return
     if event.is_action_pressed("flight_takeoff") and screen in ["preflight", "flight"]:
         arm_and_takeoff()
-    elif event.is_action_pressed("flight_pause"):
+    elif event.is_action_pressed("flight_pause") and screen == "flight":
         set_paused(not paused)
     elif event.is_action_pressed("flight_respawn"):
         respawn()
@@ -250,13 +256,16 @@ func _process(_delta: float) -> void:
         get_tree().quit()
         return
     if airsim_session != null and paused != airsim_session.is_paused():
-        set_paused(airsim_session.is_paused(), false)
+        if not airsim_session.is_paused() and _airsim_lifecycle_stopped() and not airsim_session.is_explicit_step_active():
+            airsim_session.set_paused(true)
+        else:
+            set_paused(airsim_session.is_paused(), false)
     _update_chase_camera()
     _refresh_controller_confirmation()
     _refresh_controller_settings()
     _refresh_flight_hud()
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
     if reset_hold_frames > 0:
         reset_hold_frames -= 1
         if reset_hold_frames == 0 and drone_body != null and not paused:
@@ -396,6 +405,8 @@ func _physics_process(_delta: float) -> void:
     _airsim_last_velocity = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
     if native != null and native.has_method("refresh_imu_sample"):
         native.call("refresh_imu_sample")
+    if time_trial != null and drone_body != null:
+        time_trial.advance(drone_body.global_position, 1.0 / float(Engine.physics_ticks_per_second))
     _advance_airsim_sensors()
     _update_status_diagram()
 
@@ -419,6 +430,8 @@ func request_takeoff() -> void:
         drone_body.freeze = false
         drone_body.sleeping = false
         drone_body.apply_native_state(drone_body.global_position, drone_body.global_transform.basis.get_rotation_quaternion(), TAKEOFF_VELOCITY, Vector3.ZERO)
+    if time_trial != null:
+        time_trial.start()
     _refresh_flight_hud()
 
 func arm_and_takeoff() -> void:
@@ -443,6 +456,7 @@ func request_exit() -> void:
     takeoff_requested = false
     paused = true
     reset_hold_frames = 0
+    _reset_airsim_flight_state()
     if native != null:
         native.call("reset_flight")
     if drone_body != null:
@@ -533,21 +547,8 @@ func enter_preflight() -> void:
 
 func respawn() -> void:
     reset_count += 1
-    _airsim_api_control = false
+    _reset_airsim_flight_state()
     _airsim_disarm_requested = false
-    _airsim_command_state.clear()
-    _airsim_hold_controls.clear()
-    _airsim_command_remaining_frames = 0
-    _airsim_collision_seen = false
-    _airsim_contact_this_frame = false
-    _airsim_collision_normal = Vector3.ZERO
-    _airsim_collision_point = Vector3.ZERO
-    _airsim_last_velocity = Vector3.ZERO
-    _airsim_last_body_angular_velocity = Vector3.ZERO
-    _airsim_linear_acceleration = Vector3.ZERO
-    _airsim_angular_acceleration = Vector3.ZERO
-    if airsim_sensor_suite != null and airsim_rpc_server != null:
-        airsim_sensor_suite.configure(airsim_rpc_server.settings, [_airsim_vehicle_name])
     screen = "flight"
     flight_mode = "ANGLE"
     takeoff_requested = true
@@ -559,10 +560,24 @@ func respawn() -> void:
     update_fallback_status()
     if not reset_to_spawn():
         return
+    if time_trial != null:
+        time_trial.start()
     if drone_body != null:
         # ponytail: short reset hold; replace with real throttle input state when controller profiles land.
         reset_hold_frames = 30
     _refresh_flight_hud()
+
+func retry_time_trial() -> void:
+    if loaded_map == null:
+        enter_preflight()
+        return
+    respawn()
+
+func change_map() -> void:
+    _reset_airsim_flight_state()
+    takeoff_requested = false
+    set_paused(false)
+    enter_preflight()
 
 func load_map(map_id: String) -> bool:
     var maps := FreeFlightMap.new()
@@ -583,6 +598,7 @@ func load_map(map_id: String) -> bool:
     add_child(map_root)
     loaded_map = map_root
     loaded_map_id = map_id
+    _configure_time_trial(map_root)
     return reset_to_spawn()
 
 func reset_to_spawn() -> bool:
@@ -597,6 +613,8 @@ func reset_to_spawn() -> bool:
         drone_body.reset_contact()
         drone_body.apply_native_state(spawn.global_position, spawn.global_transform.basis.get_rotation_quaternion(), Vector3.ZERO, Vector3.ZERO)
         drone_body.freeze = true
+    if time_trial != null:
+        time_trial.reset()
     return true
 
 func _spawn_position() -> Vector3:
@@ -612,11 +630,60 @@ func unload_map() -> void:
         loaded_map.queue_free()
         loaded_map = null
     loaded_map_id = ""
+    time_trial = null
+
+func _configure_time_trial(map_root: Node3D) -> void:
+    var route := map_root.get_node_or_null("TimeTrial") as Node3D
+    var finish := route.get_node_or_null("Finish") as Marker3D if route != null else null
+    if route == null or finish == null:
+        time_trial = null
+        return
+    var checkpoints: Array[Vector3] = []
+    for child in route.get_children():
+        if child is Marker3D and child.name.begins_with("Checkpoint"):
+            checkpoints.append((child as Marker3D).global_position)
+    time_trial = TimeTrialController.new()
+    time_trial.configure(checkpoints, finish.global_position, 2.5)
+    time_trial.checkpoint_reached.connect(_on_trial_checkpoint_reached)
+    time_trial.trial_finished.connect(_on_trial_finished)
+
+func _on_trial_checkpoint_reached(_index: int, _total: int) -> void:
+    _refresh_flight_hud()
+
+func _on_trial_finished(elapsed_seconds: float) -> void:
+    _reset_airsim_flight_state()
+    takeoff_requested = false
+    set_paused(true)
+    screen = "finish"
+    if finish_summary_label != null:
+        finish_summary_label.text = "FINISH\nTime %0.2f s" % elapsed_seconds
+    _refresh_flight_hud()
 
 func _set_map_error(message: String) -> bool:
     last_error_message = message
     push_warning(message)
     return false
+
+func _reset_airsim_flight_state() -> void:
+    _airsim_api_control = false
+    _airsim_disarm_requested = true
+    _airsim_command_state.clear()
+    _airsim_hold_controls.clear()
+    _airsim_command_remaining_frames = 0
+    _airsim_collision_seen = false
+    _airsim_contact_this_frame = false
+    _airsim_collision_normal = Vector3.ZERO
+    _airsim_collision_point = Vector3.ZERO
+    _airsim_last_velocity = Vector3.ZERO
+    _airsim_last_body_angular_velocity = Vector3.ZERO
+    _airsim_linear_acceleration = Vector3.ZERO
+    _airsim_angular_acceleration = Vector3.ZERO
+    if airsim_rpc_server != null:
+        airsim_rpc_server.reset_vehicle_control_state()
+    if native != null and native.has_method("disarm_flight_control"):
+        native.call("disarm_flight_control")
+    if airsim_sensor_suite != null and airsim_rpc_server != null:
+        airsim_sensor_suite.configure(airsim_rpc_server.settings, [_airsim_vehicle_name])
 
 func update_fallback_status() -> void:
     last_profile_status = InputProfiles.fallback_status(gamepad_device_state.connected_joypads())
@@ -633,6 +700,8 @@ func toggle_altitude_hold() -> void:
     update_fallback_status()
 
 func set_paused(value: bool, sync_session: bool = true) -> void:
+    if not value and _airsim_lifecycle_stopped() and (airsim_session == null or not airsim_session.is_explicit_step_active()):
+        return
     paused = value
     if sync_session and airsim_session != null:
         airsim_session.set_paused(value)
@@ -811,6 +880,7 @@ func _build_flight_hud() -> void:
     add_child(layer)
 
     var margin := MarginContainer.new()
+    margin.name = "StatusMargin"
     margin.set_anchors_preset(Control.PRESET_TOP_LEFT)
     margin.offset_right = 360.0
     margin.offset_bottom = 128.0
@@ -821,9 +891,11 @@ func _build_flight_hud() -> void:
     layer.add_child(margin)
 
     var panel := PanelContainer.new()
+    panel.name = "StatusPanel"
     margin.add_child(panel)
 
     var rows := VBoxContainer.new()
+    rows.name = "StatusRows"
     rows.add_theme_constant_override("separation", 4)
     panel.add_child(rows)
 
@@ -836,10 +908,90 @@ func _build_flight_hud() -> void:
     arm_status_label.name = "ArmStatus"
     rows.add_child(arm_status_label)
 
+    time_trial_status_label = Label.new()
+    time_trial_status_label.name = "TimeTrialStatus"
+    rows.add_child(time_trial_status_label)
+
     arm_takeoff_button = Button.new()
     arm_takeoff_button.name = "ArmTakeoff"
     arm_takeoff_button.pressed.connect(_handle_primary_action)
     rows.add_child(arm_takeoff_button)
+    _build_pause_panel()
+    _build_finish_panel()
+
+func _build_pause_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "PausePanel"
+    panel.set_anchors_preset(Control.PRESET_CENTER)
+    panel.offset_left = -170.0
+    panel.offset_top = -120.0
+    panel.offset_right = 170.0
+    panel.offset_bottom = 120.0
+    pause_panel = panel
+    flight_hud_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+    var title := Label.new()
+    title.text = "PAUSED"
+    rows.add_child(title)
+    var resume := Button.new()
+    resume.name = "Resume"
+    resume.text = "RESUME"
+    resume.pressed.connect(func() -> void: set_paused(false))
+    rows.add_child(resume)
+    var retry := Button.new()
+    retry.name = "Retry"
+    retry.text = "RETRY"
+    retry.pressed.connect(retry_time_trial)
+    rows.add_child(retry)
+    var change := Button.new()
+    change.name = "ChangeMap"
+    change.text = "CHANGE MAP"
+    change.pressed.connect(change_map)
+    rows.add_child(change)
+    var exit := Button.new()
+    exit.name = "Exit"
+    exit.text = "EXIT"
+    exit.pressed.connect(request_exit)
+    rows.add_child(exit)
+
+func _build_finish_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "FinishPanel"
+    panel.set_anchors_preset(Control.PRESET_CENTER)
+    panel.offset_left = -170.0
+    panel.offset_top = -120.0
+    panel.offset_right = 170.0
+    panel.offset_bottom = 120.0
+    finish_panel = panel
+    flight_hud_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+    finish_summary_label = Label.new()
+    finish_summary_label.name = "Summary"
+    finish_summary_label.text = "FINISH"
+    rows.add_child(finish_summary_label)
+    var retry := Button.new()
+    retry.name = "Retry"
+    retry.text = "RETRY"
+    retry.pressed.connect(retry_time_trial)
+    rows.add_child(retry)
+    var change := Button.new()
+    change.name = "ChangeMap"
+    change.text = "CHANGE MAP"
+    change.pressed.connect(change_map)
+    rows.add_child(change)
+    var exit := Button.new()
+    exit.name = "Exit"
+    exit.text = "EXIT"
+    exit.pressed.connect(request_exit)
+    rows.add_child(exit)
 
 func _build_status_diagram() -> void:
     status_diagram = StatusDiagramDebug.new()
@@ -868,8 +1020,17 @@ func _refresh_flight_hud() -> void:
         controller_settings_panel.visible = screen == "controller_settings"
     if flight_hud_layer != null:
         flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings"]
+    if pause_panel != null:
+        pause_panel.visible = paused and screen == "flight"
+    if finish_panel != null:
+        finish_panel.visible = screen == "finish"
     key_hints_label.text = KEY_HINTS_TEXT
     arm_takeoff_button.disabled = screen == "main_menu"
+    if time_trial_status_label != null:
+        time_trial_status_label.visible = time_trial != null and screen in ["preflight", "flight", "finish"]
+        if time_trial != null:
+            var trial_state := "FINISHED" if time_trial.finished else "NEXT %d/%d" % [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()]
+            time_trial_status_label.text = "TIME TRIAL | %s | %0.2f s" % [trial_state, time_trial.elapsed_seconds]
     if screen == "preflight":
         var armed := _flight_control_armed()
         arm_status_label.text = "%s -> %s -> press T or ARM" % [_profile_input_status(), "ARMED" if armed else "DISARMED"]
@@ -890,6 +1051,9 @@ func _refresh_flight_hud() -> void:
     elif screen == "exit":
         arm_status_label.text = "EXIT requested"
         arm_takeoff_button.text = "EXIT"
+    elif screen == "finish":
+        arm_status_label.text = "TIME TRIAL COMPLETE"
+        arm_takeoff_button.text = "RETRY"
     else:
         arm_status_label.text = "Quick Fly: choose Quick Fly, then arm at low throttle"
         arm_takeoff_button.text = "ARM / TAKEOFF (T)"
@@ -905,6 +1069,8 @@ func _handle_primary_action() -> void:
         screen = "main_menu"
         last_error_message = ""
         _refresh_flight_hud()
+    elif screen == "finish":
+        retry_time_trial()
 
 func _first_connected_device() -> int:
     var devices := gamepad_device_state.connected_joypads()
@@ -1059,7 +1225,13 @@ func _airsim_name_matches(name: String) -> bool:
     return name == _airsim_vehicle_name or (_airsim_vehicle_name.is_empty() and name.is_empty())
 
 
+func _airsim_lifecycle_stopped() -> bool:
+    return screen in ["finish", "settings", "controller_settings", "error"] or (screen == "main_menu" and exit_requested)
+
+
 func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
+    if _airsim_lifecycle_stopped():
+        return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
     _airsim_api_control = enabled
@@ -1074,6 +1246,8 @@ func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
 
 
 func _airsim_arm_disarm(armed: bool, name: String) -> Dictionary:
+    if _airsim_lifecycle_stopped():
+        return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
     if native == null:
@@ -1140,6 +1314,8 @@ func _airsim_task_complete(name: String) -> bool:
 
 
 func _airsim_command(method: String, params: Array, name: String) -> Dictionary:
+    if _airsim_lifecycle_stopped() or (screen == "main_menu" and method != "takeoff"):
+        return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
     var args: Array = params.slice(0, params.size() - 1)

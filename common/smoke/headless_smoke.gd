@@ -246,6 +246,17 @@ func _verify_industrial_yard_descriptor_and_scene() -> bool:
         push_error("Industrial Yard scene must expose at least two cargo containers")
         scene.queue_free()
         return false
+    var time_trial := scene.get_node_or_null("TimeTrial")
+    if not is_instance_of(time_trial, Node3D) or time_trial.get_node_or_null("Finish") == null:
+        push_error("Industrial Yard scene must expose a TimeTrial route and Finish marker")
+        scene.queue_free()
+        return false
+    for checkpoint_name in ["Checkpoint01", "Checkpoint02", "Checkpoint03"]:
+        var checkpoint := time_trial.get_node_or_null(checkpoint_name) as Marker3D
+        if checkpoint == null or checkpoint.get_node_or_null("DirectionArrow") == null:
+            push_error("Industrial Yard TimeTrial must expose %s with a direction arrow" % checkpoint_name)
+            scene.queue_free()
+            return false
     var static_bodies := scene.find_children("*", "StaticBody3D", true, false)
     if static_bodies.is_empty():
         push_error("Industrial Yard scene must expose StaticBody3D collision")
