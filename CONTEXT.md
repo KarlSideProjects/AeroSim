@@ -101,7 +101,7 @@ The platform on which every AirSim-class minimum capability must pass together: 
 _Avoid_: All-platform minimum, Linux-only product
 
 **Reference Performance Profile**:
-The designated Ubuntu performance runner with a 6-core CPU, 16 GB RAM, and RTX 3060 12 GB-class GPU. Only this profile can pass or fail the 1080p Player Mode and Lab Mode real-time performance gates.
+The designated Ubuntu performance runner is Ubuntu 26.04 LTS with AMD Ryzen 9 7945HX, NVIDIA GeForce RTX 4060 Ti, and NVIDIA driver 580.159.03. Only this profile can pass or fail the 1080p Player Mode and Lab Mode real-time performance gates.
 _Avoid_: Minimum developer hardware, Required local machine
 
 **Local Development Profile**:

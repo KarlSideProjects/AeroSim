@@ -7,7 +7,7 @@ This policy controls how AeroSim may use Microsoft AirSim as an implementation a
 | Field | Value |
 |---|---|
 | Repository | `https://github.com/microsoft/airsim.git` |
-| Local checkout | sibling directory `../AirSim-reference` |
+| Local checkout | sibling of the main checkout root: `../AirSim-reference` |
 | Tag | `v1.8.1` |
 | Commit | `96235148a332fe7cb3d3525a0720e26faaca99e0` |
 | License | MIT; retain required notices for adapted code |
@@ -24,10 +24,18 @@ Before adapting an AirSim source path, symbol, protocol behavior, setting, or te
 4. In the implementing AeroSim issue or pull request, record the queries, relevant issue URLs, applicability assessment, license or attribution disposition, and the AeroSim tests created from the findings.
 5. Implement against AeroSim's frozen compatibility manifest and observable behavior. Do not copy an upstream assumption merely because it exists in AirSim code.
 
-Useful read-only commands include:
+Resolve the reference from the main checkout root so the commands work in linked worktrees. An explicit `AEROSIM_AIRSIM_REFERENCE` override is supported for CI or nonstandard layouts:
 
 ```bash
-git -C ../AirSim-reference show --stat v1.8.1
+AEROSIM_GIT_COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+AEROSIM_REPO_ROOT="$(dirname "$AEROSIM_GIT_COMMON_DIR")"
+AEROSIM_AIRSIM_REFERENCE="${AEROSIM_AIRSIM_REFERENCE:-$AEROSIM_REPO_ROOT/../AirSim-reference}"
+```
+
+Useful read-only commands then include:
+
+```bash
+git -C "$AEROSIM_AIRSIM_REFERENCE" show --stat v1.8.1
 gh issue list --repo microsoft/AirSim --state all --search 'SYMBOL_OR_BEHAVIOR' --limit 100
 gh issue view ISSUE_NUMBER --repo microsoft/AirSim --comments
 ```

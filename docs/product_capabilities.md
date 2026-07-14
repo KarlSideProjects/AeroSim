@@ -288,7 +288,7 @@ Ubuntu x86_64 is the Qualification Platform on which every AirSim-class minimum 
 
 **Status:** Confirmed target
 
-The Reference Performance Profile is a designated Ubuntu runner with a 6-core CPU, 16 GB RAM, and RTX 3060 12 GB-class GPU. On that profile, Player Mode targets stable 60 FPS at 1080p default quality, and the documented two-vehicle Lab Mode sensor workload targets real-time factor at least 1.0.
+The Reference Performance Profile is a designated Ubuntu 26.04 LTS runner with AMD Ryzen 9 7945HX, NVIDIA GeForce RTX 4060 Ti, and NVIDIA driver 580.159.03. On that profile, Player Mode targets stable 60 FPS at 1080p default quality, and the documented two-vehicle Lab Mode sensor workload targets real-time factor at least 1.0.
 
 Lower-spec developer machines use the Local Development Profile. They still run functional and deterministic verification and may reduce visual quality or sensor rates. Missing the reference hardware reports performance as not qualified; it does not fail local development solely because of hardware specification.
 

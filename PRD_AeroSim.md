@@ -19,14 +19,14 @@
 
 ---
 
-## 0. v4.0 規範優先序與最低成果
+## 0. v4.1 規範優先序與最低成果
 
 ### 0.1 規範優先序
 
 1. 本 PRD 定義產品成果、範圍與 release gate。
 2. [`docs/product_capabilities.md`](docs/product_capabilities.md) 是功能與特性的逐項正本，記錄能力 ID、目前狀態與最低驗收證據。
 3. [`CONTEXT.md`](CONTEXT.md) 定義領域語言；`docs/adr/` 記錄不可逆或具取捨的決策。
-4. 本文件後段保留的 v3.x 物理、飛控、輸入、授權與發行 gate，在不衝突時繼續有效；任何衝突一律以 v4.0 與能力正本為準。
+4. 本文件後段保留的 v3.x 物理、飛控、輸入、授權與發行 gate，在不衝突時繼續有效；任何衝突一律以 v4.1 與能力正本為準。
 
 ### 0.2 AirSim-class minimum 定義
 
@@ -54,7 +54,7 @@ AirSim-class minimum 不是外觀仿製。AeroSim 必須在同一 Godot 產品�
 
 ### 0.4 開發參考、Agent 與人工審核順序
 
-- Microsoft AirSim 參考庫放在 AeroSim repo 外的 sibling `../AirSim-reference`，固定 tag `v1.8.1`、commit `96235148a332fe7cb3d3525a0720e26faaca99e0`，只讀使用且不得成為 build/runtime/scene dependency。
+- Microsoft AirSim 參考庫放在 AeroSim **主 checkout root** 外的 sibling `../AirSim-reference`，固定 tag `v1.8.1`、commit `96235148a332fe7cb3d3525a0720e26faaca99e0`，只讀使用且不得成為 build/runtime/scene dependency；linked worktree 必須由 `git rev-parse --git-common-dir` 的 parent 解析該路徑。
 - 引用或改寫 AirSim path、symbol、setting、protocol behavior 或 fixture 前，必須依 `docs/airsim_reference_policy.md` 搜尋相關 open 與 closed upstream issues，並在實作 issue／PR 留下 query、URL、適用性、授權與導出測試。
 - Codex 專案實作預設 `gpt-5.6-luna` high；只有具體、有限、模糊或高風險的問題可交給 read-only `gpt-5.6-sol` high 顧問，最後決策與驗證仍由主 Agent 負責。模型不可用時必須揭露，不得靜默冒稱。
 - CAP-006 前不要求人工視覺、UI 或可玩性審核；deterministic gates 與 Codex AI Visual Verification 仍持續產生 provisional evidence。Ubuntu packaged game 通過完整可玩流程後，才開始第一次人工完整遊玩與 Approved Visual Reference 核准。
@@ -338,7 +338,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms（基準機 Ryzen 5 5600） | GPU-A | SC |
+| G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms（Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX、NVIDIA GeForce RTX 4060 Ti、driver 580.159.03） | GPU-A | SC |
 | G0.2 | Mobile High 與 Mobile Base 兩 profile 於基準行動裝置：物理 P99 ≤ 5 ms 且整體 ≥ 60 FPS（量測定義同 G0.1；以 Perfetto 拆解物理/渲染占比） | DEV-M→GPU-A | AND, iOS |
 | G0.3 | 1000/500 Hz 子步進下四元數積分 10 分鐘無 NaN、範數漂移 < 1e-6 | CI-A | SC |
 | G0.4 | 桌面/行動雙渲染管線同場景資產打通 | GPU-A | SC |
@@ -406,7 +406,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G4.1 | Reference Performance Profile（Ubuntu、6-core CPU、16 GB RAM、RTX 3060 12 GB-class）Player Mode 1080p default quality 穩定 60 FPS；僅指定 runner 可阻擋，本機規格不足回報 not-qualified | GPU-A | LIN |
+| G4.1 | Reference Performance Profile（Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX、NVIDIA GeForce RTX 4060 Ti、driver 580.159.03）Player Mode 1080p default quality 穩定 60 FPS；僅指定 runner 可阻擋，本機規格不足回報 not-qualified | GPU-A | LIN |
 | G4.2 | 行動基準機同場景 ≥ 60 FPS（P99 ≥ 45），30 分鐘熱節流後 ≥ 50 FPS | DEV-M | AND, IOS |
 | G4.3 | GA 交付一張 `Industrial Test Range`：launch area、warehouse/street、obstacle corridor、短 Time Trial route、reset-to-spawn、方向指示與 finish panel；Map Catalog 保留且只有一個真實 entry | GPU-A + DEV-M | LIN |
 | G4.4 | FPV 攝影機：uptilt/FOV/OSD；桌面含類比雜訊濾鏡 | GPU-A | SC |
@@ -499,7 +499,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 0. **CI 平台範圍（修正版）**：Linux headless 僅承擔——數值模擬、頻譜分析、GDExtension 單元測試、資產載入 smoke、選單樹遍歷。渲染/截圖/UI 視覺/效能類 Gate 一律 GPU runner 或實機（DEV-M/GPU-A）。Web 不列入任何目標。
 1. 測試報告：每 Gate 一份，含環境、版本雜湊、原始數據、判定；未過附根因與修改計畫。
 2. 重測循環：修改 → 該 Phase 全 Gate 回歸 → 報告。
-3. 效能資格機凍結：Ubuntu x86_64、6-core CPU、16 GB RAM、RTX 3060 12 GB-class。效能 gate 只在具名 runner 阻擋；其他本機執行功能／決定性測試並回報 not-qualified。未來 Player Mode lane 的平台基準各自凍結，不阻擋 Ubuntu。
+3. 效能資格機凍結：Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX、NVIDIA GeForce RTX 4060 Ti、driver 580.159.03。效能 gate 只在具名 runner 阻擋；其他本機執行功能／決定性測試並回報 not-qualified。未來 Player Mode lane 的平台基準各自凍結，不阻擋 Ubuntu。
 4. 盲測規範：受測者不知修改內容；問卷含真機 blackbox 回放錨定題。
 5. 版本鎖定：Godot 4.7 之 patch 版本與 export template hash 記錄於 repo；引擎升級觸發 G0–G3 全量重跑。
 6. AirSim 引用證據：每個受影響 issue／PR 必須列出 v1.8.1 path／symbol／commit、open/closed issue queries、相關 URL 與 disposition、license attribution 及導出測試；無結果只代表查過，不代表無缺陷。
