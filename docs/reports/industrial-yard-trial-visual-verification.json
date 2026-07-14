@@ -3,7 +3,7 @@
   "input_hashes": {
     "00_cold_start.png": "5b5e5b124747390f0cfde3d45ddb670fafbf276757fb16df3ed56c34ce17055d",
     "01_industrial_yard_preflight.png": "a2d5c0ff6cc4afada848bc1871ef6972146c432f6ec1900ce1d01a376b67d7dc",
-    "03_takeoff.png": "9a0c23ba52b90b7712adb203218b2153126fb19ce1cb3255593852d1e7bb9800",
+    "03_takeoff.png": "40944768684154275609880de1b64d47ed35c26c53dc1fe20386e6674db65896",
     "05_reset.png": "21d9a25b17abd1487f5344ee318a0c02f465638811ec00313d6c56119d7db889"
   },
   "rubric_version": "aerosim-visual-provisional-v1",

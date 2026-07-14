@@ -137,6 +137,9 @@ func _run() -> void:
 	await _settle(2)
 	var pause_panel: Control = runtime.get_node_or_null("FlightHud/PausePanel")
 	_expect(runtime.paused and pause_panel != null and pause_panel.is_visible_in_tree(), "P opens the pause overlay")
+	var paused_trial_time: float = runtime.time_trial.elapsed_seconds
+	await _settle(8)
+	_expect(absf(runtime.time_trial.elapsed_seconds - paused_trial_time) <= 1e-6, "pause freezes the Time Trial simulation clock")
 	var resume_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Resume")
 	if resume_button != null:
 		_click(resume_button)
