@@ -82,6 +82,7 @@ struct TelemetrySnapshot {
 };
 
 double betaflight_rate_degrees_per_second(double stick, const RateProfile &profile);
+double betaflight_stick_for_rate_degrees_per_second(double rate_degrees_per_second, const RateProfile &profile);
 QuadXMixerResult quad_x_mix_thrust(
         const SimulationConfig &config,
         double collective_thrust_newtons,
@@ -127,6 +128,7 @@ private:
 
 public:
     bool arm(double throttle);
+    void disarm();
     bool armed() const;
     const std::string &arm_reject_code() const;
     void reset_integrators();

@@ -82,6 +82,13 @@ int main() {
     if (!armed_controller.arm(0.0)) {
         return fail("low throttle should satisfy the arm precondition");
     }
+    armed_controller.disarm();
+    if (armed_controller.armed()) {
+        return fail("disarm should clear the flight controller armed state");
+    }
+    if (!armed_controller.arm(0.0)) {
+        return fail("flight controller should re-arm after disarm");
+    }
     for (int frame = 0; frame < config.physics_hz; ++frame) {
         armed_controller.step_angle_mode(armed_state, armed_clock, config, climb);
     }
@@ -217,6 +224,13 @@ int main() {
         const double tolerance = std::max(0.01, std::abs(point.betaflight_degrees_per_second) * 0.01);
         if (!near(actual, point.betaflight_degrees_per_second, tolerance)) {
             return fail("G2.5 rates curve must match Betaflight RC Rate / Super Rate / Expo points within 1%");
+        }
+    }
+    for (double target : {-500.0, -120.0, 0.0, 120.0, 500.0}) {
+        const double stick = aerosim::betaflight_stick_for_rate_degrees_per_second(target, freestyle_rates);
+        const double round_trip = aerosim::betaflight_rate_degrees_per_second(stick, freestyle_rates);
+        if (!near(round_trip, target, 0.01)) {
+            return fail("Betaflight rate inverse did not round-trip");
         }
     }
 
