@@ -72,6 +72,12 @@ public:
             const SimulationConfig &config,
             const AcroCommand &command,
             const CollisionContact &contact);
+    CollisionStepResult step_per_motor(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const MotorCommands &commands,
+            const CollisionContact &contact);
 };
 
 } // namespace aerosim

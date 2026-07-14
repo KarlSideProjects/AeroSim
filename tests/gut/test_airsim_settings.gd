@@ -164,3 +164,49 @@ func test_rejects_invalid_subwindow_and_recording_types() -> void:
     assert_string_contains(result.error, "WindowID")
     assert_string_contains(result.error, "Recording.Enabled")
     assert_string_contains(result.error, "RecordInterval")
+
+
+func test_accepts_px4_sitl_transport_settings() -> void:
+    var result := AirSimSettings.validate({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ClockType": "SteppableClock",
+        "Vehicles": {
+            "Drone1": {
+                "VehicleType": "PX4Multirotor",
+                "UseSerial": false,
+                "UseTcp": true,
+                "TcpPort": 4560,
+                "ControlIp": "127.0.0.1",
+                "ControlPortLocal": 14540,
+                "ControlPortRemote": 14580,
+                "LockStep": true,
+                "LocalHostIp": "127.0.0.1",
+                "UdpIp": "127.0.0.1",
+                "UdpPort": 14560
+            }
+        }
+    })
+
+    assert_true(result.ok, result.error)
+    assert_eq(result.settings["Vehicles"]["Drone1"]["TcpPort"], 4560)
+
+
+func test_rejects_px4_serial_transport_and_invalid_ports() -> void:
+    var result := AirSimSettings.validate({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {
+            "Drone1": {
+                "VehicleType": "PX4Multirotor",
+                "UseSerial": true,
+                "ControlPortLocal": 0,
+                "ControlPortRemote": 70000
+            }
+        }
+    })
+
+    assert_false(result.ok)
+    assert_string_contains(result.error, "UseSerial")
+    assert_string_contains(result.error, "ControlPortLocal")
+    assert_string_contains(result.error, "ControlPortRemote")
