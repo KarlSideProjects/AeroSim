@@ -78,7 +78,20 @@ void integrate(RigidBodyState &state, const SimulationConfig &config, double dt)
     });
 }
 
-bool valid_per_motor_config(const PerMotorPhysicsConfig &config) {
+std::array<std::array<double, 4>, 4> mixer_columns(const PerMotorPhysicsConfig &config) {
+    std::array<std::array<double, 4>, 4> columns{};
+    for (std::size_t index = 0; index < config.position_frd.size(); ++index) {
+        columns[0][index] = 1.0;
+        columns[1][index] = -config.position_frd[index].y;
+        columns[2][index] = config.position_frd[index].x;
+        columns[3][index] = config.spin_direction[index] * config.yaw_torque_per_newton;
+    }
+    return columns;
+}
+
+} // namespace
+
+bool validate_per_motor_config(const PerMotorPhysicsConfig &config) {
     const double values[] = {
             config.inertia_kg_m2.x,
             config.inertia_kg_m2.y,
@@ -100,8 +113,78 @@ bool valid_per_motor_config(const PerMotorPhysicsConfig &config) {
             return false;
         }
     }
+    const double max_abs_position = std::max({
+            std::abs(config.position_frd[0].x),
+            std::abs(config.position_frd[0].y),
+            std::abs(config.position_frd[1].x),
+            std::abs(config.position_frd[1].y),
+            std::abs(config.position_frd[2].x),
+            std::abs(config.position_frd[2].y),
+            std::abs(config.position_frd[3].x),
+            std::abs(config.position_frd[3].y),
+    });
+    const double position_tolerance = 1e-9 * std::max(1.0, max_abs_position);
+    const double forward_arm = std::abs(config.position_frd[0].x);
+    const double right_arm = std::abs(config.position_frd[0].y);
+    if (forward_arm <= position_tolerance || right_arm <= position_tolerance ||
+            forward_arm > 1.0 || right_arm > 1.0) {
+        return false;
+    }
+    const std::array<Vec3, 4> expected_positions = {{
+            {-forward_arm, right_arm, 0.0},
+            {forward_arm, right_arm, 0.0},
+            {-forward_arm, -right_arm, 0.0},
+            {forward_arm, -right_arm, 0.0},
+    }};
+    const std::array<double, 4> expected_spin = {1.0, -1.0, -1.0, 1.0};
+    for (std::size_t index = 0; index < expected_positions.size(); ++index) {
+        const Vec3 &actual = config.position_frd[index];
+        const Vec3 &expected = expected_positions[index];
+        if (std::abs(actual.x - expected.x) > position_tolerance ||
+                std::abs(actual.y - expected.y) > position_tolerance ||
+                std::abs(actual.z) > position_tolerance ||
+                config.spin_direction[index] != expected_spin[index]) {
+            return false;
+        }
+    }
+
+    const auto columns = mixer_columns(config);
+    std::array<double, 4> scales{};
+    std::array<double, 4> diagonal{};
+    for (std::size_t axis = 0; axis < columns.size(); ++axis) {
+        for (double coefficient : columns[axis]) {
+            scales[axis] = std::max(scales[axis], std::abs(coefficient));
+        }
+        if (!std::isfinite(scales[axis]) || scales[axis] <= 0.0) {
+            return false;
+        }
+        for (double coefficient : columns[axis]) {
+            const double normalized_coefficient = coefficient / scales[axis];
+            diagonal[axis] += normalized_coefficient * normalized_coefficient;
+        }
+        if (!std::isfinite(diagonal[axis]) || diagonal[axis] <= 0.0) {
+            return false;
+        }
+    }
+    for (std::size_t left = 0; left < columns.size(); ++left) {
+        for (std::size_t right = left + 1; right < columns.size(); ++right) {
+            double cross = 0.0;
+            for (std::size_t index = 0; index < columns[left].size(); ++index) {
+                cross += (columns[left][index] / scales[left]) *
+                        (columns[right][index] / scales[right]);
+            }
+            const double correlation = std::abs(cross) /
+                    std::sqrt(diagonal[left]) /
+                    std::sqrt(diagonal[right]);
+            if (!std::isfinite(correlation) || correlation > 1e-9) {
+                return false;
+            }
+        }
+    }
     return true;
 }
+
+namespace {
 
 bool valid_motor_commands(const MotorCommands &commands) {
     for (double command : commands.normalized) {
@@ -178,11 +261,11 @@ double quat_norm(const Quat &q) {
 }
 
 Vec3 frd_to_y_up(const Vec3 &frd) {
-    return {frd.x, -frd.z, frd.y};
+    return {frd.x, frd.z, -frd.y};
 }
 
 Vec3 y_up_to_frd(const Vec3 &y_up) {
-    return {y_up.x, y_up.z, -y_up.y};
+    return {y_up.x, -y_up.z, y_up.y};
 }
 
 double first_order_motor_response(double current, double target, double tau_s, double dt_s) {
@@ -247,7 +330,7 @@ TrajectorySample step_per_motor_physics_frame(
         const SimulationConfig &config,
         const MotorCommands &commands) {
     if (config.physics_hz <= 0 || config.substep_hz <= 0 || config.mass_kg <= 0.0 ||
-            !valid_per_motor_config(config.per_motor) || !valid_motor_commands(commands)) {
+            !validate_per_motor_config(config.per_motor) || !valid_motor_commands(commands)) {
         return {};
     }
 

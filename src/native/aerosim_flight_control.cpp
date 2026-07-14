@@ -70,6 +70,86 @@ double loaded_voltage_v(const SimulationConfig &config, double throttle) {
 
 } // namespace
 
+QuadXMixerResult quad_x_mix_thrust(
+        const SimulationConfig &config,
+        double collective_thrust_newtons,
+        const Vec3 &target_torque_frd_nm) {
+    QuadXMixerResult result;
+    if (!validate_per_motor_config(config.per_motor) ||
+            !std::isfinite(collective_thrust_newtons) || collective_thrust_newtons < 0.0 ||
+            !std::isfinite(target_torque_frd_nm.x) ||
+            !std::isfinite(target_torque_frd_nm.y) ||
+            !std::isfinite(target_torque_frd_nm.z)) {
+        return result;
+    }
+
+    const auto &per_motor = config.per_motor;
+    const auto columns = std::array<std::array<double, 4>, 4>{{
+            {1.0, 1.0, 1.0, 1.0},
+            {-per_motor.position_frd[0].y, -per_motor.position_frd[1].y,
+                    -per_motor.position_frd[2].y, -per_motor.position_frd[3].y},
+            {per_motor.position_frd[0].x, per_motor.position_frd[1].x,
+                    per_motor.position_frd[2].x, per_motor.position_frd[3].x},
+            {per_motor.spin_direction[0] * per_motor.yaw_torque_per_newton,
+                    per_motor.spin_direction[1] * per_motor.yaw_torque_per_newton,
+                    per_motor.spin_direction[2] * per_motor.yaw_torque_per_newton,
+                    per_motor.spin_direction[3] * per_motor.yaw_torque_per_newton},
+    }};
+    const std::array<double, 4> targets = {
+            collective_thrust_newtons,
+            target_torque_frd_nm.x,
+            target_torque_frd_nm.y,
+            target_torque_frd_nm.z,
+    };
+    std::array<double, 4> delta_thrust{};
+    for (std::size_t axis = 1; axis < columns.size(); ++axis) {
+        double denominator = 0.0;
+        for (double coefficient : columns[axis]) {
+            denominator += coefficient * coefficient;
+        }
+        if (!std::isfinite(denominator) || denominator <= 0.0) {
+            return result;
+        }
+        for (std::size_t index = 0; index < delta_thrust.size(); ++index) {
+            delta_thrust[index] += columns[axis][index] * targets[axis] / denominator;
+        }
+    }
+
+    const double max_thrust = per_motor.max_thrust_per_motor_newtons;
+    const double requested_base = collective_thrust_newtons / 4.0;
+    double minimum_delta = delta_thrust[0];
+    double maximum_delta = delta_thrust[0];
+    for (double delta : delta_thrust) {
+        minimum_delta = std::min(minimum_delta, delta);
+        maximum_delta = std::max(maximum_delta, delta);
+    }
+    const double delta_range = maximum_delta - minimum_delta;
+    double axis_scale = 1.0;
+    if (delta_range > max_thrust) {
+        axis_scale = max_thrust / delta_range;
+        result.axis_saturated = {true, true, true};
+        for (double &delta : delta_thrust) {
+            delta *= axis_scale;
+        }
+        minimum_delta *= axis_scale;
+        maximum_delta *= axis_scale;
+    }
+
+    const double minimum_base = -minimum_delta;
+    const double maximum_base = max_thrust - maximum_delta;
+    const double base = std::clamp(requested_base, minimum_base, maximum_base);
+    result.collective_saturated = std::abs(base - requested_base) > 1e-12;
+    for (std::size_t index = 0; index < result.normalized.size(); ++index) {
+        const double thrust = base + delta_thrust[index];
+        if (!std::isfinite(thrust) || thrust < -1e-9 || thrust > max_thrust + 1e-9) {
+            return QuadXMixerResult{};
+        }
+        result.normalized[index] = std::clamp(thrust / max_thrust, 0.0, 1.0);
+    }
+    result.valid = true;
+    return result;
+}
+
 double betaflight_rate_degrees_per_second(double stick, const RateProfile &profile) {
     if (!std::isfinite(stick) ||
             !std::isfinite(profile.rc_rate) ||

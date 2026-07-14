@@ -28,6 +28,13 @@ struct AcroCommand {
     RateProfile rates;
 };
 
+struct QuadXMixerResult {
+    std::array<double, 4> normalized = {0.0, 0.0, 0.0, 0.0};
+    std::array<bool, 3> axis_saturated = {false, false, false};
+    bool collective_saturated = false;
+    bool valid = false;
+};
+
 struct PidTimingStats {
     double target_hz = 0.0;
     double p99_jitter_fraction = 0.0;
@@ -75,6 +82,10 @@ struct TelemetrySnapshot {
 };
 
 double betaflight_rate_degrees_per_second(double stick, const RateProfile &profile);
+QuadXMixerResult quad_x_mix_thrust(
+        const SimulationConfig &config,
+        double collective_thrust_newtons,
+        const Vec3 &target_torque_frd_nm);
 
 class FlightController {
 private:

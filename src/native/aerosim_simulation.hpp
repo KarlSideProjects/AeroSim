@@ -61,6 +61,8 @@ struct PerMotorPhysicsConfig {
     double yaw_torque_per_newton = 0.0;
 };
 
+bool validate_per_motor_config(const PerMotorPhysicsConfig &config);
+
 struct MotorCommands {
     std::array<double, 4> normalized = {0.0, 0.0, 0.0, 0.0};
 };
@@ -98,6 +100,7 @@ struct HardwareConfig {
     double battery_remaining_mah = 0.0;
     double max_total_current_a = 0.0;
     double max_motor_rpm = 0.0;
+    PerMotorPhysicsConfig per_motor;
 
     bool set_mass_kg(double value) {
         if (!std::isfinite(value) || value <= 0.0) {
@@ -144,6 +147,14 @@ struct HardwareConfig {
         return true;
     }
 
+    bool set_per_motor_model(const PerMotorPhysicsConfig &value) {
+        if (!validate_per_motor_config(value)) {
+            return false;
+        }
+        per_motor = value;
+        return true;
+    }
+
     SimulationConfig simulation_config() const {
         SimulationConfig config;
         config.mass_kg = mass_kg;
@@ -156,6 +167,7 @@ struct HardwareConfig {
         config.battery_remaining_mah = battery_remaining_mah;
         config.max_total_current_a = max_total_current_a;
         config.max_motor_rpm = max_motor_rpm;
+        config.per_motor = per_motor;
         return config;
     }
 };

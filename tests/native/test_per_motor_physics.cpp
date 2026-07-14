@@ -54,12 +54,12 @@ int main() {
         return fail("equal Quad-X motor commands must cancel roll, pitch, and yaw torque");
     }
 
-    aerosim::MotorCommands left_commands{{0.0, 0.0, 1.0, 1.0}};
-    aerosim::RigidBodyState left_state;
-    aerosim::SimulationClock left_clock;
-    aerosim::step_per_motor_physics_frame(left_state, left_clock, config, left_commands);
-    if (left_state.angular_velocity.x <= 0.0) {
-        return fail("left-side Quad-X motor differential must create a positive roll torque in Y-up physics");
+    aerosim::MotorCommands right_commands{{1.0, 1.0, 0.0, 0.0}};
+    aerosim::RigidBodyState right_state;
+    aerosim::SimulationClock right_clock;
+    aerosim::step_per_motor_physics_frame(right_state, right_clock, config, right_commands);
+    if (right_state.angular_velocity.x <= 0.0) {
+        return fail("right-side Quad-X motor differential must create a positive FRD roll torque in Y-up physics");
     }
 
     return EXIT_SUCCESS;
