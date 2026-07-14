@@ -42,9 +42,9 @@ It fails above the frozen 15-second G6.4 desktop threshold.
 
 | Artifact | Path | Gate | Current status |
 | --- | --- | --- | --- |
-| Windows desktop bundle | `build/release/AeroSim-windows.zip` | size <= 300 MB | CI verified |
-| Linux desktop bundle | `build/release/AeroSim-linux.zip` | size <= 300 MB | CI verified |
-| Android sideload APK | successful `main` CI `release-android/AeroSim-android.apk` + `signing.txt` | size <= 300 MB, locked production signature | production-signing CI is configured; first signed CI run not verified |
+| Windows desktop bundle | future platform export artifact | size <= 300 MB | build-only lane; not verified by current Linux CI |
+| Linux desktop bundle | `build/release/AeroSim-linux.zip` | size <= 300 MB | CI verified when the Linux workflow run is green |
+| Android sideload APK | future platform export artifact | size <= 300 MB, locked production signature | build-only lane; not verified by current Linux CI |
 | Third-party notices | `build/THIRD_PARTY_NOTICES.txt` | generated from `third_party/licenses.json` | CI verified |
 
 macOS packaging, Developer ID signing, notarization, and macOS cold-start
@@ -121,7 +121,8 @@ actual delivery channel.
 
 | Gate | Evidence | Result |
 | --- | --- | --- |
-| G6.1/G6.2 Windows/Linux/Android artifact sizes | `scripts/check_release_artifacts.py` output | CI verified |
+| G6.1 Linux release artifact size | `scripts/check_release_artifacts.py` output | CI verified when the Linux workflow run is green |
+| G6.1/G6.2 Windows/Android artifact sizes | Platform build/export evidence | N/A (build-only lane; not verified by current Linux CI) |
 | G6.2 Android sideload | device log / screen recording | N/A (unverified frozen), not pass |
 | G6.3 license scan + NOTICE | CI link + `build/THIRD_PARTY_NOTICES.txt` | CI verified |
 | G6.4 Linux cold start | `build/cold_start/linux.json` from real-display release probe | automation added; not verified until measured release evidence exists |

@@ -392,7 +392,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G3.1 | 阻力：等速前飛穩態俯仰/推力 vs Forster 解析 ≤ 5%；**且** C++ 移植版 vs gym-pybullet-drones Python 原版逐點 ≤ 1e-6 | CI-A | SC |
 | G3.2 | 地面效應：z/R 5→1 增益曲線 vs Shi Eq.15 ≤ 5%；Python Oracle 逐點 ≤ 1e-6；低空懸停「氣墊」可觀測 | CI-A | SC |
 | G3.3 | 下洗：雙機交錯升力衰減 vs DSL 模型 ≤ 10%；Python Oracle 逐點 ≤ 1e-6 | CI-A | SC |
-| G3.4 | **Dryden（determinism 修正版）**：固定 seed、Welch 法（段長 2¹⁴、50% overlap、Hann 窗）估 PSD，0.1–10 rad/s 各 bin 與理論譜偏差 ≤ 10%（95% 信賴區間內），輕/中/重三檔；同 seed 重跑 bitwise 一致 | CI-A | SC |
+| G3.4 | **Dryden（determinism 修正版）**：解析成形濾波器頻率響應逐 bin 對 MIL-F-8785C 理論譜偏差 ≤ 10%；另以固定 seed 的 Welch 法（段長 2¹⁴、50% overlap、Hann 窗）做 95% CI smoke，輕/中/重三檔；同 seed 重跑 bitwise 一致 | CI-A | SC |
 | G3.5 | 風切剖面 vs 軍規模型逐點 ≤ 5% | CI-A | SC |
 | G3.6 | Propwash 機制軌：split-S 出彎擾動注入、強度與油門相關係數 ≥ 0.8、關閉時為 0；真機實測殘差軌（原 (b)）依決策豁免，未來取得合規資料時再重啟 | CI-A | SC |
 | G3.7 | **效能預算（修正版）**：全效應開啟後，物理 P99 相對 G0 基線增幅 ≤ 20%，且絕對值仍 ≤ 3 ms（桌面）/ 5 ms（行動各 profile） | GPU-A / DEV-M | SC |
