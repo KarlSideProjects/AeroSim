@@ -31,7 +31,9 @@ def exercise(port: int) -> None:
     client.simPause(True)
     assert client.simIsPause() is True
     client.simContinueForFrames(4)
+    assert client.simIsPause() is True
     client.simContinueForTime(2.0 / 240.0)
+    assert client.simIsPause() is True
     expect_rpc_error(client)
 
     client.reset()
