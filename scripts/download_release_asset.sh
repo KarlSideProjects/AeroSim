@@ -10,7 +10,7 @@ url="$1"
 output="$2"
 algorithm="$3"
 expected_hash="$4"
-chunk_size="${AEROSIM_DOWNLOAD_CHUNK_SIZE:-67108864}"
+chunk_size="${AEROSIM_DOWNLOAD_CHUNK_SIZE:-16777216}"
 parallelism="${AEROSIM_DOWNLOAD_PARALLELISM:-8}"
 
 case "$algorithm" in
