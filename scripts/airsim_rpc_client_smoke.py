@@ -57,6 +57,17 @@ def exercise(port: int) -> None:
     assert len(lidar.segmentation) == len(lidar.point_cloud) // 3
     assert raw_imu["sample_count"] >= 1
     assert raw_imu["dropped_count"] == 0
+    images = client.simGetImages([
+        airsim.ImageRequest("0", airsim.ImageType.Segmentation, False, False),
+        airsim.ImageRequest("0", airsim.ImageType.DepthPlanar, True, False),
+    ], vehicle_name="Drone1")
+    assert [response.image_type for response in images] == [airsim.ImageType.Segmentation, airsim.ImageType.DepthPlanar]
+    assert images[0].width == images[1].width == 256
+    assert images[0].height == images[1].height == 144
+    assert isinstance(images[0].image_data_uint8, (bytes, bytearray))
+    assert len(images[0].image_data_uint8) == 256 * 144 * 3
+    assert len(images[1].image_data_float) == 256 * 144
+    assert images[0].time_stamp == images[1].time_stamp
     client.enableApiControl(True, vehicle_name="Drone1")
     assert client.isApiControlEnabled("Drone1") is True
     assert client.armDisarm(True, vehicle_name="Drone1") is True

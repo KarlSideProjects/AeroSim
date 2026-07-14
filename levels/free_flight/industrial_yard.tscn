@@ -84,8 +84,10 @@ light_energy = 1.5
 [node name="Ground" type="MeshInstance3D" parent="."]
 mesh = SubResource("MeshGround")
 surface_material_override/0 = SubResource("MaterialGround")
+metadata/airsim_segmentation_id = 1
 
 [node name="GroundCollision" type="StaticBody3D" parent="."]
+metadata/airsim_segmentation_id = 1
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="GroundCollision"]
 position = Vector3(0, -0.1, 0)
@@ -93,6 +95,7 @@ shape = SubResource("ShapeGround")
 
 [node name="SpawnPlatform" type="StaticBody3D" parent="."]
 position = Vector3(0, 0.15, -24)
+metadata/airsim_segmentation_id = 2
 
 [node name="Mesh" type="MeshInstance3D" parent="SpawnPlatform"]
 mesh = SubResource("MeshPlatform")
@@ -113,6 +116,7 @@ font_size = 64
 
 [node name="ContainerBlue" type="StaticBody3D" parent="CargoContainers"]
 position = Vector3(-4.5, 1.2, -8)
+metadata/airsim_segmentation_id = 3
 
 [node name="Mesh" type="MeshInstance3D" parent="CargoContainers/ContainerBlue"]
 mesh = SubResource("MeshContainer")
@@ -124,6 +128,7 @@ shape = SubResource("ShapeContainer")
 [node name="ContainerOrange" type="StaticBody3D" parent="CargoContainers"]
 position = Vector3(4.5, 1.2, -8)
 rotation = Vector3(0, 0.35, 0)
+metadata/airsim_segmentation_id = 4
 
 [node name="Mesh" type="MeshInstance3D" parent="CargoContainers/ContainerOrange"]
 mesh = SubResource("MeshContainer")
@@ -134,6 +139,7 @@ shape = SubResource("ShapeContainer")
 
 [node name="LowGate" type="StaticBody3D" parent="."]
 position = Vector3(0, 0, 3)
+metadata/airsim_segmentation_id = 5
 
 [node name="LeftPost" type="MeshInstance3D" parent="LowGate"]
 position = Vector3(-1.9, 1.2, 0)
@@ -165,6 +171,7 @@ shape = SubResource("ShapeGateTop")
 [node name="TurnMarker" type="StaticBody3D" parent="."]
 position = Vector3(6, 0.55, 9)
 rotation = Vector3(0, 1.5708, 0)
+metadata/airsim_segmentation_id = 6
 
 [node name="Mesh" type="MeshInstance3D" parent="TurnMarker"]
 mesh = SubResource("MeshTurn")
@@ -181,6 +188,7 @@ font_size = 48
 
 [node name="Tower" type="StaticBody3D" parent="."]
 position = Vector3(8, 5.5, 18)
+metadata/airsim_segmentation_id = 7
 
 [node name="Mesh" type="MeshInstance3D" parent="Tower"]
 mesh = SubResource("MeshTower")

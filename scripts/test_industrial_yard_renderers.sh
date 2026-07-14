@@ -18,4 +18,8 @@ for renderer in forward_plus mobile; do
         --script res://tests/headless/industrial_yard_renderer_smoke.gd
 done
 
+echo "running deterministic camera surface smoke"
+"$godot_bin" --headless --path . \
+    --script res://tests/headless/camera_surface_smoke.gd
+
 echo "Industrial Yard renderer checks passed"
