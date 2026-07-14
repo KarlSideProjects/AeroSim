@@ -4,6 +4,8 @@ const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
+const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
+const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const TAKEOFF_VELOCITY := Vector3(0.0, 6.0, 0.0)
@@ -22,6 +24,9 @@ const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Ex
 @onready var chase_camera := get_node_or_null("ChaseCamera") as Camera3D
 
 var native: Object
+var airsim_session: AirSimSession
+var airsim_rpc_server: AirSimRpcServer
+var airsim_stop_file := ""
 var paused := false
 var exit_requested := false
 var quit_on_exit := true
@@ -72,6 +77,39 @@ func _ready() -> void:
     if native == null:
         push_error("AeroSimNative is not registered")
         return
+    airsim_session = AirSimSession.new(Engine.physics_ticks_per_second)
+    airsim_rpc_server = AirSimRpcServer.new()
+    airsim_rpc_server.set_session(airsim_session, Callable(self, "respawn"))
+    add_child(airsim_rpc_server)
+    airsim_stop_file = _cold_start_arg("--airsim-stop-file")
+    var airsim_port := int(_cold_start_arg("--airsim-rpc-port", str(AirSimRpcServer.DEFAULT_PORT)))
+    var startup_settings := {
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": airsim_port,
+        "RpcEnabled": true,
+    }
+    var settings_path := _cold_start_arg("--airsim-settings-file")
+    if not settings_path.is_empty():
+        var settings_file := FileAccess.open(settings_path, FileAccess.READ)
+        if settings_file == null:
+            push_error("AirSim settings file could not be opened: %s" % settings_path)
+            get_tree().quit(1)
+            return
+        else:
+            var parsed_settings = JSON.parse_string(settings_file.get_as_text())
+            settings_file.close()
+            if typeof(parsed_settings) != TYPE_DICTIONARY:
+                push_error("AirSim settings file must contain a JSON object")
+                get_tree().quit(1)
+                return
+            else:
+                startup_settings = parsed_settings
+    var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
+    if not rpc_result.ok:
+        push_error("AirSim RPC startup failed: %s" % rpc_result.error)
+    else:
+        _write_airsim_ready_marker(_cold_start_arg("--airsim-ready-file"))
     var hardware_config := HardwareConfig.new()
     if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
         last_error_message = hardware_config.last_error
@@ -133,6 +171,16 @@ func _cold_start_frame_is_observable(image: Image) -> bool:
         max_count = maxi(max_count, int(counts[color]))
     return float(max_count) / float(image.get_width() * image.get_height()) < 0.99
 
+func _write_airsim_ready_marker(path: String) -> void:
+    if path.is_empty():
+        return
+    var marker := FileAccess.open(path, FileAccess.WRITE)
+    if marker == null:
+        push_error("Cannot write AirSim readiness marker: %s" % path)
+        return
+    marker.store_string("ready")
+    marker.close()
+
 func _unhandled_input(event: InputEvent) -> void:
     if event is InputEventJoypadButton and _handle_gamepad_button(event):
         return
@@ -148,6 +196,11 @@ func _unhandled_input(event: InputEvent) -> void:
         request_exit()
 
 func _process(_delta: float) -> void:
+    if not airsim_stop_file.is_empty() and FileAccess.file_exists(airsim_stop_file):
+        get_tree().quit()
+        return
+    if airsim_session != null and paused != airsim_session.is_paused():
+        set_paused(airsim_session.is_paused(), false)
     _update_chase_camera()
     _refresh_controller_confirmation()
     _refresh_controller_settings()
@@ -160,6 +213,17 @@ func _physics_process(_delta: float) -> void:
             drone_body.freeze = false
             drone_body.sleeping = false
         return
+    if paused:
+        if airsim_session != null and not airsim_session.is_paused():
+            set_paused(false, false)
+        if paused:
+            return
+    var session_advanced := true
+    if airsim_session != null:
+        session_advanced = airsim_session.advance_frame()
+        if not session_advanced and airsim_session.is_paused():
+            set_paused(true, false)
+            return
     if native == null or paused or not takeoff_requested:
         return
     if not native.call("flight_control_armed"):
@@ -247,6 +311,8 @@ func _physics_process(_delta: float) -> void:
             Vector3(row[8], row[9], row[10]),
             Vector3(row[14], row[15], row[16])
         )
+    if airsim_session != null and airsim_session.is_paused():
+        set_paused(true, false)
     _update_status_diagram()
 
 func request_takeoff() -> void:
@@ -389,8 +455,10 @@ func toggle_altitude_hold() -> void:
         flight_mode = "ALTITUDE_HOLD"
     update_fallback_status()
 
-func set_paused(value: bool) -> void:
+func set_paused(value: bool, sync_session: bool = true) -> void:
     paused = value
+    if sync_session and airsim_session != null:
+        airsim_session.set_paused(value)
     if drone_body != null:
         drone_body.freeze = value
         if not value:

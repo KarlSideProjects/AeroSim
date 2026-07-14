@@ -1,0 +1,78 @@
+{
+  "manifest_version": 1,
+  "settings_version": 1.2,
+  "airsim_client": "1.8.1",
+  "transport": "msgpack-rpc",
+  "storage": "startup-only; never persisted in the Player SettingsStore",
+  "schema": {
+    "required": ["SettingsVersion"],
+    "types": {
+      "SettingsVersion": "number",
+      "SimMode": "string",
+      "ClockType": "string",
+      "ClockSpeed": "number",
+      "ApiServerPort": "integer",
+      "RpcEnabled": "boolean",
+      "OriginGeopoint": "object",
+      "Vehicles": "object",
+      "SubWindows": "array",
+      "Recording": "object"
+    },
+    "nested_types": {
+      "gimbal": {"Stabilization": "number", "Pitch": "number", "Roll": "number", "Yaw": "number"},
+      "capture_settings": {"ImageType": "integer", "Width": "integer", "Height": "integer", "FOV_Degrees": "number", "AutoExposureSpeed": "number", "AutoExposureBias": "number", "AutoExposureMaxBrightness": "number", "AutoExposureMinBrightness": "number", "MotionBlurAmount": "number", "TargetGamma": "number", "ProjectionMode": "string", "OrthoWidth": "number"},
+      "noise_settings": {"Enabled": "boolean", "ImageType": "integer", "RandContrib": "number", "RandSpeed": "number", "RandSize": "number", "RandDensity": "number", "HorzWaveContrib": "number", "HorzWaveStrength": "number", "HorzWaveVertSize": "number", "HorzWaveScreenSize": "number", "HorzNoiseLinesContrib": "number", "HorzNoiseLinesDensityY": "number", "HorzNoiseLinesDensityXY": "number", "HorzDistortionContrib": "number", "HorzDistortionStrength": "number"},
+      "camera": {"X": "number", "Y": "number", "Z": "number", "Roll": "number", "Pitch": "number", "Yaw": "number", "Gimbal": "object", "CaptureSettings": "array", "NoiseSettings": "array"},
+      "sensor": {"SensorType": "integer", "Enabled": "boolean", "X": "number", "Y": "number", "Z": "number", "Roll": "number", "Pitch": "number", "Yaw": "number", "DrawDebugPoints": "boolean", "DataFrame": "string"},
+      "origin_geopoint": {"Latitude": "number", "Longitude": "number", "Altitude": "number"},
+      "vehicle": {"VehicleType": "string", "Cameras": "object", "Sensors": "object"},
+      "subwindow": {"WindowID": "integer", "ImageType": "integer", "Visible": "boolean", "CameraName": "string", "CameraID": "integer", "VehicleName": "string", "External": "boolean"},
+      "recording": {"RecordOnMove": "boolean", "RecordInterval": "number", "Folder": "string", "Enabled": "boolean"}
+    },
+    "enums": {
+      "SimMode": ["Multirotor"],
+      "ClockType": ["", "SteppableClock", "ScalableClock"],
+      "VehicleType": ["SimpleFlight", "PX4Multirotor"]
+    }
+  },
+  "bind": {
+    "address": "127.0.0.1",
+    "default_port": 41451,
+    "remote_addresses": "unsupported"
+  },
+  "supported_api": [
+    "ping",
+    "getServerVersion",
+    "getMinRequiredClientVersion",
+    "getSettingsString",
+    "simPause",
+    "simIsPaused",
+    "simContinueForTime",
+    "simContinueForFrames",
+    "reset"
+  ],
+  "settings": {
+    "root": [
+      "SettingsVersion",
+      "SimMode",
+      "ClockType",
+      "ClockSpeed",
+      "ApiServerPort",
+      "RpcEnabled",
+      "OriginGeopoint",
+      "Vehicles",
+      "SubWindows",
+      "Recording"
+    ],
+    "origin_geopoint": ["Latitude", "Longitude", "Altitude"],
+    "vehicle": ["VehicleType", "Cameras", "Sensors"],
+    "camera": ["X", "Y", "Z", "Roll", "Pitch", "Yaw", "Gimbal", "CaptureSettings", "NoiseSettings"],
+    "gimbal": ["Stabilization", "Pitch", "Roll", "Yaw"],
+    "capture_settings": ["ImageType", "Width", "Height", "FOV_Degrees", "AutoExposureSpeed", "AutoExposureBias", "AutoExposureMaxBrightness", "AutoExposureMinBrightness", "MotionBlurAmount", "TargetGamma", "ProjectionMode", "OrthoWidth"],
+    "noise_settings": ["Enabled", "ImageType", "RandContrib", "RandSpeed", "RandSize", "RandDensity", "HorzWaveContrib", "HorzWaveStrength", "HorzWaveVertSize", "HorzWaveScreenSize", "HorzNoiseLinesContrib", "HorzNoiseLinesDensityY", "HorzNoiseLinesDensityXY", "HorzDistortionContrib", "HorzDistortionStrength"],
+    "sensor": ["SensorType", "Enabled", "X", "Y", "Z", "Roll", "Pitch", "Yaw", "DrawDebugPoints", "DataFrame"],
+    "subwindow": ["WindowID", "ImageType", "Visible", "CameraName", "CameraID", "VehicleName", "External"],
+    "recording": ["RecordOnMove", "RecordInterval", "Folder", "Enabled"]
+  },
+  "unsupported_policy": "Unknown methods, settings, versions, types, vehicles, and non-loopback binds fail explicitly."
+}
