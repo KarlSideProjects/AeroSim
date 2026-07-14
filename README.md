@@ -62,6 +62,5 @@ GitHub Actions 會執行：
 4. 下載並驗證 Godot `4.7-stable` Linux editor hash。
 5. 下載鎖定 commit 的 godot-cpp，建置 Linux GDExtension。
 6. headless smoke，確認 GDScript 可呼叫 native probe 並輸出檔案。
-7. Windows 原生 C++ 單元測試與 GDExtension 建置。
-8. Android emulator 執行同一組原生 C++ 單元測試，並建置 Android arm64 GDExtension。
-9. Linux / Windows / Android replay terminal-state artifacts 互相比對 G0.6a tolerance。
+7. Linux headed acceptance 與 release artifact checks。
+8. Linux replay terminal-state artifact 與 build provenance 檢查。
