@@ -15,6 +15,7 @@ var settings: Dictionary = {}
 var reset_handler: Callable
 var _clients: Array = []
 var _client_buffers: Dictionary = {}
+var _pending_step_responses: Array[Dictionary] = []
 
 
 func set_session(owner_session: AirSimSession, owner_reset_handler: Callable = Callable()) -> void:
@@ -70,6 +71,7 @@ func stop() -> void:
         client.disconnect_from_host()
     _clients.clear()
     _client_buffers.clear()
+    _pending_step_responses.clear()
     _running = false
     set_process(false)
 
@@ -119,6 +121,7 @@ func poll() -> void:
                 continue
             _client_buffers[client_id] = buffer
             _process_client_buffer(client)
+    _flush_pending_step_responses()
 
 
 func _process_client_buffer(client: StreamPeerTCP) -> void:
@@ -142,7 +145,10 @@ func _process_client_buffer(client: StreamPeerTCP) -> void:
             response = dispatch(decoded.value)
         else:
             response = _error_response(null, "RPC request must be an array")
-        if not _send_response(client, response):
+        var is_explicit_step: bool = response[2] == null and typeof(decoded.value) == TYPE_ARRAY and decoded.value.size() == 4 and decoded.value[2] in ["simContinueForFrames", "simContinueForTime"]
+        if is_explicit_step:
+            _pending_step_responses.append({"client": client, "message_id": response[1]})
+        elif not _send_response(client, response):
             _remove_client(client)
             return
         buffer = buffer.slice(consumed)
@@ -157,6 +163,21 @@ func _remove_client(client: StreamPeerTCP) -> void:
     client.disconnect_from_host()
     _clients.erase(client)
     _client_buffers.erase(client.get_instance_id())
+    for pending in _pending_step_responses.duplicate():
+        if pending["client"] == client:
+            _pending_step_responses.erase(pending)
+
+
+func _flush_pending_step_responses() -> void:
+    if session.is_explicit_step_active():
+        return
+    for pending in _pending_step_responses.duplicate():
+        var client: StreamPeerTCP = pending["client"]
+        _pending_step_responses.erase(pending)
+        if not _clients.has(client):
+            continue
+        if not _send_response(client, _success_response(pending["message_id"], null)):
+            _remove_client(client)
 
 
 func dispatch(request: Array) -> Array:

@@ -25,6 +25,10 @@ func is_paused() -> bool:
     return _paused
 
 
+func is_explicit_step_active() -> bool:
+    return _explicit_frames_remaining > 0
+
+
 func advance_frame() -> bool:
     if _paused:
         return false
@@ -37,6 +41,8 @@ func advance_frame() -> bool:
 
 
 func continue_for_frames(frames: int) -> Dictionary:
+    if is_explicit_step_active():
+        return _error("an explicit simulation step is already in progress")
     if frames < 0 or frames > MAX_EXPLICIT_STEP_FRAMES:
         return _error("frame step must be from 0 to %d" % MAX_EXPLICIT_STEP_FRAMES)
     _explicit_frames_remaining = frames
@@ -45,6 +51,8 @@ func continue_for_frames(frames: int) -> Dictionary:
 
 
 func continue_for_time(seconds: float) -> Dictionary:
+    if is_explicit_step_active():
+        return _error("an explicit simulation step is already in progress")
     if not is_finite(seconds) or seconds < 0.0:
         return _error("duration step must not be negative")
     var exact_frames := seconds * float(physics_hz)

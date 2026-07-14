@@ -94,11 +94,15 @@ func _ready() -> void:
         var settings_file := FileAccess.open(settings_path, FileAccess.READ)
         if settings_file == null:
             push_error("AirSim settings file could not be opened: %s" % settings_path)
+            get_tree().quit(1)
+            return
         else:
             var parsed_settings = JSON.parse_string(settings_file.get_as_text())
             settings_file.close()
             if typeof(parsed_settings) != TYPE_DICTIONARY:
                 push_error("AirSim settings file must contain a JSON object")
+                get_tree().quit(1)
+                return
             else:
                 startup_settings = parsed_settings
     var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
@@ -209,6 +213,11 @@ func _physics_process(_delta: float) -> void:
             drone_body.freeze = false
             drone_body.sleeping = false
         return
+    if paused:
+        if airsim_session != null and not airsim_session.is_paused():
+            set_paused(false, false)
+        if paused:
+            return
     var session_advanced := true
     if airsim_session != null:
         session_advanced = airsim_session.advance_frame()
