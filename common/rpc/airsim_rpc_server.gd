@@ -1,6 +1,10 @@
 class_name AirSimRpcServer
 extends Node
 
+const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const AirSimSettings = preload("res://common/rpc/airsim_settings.gd")
+const MsgpackCodec = preload("res://common/rpc/msgpack_codec.gd")
+
 const DEFAULT_BIND_ADDRESS := "127.0.0.1"
 const DEFAULT_PORT: int = 41451
 const MAX_CLIENTS: int = 16
