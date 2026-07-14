@@ -3,6 +3,8 @@ extends Node
 
 const DEFAULT_BIND_ADDRESS := "127.0.0.1"
 const DEFAULT_PORT: int = 41451
+const MAX_CLIENTS: int = 16
+const MAX_CLIENT_BUFFER_BYTES: int = 1_048_576
 
 var bind_address: String = DEFAULT_BIND_ADDRESS
 var port: int = DEFAULT_PORT
@@ -10,8 +12,16 @@ var _tcp_server := TCPServer.new()
 var _running: bool = false
 var session := AirSimSession.new()
 var settings: Dictionary = {}
+var reset_handler: Callable
 var _clients: Array = []
 var _client_buffers: Dictionary = {}
+
+
+func set_session(owner_session: AirSimSession, owner_reset_handler: Callable = Callable()) -> void:
+    if _running:
+        stop()
+    session = owner_session
+    reset_handler = owner_reset_handler
 
 
 func validate_bind_address(address: String) -> Dictionary:
@@ -47,6 +57,7 @@ func start_with_settings(raw_settings: Dictionary) -> Dictionary:
         return validation
     settings = validation.settings
     if not settings["RpcEnabled"]:
+        stop()
         return {"ok": true, "settings": settings, "running": false}
     var result := start(DEFAULT_BIND_ADDRESS, settings["ApiServerPort"])
     result["settings"] = settings
@@ -82,6 +93,9 @@ func poll() -> void:
         var client: StreamPeerTCP = _tcp_server.take_connection()
         if client == null:
             break
+        if _clients.size() >= MAX_CLIENTS:
+            client.disconnect_from_host()
+            continue
         _clients.append(client)
         _client_buffers[client.get_instance_id()] = PackedByteArray()
 
@@ -99,6 +113,10 @@ func poll() -> void:
             var client_id: int = client.get_instance_id()
             var buffer: PackedByteArray = _client_buffers[client_id]
             buffer.append_array(data_result[1])
+            if buffer.size() > MAX_CLIENT_BUFFER_BYTES:
+                _send_response(client, _error_response(null, "RPC request exceeds the maximum frame size"))
+                _remove_client(client)
+                continue
             _client_buffers[client_id] = buffer
             _process_client_buffer(client)
 
@@ -177,6 +195,8 @@ func dispatch(request: Array) -> Array:
             if not params.is_empty():
                 return _error_response(message_id, "reset expects no parameters")
             session.reset()
+            if reset_handler.is_valid():
+                reset_handler.call()
             return _success_response(message_id, null)
         "getServerVersion":
             if not params.is_empty():
@@ -196,7 +216,7 @@ func dispatch(request: Array) -> Array:
 
 func _session_response(message_id, result: Dictionary) -> Array:
     if result.ok:
-        return _success_response(message_id, result)
+        return _success_response(message_id, null)
     return _error_response(message_id, result.error)
 
 

@@ -13,6 +13,10 @@ func test_paused_session_advances_only_when_explicitly_stepped() -> void:
 
     var result: Dictionary = session.continue_for_frames(3)
     assert_true(result.ok)
+    assert_false(session.is_paused())
+    session.advance_frame()
+    session.advance_frame()
+    session.advance_frame()
     assert_eq(session.frame_index, 3)
     assert_almost_eq(session.simulation_time_seconds, 0.003, 0.000001)
     assert_true(session.is_paused())
@@ -24,6 +28,8 @@ func test_duration_step_is_deterministic_and_rejects_invalid_duration() -> void:
 
     var result: Dictionary = session.continue_for_time(0.025)
     assert_true(result.ok)
+    for _frame in 25:
+        session.advance_frame()
     assert_eq(session.frame_index, 25)
     assert_almost_eq(session.simulation_time_seconds, 0.025, 0.000001)
 

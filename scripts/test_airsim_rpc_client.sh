@@ -34,8 +34,7 @@ fi
 "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet airsim==1.8.1
 
 "$GODOT_BIN" --headless --path "$ROOT_DIR" \
-    --script res://tests/headless/airsim_rpc_harness.gd -- \
-    --rpc-port "$PORT" --ready-file "$READY_FILE" --stop-file "$STOP_FILE" \
+    -- --airsim-rpc-port "$PORT" --airsim-ready-file "$READY_FILE" --airsim-stop-file "$STOP_FILE" \
     >"$TMP_DIR/godot.log" 2>&1 &
 GODOT_PID=$!
 

@@ -1,7 +1,29 @@
 {
   "manifest_version": 1,
+  "settings_version": 1.2,
   "airsim_client": "1.8.1",
   "transport": "msgpack-rpc",
+  "storage": "startup-only; never persisted in the Player SettingsStore",
+  "schema": {
+    "required": ["SettingsVersion"],
+    "types": {
+      "SettingsVersion": "number",
+      "SimMode": "string",
+      "ClockType": "string",
+      "ClockSpeed": "number",
+      "ApiServerPort": "integer",
+      "RpcEnabled": "boolean",
+      "OriginGeopoint": "object",
+      "Vehicles": "object",
+      "SubWindows": "array",
+      "Recording": "object"
+    },
+    "enums": {
+      "SimMode": ["Multirotor"],
+      "ClockType": ["", "SteppableClock", "ScalableClock"],
+      "VehicleType": ["SimpleFlight", "PX4Multirotor"]
+    }
+  },
   "bind": {
     "address": "127.0.0.1",
     "default_port": 41451,

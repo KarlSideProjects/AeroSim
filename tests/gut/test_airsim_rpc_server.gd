@@ -15,6 +15,7 @@ func test_loopback_is_the_only_allowed_bind_address() -> void:
 
 func test_default_port_is_the_frozen_airsim_port() -> void:
     assert_eq(AirSimRpcServer.DEFAULT_PORT, 41451)
+    assert_eq(AirSimRpcServer.MAX_CLIENT_BUFFER_BYTES, 1_048_576)
 
 
 func test_non_loopback_start_is_rejected_before_listening() -> void:
@@ -45,7 +46,7 @@ func test_dispatches_explicit_frame_step_and_rejects_unknown_methods() -> void:
     assert_eq(step_response[0], 1)
     assert_eq(step_response[1], 2)
     assert_eq(step_response[2], null)
-    assert_eq(step_response[3]["frames"], 4)
+    assert_eq(step_response[3], null)
 
     var unknown: Array = server.dispatch([0, 3, "futureApi", []])
     assert_eq(unknown[0], 1)
@@ -100,7 +101,9 @@ func test_manifest_names_the_current_compatibility_surface() -> void:
     var manifest = JSON.parse_string(file.get_as_text())
     assert_true(manifest is Dictionary)
     assert_eq(manifest["airsim_client"], "1.8.1")
+    assert_eq(manifest["settings_version"], 1.2)
     assert_eq(manifest["transport"], "msgpack-rpc")
+    assert_string_contains(manifest["storage"], "never persisted")
     assert_true(manifest["supported_api"].has("ping"))
     assert_true(manifest["supported_api"].has("simContinueForFrames"))
     assert_true(manifest["settings"]["root"].has("Vehicles"))

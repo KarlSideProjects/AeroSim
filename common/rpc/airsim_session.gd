@@ -8,6 +8,7 @@ var frame_index: int = 0
 var simulation_time_seconds: float = 0.0
 
 var _paused: bool = false
+var _explicit_frames_remaining: int = 0
 
 
 func _init(new_physics_hz: int = 240) -> void:
@@ -16,6 +17,8 @@ func _init(new_physics_hz: int = 240) -> void:
 
 func set_paused(value: bool) -> void:
     _paused = value
+    if value:
+        _explicit_frames_remaining = 0
 
 
 func is_paused() -> bool:
@@ -26,21 +29,22 @@ func advance_frame() -> bool:
     if _paused:
         return false
     _advance_frames(1)
+    if _explicit_frames_remaining > 0:
+        _explicit_frames_remaining -= 1
+        if _explicit_frames_remaining == 0:
+            _paused = true
     return true
 
 
 func continue_for_frames(frames: int) -> Dictionary:
-    if not _paused:
-        return _error("simulation must be paused before explicit stepping")
     if frames < 0 or frames > MAX_EXPLICIT_STEP_FRAMES:
         return _error("frame step must be from 0 to %d" % MAX_EXPLICIT_STEP_FRAMES)
-    _advance_frames(frames)
+    _explicit_frames_remaining = frames
+    _paused = false
     return _step_result(frames)
 
 
 func continue_for_time(seconds: float) -> Dictionary:
-    if not _paused:
-        return _error("simulation must be paused before explicit stepping")
     if not is_finite(seconds) or seconds < 0.0:
         return _error("duration step must not be negative")
     var exact_frames := seconds * float(physics_hz)
@@ -49,7 +53,8 @@ func continue_for_time(seconds: float) -> Dictionary:
         return _error("duration must resolve to whole simulation frames")
     if frames > MAX_EXPLICIT_STEP_FRAMES:
         return _error("duration step is too large")
-    _advance_frames(frames)
+    _explicit_frames_remaining = frames
+    _paused = false
     return _step_result(frames)
 
 
@@ -57,6 +62,7 @@ func reset() -> void:
     frame_index = 0
     simulation_time_seconds = 0.0
     _paused = false
+    _explicit_frames_remaining = 0
 
 
 func _advance_frames(frames: int) -> void:

@@ -28,10 +28,8 @@ def exercise(port: int) -> None:
 
     client.simPause(True)
     assert client.simIsPause() is True
-    frame_result = client.client.call("simContinueForFrames", 4)
-    assert frame_result["frames"] == 4
-    time_result = client.client.call("simContinueForTime", 2.0 / 240.0)
-    assert time_result["frames"] == 2
+    client.simContinueForFrames(4)
+    client.simContinueForTime(2.0 / 240.0)
     expect_rpc_error(client)
 
     client.reset()

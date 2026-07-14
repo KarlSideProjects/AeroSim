@@ -48,7 +48,7 @@ func test_rejects_unsupported_vehicle_type_and_more_than_two_vehicles() -> void:
 
     assert_false(result.ok)
     assert_string_contains(result.error, "one or two")
-    assert_string_contains(result.error, "SimpleFlight or PX4Multirotor")
+    assert_string_contains(result.error, "SimpleFlight, PX4Multirotor")
 
 
 func test_applies_the_loopback_rpc_port_default() -> void:
@@ -60,6 +60,19 @@ func test_applies_the_loopback_rpc_port_default() -> void:
     assert_true(result.ok)
     assert_eq(result.settings["ApiServerPort"], AirSimSettings.DEFAULT_API_SERVER_PORT)
     assert_eq(result.settings["RpcEnabled"], true)
+
+
+func test_startup_settings_are_deep_copied_and_not_player_persisted() -> void:
+    var source := {
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}}
+    }
+    var result := AirSimSettings.validate(source)
+
+    assert_true(result.ok)
+    result.settings["Vehicles"]["Drone1"]["VehicleType"] = "PX4Multirotor"
+    assert_eq(source["Vehicles"]["Drone1"]["VehicleType"], "SimpleFlight")
 
 
 func test_rejects_unknown_recording_field() -> void:
