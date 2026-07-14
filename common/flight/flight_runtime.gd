@@ -256,7 +256,10 @@ func _process(_delta: float) -> void:
         get_tree().quit()
         return
     if airsim_session != null and paused != airsim_session.is_paused():
-        set_paused(airsim_session.is_paused(), false)
+        if not airsim_session.is_paused() and _airsim_lifecycle_stopped() and not airsim_session.is_explicit_step_active():
+            airsim_session.set_paused(true)
+        else:
+            set_paused(airsim_session.is_paused(), false)
     _update_chase_camera()
     _refresh_controller_confirmation()
     _refresh_controller_settings()
@@ -697,7 +700,7 @@ func toggle_altitude_hold() -> void:
     update_fallback_status()
 
 func set_paused(value: bool, sync_session: bool = true) -> void:
-    if not value and screen in ["finish", "main_menu", "settings", "controller_settings", "error"]:
+    if not value and _airsim_lifecycle_stopped() and (airsim_session == null or not airsim_session.is_explicit_step_active()):
         return
     paused = value
     if sync_session and airsim_session != null:
@@ -1222,8 +1225,12 @@ func _airsim_name_matches(name: String) -> bool:
     return name == _airsim_vehicle_name or (_airsim_vehicle_name.is_empty() and name.is_empty())
 
 
+func _airsim_lifecycle_stopped() -> bool:
+    return screen in ["finish", "settings", "controller_settings", "error"] or (screen == "main_menu" and exit_requested)
+
+
 func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
-    if screen in ["finish", "main_menu", "settings", "controller_settings", "error"]:
+    if _airsim_lifecycle_stopped():
         return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
@@ -1239,7 +1246,7 @@ func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
 
 
 func _airsim_arm_disarm(armed: bool, name: String) -> Dictionary:
-    if screen in ["finish", "main_menu", "settings", "controller_settings", "error"]:
+    if _airsim_lifecycle_stopped():
         return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
@@ -1307,7 +1314,7 @@ func _airsim_task_complete(name: String) -> bool:
 
 
 func _airsim_command(method: String, params: Array, name: String) -> Dictionary:
-    if screen in ["finish", "main_menu", "settings", "controller_settings", "error"]:
+    if _airsim_lifecycle_stopped() or (screen == "main_menu" and method != "takeoff"):
         return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
