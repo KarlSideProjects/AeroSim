@@ -41,7 +41,7 @@ func continue_for_frames(frames: int) -> Dictionary:
 func continue_for_time(seconds: float) -> Dictionary:
     if not _paused:
         return _error("simulation must be paused before explicit stepping")
-    if seconds < 0.0:
+    if not is_finite(seconds) or seconds < 0.0:
         return _error("duration step must not be negative")
     var exact_frames := seconds * float(physics_hz)
     var frames := roundi(exact_frames)

@@ -153,7 +153,7 @@ static func _reject_unknown_keys(value: Dictionary, allowed: Dictionary, scope: 
 static func _validate_settings_version(raw: Dictionary, errors: Array[String]) -> void:
     if not raw.has("SettingsVersion"):
         errors.append("SettingsVersion is required")
-    elif typeof(raw["SettingsVersion"]) not in [TYPE_INT, TYPE_FLOAT] or is_equal_approx(float(raw["SettingsVersion"]), 1.2) == false:
+    elif not _is_finite_number(raw["SettingsVersion"]) or float(raw["SettingsVersion"]) != 1.2:
         errors.append("SettingsVersion must be numeric 1.2")
 
 
@@ -165,7 +165,7 @@ static func _validate_sim_mode(raw: Dictionary, errors: Array[String]) -> void:
 static func _validate_clock(raw: Dictionary, errors: Array[String]) -> void:
     if raw.has("ClockType") and (typeof(raw["ClockType"]) != TYPE_STRING or not SUPPORTED_CLOCK_TYPES.has(raw["ClockType"])):
         errors.append("ClockType must be SteppableClock, ScalableClock, or empty")
-    if raw.has("ClockSpeed") and (typeof(raw["ClockSpeed"]) not in [TYPE_INT, TYPE_FLOAT] or float(raw["ClockSpeed"]) <= 0.0):
+    if raw.has("ClockSpeed") and (not _is_finite_number(raw["ClockSpeed"]) or float(raw["ClockSpeed"]) <= 0.0):
         errors.append("ClockSpeed must be a positive number")
 
 
@@ -187,7 +187,7 @@ static func _validate_origin(raw: Dictionary, errors: Array[String]) -> void:
     var origin: Dictionary = raw["OriginGeopoint"]
     _reject_unknown_keys(origin, ORIGIN_KEYS, "OriginGeopoint", errors)
     for key in ORIGIN_KEYS:
-        if not origin.has(key) or typeof(origin[key]) not in [TYPE_INT, TYPE_FLOAT]:
+        if not origin.has(key) or not _is_finite_number(origin[key]):
             errors.append("OriginGeopoint.%s must be numeric" % key)
 
 
@@ -294,8 +294,12 @@ static func _validate_sensor_entry(value: Dictionary, scope: String, errors: Arr
 
 static func _validate_numeric_fields(value: Dictionary, fields: Array, scope: String, errors: Array[String]) -> void:
     for field in fields:
-        if value.has(field) and typeof(value[field]) not in [TYPE_INT, TYPE_FLOAT]:
+        if value.has(field) and not _is_finite_number(value[field]):
             errors.append("%s.%s must be numeric" % [scope, field])
+
+
+static func _is_finite_number(value: Variant) -> bool:
+    return typeof(value) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(value))
 
 
 static func _validate_subwindows(raw: Dictionary, errors: Array[String]) -> void:
@@ -336,7 +340,7 @@ static func _validate_recording(raw: Dictionary, errors: Array[String]) -> void:
     for key in ["RecordOnMove", "Enabled"]:
         if recording.has(key) and typeof(recording[key]) != TYPE_BOOL:
             errors.append("Recording.%s must be boolean" % key)
-    if recording.has("RecordInterval") and (typeof(recording["RecordInterval"]) not in [TYPE_INT, TYPE_FLOAT] or float(recording["RecordInterval"]) < 0.0):
+    if recording.has("RecordInterval") and (not _is_finite_number(recording["RecordInterval"]) or float(recording["RecordInterval"]) < 0.0):
         errors.append("Recording.RecordInterval must be a non-negative number")
     if recording.has("Folder") and typeof(recording["Folder"]) != TYPE_STRING:
         errors.append("Recording.Folder must be a string")

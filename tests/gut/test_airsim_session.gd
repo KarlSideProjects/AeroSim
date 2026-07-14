@@ -31,6 +31,10 @@ func test_duration_step_is_deterministic_and_rejects_invalid_duration() -> void:
     assert_false(invalid.ok)
     assert_string_contains(invalid.error, "whole simulation frames")
 
+    var non_finite: Dictionary = session.continue_for_time(NAN)
+    assert_false(non_finite.ok)
+    assert_string_contains(non_finite.error, "duration step")
+
 
 func test_reset_restores_the_initial_clock_state() -> void:
     var session := AirSimSession.new(240)
