@@ -94,13 +94,13 @@ PX4 SITL can control an AeroSim multirotor through the supported Lab Mode path. 
 
 ### CAP-012: Deterministic multirotor flight core
 
-**Status:** Available
+**Status:** Foundation
 
 The native C++ core provides multirotor state integration, Angle, Acro, and Altitude Hold control, airframe configuration, IMU-driven attitude estimation, and collision authority handoff between native integration and Godot physics.
 
 **Minimum acceptance:** Native behavior tests pass with warnings as errors; identical seeds and inputs reproduce identical same-platform results; cross-platform terminal state stays inside the frozen tolerance.
 
-**Current evidence:** Native tests cover flight control, collision, aerodynamics, IMU, hardware configuration, telemetry, and replay. The Godot smoke path exercises the C++ binding.
+**Current evidence:** Native tests cover flight control, collision, aerodynamics, IMU, hardware configuration, telemetry, and replay. The Godot smoke path exercises the C++ binding. The complete product session and cross-platform replay tolerance are not yet evidenced.
 
 ### CAP-013: Two simultaneous named vehicles
 
@@ -206,9 +206,9 @@ Before CAP-006, the pipeline accepts only sources already covered by the checked
 
 **Status:** Confirmed target
 
-Every shippable scene is rendered from four fixed GPU camera views. Before CAP-006, Codex reviews provisional references while deterministic structure, collision, render, and image checks continue to block regressions. Once the complete playable loop passes, a person performs the first formal review and approves the initial reference set. Later builds run the same deterministic checks plus AI review for coherent composition, readable lighting, plausible scale, intact assets, and flight legibility.
+Every shippable scene is targeted to render from four fixed GPU camera views. Before CAP-006, Codex reviews provisional references while deterministic structure, collision, render, and image checks continue to block regressions. Once the complete playable loop passes, a person performs the first formal review and approves the initial reference set. Later builds run the same deterministic checks plus AI review for coherent composition, readable lighting, plausible scale, intact assets, and flight legibility.
 
-Deterministic scene structure, dependency, collision, rendering, and basic image checks run on every pull request. Codex performs AI review when scene, asset, material, lighting, or UI inputs change and for every release. GitHub Actions generates the four screenshots and manifest but does not call a separate vision API. The required Codex review compares those inputs with the current provisional or Approved Visual Reference using a versioned rubric and emits strict JSON evidence containing the commit, input hashes, rubric version, reviewer model identity, reference status, severity, findings, and verdict.
+The target pipeline runs deterministic scene structure, dependency, collision, rendering, and basic image checks on every relevant pull request. Codex performs AI review when scene, asset, material, lighting, or UI inputs change and for every release. The target headed acceptance workflow will generate four screenshots and a manifest; current CI does not yet provide the complete visual-review pipeline or call a separate vision API. The required Codex review compares those inputs with the current provisional or Approved Visual Reference using a versioned rubric and emits strict JSON evidence containing the commit, input hashes, rubric version, reviewer model identity, reference status, severity, findings, and verdict.
 
 **Minimum acceptance:** Path-trigger tests prove visual changes cannot skip Codex review, release validation always requires current evidence, the gate rejects any Critical or High visual finding, absent or stale review evidence blocks the required workflow, no human review is requested before CAP-006, and the initial approval or any later reference replacement requires explicit human approval. This is a triggered agent review, not an unattended GitHub-only job.
 

@@ -6,7 +6,7 @@
 
 Godot 4.7 官方把 glTF 2.0 列為推薦格式，支援 `.gltf` 與 `.glb`；GLB 可把 mesh 與 texture 放在單一檔案。[Godot 4.7：Available 3D formats](https://docs.godotengine.org/en/4.7/tutorials/assets_pipeline/importing_3d_scenes/available_formats.html)
 
-「看起來正常合理」不能由零人工的結構測試證明。可靠契約是：**headless 結構／碰撞 gate + 固定 GPU 的 headed 截圖 + 一次人工核准 golden images + 後續影像 regression**。Headless 只能證明場景可載入與可碰撞；Godot 官方明載 `--headless` 會停用所有 rendering 與 window management，因此不能用它批准畫面。[RenderingServer](https://docs.godotengine.org/en/4.7/classes/class_renderingserver.html)
+「看起來正常合理」不能由零人工的結構測試證明。可靠契約是：**headless 結構／碰撞 gate + 固定 GPU 的 headed 截圖 + CAP-006 後一次人工核准 golden images + 後續影像 regression**。Headless 只能證明場景可載入與可碰撞；Godot 官方明載 `--headless` 會停用所有 rendering 與 window management，因此不能用它批准畫面。[RenderingServer](https://docs.godotengine.org/en/4.7/classes/class_renderingserver.html)
 
 ## 方案比較
 
@@ -35,11 +35,11 @@ Godot 4.7 官方把 glTF 2.0 列為推薦格式，支援 `.gltf` 與 `.glb`；GL
 - 延續現有 descriptor、unknown-map、load/free/reset assertions。
 - 每個可見實體障礙都必須對應明確的 `StaticBody3D/CollisionShape3D`；另做 spawn shape query、地面 raycast、代表性障礙 shape cast，確保不穿地、出生不重疊、飛行走廊真的會撞。visual mesh 與 collision 分離，兩者對齊由場景 manifest 的 landmark transform 驗證。
 
-### 2. Headed GPU 視覺批准（asset 或場景改版時）
+### 2. Headed GPU 視覺證據（asset 或場景改版時）
 
 - 固定 Godot 4.7、Linux GPU runner、renderer、解析度、品質設定、random seed、world time 與曝光；**不可加 `--headless`**。
 - 固定四個 deterministic camera：spawn/chase、yard overview、obstacle corridor、ground-level scale。每張圖等待 `RenderingServer.frame_post_draw` 後再擷取；這是 Godot 官方建議的 Viewport capture 時序。[Using Viewports](https://docs.godotengine.org/en/4.7/tutorials/rendering/viewports.html) [Viewport](https://docs.godotengine.org/en/4.7/classes/class_viewport.html)
-- 第一次由人核准四張 golden images，檢查：物件可辨識為 industrial yard、比例合理且落地、無白模／缺材質／穿插／漂浮／z-fighting、天空與曝光正常、spawn 與飛行走廊清楚、代表性障礙和 collision 一致。核准後 golden PNG 與 renderer metadata 一起進版控。
+- CAP-006 前由 Codex 產生 provisional evidence，不請求人工作業；CAP-006 完成後才由人第一次核准四張 golden images，檢查：物件可辨識為 industrial yard、比例合理且落地、無白模／缺材質／穿插／漂浮／z-fighting、天空與曝光正常、spawn 與飛行走廊清楚、代表性障礙和 collision 一致。核准後 golden PNG 與 renderer metadata 一起進版控；後續例行改版只跑 regression，只有替換 approved reference 才需要再次人工核准。
 
 ### 3. GPU image regression（其後每次 CI）
 
@@ -56,6 +56,6 @@ Godot 4.7 官方把 glTF 2.0 列為推薦格式，支援 `.gltf` 與 `.glb`；GL
 
 ## 自動化的界線
 
-結構檢查能證明「載得進、尺寸不是零、物件與碰撞存在」；golden diff 能證明「沒有偏離曾經核准的畫面」。兩者都不能第一次自行判斷美術是否自然、比例是否可信、構圖是否像完成的遊戲場景。**最少且不可省的人工作業，就是每個新場景／重大 art revision 的一次四視角批准。**
+結構檢查能證明「載得進、尺寸不是零、物件與碰撞存在」；golden diff 能證明「沒有偏離曾經核准的畫面」。兩者都不能第一次自行判斷美術是否自然、比例是否可信、構圖是否像完成的遊戲場景。**最少且不可省的人工作業，是 CAP-006 後第一次四視角批准；後續例行 art revision 不逐次要求人工批准，只有替換 approved reference 時才重做批准。**
 
 跳過：Unreal extraction、通用轉換器與自建 importer；只有未來確定要批次遷移多個具合法 source project 的 Unreal 場景時，才值得重新評估。

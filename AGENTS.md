@@ -13,7 +13,7 @@ This is a Godot 4.7 drone-simulation project with a C++17 GDExtension. Native si
 - `GODOT_CPP_DIR=/path/to/godot-cpp scons target=template_debug platform=linux` builds the Linux GDExtension.
 - `GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5` runs the Godot/native smoke path.
 
-For the full Linux gate, set `RUNNER_TEMP` and run `GODOT_BIN=... RUNNER_TEMP=/tmp/aerosim-ci scripts/verify_issue_11.sh`. It fetches the pinned `godot-cpp` revision and creates build artifacts.
+For the Linux native/build/headless gate, set `RUNNER_TEMP` and run `GODOT_BIN=... RUNNER_TEMP=/tmp/aerosim-ci scripts/verify_issue_11.sh`. It fetches the pinned `godot-cpp` revision and creates build artifacts; headed acceptance, release export, and GPU performance are separate workflow gates.
 
 ## Coding Style & Naming Conventions
 
@@ -21,7 +21,7 @@ Use four spaces in C++ and GDScript. Keep C++ in the `aerosim` namespace; use `P
 
 ## Testing Guidelines
 
-Name native tests `tests/native/test_<area>.cpp`; each is a standalone executable that returns failure with a reason. Add a behavior-focused assertion for each simulation change, especially deterministic replay or configuration behavior. Run the narrow test first, then `scripts/test_native.sh`; run headless smoke for binding, scene, or GDScript changes. CI runs the Linux native, headed, release, replay, and recovery gates; other platform work remains explicitly deferred or build-only until its workflow is restored.
+Name native tests `tests/native/test_<area>.cpp`; each is a standalone executable that returns failure with a reason. Add a behavior-focused assertion for each simulation change, especially deterministic replay or configuration behavior. Run the narrow test first, then `scripts/test_native.sh`; run headless smoke for binding, scene, or GDScript changes. CI runs Linux native, headed, release, and replay gates; recovery is a non-blocking shadow job, and other platform work remains explicitly deferred or build-only until its workflow is restored.
 
 ## Commits & Pull Requests
 

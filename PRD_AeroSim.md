@@ -171,13 +171,13 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | A3 | 機身阻力 | 轉速-速度耦合線性阻力矩陣 | Forster (2015) Eq. 4.2 |
 | A4 | 地面效應 | 推力增益 vs z/R_prop | Shi et al. (2019) Eq. 15 |
 | A5 | 尾流下洗 | 上方機對下方機升力衰減 | DSL 實驗模型 |
-| A6 | Propwash | 大姿態變化穿越自身尾流之角速度擾動注入 | 自研 + 真機 blackbox 標定（G3.6） |
+| A6 | Propwash | 大姿態變化穿越自身尾流之角速度擾動注入 | 自研機制 + Python Oracle／SITL 趨勢交叉驗證（G3.6） |
 | A7 | 穩態風 | 3D 向量場，場景可配置 | 自研 |
 | A8 | 紊流 | Dryden 成形濾波器，輕/中/重軍規參數 | MIL-F-8785C |
 | A9 | 風切 | 風速隨高度剖面 | MIL-F-8785C |
 | A10 | 電池-推力耦合 | 電壓 sag → 可用推力上限（由 3.6 電池參數驅動） | SimITL 思路 |
 
-> **已知物理近似邊界（誠實聲明，隨產品文件揭露）**：本產品為剛體動力學 + 參數化氣動模型，非 CFD。未建模現象：渦環狀態（VRS，垂直快速下降穿越自身下洗）、槳葉柔性與失速、精細紊流-機體交互。A6 propwash 為自研近似項，以 G3.6 之真機頻段能量比（0.5–2.0 倍）界定其擬真度範圍。
+> **已知物理近似邊界（誠實聲明，隨產品文件揭露）**：本產品為剛體動力學 + 參數化氣動模型，非 CFD。未建模現象：渦環狀態（VRS，垂直快速下降穿越自身下洗）、槳葉柔性與失速、精細紊流-機體交互。A6 propwash 為自研近似項，以 G3.6 的機制注入與油門相關性界定目前驗收範圍；真機頻段能量比暫不作門檻。
 
 ### 3.5 UI/UX 設計需求
 
@@ -216,7 +216,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 
 **固定映射確認合約（回應審查 C3）**——全數通過才建立 session profile，任一未過即擋進場並標示原因：
 - 僅接受 Xbox 360 相容手把，SDL mapping 必須存在。
-- 固定四軸映射與固定 deadzone（raw 0.08–0.10 區間內的版本化具名常數）。
+- 固定四軸映射與固定 deadzone（版本化具名常數，實作定值 raw 0.08）。
 - Arm / Mode 預設鍵不得重複，按下與放開狀態可辨識，去抖 ≤ 50 ms。
 - 油門低位檢查通過為 arm 之前置條件（未低位不得 arm，preflight 面板同步阻擋）。
 - unknown 裝置 100% 擋下並提示 keyboard fallback（注入測試判定）。
@@ -301,7 +301,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 - 慣量：由零件質量分布估算（提供 CAD 匯入或簡化桿-點模型），並可被實測值覆寫。
 
 #### 3.6.3 雙基準機參數包（Phase 1 交付物）
-1. **5 吋穿越機資料包（主打）**：台架推力表、慣量估測（雙線擺法或 CAD）、真機 Betaflight blackbox 飛行紀錄（含 step response 與典型 propwash 動作）、階躍響應標定之 τ_m。作為 G2.8 / G3 雙軌驗收之外部真值。
+1. **5 吋穿越機資料包（主打）**：公開台架推力表、慣量估測（雙線擺法或 CAD）、階躍響應標定之 τ_m。G2.8 與 G3.6(b) 不以真機 blackbox 作為驗收真值；若未來取得合規資料，再依決策重啟對應驗證。
 2. **Iris 級資料包**：沿用 PX4 iris.sdf 慣量（0.0291/0.0291/0.0552），供 PX4 SITL 與定高驗證。
 
 ---
@@ -364,7 +364,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G1.7 | **硬體參數系統**：3.6.1 Schema 全欄位可由 JSON 載入；**schema 含 version 欄、全欄位單位與座標系標註、馬達順序與旋向、槳表插值規則（範圍內線性、禁止外插——越界即拒絕）**；驗證器拒絕越界值 100% 攔截；載入失敗回退出廠預設並明示；熱切換機體不重啟場景 | CI-A | SC |
 | G1.8 | **派生量實務合理性**：5 吋 6S 預設組——懸停油門落於 22–35%、TWR ≥ 8、預估懸停續航落於 3–6 分鐘區間 | CI-A | SC |
 | G1.9 | **k_t/k_q 擬合**：由台架推力表擬合之 k_t、k_q 反推推力/扭矩，對表內各轉速點殘差 ≤ 3% | CI-A | SC |
-| G1.10 | **5 吋機資料包交付**（3.6.3）：台架表、慣量估測、blackbox 紀錄齊備並入版控。**擷取協定（回應審查 H8）**：記錄韌體版本與濾波設定、盡可能取未濾波陀螺儀、時間對齊與重採樣方法文件化、記錄初始條件；**紀錄分為標定組（calibration）與保留組（holdout），兩組不同飛行架次，標定組僅用於調參** | DEV-M | SC |
+| G1.10 | **5 吋機資料包交付**（3.6.3）：公開台架推力表與慣量估測資料齊備並入版控；不要求真機 blackbox 紀錄。**資料協定**：記錄資料來源、單位、時間基準與適用範圍，並以獨立案例保留調參與驗證結果 | DEV-M | SC |
 
 ---
 
@@ -379,8 +379,8 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G2.4 | Angle Mode 30° 滾轉階躍：上升 ≤ 150 ms、超調 ≤ 10%、2% 穩定 ≤ 500 ms | CI-A | SC |
 | G2.5 | Acro：720°/s 指令峰值角速度誤差 ≤ 5%；rates 曲線 vs Betaflight 同參數逐點誤差 ≤ 1% | CI-A | SC |
 | G2.6 | Altitude Hold：氣壓計噪音開啟，60 秒高度漂移 ≤ ±15 cm | CI-A | SC |
-| G2.7 | 手感盲測：≥5 名 Betaflight 實機飛手，Acro 盲測均分 ≥ 7.0 且無人 ≤ 4（問卷含真機 blackbox 回放錨定題） | USR | SC |
-| G2.8 | **Blackbox 重播真值**：取 G1.10 真機紀錄之搖桿輸入重播入模擬器，陀螺儀三軸軌跡相關係數 ≥ 0.90、角速度 RMSE ≤ 真機峰值角速度之 8%。**判定一律以 holdout 組為準（標定組結果僅供參考），開迴路（模型辨識）與閉迴路（含飛控）重播分開報告** | CI-A | SC |
+| G2.7 | 手感盲測：≥5 名 Betaflight 實機飛手，Acro 盲測均分 ≥ 7.0 且無人 ≤ 4（問卷含固定情境比較題） | USR | SC |
+| G2.8 | **豁免真機 blackbox 真值重播**：目前不要求真機資料；保留 replay harness 供未來取得合規資料時重啟驗證 | — | — |
 | G2.9 | **SITL 交叉驗證**：同輸入分別餵自研飛控與 Betaflight SITL（開發環境工具，不隨 Tier 1 發布），姿態響應趨勢相關係數 ≥ 0.85（此為自研飛控之健全性檢查，非等價承諾） | CI-A | SC |
 
 ---
@@ -394,7 +394,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G3.3 | 下洗：雙機交錯升力衰減 vs DSL 模型 ≤ 10%；Python Oracle 逐點 ≤ 1e-6 | CI-A | SC |
 | G3.4 | **Dryden（determinism 修正版）**：固定 seed、Welch 法（段長 2¹⁴、50% overlap、Hann 窗）估 PSD，0.1–10 rad/s 各 bin 與理論譜偏差 ≤ 10%（95% 信賴區間內），輕/中/重三檔；同 seed 重跑 bitwise 一致 | CI-A | SC |
 | G3.5 | 風切剖面 vs 軍規模型逐點 ≤ 5% | CI-A | SC |
-| G3.6 | Propwash 雙軌：(a) 機制測試——split-S 出彎擾動注入、強度與油門相關係數 ≥ 0.8、關閉時為 0；(b) **實測殘差**——重播 G1.10 之 propwash 動作 blackbox，擾動頻段（10–80 Hz）陀螺儀 PSD 能量比真機對應值落於 0.5–2.0 倍區間 | CI-A | SC |
+| G3.6 | Propwash 機制軌：split-S 出彎擾動注入、強度與油門相關係數 ≥ 0.8、關閉時為 0；真機實測殘差軌（原 (b)）依決策豁免，未來取得合規資料時再重啟 | CI-A | SC |
 | G3.7 | **效能預算（修正版）**：全效應開啟後，物理 P99 相對 G0 基線增幅 ≤ 20%，且絕對值仍 ≤ 3 ms（桌面）/ 5 ms（行動各 profile） | GPU-A / DEV-M | SC |
 | G3.8 | 氣象盲測：飛手盲判無風/中紊流/強陣風，正確率 ≥ 80% | USR | SC |
 
@@ -437,8 +437,8 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G5.1 | **逐 OS 控制器閘門**：Windows / macOS / Linux 各自以 Xbox 360 相容 gamepad 完成固定 mapping 確認 + 斷線重連；**任一 OS 未過僅凍結該 OS Lane** | DEV-M | WIN / MAC / LIN |
-| G5.2 | Android OTG gamepad 同 G5.1 | DEV-M | AND |
+| G5.1 | **逐 OS 控制器閘門**：Linux 以 Xbox 360 相容 gamepad 完成固定 mapping 確認 + 斷線重連；Windows / macOS 為 build-only，控制器實機分項維持 N/A（未驗證凍結） | DEV-M | WIN / MAC / LIN |
+| G5.2 | Android export/build-only；OTG gamepad 實機分項維持 N/A（未驗證凍結） | DEV-M | AND |
 | G5.3 | iOS（若 Lane 續行）：MFi（SDL3 路徑）+ VirtualJoystick（Fixed/Dynamic 雙模式）可完成 G2.3 姿態保持測試 | DEV-M | IOS |
 | G5.4 | 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）：桌面 ≤ 40 ms、行動 ≤ 60 ms | DEV-M | 各 Lane |
 | G5.5 | 輸入映射匯出/匯入、斷線重連不丟設定（已確認 mapping/schema version 跨 session 持久化，見範圍排除之界線釐清） | CI-A | SC |
@@ -498,7 +498,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 1. 測試報告：每 Gate 一份，含環境、版本雜湊、原始數據、判定；未過附根因與修改計畫。
 2. 重測循環：修改 → 該 Phase 全 Gate 回歸 → 報告。
 3. 效能資格機凍結：Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX、NVIDIA GeForce RTX 4060 Ti、driver 580.159.03。效能 gate 只在具名 runner 阻擋；其他本機執行功能／決定性測試並回報 not-qualified。未來 Player Mode lane 的平台基準各自凍結，不阻擋 Ubuntu。
-4. 盲測規範：受測者不知修改內容；問卷含真機 blackbox 回放錨定題。
+4. 盲測規範：受測者不知修改內容；問卷使用固定情境比較題，不依賴真機 blackbox 回放。
 5. 版本鎖定：Godot 4.7 之 patch 版本與 export template hash 記錄於 repo；引擎升級觸發 G0–G3 全量重跑。
 6. AirSim 引用證據：每個受影響 issue／PR 必須列出 v1.8.1 path／symbol／commit、open/closed issue queries、相關 URL 與 disposition、license attribution 及導出測試；無結果只代表查過，不代表無缺陷。
 7. Agent 證據：Codex 報告記錄實際 model identity 與 reasoning profile；Sol 建議須附問題邊界與主 Agent 的採納或拒絕理由。
