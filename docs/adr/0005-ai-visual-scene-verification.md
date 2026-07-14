@@ -1,0 +1,3 @@
+# Require AI visual verification for game scenes
+
+Every shippable game scene must pass AI review of deterministic GPU-rendered screenshots in addition to deterministic import, structure, collision, and rendering checks. Before the Playable Game Milestone, Codex uses provisional references and no human review is requested. After the complete loop passes, a person performs the first formal review and approves the initial four-view reference; subsequent builds compare against it automatically. Numeric checks alone cannot establish that a scene looks coherent or reasonable, while AI review alone is too variable to establish resource integrity or physics correctness; all evidence layers are required.

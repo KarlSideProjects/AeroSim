@@ -1,0 +1,3 @@
+# Delay human review until the complete game is playable
+
+Human visual and usability review will not be requested for isolated screens, graybox scenes, or incomplete flows. Deterministic gates and Codex AI Visual Verification continue throughout development with provisional references; the first human review begins only after a packaged Ubuntu Player Mode completes the full Playable Game Milestone, at which point the initial four-view visual reference may be approved. This avoids spending human attention on fragments while preserving automated evidence and regression detection before the milestone.

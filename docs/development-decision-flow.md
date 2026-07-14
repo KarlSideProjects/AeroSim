@@ -1,6 +1,6 @@
 # 開發決策流程 — 從 PRD 初始規劃到目前狀態
 
-本文件回答一個問題：**AeroSim 的計畫（開工基線 PRD v3.2，現行 v3.4）從 2026-07-08 拆解開工到現在，哪些地方變了、為什麼變、變更記錄在哪裡。**
+本文件是截至 2026-07-11 的**歷史決策流程快照**：記錄 AeroSim 從 PRD v3.2 到 v3.4 的變更。v4.1 publication 後，本文件不再是現行產品或驗收 authority；目前契約以 `PRD_AeroSim.md`、`docs/product_capabilities.md` 與 `docs/decisions/` 為準。
 
 怎麼讀：
 
@@ -42,7 +42,7 @@ flowchart TD
     GAMEPAD["2026-07-11 輸入裝置定位<br/>真實 RC 遙控器 → Xbox 360 相容標準手把<br/>移除 RadioProfile／16 通道・裝置定義調整非門檻下修"]
     XBOXDEF["2026-07-12 Xbox Default Profile（PRD v3.4）<br/>固定映射確認取代八步校準精靈<br/>移除端點/中心/RMS 採樣合約與反向注入・比照 G2.8 豁免非下修"]
 
-    NOW["目前狀態（2026-07-11）<br/>#91 in-progress・#27 / #31 / #55 / #93 blocked<br/>#86 / #90 ready-for-agent・#92 ready-for-human"]
+    NOW["歷史狀態快照（2026-07-11；非 v4.1 現行狀態）<br/>#91 in-progress・#27 / #31 / #55 / #93 blocked<br/>#86 / #90 ready-for-agent・#92 ready-for-human"]
 
     PRD --> SPLIT
     SPLIT --> IOS
@@ -119,7 +119,7 @@ flowchart TD
 - **原計畫**：PRD 3.6.3／G1.10：5 吋機資料包（台架推力表 + 真機 Betaflight blackbox，分標定組與 holdout 組）作為 G2.8 blackbox 重播與 G3.6(b) propwash 實測殘差的外部真值。
 - **變動內容**（三段演進）：
   1. 2026-07-08：維護者無實體 5 吋機，改走公開資料源，調研階段轉 agent 工作。調研結論：無同時滿足 G1.10 技術欄位與 C-2 授權的公開資料源（Tyto 授權未過 C-2；公開 blackbox 多為 GPL 或參數不可考），維護者拍板走「社群／實驗室代錄」（路徑 B）。
-  2. 2026-07-10：維護者決策**取消社群代錄**——#22 關閉（台架推力表已由公開數據庫滿足，#20/#21 完成）；**G2.8 整項豁免**（#26 關閉，harness 程式碼保留不刪）；**G3.6 僅保留 (a) 機制軌**，(b) 實測殘差軌豁免（#32 依此調整）。
+  2. 2026-07-10：維護者決策**取消社群代錄**——#22 關閉；**G2.8 整項豁免**（#26 關閉，harness 程式碼保留不刪）；**G3.6 僅保留 (a) 機制軌**，(b) 實測殘差軌豁免（#32 依此調整）。原決策文字所稱「台架推力表已由公開數據庫滿足」不代表現行 G1.10 已具可再發布授權；v4.1 將 G1.10 維持 not verified／blocked，直到 provenance 與 C-2 證據齊備。
   3. 誠實聲明入檔：擬真度自此失去外部真機錨定，僅由解析解、Python Oracle、SITL 趨勢交叉驗證（G2.9）與維護者手感保證；「像真機」宣稱相應收斂。未來取得合規資料可重啟。
 - **驅動因素**：環境限制（無真機）＋ 成本（社群發包取消）。
 - **紀錄位置**：`docs/decisions/2026-07-10-acceptance-simplification.md`（修訂二）、[#22](https://github.com/jhihweijhan/AeroSim/issues/22)、[#26](https://github.com/jhihweijhan/AeroSim/issues/26)、`docs/research/g1_10_public_data_sources.md`。
@@ -260,7 +260,7 @@ flowchart LR
 - **24h 接手時鐘首例**：draft PR #73（#31）與 #77（#27）於 2026-07-10T14:57Z 稽核認定逾時（最後 commit 逾 24 小時且無 claim 者本人活動），由新 agent 留言宣告接手、接續既有 branch 完成，不砍掉重練。
 - **裁定請求格式**：#56 要求 blocked 提問附「白話說明 + 編號選項 + 建議與理由」——節點 4（G3.4）、9（G2.9）、10（macOS 三選項）都是這個格式的實例。
 
-## 目前狀態（2026-07-11）
+## 歷史狀態快照（2026-07-11；非 v4.1 現行狀態）
 
 | Issue | 狀態 | 說明 |
 |---|---|---|
