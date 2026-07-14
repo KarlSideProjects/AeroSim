@@ -124,6 +124,11 @@ jobs:
       - name: Hardcoded airframe constant scan
         run: scripts/check_hardcoded_airframe_constants.sh
 
+      - name: Shared Industrial Yard asset check
+        run: |
+          scripts/test_shared_map_assets.sh
+          scripts/check_shared_map_assets.sh
+
       - name: Store Linux replay artifact locally
         run: |
           install -D build/replay_terminal_state.json \
@@ -155,6 +160,9 @@ jobs:
           scripts/download_release_asset.sh "$godot_url" "$godot_zip" sha256 "$godot_sha256"
           unzip -q "$godot_zip" -d "$godot_dir"
           echo "GODOT_BIN=$(find "$godot_dir" -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
+
+      - name: Industrial Yard renderer smoke
+        run: scripts/test_industrial_yard_renderers.sh
 
       - name: Fetch godot-cpp
         run: |

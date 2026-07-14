@@ -4,6 +4,8 @@ const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
+const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
+const IndustrialYardScene = preload("res://levels/free_flight/industrial_yard.tscn")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 
@@ -58,6 +60,9 @@ func _run() -> void:
     var requested_frames := _requested_frames()
     var requested_seconds := _requested_seconds(requested_frames)
     if not await _verify_keyboard_profile_actions():
+        quit(1)
+        return
+    if not _verify_industrial_yard_descriptor_and_scene():
         quit(1)
         return
     # Gamepad event injection registers a virtual controller for this process.
@@ -195,6 +200,64 @@ func _run() -> void:
 
 func _input_fallback_status(connected_joypads: Array) -> String:
     return InputProfiles.fallback_status(connected_joypads)
+
+func _verify_industrial_yard_descriptor_and_scene() -> bool:
+    var maps := FreeFlightMap.new()
+    var descriptor: Dictionary = maps.load_descriptor("industrial_yard")
+    if not maps.last_ok:
+        push_error("Industrial Yard descriptor must load: %s" % maps.last_error)
+        return false
+    var expected_fields := {
+        "id": "industrial_yard",
+        "name": "Industrial Yard",
+        "type": "free_flight",
+        "recommended_aircraft": "5_inch_6s",
+        "wind_preset": "calm",
+        "spawn_count": 1,
+        "mode": "free_flight"
+    }
+    for field in expected_fields:
+        if descriptor.get(field) != expected_fields[field]:
+            push_error("Industrial Yard descriptor field %s must be %s" % [field, str(expected_fields[field])])
+            return false
+    for field in expected_fields:
+        var missing_field := descriptor.duplicate(true)
+        missing_field.erase(field)
+        if maps.validate_descriptor(missing_field) == "":
+            push_error("Industrial Yard descriptor validation must reject missing %s" % field)
+            return false
+
+    var scene := IndustrialYardScene.instantiate()
+    var named_nodes := {
+        "SpawnNorth": Marker3D,
+        "Ground": MeshInstance3D,
+        "CargoContainers": Node3D,
+        "LowGate": StaticBody3D,
+        "TurnMarker": StaticBody3D,
+        "Tower": StaticBody3D
+    }
+    for node_name in named_nodes:
+        if not is_instance_of(scene.get_node_or_null(node_name), named_nodes[node_name]):
+            push_error("Industrial Yard scene must expose %s" % node_name)
+            scene.queue_free()
+            return false
+    var cargo_containers := scene.get_node_or_null("CargoContainers")
+    if cargo_containers.get_child_count() < 2:
+        push_error("Industrial Yard scene must expose at least two cargo containers")
+        scene.queue_free()
+        return false
+    var static_bodies := scene.find_children("*", "StaticBody3D", true, false)
+    if static_bodies.is_empty():
+        push_error("Industrial Yard scene must expose StaticBody3D collision")
+        scene.queue_free()
+        return false
+    for body in static_bodies:
+        if body.find_children("*", "CollisionShape3D", true, false).is_empty():
+            push_error("Industrial Yard StaticBody3D %s must have a CollisionShape3D" % body.name)
+            scene.queue_free()
+            return false
+    scene.queue_free()
+    return true
 
 func _configure_default_power_model(native: Object) -> bool:
     var loader := HardwareConfig.new()
@@ -1237,6 +1300,27 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox default profile confirmation must create the session profile then enter low-throttle preflight")
         scene.queue_free()
         return false
+    if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null:
+        push_error("Quick Fly preflight must load Industrial Yard as the default Free Flight map")
+        scene.queue_free()
+        return false
+    if scene.get_viewport().get_camera_3d() != scene.chase_camera or not scene.chase_camera.current:
+        push_error("Industrial Yard preflight must keep ChaseCamera as the active Camera3D")
+        scene.queue_free()
+        return false
+    var spawn := scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
+    if spawn == null or scene.drone_body.global_position.distance_to(spawn.global_position) > 1e-6:
+        push_error("Industrial Yard load must place the drone at SpawnNorth")
+        scene.queue_free()
+        return false
+    if scene.load_map("missing_map") or not scene.last_error_message.contains("missing_map"):
+        push_error("Missing Free Flight maps must fail with the requested map id in the error")
+        scene.queue_free()
+        return false
+    if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null:
+        push_error("Missing map load must not fall back to or replace the active Industrial Yard map")
+        scene.queue_free()
+        return false
     if not scene.has_method("set_gamepad_button_time_source"):
         push_error("Flight runtime must accept an injected button timestamp source for deterministic debounce tests")
         scene.queue_free()
@@ -1604,8 +1688,13 @@ func _verify_runtime_actions() -> bool:
         push_error("flight_respawn action must resume from pause and keep flight active")
         scene.queue_free()
         return false
-    if scene.drone_body.position.distance_to(Vector3(-1.0, 0.0, 0.0)) > 1e-6 or scene.drone_body.linear_velocity.length() > 1e-6 or scene.drone_body.angular_velocity.length() > 1e-6:
-        push_error("flight_respawn action must return to spawn and clear body velocity; position=%s linear=%s angular=%s" % [scene.drone_body.position, scene.drone_body.linear_velocity, scene.drone_body.angular_velocity])
+    spawn = scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
+    if spawn == null or scene.drone_body.global_position.distance_to(spawn.global_position) > 1e-6 or scene.drone_body.linear_velocity.length() > 1e-6 or scene.drone_body.angular_velocity.length() > 1e-6:
+        push_error("flight_respawn action must return to Industrial Yard SpawnNorth and clear body velocity; position=%s linear=%s angular=%s" % [scene.drone_body.global_position, scene.drone_body.linear_velocity, scene.drone_body.angular_velocity])
+        scene.queue_free()
+        return false
+    if scene.get_viewport().get_camera_3d() != scene.chase_camera:
+        push_error("Industrial Yard reset must retain the active ChaseCamera Camera3D")
         scene.queue_free()
         return false
     for _frame in range(31):
@@ -1617,8 +1706,9 @@ func _verify_runtime_actions() -> bool:
 
     scene.quit_on_exit = false
     await _press_key(KEY_ESCAPE)
-    if not scene.exit_requested or scene.screen != "exit":
-        push_error("flight_exit action must request a GUI exit through the runtime exit hook")
+    await process_frame
+    if not scene.exit_requested or scene.screen != "main_menu" or scene.loaded_map != null or scene.get_node_or_null("LoadedMap") != null:
+        push_error("flight_exit action must stop flight, free the map, and return to the main menu stub")
         scene.queue_free()
         return false
 

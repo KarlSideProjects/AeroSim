@@ -1,0 +1,22 @@
+{
+  "commit": "01dc2e52bfc7ce18653cfbd9ee262bc790716b1f",
+  "input_hashes": {
+    "00_cold_start.png": "40ac15a83d9a74de7366302537f4ff50801c06514e8a59f95b2876e4f29973bd",
+    "01_industrial_yard_preflight.png": "14c8804ec917306f4c16e16274a6e61470ca58dd9d8a0ec6f5496db17dfd11b1",
+    "03_takeoff.png": "372f0172048d481cb9ec91653b517b4b5c0193b4990e408c09c140d102c04162",
+    "05_reset.png": "3e7839ae92367db28230a173a68721aafb87cdbb2d2bde6523a832122aaf6181"
+  },
+  "rubric_version": "aerosim-visual-provisional-v1",
+  "reviewer_model": "gpt-5.6-luna",
+  "reference_status": "provisional",
+  "severity": "medium",
+  "findings": [
+    {
+      "severity": "medium",
+      "view": "01_industrial_yard_preflight.png",
+      "finding": "The current chase-camera capture emphasizes the SpawnNorth platform; the full landmark route is not visible from this fixed acceptance angle.",
+      "disposition": "Documented for the post-CAP-006 visual pass; deterministic scene-structure checks cover the route landmarks."
+    }
+  ],
+  "verdict": "provisional_pass"
+}
