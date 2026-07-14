@@ -16,6 +16,22 @@ bool near(double actual, double expected, double tolerance) {
     return std::abs(actual - expected) <= tolerance;
 }
 
+void configure_per_motor_model(aerosim::HardwareConfig &hardware) {
+    aerosim::PerMotorPhysicsConfig model;
+    model.inertia_kg_m2 = {0.003, 0.003, 0.005};
+    model.max_thrust_per_motor_newtons = 10.0;
+    model.max_current_per_motor_a = 1.0;
+    model.yaw_torque_per_newton = 0.01;
+    model.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    model.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    hardware.set_per_motor_model(model);
+}
+
 } // namespace
 
 int main() {
@@ -24,6 +40,7 @@ int main() {
     if (!hardware.set_mass_kg(mass_kg)) {
         return fail("hardware config must accept a positive mass");
     }
+    configure_per_motor_model(hardware);
 
     aerosim::SimulationConfig config = hardware.simulation_config();
     config.seconds = 1.0;

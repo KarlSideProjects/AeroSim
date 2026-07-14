@@ -44,6 +44,17 @@ void configure_power_model(aerosim::SimulationConfig &config) {
     config.battery_cells = 6.0;
     config.battery_cell_resistance_ohm = 0.0;
     config.max_total_current_a = 1.0;
+    config.per_motor.inertia_kg_m2 = {0.003, 0.003, 0.005};
+    config.per_motor.max_thrust_per_motor_newtons = config.max_total_thrust_newtons / 4.0;
+    config.per_motor.max_current_per_motor_a = 1.0 / 4.0;
+    config.per_motor.yaw_torque_per_newton = 0.01;
+    config.per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
 }
 
 bool same_state_bits(const aerosim::RigidBodyState &a, const aerosim::RigidBodyState &b) {
@@ -205,10 +216,16 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
     }
 
     const double y_before_response = state.position.y;
+    const aerosim::Vec3 angular_before_response = state.angular_velocity;
     for (int frame = 0; frame < config.physics_hz / 2; ++frame) {
         step_trial_mode(mode, authority, state, clock, controller, config, recover, acro_recover, clear);
     }
-    if (state.position.y <= y_before_response || !finite(state)) {
+    const double angular_response =
+            std::abs(state.angular_velocity.x - angular_before_response.x) +
+            std::abs(state.angular_velocity.y - angular_before_response.y) +
+            std::abs(state.angular_velocity.z - angular_before_response.z);
+    if ((mode == ControlMode::Angle && state.position.y <= y_before_response) ||
+            (mode == ControlMode::Acro && angular_response <= 1e-6) || !finite(state)) {
         return {};
     }
 

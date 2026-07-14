@@ -62,6 +62,7 @@ struct PerMotorPhysicsConfig {
 };
 
 bool validate_per_motor_config(const PerMotorPhysicsConfig &config);
+std::array<std::array<double, 4>, 4> quad_x_mixer_columns(const PerMotorPhysicsConfig &config);
 
 struct MotorCommands {
     std::array<double, 4> normalized = {0.0, 0.0, 0.0, 0.0};
@@ -202,6 +203,11 @@ TrajectorySample step_per_motor_physics_frame(
         SimulationClock &clock,
         const SimulationConfig &config,
         const MotorCommands &commands);
+TrajectorySample step_per_motor_physics_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const std::function<MotorCommands(double)> &command_for_substep);
 std::vector<TrajectorySample> simulate_trajectory(const SimulationConfig &config);
 
 } // namespace aerosim

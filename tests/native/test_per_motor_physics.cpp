@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -44,6 +45,12 @@ int main() {
     }};
     config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
 
+    const auto columns = aerosim::quad_x_mixer_columns(config.per_motor);
+    if (!near(columns[1][0], -0.10, 1e-12) || !near(columns[2][0], -0.10, 1e-12) ||
+            !near(columns[3][0], 0.01, 1e-12)) {
+        return fail("Quad-X mixer columns must expose the canonical motor torque basis");
+    }
+
     aerosim::MotorCommands equal_commands{{1.0, 1.0, 1.0, 1.0}};
     aerosim::RigidBodyState equal_state;
     aerosim::SimulationClock equal_clock;
@@ -58,8 +65,34 @@ int main() {
     aerosim::RigidBodyState right_state;
     aerosim::SimulationClock right_clock;
     aerosim::step_per_motor_physics_frame(right_state, right_clock, config, right_commands);
-    if (right_state.angular_velocity.x <= 0.0) {
-        return fail("right-side Quad-X motor differential must create a positive FRD roll torque in Y-up physics");
+    if (right_state.angular_velocity.x >= 0.0) {
+        return fail("right-side Quad-X motor differential must create the frozen negative roll torque in Y-up physics");
+    }
+
+    config.substep_hz = 200;
+    aerosim::RigidBodyState rollback_state;
+    rollback_state.position.x = 3.0;
+    aerosim::SimulationClock rollback_clock;
+    const aerosim::RigidBodyState initial_state = rollback_state;
+    const aerosim::SimulationClock initial_clock = rollback_clock;
+    int callback_count = 0;
+    const aerosim::TrajectorySample rollback_sample = aerosim::step_per_motor_physics_frame(
+            rollback_state,
+            rollback_clock,
+            config,
+            [&callback_count](double) {
+                ++callback_count;
+                if (callback_count == 1) {
+                    return aerosim::MotorCommands{{1.0, 1.0, 1.0, 1.0}};
+                }
+                const double invalid = std::numeric_limits<double>::quiet_NaN();
+                return aerosim::MotorCommands{{invalid, invalid, invalid, invalid}};
+            });
+    if (rollback_sample.substeps != 0 || rollback_state.position.x != initial_state.position.x ||
+            rollback_state.motor_thrust_newtons != initial_state.motor_thrust_newtons ||
+            rollback_clock.total_substeps != initial_clock.total_substeps ||
+            rollback_clock.substep_accumulator != initial_clock.substep_accumulator) {
+        return fail("invalid per-motor substep commands must roll back the complete frame");
     }
 
     return EXIT_SUCCESS;

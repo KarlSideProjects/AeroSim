@@ -17,14 +17,6 @@ Vec3 operator*(const Vec3 &v, double scale) {
     return {v.x * scale, v.y * scale, v.z * scale};
 }
 
-Vec3 cross(const Vec3 &a, const Vec3 &b) {
-    return {
-            a.y * b.z - a.z * b.y,
-            a.z * b.x - a.x * b.z,
-            a.x * b.y - a.y * b.x,
-    };
-}
-
 Quat normalized(const Quat &q) {
     const double norm = quat_norm(q);
     if (!std::isfinite(norm) || norm == 0.0) {
@@ -78,7 +70,9 @@ void integrate(RigidBodyState &state, const SimulationConfig &config, double dt)
     });
 }
 
-std::array<std::array<double, 4>, 4> mixer_columns(const PerMotorPhysicsConfig &config) {
+} // namespace
+
+std::array<std::array<double, 4>, 4> quad_x_mixer_columns(const PerMotorPhysicsConfig &config) {
     std::array<std::array<double, 4>, 4> columns{};
     for (std::size_t index = 0; index < config.position_frd.size(); ++index) {
         columns[0][index] = 1.0;
@@ -88,8 +82,6 @@ std::array<std::array<double, 4>, 4> mixer_columns(const PerMotorPhysicsConfig &
     }
     return columns;
 }
-
-} // namespace
 
 bool validate_per_motor_config(const PerMotorPhysicsConfig &config) {
     const double values[] = {
@@ -148,7 +140,7 @@ bool validate_per_motor_config(const PerMotorPhysicsConfig &config) {
         }
     }
 
-    const auto columns = mixer_columns(config);
+    const auto columns = quad_x_mixer_columns(config);
     std::array<double, 4> scales{};
     std::array<double, 4> diagonal{};
     for (std::size_t axis = 0; axis < columns.size(); ++axis) {
@@ -216,6 +208,7 @@ void integrate_per_motor(
 
     Vec3 body_force;
     Vec3 body_torque;
+    const auto columns = quad_x_mixer_columns(config.per_motor);
     for (std::size_t index = 0; index < commands.normalized.size(); ++index) {
         const double target_thrust = config.per_motor.max_thrust_per_motor_newtons *
                 commands.normalized[index] * thrust_scale;
@@ -224,9 +217,9 @@ void integrate_per_motor(
         state.motor_thrust_newtons[index] = thrust;
         const Vec3 force{0.0, thrust, 0.0};
         body_force = body_force + force;
-        body_torque = body_torque + cross(frd_to_y_up(config.per_motor.position_frd[index]), force);
-        body_torque.y -= config.per_motor.spin_direction[index] *
-                config.per_motor.yaw_torque_per_newton * thrust;
+        body_torque.x += columns[1][index] * thrust;
+        body_torque.z -= columns[2][index] * thrust;
+        body_torque.y += columns[3][index] * thrust;
     }
 
     const double ground_lift = a4_ground_effect_lift_newtons(config.a4_ground_effect, state.position.y);
@@ -329,17 +322,37 @@ TrajectorySample step_per_motor_physics_frame(
         SimulationClock &clock,
         const SimulationConfig &config,
         const MotorCommands &commands) {
+    return step_per_motor_physics_frame(
+            state,
+            clock,
+            config,
+            [&commands](double) { return commands; });
+}
+
+TrajectorySample step_per_motor_physics_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const std::function<MotorCommands(double)> &command_for_substep) {
     if (config.physics_hz <= 0 || config.substep_hz <= 0 || config.mass_kg <= 0.0 ||
-            !validate_per_motor_config(config.per_motor) || !valid_motor_commands(commands)) {
+            !validate_per_motor_config(config.per_motor) || !command_for_substep) {
         return {};
     }
 
+    const RigidBodyState initial_state = state;
+    const SimulationClock initial_clock = clock;
     const double substeps_per_frame = static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz);
     const double dt = 1.0 / static_cast<double>(config.substep_hz);
     clock.substep_accumulator += substeps_per_frame;
     const auto frame_substeps = static_cast<std::int32_t>(std::floor(clock.substep_accumulator + 1e-12));
     clock.substep_accumulator -= frame_substeps;
     for (std::int32_t step = 0; step < frame_substeps; ++step) {
+        const MotorCommands commands = command_for_substep(dt);
+        if (!valid_motor_commands(commands)) {
+            state = initial_state;
+            clock = initial_clock;
+            return {};
+        }
         integrate_per_motor(state, config, commands, dt);
     }
     clock.total_substeps += static_cast<std::uint64_t>(frame_substeps);

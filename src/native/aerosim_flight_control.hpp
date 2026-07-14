@@ -99,6 +99,10 @@ private:
     double altitude_hold_vertical_speed_mps_ = 0.0;
     double altitude_hold_trim_throttle_ = 0.0;
     bool altitude_hold_just_captured_ = false;
+    std::array<double, 3> rate_integral_ = {0.0, 0.0, 0.0};
+    std::array<double, 3> previous_target_rates_y_up_ = {0.0, 0.0, 0.0};
+    std::array<bool, 4> motor_saturation_latched_ = {false, false, false, false};
+    std::array<bool, 3> pid_saturation_latched_ = {false, false, false};
     PidTimingStats pid_timing_stats_;
     std::array<TelemetrySnapshot, 2> telemetry_buffers_;
     int telemetry_read_index_ = 0;
@@ -112,6 +116,14 @@ private:
             const std::array<double, 3> &pid_output,
             const std::array<bool, 3> &pid_saturated,
             const std::string &mode);
+    MotorCommands control_substep(
+            RigidBodyState &state,
+            const SimulationConfig &config,
+            double throttle,
+            const Vec3 &desired_rates_y_up,
+            double dt,
+            std::array<double, 3> &pid_output,
+            std::array<bool, 3> &pid_saturated);
 
 public:
     bool arm(double throttle);

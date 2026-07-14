@@ -440,7 +440,8 @@ func _verify_flight_control_public_path(native: Object) -> bool:
 
     native.call("reset_flight")
     native.call("arm_flight_control", 0.0)
-    native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, 0.5, 1.0, 0.0, 0.0, 1.0, 0.722222222222, 0.0)
+    for _frame in range(Engine.physics_ticks_per_second / 2):
+        native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, 0.5, 1.0, 0.0, 0.0, 1.0, 0.722222222222, 0.0)
     var acro: Dictionary = native.call("flight_control_diagnostics")
     var roll_rate_dps := rad_to_deg(float(acro.get("angular_velocity_z_rad_s", 0.0)))
     if absf(roll_rate_dps - 720.0) > 720.0 * 0.05:
