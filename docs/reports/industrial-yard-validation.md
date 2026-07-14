@@ -1,6 +1,7 @@
 # Industrial Yard validation
 
-Commit: `01dc2e52bfc7ce18653cfbd9ee262bc790716b1f`
+Implementation commit: `01dc2e52bfc7ce18653cfbd9ee262bc790716b1f`
+Validation commit: `5c124394e7088dee0eb5cdc1566b757fdb27ad04`
 
 The #35 slice preserves one renderer-shared `industrial_yard.tscn`, validates its descriptor and collision landmarks, loads it through Quick Fly, resets to `SpawnNorth`, uses that marker as the AirSim NED origin, and exits by freeing the loaded map.
 
