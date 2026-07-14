@@ -25,7 +25,7 @@
 
 1. 本 PRD 定義產品成果、範圍與 release gate。
 2. [`docs/product_capabilities.md`](docs/product_capabilities.md) 是功能與特性的逐項正本，記錄能力 ID、目前狀態與最低驗收證據。
-3. [`CONTEXT.md`](CONTEXT.md) 定義領域語言；`docs/adr/` 記錄不可逆或具取捨的決策。
+3. [`CONTEXT.md`](CONTEXT.md) 定義領域語言；`docs/adr/` 記錄架構層不可逆或具取捨的決策，驗收與產品範圍裁定則以 `docs/decisions/` 及其 decision flow 為準。
 4. 本文件後段保留的 v3.x 物理、飛控、輸入、授權與發行 gate，在不衝突時繼續有效；任何衝突一律以 v4.1 與能力正本為準。
 
 ### 0.2 AirSim-class minimum 定義
@@ -301,7 +301,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 - 慣量：由零件質量分布估算（提供 CAD 匯入或簡化桿-點模型），並可被實測值覆寫。
 
 #### 3.6.3 雙基準機參數包（Phase 1 交付物）
-1. **5 吋穿越機資料包（主打）**：公開台架推力表、慣量估測（雙線擺法或 CAD）、階躍響應標定之 τ_m。G2.8 與 G3.6(b) 不以真機 blackbox 作為驗收真值；若未來取得合規資料，再依決策重啟對應驗證。
+1. **5 吋穿越機資料包（主打）**：具可再發布授權與 provenance 證據的台架推力表、慣量估測（雙線擺法或 CAD）、階躍響應標定之 τ_m；若沒有合規來源則維持 not verified／blocked，不把「公開」視為可發布。G2.8 與 G3.6(b) 不以真機 blackbox 作為驗收真值；若未來取得合規資料，再依決策重啟對應驗證。
 2. **Iris 級資料包**：沿用 PX4 iris.sdf 慣量（0.0291/0.0291/0.0552），供 PX4 SITL 與定高驗證。
 
 ---
@@ -346,7 +346,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G0.7 | Linux headless 可無視窗執行完整物理模擬並輸出數據 | CI-A | SC |
 | G0.8 | **碰撞權威切換**（回應 High 6）：四場景各 100 次隨機化重複——(a) 30 m/s 正撞牆、(b) 5° 掠角擦地、(c) 撞桿反彈、(d) 翻滾觸地後恢復。全數：無 NaN、速度/角速度有限、動能不增加（restitution 容忍 +1%）、交接後 0.5 秒內飛控可重新響應輸入、同種子重播結果一致 | CI-A | SC |
 | G0.9 | **Fidelity 等價**：Mobile Base vs Desktop Full 同輸入序列（60 秒標準機動）姿態軌跡 RMSE ≤ 1.5°、位置 RMSE ≤ 15 cm（**僅擋行動 Lane**；Desktop 主線不受此 Gate 阻擋） | CI-A | AND, IOS |
-| G0.P | **可玩垂直切片**：Ubuntu 冷啟動 → 七入口主選單 → Map 選擇 → Quick Fly → spawn → arm → 起飛 → pause → reset → exit 全流程可走通，保存錄影、輸入 log 與 build hash。此 Gate 驗操作性，不取代正式場景、Dashboard 或 AirSim-class gate | DEV-M | LIN |
+| G0.P | **可玩垂直切片**：Ubuntu 冷啟動 → 七入口主選單 → Map 選擇 → Quick Fly → spawn → arm → 起飛 → pause → reset → exit 全流程可走通；維護者在真實 display 親眼看到並親自操作，於 issue 留言確認，附 build hash。此 Gate 驗操作性，不取代正式場景、Dashboard 或 AirSim-class gate | DEV-M | LIN |
 | G0.10 | iOS Lane 決策文件：Ad Hoc / TestFlight 路線之裝置數、審查風險、成本評估，做出 Go/No-Go 並簽核 | LEG | IOS |
 
 ---
@@ -364,7 +364,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G1.7 | **硬體參數系統**：3.6.1 Schema 全欄位可由 JSON 載入；**schema 含 version 欄、全欄位單位與座標系標註、馬達順序與旋向、槳表插值規則（範圍內線性、禁止外插——越界即拒絕）**；驗證器拒絕越界值 100% 攔截；載入失敗回退出廠預設並明示；熱切換機體不重啟場景 | CI-A | SC |
 | G1.8 | **派生量實務合理性**：5 吋 6S 預設組——懸停油門落於 22–35%、TWR ≥ 8、預估懸停續航落於 3–6 分鐘區間 | CI-A | SC |
 | G1.9 | **k_t/k_q 擬合**：由台架推力表擬合之 k_t、k_q 反推推力/扭矩，對表內各轉速點殘差 ≤ 3% | CI-A | SC |
-| G1.10 | **5 吋機資料包交付**（3.6.3）：公開台架推力表與慣量估測資料齊備並入版控；不要求真機 blackbox 紀錄。**資料協定**：記錄資料來源、單位、時間基準與適用範圍，並以獨立案例保留調參與驗證結果 | DEV-M | SC |
+| G1.10 | **5 吋機資料包交付**（3.6.3）：台架推力表與慣量估測資料須有可再發布的授權、來源與 provenance 證據後才可入版控；沒有合規來源時標記 not verified／blocked，不以「public」推定可發布。不要求真機 blackbox 紀錄。**資料協定**：記錄資料來源、單位、時間基準與適用範圍，並以獨立案例保留調參與驗證結果 | DEV-M | SC |
 
 ---
 
@@ -409,7 +409,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G4.3 | GA 交付一張 `Industrial Test Range`：launch area、warehouse/street、obstacle corridor、短 Time Trial route、reset-to-spawn、方向指示與 finish panel；Map Catalog 保留且只有一個真實 entry | GPU-A + DEV-M | LIN |
 | G4.4 | FPV 攝影機：uptilt/FOV/OSD；桌面含類比雜訊濾鏡 | GPU-A | SC |
 | G4.5 | Kenney City Kit (Industrial) CC0 為主要資產，缺口只用 Godot primitives／自製資產；clean checkout 自動 import，不依賴 Unity／Unreal 轉換 | CI-A + GPU-A | LIN |
-| G4.6 | **Playable Game Milestone**：Ubuntu package 由冷啟動完成七入口 → Controller／Drone／單一 Map 選擇 → Quick Fly → production vehicle 飛行／碰撞／pause／respawn → 短 Time Trial finish → quit；全程無 placeholder 或 developer-only state，Codex Critical/High = 0。此 gate 通過後才開始第一次人工完整審核與初始 Approved Visual Reference 核准 | CI-A + GPU-A + Codex | LIN |
+| G4.6 | **Playable Game Milestone**：先通過自動化與 headed checks，再由維護者在 Ubuntu 真實 display 親眼看到並親自完成七入口 → Controller／Drone／單一 Map 選擇 → Quick Fly → production vehicle 飛行／碰撞／pause／respawn → 短 Time Trial finish → quit，於 issue 留言確認；全程無 placeholder 或 developer-only state，Codex Critical/High = 0。此 gate 通過後才開始第一次正式人工視覺／可用性審核與初始 Approved Visual Reference 核准 | CI-A + GPU-A + DEV-M + Codex | LIN |
 
 ### Phase 4B — UI/UX
 

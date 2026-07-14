@@ -64,11 +64,11 @@ The main menu exposes exactly `Quick Fly`, `Lab Mode`, `Controller`, `Drone`, `M
 
 **Status:** Confirmed target
 
-The first human review begins only after an Ubuntu package provides one complete, production-facing Player Mode game loop. From a cold start, a person can use the seven-entry menu, select the controller, drone, and sole Map Catalog entry, Quick Fly into the Industrial Test Range, fly the production vehicle, collide, pause, respawn, complete the short Time Trial, and quit without developer tools, placeholder UI, or missing production assets.
+The first formal visual and usability review begins only after an Ubuntu package provides one complete, production-facing Player Mode game loop. Before that review, the required milestone sequence is automated checks, a headed run on the maintainer's real display that the maintainer visibly observes, and maintainer play acceptance recorded on the issue. From a cold start, the maintainer can use the seven-entry menu, select the controller, drone, and sole Map Catalog entry, Quick Fly into the Industrial Test Range, fly the production vehicle, collide, pause, respawn, complete the short Time Trial, and quit without developer tools, placeholder UI, or missing production assets.
 
 Before this milestone, deterministic checks and Codex AI Visual Verification produce provisional evidence without requesting human approval. After the automated and headed milestone gate passes, a person performs the first formal visual and usability review and approves or rejects the initial four-view reference.
 
-**Minimum acceptance:** A clean Ubuntu install passes an automated or agent-operated end-to-end run of the complete loop, stores video or screenshots and machine-readable results, has zero Critical or High Codex visual findings, and contains no placeholder or developer-only state in the path. Only then may a human review be requested.
+**Minimum acceptance:** A clean Ubuntu install passes the automated or agent-operated end-to-end run, then a real-display headed run is visibly observed and the maintainer personally completes the same loop and records issue acceptance. Store screenshots and machine-readable results, require zero Critical or High Codex visual findings, and contain no placeholder or developer-only state in the path. Only then may formal human visual or usability review be requested.
 
 ## Compatibility and flight control
 
@@ -296,4 +296,4 @@ Lower-spec developer machines use the Local Development Profile. They still run 
 
 The AirSim-class minimum is reached only when every confirmed target above is either Available or explicitly removed through a reviewed product decision. Passing native tests alone, displaying an AirSim-like UI, or importing a visually similar scene does not satisfy the minimum.
 
-For the scene acquisition and validation rationale, see [Godot scene acquisition and validation](research/godot_scene_acquisition_and_validation.md). AirSim reference use follows the [AirSim Reference Policy](airsim_reference_policy.md). Durable scope decisions are recorded in [architecture decision records](adr/).
+For the scene acquisition and validation rationale, see [Godot scene acquisition and validation](research/godot_scene_acquisition_and_validation.md). AirSim reference use follows the [AirSim Reference Policy](airsim_reference_policy.md). Architecture decisions are recorded in [architecture decision records](adr/); acceptance and product-scope decisions are recorded in [`docs/decisions/`](decisions/) and summarized by the [development decision flow](development-decision-flow.md).
