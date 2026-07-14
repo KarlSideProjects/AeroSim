@@ -166,6 +166,9 @@ jobs:
       - name: GUT GDScript unit tests
         run: scripts/run_gut_tests.sh
 
+      - name: AirSim pinned client RPC integration
+        run: scripts/test_airsim_rpc_client.sh
+
       - name: Headed acceptance (Xvfb + lavapipe)
         env:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
