@@ -189,6 +189,35 @@ func _run() -> void:
 	await _settle(4)
 	var industrial_yard_frame := await _snapshot("01_industrial_yard_preflight")
 	_expect(_max_color_ratio(industrial_yard_frame) < 0.99, "Industrial Yard preflight capture is not monochrome")
+	var camera_rpc: Array = runtime.airsim_rpc_server.dispatch([0, 142, "simGetImages", [[
+		{"camera_name": "0", "image_type": 0, "pixels_as_float": false, "compress": true},
+		{"camera_name": "0", "image_type": 1, "pixels_as_float": true, "compress": false},
+		{"camera_name": "0", "image_type": 5, "pixels_as_float": false, "compress": false},
+	], "", false]])
+	_expect(camera_rpc[2] == null and camera_rpc[3].size() == 3, "simGetImages returns all requested Industrial Yard camera responses in order")
+	if camera_rpc[2] == null and camera_rpc[3].size() == 3:
+		var scene_response: Dictionary = camera_rpc[3][0]
+		var depth_response: Dictionary = camera_rpc[3][1]
+		var segmentation_response: Dictionary = camera_rpc[3][2]
+		_expect(scene_response.image_type == 0 and scene_response.width == 256 and scene_response.height == 144 and scene_response.image_data_uint8.size() > 8, "Scene response has AirSim dimensions and PNG bytes")
+		var scene_image := Image.new()
+		var scene_decode := scene_image.load_png_from_buffer(scene_response.image_data_uint8)
+		_expect(scene_decode == OK and not scene_image.is_empty() and _max_color_ratio(scene_image) < 0.99, "Scene PNG decodes to an observable rendered view")
+		_expect(depth_response.image_type == 1 and depth_response.pixels_as_float and depth_response.image_data_float.size() == 256 * 144, "DepthPlanar response has one float per pixel")
+		_expect(segmentation_response.image_type == 5 and segmentation_response.image_data_uint8.size() == 256 * 144 * 3, "Segmentation raw response has RGB bytes")
+		var segmentation_ids := {}
+		for offset in range(0, segmentation_response.image_data_uint8.size(), 3):
+			var segmentation_id := int(segmentation_response.image_data_uint8[offset]) | (int(segmentation_response.image_data_uint8[offset + 1]) << 8) | (int(segmentation_response.image_data_uint8[offset + 2]) << 16)
+			if segmentation_id > 0:
+				segmentation_ids[segmentation_id] = true
+		_expect(segmentation_ids.has(1), "Segmentation raw response includes the catalog-backed Ground ID")
+		_expect(scene_response.time_stamp == depth_response.time_stamp and depth_response.time_stamp == segmentation_response.time_stamp, "multi-request camera responses share one simulation timestamp")
+		runtime.airsim_rpc_server.dispatch([0, 144, "simPause", [true]])
+		var paused_camera_rpc: Array = runtime.airsim_rpc_server.dispatch([0, 143, "simGetImages", [[{"camera_name": "0", "image_type": 1, "pixels_as_float": true, "compress": false}], "", false]])
+		var paused_camera_rpc_again: Array = runtime.airsim_rpc_server.dispatch([0, 145, "simGetImages", [[{"camera_name": "0", "image_type": 1, "pixels_as_float": true, "compress": false}], "", false]])
+		_expect(paused_camera_rpc[3][0].time_stamp == depth_response.time_stamp and paused_camera_rpc_again[3][0].time_stamp == paused_camera_rpc[3][0].time_stamp, "paused camera reads keep the simulation timestamp frozen")
+		_expect(paused_camera_rpc_again[3][0].image_data_float == paused_camera_rpc[3][0].image_data_float, "paused camera reads repeat the same depth frame")
+		runtime.airsim_rpc_server.dispatch([0, 146, "simPause", [false]])
 	_expect(not runtime.load_map("missing_map") and runtime.last_error_message.contains("missing_map"), "missing map load names the missing map explicitly")
 	_expect(runtime.loaded_map_id == "industrial_yard" and runtime.loaded_map != null, "missing map load keeps Industrial Yard active without a smoke fallback")
 

@@ -152,6 +152,15 @@ func test_loopback_transport_dispatches_one_messagepack_request() -> void:
     server.stop()
 
 
+func test_messagepack_preserves_binary_image_payloads() -> void:
+    var payload := [0, 21, "image", [PackedByteArray([0, 1, 2, 255])]]
+    var decoded: Dictionary = MsgpackCodec.decode(MsgpackCodec.encode(payload))
+
+    assert_true(decoded.ok)
+    assert_true(decoded.value[3][0] is PackedByteArray)
+    assert_eq(decoded.value[3][0], PackedByteArray([0, 1, 2, 255]))
+
+
 func test_manifest_names_the_current_compatibility_surface() -> void:
     var file := FileAccess.open("res://config/airsim_compatibility_manifest.json", FileAccess.READ)
     assert_not_null(file)
@@ -166,7 +175,81 @@ func test_manifest_names_the_current_compatibility_surface() -> void:
     assert_true(manifest["supported_api"].has("ping"))
     assert_true(manifest["supported_api"].has("getMultirotorState"))
     assert_true(manifest["supported_api"].has("simContinueForFrames"))
+    assert_true(manifest["supported_api"].has("simGetImages"))
     assert_true(manifest["settings"]["root"].has("Vehicles"))
+
+
+func test_sim_get_images_preserves_request_order_and_encoding_contract() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var camera_surface := FakeCameraSurface.new()
+    server.set_camera_backend(Callable(camera_surface, "capture"))
+    server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41455,
+        "RpcEnabled": false,
+    })
+
+    var response: Array = server.dispatch([0, 11, "simGetImages", [[
+        {"camera_name": "front_center", "image_type": 5, "pixels_as_float": false, "compress": true},
+        {"camera_name": "front_center", "image_type": 1, "pixels_as_float": true, "compress": false},
+        {"camera_name": "front_center", "image_type": 0, "pixels_as_float": false, "compress": false},
+    ], "", false]])
+
+    assert_eq(response[2], null)
+    assert_eq(response[3].size(), 3)
+    assert_eq(response[3][0]["image_type"], 5)
+    assert_eq(response[3][1]["image_type"], 1)
+    assert_eq(response[3][2]["image_type"], 0)
+    assert_true(response[3][0]["image_data_uint8"] is PackedByteArray)
+    assert_true(response[3][1]["image_data_float"] is PackedFloat32Array)
+    assert_eq(response[3][2]["compress"], false)
+
+
+func test_sim_get_images_rejects_unsupported_types_and_bad_requests() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var camera_surface := FakeCameraSurface.new()
+    server.set_camera_backend(Callable(camera_surface, "capture"))
+
+    var unsupported: Array = server.dispatch([0, 12, "simGetImages", [[
+        {"camera_name": "0", "image_type": 3, "pixels_as_float": false, "compress": true}
+    ], "", false]])
+    assert_string_contains(unsupported[2], "unsupported")
+
+    var malformed: Array = server.dispatch([0, 13, "simGetImages", [{"camera_name": "0"}, "", false]])
+    assert_string_contains(malformed[2], "requests must be an array")
+
+
+class FakeCameraSurface extends RefCounted:
+    func capture(requests: Array, _vehicle_name: String, _external: bool) -> Dictionary:
+        if requests.size() == 0:
+            return {"ok": true, "responses": []}
+        if typeof(requests[0]) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "requests must be an array of ImageRequest maps"}
+        for request in requests:
+            if int(request.get("image_type", -1)) not in [0, 1, 5]:
+                return {"ok": false, "error": "unsupported image type"}
+        var responses: Array = []
+        for request in requests:
+            var image_type := int(request["image_type"])
+            var item := {
+                "image_data_uint8": PackedByteArray([137, 80, 78, 71]) if not bool(request.get("pixels_as_float", false)) else PackedByteArray(),
+                "image_data_float": PackedFloat32Array([1.0]) if bool(request.get("pixels_as_float", false)) else PackedFloat32Array(),
+                "camera_position": {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0},
+                "camera_name": String(request.get("camera_name", "0")),
+                "camera_orientation": {"w_val": 1.0, "x_val": 0.0, "y_val": 0.0, "z_val": 0.0},
+                "time_stamp": 0,
+                "message": "",
+                "pixels_as_float": bool(request.get("pixels_as_float", false)),
+                "compress": bool(request.get("compress", true)),
+                "width": 1,
+                "height": 1,
+                "image_type": image_type,
+            }
+            responses.append(item)
+        return {"ok": true, "responses": responses}
 
 
 func test_start_with_settings_validates_before_opening_listener() -> void:
