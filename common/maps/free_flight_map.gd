@@ -60,5 +60,5 @@ func _read_json(path: String) -> Dictionary:
 func _fail(error: String) -> Dictionary:
     last_ok = false
     last_error = error
-    push_error(error)
+    push_warning(error)
     return {}

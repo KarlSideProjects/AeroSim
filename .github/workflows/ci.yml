@@ -124,6 +124,11 @@ jobs:
       - name: Hardcoded airframe constant scan
         run: scripts/check_hardcoded_airframe_constants.sh
 
+      - name: Shared Industrial Yard asset check
+        run: |
+          scripts/test_shared_map_assets.sh
+          scripts/check_shared_map_assets.sh
+
       - name: Store Linux replay artifact locally
         run: |
           install -D build/replay_terminal_state.json \

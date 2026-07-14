@@ -14,6 +14,7 @@ const DEFAULT_FREE_FLIGHT_MAP_ID := "industrial_yard"
 const MAP_SCENE_PATHS := {
     "industrial_yard": "res://levels/free_flight/industrial_yard.tscn"
 }
+const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const TAKEOFF_VELOCITY := Vector3(0.0, 6.0, 0.0)
 const KEYBOARD_FLIGHT_THROTTLE := 0.75
 const ACRO_RC_RATE := 1.0
@@ -598,6 +599,13 @@ func reset_to_spawn() -> bool:
         drone_body.freeze = true
     return true
 
+func _spawn_position() -> Vector3:
+    if loaded_map != null:
+        var spawn := loaded_map.get_node_or_null("SpawnNorth") as Marker3D
+        if spawn != null:
+            return spawn.global_position
+    return SPAWN_POSITION
+
 func unload_map() -> void:
     if loaded_map != null:
         remove_child(loaded_map)
@@ -607,7 +615,7 @@ func unload_map() -> void:
 
 func _set_map_error(message: String) -> bool:
     last_error_message = message
-    push_error(message)
+    push_warning(message)
     return false
 
 func update_fallback_status() -> void:
@@ -841,6 +849,11 @@ func _update_status_diagram() -> void:
     if status_diagram == null or native == null or not native.has_method("telemetry_snapshot"):
         return
     status_diagram.update_from_snapshot(native.call("telemetry_snapshot"))
+
+func _reset_drone_body() -> void:
+    drone_body.reset_contact()
+    drone_body.apply_native_state(_spawn_position(), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+    drone_body.freeze = true
 
 func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
@@ -1099,12 +1112,12 @@ func _airsim_task_complete(name: String) -> bool:
         return false
     var method := String(_airsim_command_state["method"])
     var args: Array = _airsim_command_state["args"]
-    var position_ned := AirSimCoordinateContract.godot_world_to_ned(drone_body.global_position, SPAWN_POSITION)
+    var position_ned := AirSimCoordinateContract.godot_world_to_ned(drone_body.global_position, _spawn_position())
     match method:
         "takeoff":
             return position_ned.z <= -2.75 and drone_body.linear_velocity.length() < 1.0
         "land":
-            var landed_on_ground: bool = drone_body.global_position.y <= SPAWN_POSITION.y + 0.05 and drone_body.linear_velocity.length() < 0.25
+            var landed_on_ground: bool = drone_body.global_position.y <= _spawn_position().y + 0.05 and drone_body.linear_velocity.length() < 0.25
             return position_ned.z >= -0.5 and (_airsim_contact_this_frame or landed_on_ground)
         "hover":
             return drone_body.linear_velocity.length() < 2.0 and drone_body.angular_velocity.length() < 1.0
@@ -1181,7 +1194,7 @@ func _airsim_controls_for_frame() -> Dictionary:
         "hover":
             return _airsim_velocity_controls(Vector3.ZERO, 0.0)
         "goHome":
-            var home_delta: Vector3 = SPAWN_POSITION - drone_body.global_position
+            var home_delta: Vector3 = _spawn_position() - drone_body.global_position
             var home_horizontal := Vector3(home_delta.x, 0.0, home_delta.z)
             var home_velocity := home_horizontal.normalized() * minf(home_horizontal.length() * 1.5, 4.0)
             home_velocity.y = clampf(home_delta.y * 4.0 - drone_body.linear_velocity.y * 3.0, -8.0, 8.0)
@@ -1199,7 +1212,7 @@ func _airsim_controls_for_frame() -> Dictionary:
             # AirSim rotates only the horizontal body velocity into the world
             # frame and passes z unchanged to commandVelocityZ; z is NED
             # altitude, not a pitch/roll-rotated body coordinate.
-            var position_ned := AirSimCoordinateContract.godot_world_to_ned(drone_body.global_position, SPAWN_POSITION)
+            var position_ned := AirSimCoordinateContract.godot_world_to_ned(drone_body.global_position, _spawn_position())
             var body_target_velocity := Vector3(float(args[0]), float(args[1]), (float(args[2]) - position_ned.z) * 2.0)
             var body_velocity_local := AirSimCoordinateContract.frd_to_godot_body(body_target_velocity)
             return _airsim_velocity_controls(drone_body.global_transform.basis * body_velocity_local, 0.0, args[5])
@@ -1216,7 +1229,7 @@ func _airsim_controls_for_frame() -> Dictionary:
                     return _airsim_hold_controls.duplicate(true)
                 var waypoint: Dictionary = path[waypoint_index]
                 target_ned = Vector3(float(waypoint["x_val"]), float(waypoint["y_val"]), float(waypoint["z_val"]))
-            var delta_world: Vector3 = AirSimCoordinateContract.ned_to_godot_world(target_ned, SPAWN_POSITION) - drone_body.global_position
+            var delta_world: Vector3 = AirSimCoordinateContract.ned_to_godot_world(target_ned, _spawn_position()) - drone_body.global_position
             var command_speed := float(args[3]) if method == "moveToPosition" else float(args[1])
             if method == "moveOnPath" and delta_world.length() < 0.25:
                 _airsim_command_state["waypoint_index"] = int(_airsim_command_state.get("waypoint_index", 0)) + 1
@@ -1278,7 +1291,7 @@ func _airsim_neutral_controls() -> Dictionary:
 func _airsim_state(name: String) -> Dictionary:
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
-    var position: Vector3 = drone_body.global_position if drone_body != null else SPAWN_POSITION
+    var position: Vector3 = drone_body.global_position if drone_body != null else _spawn_position()
     var orientation: Quaternion = drone_body.global_transform.basis.get_rotation_quaternion() if drone_body != null else Quaternion.IDENTITY
     var linear_velocity: Vector3 = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
     var angular_velocity: Vector3 = drone_body.angular_velocity if drone_body != null else Vector3.ZERO
@@ -1314,8 +1327,8 @@ func _airsim_state(name: String) -> Dictionary:
     var collision := {
         "has_collided": _airsim_collision_seen,
         "normal": _airsim_vector3(AirSimCoordinateContract.godot_direction_to_ned(_airsim_collision_normal)),
-        "impact_point": _airsim_vector3(AirSimCoordinateContract.godot_world_to_ned(_airsim_collision_point, SPAWN_POSITION)),
-        "position": _airsim_vector3(AirSimCoordinateContract.godot_world_to_ned(position, SPAWN_POSITION)),
+        "impact_point": _airsim_vector3(AirSimCoordinateContract.godot_world_to_ned(_airsim_collision_point, _spawn_position())),
+        "position": _airsim_vector3(AirSimCoordinateContract.godot_world_to_ned(position, _spawn_position())),
         "penetration_depth": 0.0,
         "time_stamp": int(round(airsim_session.simulation_time_seconds * 1_000_000_000.0)),
         "object_name": "",
@@ -1324,7 +1337,7 @@ func _airsim_state(name: String) -> Dictionary:
     var state := {
         "collision": collision,
         "kinematics_estimated": {
-            "position": _airsim_vector3(AirSimCoordinateContract.godot_world_to_ned(position, SPAWN_POSITION)),
+            "position": _airsim_vector3(AirSimCoordinateContract.godot_world_to_ned(position, _spawn_position())),
             "orientation": _airsim_quaternion(AirSimCoordinateContract.godot_orientation_to_ned(orientation)),
             "linear_velocity": _airsim_vector3(AirSimCoordinateContract.godot_direction_to_ned(linear_velocity)),
             "angular_velocity": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(body_basis_inverse * angular_velocity)),
@@ -1334,7 +1347,7 @@ func _airsim_state(name: String) -> Dictionary:
         "gps_location": gps_location,
         "imu_sample": native_imu_sample,
         "timestamp": int(round(airsim_session.simulation_time_seconds * 1_000_000_000.0)),
-        "landed_state": 0 if position.y <= SPAWN_POSITION.y + 0.05 and linear_velocity.length() < 0.25 else 1,
+        "landed_state": 0 if position.y <= _spawn_position().y + 0.05 and linear_velocity.length() < 0.25 else 1,
         "rc_data": {"timestamp": 0, "pitch": 0.0, "roll": 0.0, "throttle": _flight_throttle(), "yaw": 0.0, "is_initialized": false, "is_valid": false},
         "ready": native != null,
         "ready_message": "" if native != null else "native runtime unavailable",

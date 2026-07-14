@@ -109,6 +109,10 @@ func _run() -> void:
 	_expect(runtime.loaded_map_id == "industrial_yard" and runtime.loaded_map != null, "Quick Fly preflight loads Industrial Yard")
 	var spawn := runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D if runtime.loaded_map != null else null
 	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6, "Industrial Yard load places the drone at SpawnNorth")
+	var airsim_state: Dictionary = runtime._airsim_state("")
+	var airsim_kinematics: Dictionary = airsim_state.get("state", {}).get("kinematics_estimated", {})
+	var airsim_position: Dictionary = airsim_kinematics.get("position", {})
+	_expect(airsim_state.get("ok", false) and absf(float(airsim_position.get("x_val", 1.0))) <= 1e-6 and absf(float(airsim_position.get("y_val", 1.0))) <= 1e-6 and absf(float(airsim_position.get("z_val", 1.0))) <= 1e-6, "AirSim NED origin follows Industrial Yard SpawnNorth")
 	_expect(root.get_camera_3d() == runtime.chase_camera and runtime.chase_camera.current, "Industrial Yard preflight keeps ChaseCamera as the active Camera3D")
 	var industrial_yard_frame := await _snapshot("01_industrial_yard_preflight")
 	_expect(_max_color_ratio(industrial_yard_frame) < 0.99, "Industrial Yard preflight capture is not monochrome")
@@ -166,6 +170,7 @@ func _run() -> void:
 	if not _failures.is_empty():
 		quit(1)
 		return
+	quit(0)
 
 func _parse_args() -> void:
 	var args := OS.get_cmdline_user_args()
