@@ -1,6 +1,6 @@
 # Industrial Yard time-trial validation
 
-Implementation commit: `8b9d763`
+Implementation commit: `8b9d763`; pause-clock evidence refinement: `2ead0c5`.
 
 The #38 slice adds a scene-authored Industrial Yard route with three ordered checkpoints and a finish marker. `TimeTrial` advances only on simulation physics frames, rejects skipped checkpoints, resets at `SpawnNorth`, and drives the Player HUD finish, Retry, pause, Change Map, and Exit states.
 
