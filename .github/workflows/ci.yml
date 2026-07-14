@@ -232,7 +232,8 @@ jobs:
           templates_dir="$XDG_DATA_HOME/godot/export_templates/4.7.stable"
           templates_url=https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_export_templates.tpz
           templates_sha512=1035dfde4edcc2472bb0c0b9610ce3ee9302642c2b9957e9066372f9f6bb759ab250c8887551a66f0bc5f51bbd9a58bb45e33a0f29844e97615a9b1138c1120e
-          scripts/download_release_asset.sh "$templates_url" "$templates_archive" sha512 "$templates_sha512"
+          AEROSIM_DOWNLOAD_PARALLELISM=16 \
+            scripts/download_release_asset.sh "$templates_url" "$templates_archive" sha512 "$templates_sha512"
           rm -rf "$templates_unpack_dir" "$templates_dir"
           mkdir -p "$templates_unpack_dir" "$templates_dir"
           unzip -q "$templates_archive" -d "$templates_unpack_dir"
