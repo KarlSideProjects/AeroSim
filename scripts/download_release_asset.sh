@@ -1,16 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 3 ]]; then
-    echo "usage: $0 URL OUTPUT SHA512" >&2
+if [[ $# -ne 4 ]]; then
+    echo "usage: $0 URL OUTPUT ALGORITHM EXPECTED_HASH" >&2
     exit 2
 fi
 
 url="$1"
 output="$2"
-expected_sha512="$3"
+algorithm="$3"
+expected_hash="$4"
 chunk_size="${AEROSIM_DOWNLOAD_CHUNK_SIZE:-67108864}"
 parallelism="${AEROSIM_DOWNLOAD_PARALLELISM:-8}"
+
+case "$algorithm" in
+    sha256) checksum_tool=sha256sum ;;
+    sha512) checksum_tool=sha512sum ;;
+    *)
+        echo "unsupported checksum algorithm: $algorithm" >&2
+        exit 2
+        ;;
+esac
 
 if ! [[ "$chunk_size" =~ ^[1-9][0-9]*$ && "$parallelism" =~ ^[1-9][0-9]*$ ]]; then
     echo "chunk size and parallelism must be positive integers" >&2
@@ -75,4 +85,4 @@ if [[ "$actual_size" != "$asset_size" ]]; then
     echo "assembled asset has size $actual_size, expected $asset_size" >&2
     exit 1
 fi
-echo "$expected_sha512  $output" | sha512sum -c -
+echo "$expected_hash  $output" | "$checksum_tool" -c -

@@ -70,9 +70,15 @@ for _ in {1..50}; do
 done
 port="$(<"$server_info")"
 sha512="$(sha512sum "$fixture" | awk '{print $1}')"
+sha256="$(sha256sum "$fixture" | awk '{print $1}')"
 
 AEROSIM_DOWNLOAD_CHUNK_SIZE=262144 \
     AEROSIM_DOWNLOAD_PARALLELISM=4 \
     "$root_dir/scripts/download_release_asset.sh" \
-    "http://127.0.0.1:$port/asset" "$output" "$sha512"
+    "http://127.0.0.1:$port/asset" "$output" sha512 "$sha512"
+cmp "$fixture" "$output"
+AEROSIM_DOWNLOAD_CHUNK_SIZE=262144 \
+    AEROSIM_DOWNLOAD_PARALLELISM=4 \
+    "$root_dir/scripts/download_release_asset.sh" \
+    "http://127.0.0.1:$port/asset" "$output" sha256 "$sha256"
 cmp "$fixture" "$output"
