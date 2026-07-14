@@ -40,7 +40,7 @@ func continue_for_frames(frames: int) -> Dictionary:
     if frames < 0 or frames > MAX_EXPLICIT_STEP_FRAMES:
         return _error("frame step must be from 0 to %d" % MAX_EXPLICIT_STEP_FRAMES)
     _explicit_frames_remaining = frames
-    _paused = false
+    _paused = frames == 0
     return _step_result(frames)
 
 
@@ -48,13 +48,11 @@ func continue_for_time(seconds: float) -> Dictionary:
     if not is_finite(seconds) or seconds < 0.0:
         return _error("duration step must not be negative")
     var exact_frames := seconds * float(physics_hz)
-    var frames := roundi(exact_frames)
-    if absf(exact_frames - float(frames)) > 0.000001:
-        return _error("duration must resolve to whole simulation frames")
+    var frames := ceili(exact_frames)
     if frames > MAX_EXPLICIT_STEP_FRAMES:
         return _error("duration step is too large")
     _explicit_frames_remaining = frames
-    _paused = false
+    _paused = frames == 0
     return _step_result(frames)
 
 

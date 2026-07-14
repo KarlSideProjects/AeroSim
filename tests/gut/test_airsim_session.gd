@@ -33,9 +33,10 @@ func test_duration_step_is_deterministic_and_rejects_invalid_duration() -> void:
     assert_eq(session.frame_index, 25)
     assert_almost_eq(session.simulation_time_seconds, 0.025, 0.000001)
 
-    var invalid: Dictionary = session.continue_for_time(0.0005)
-    assert_false(invalid.ok)
-    assert_string_contains(invalid.error, "whole simulation frames")
+    var rounded: Dictionary = session.continue_for_time(0.0005)
+    assert_true(rounded.ok)
+    session.advance_frame()
+    assert_eq(session.frame_index, 26)
 
     var non_finite: Dictionary = session.continue_for_time(NAN)
     assert_false(non_finite.ok)

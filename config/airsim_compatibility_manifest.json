@@ -18,6 +18,13 @@
       "SubWindows": "array",
       "Recording": "object"
     },
+    "nested_types": {
+      "gimbal": {"Stabilization": "number", "Pitch": "number", "Roll": "number", "Yaw": "number"},
+      "capture_settings": {"ImageType": "integer", "Width": "integer", "Height": "integer", "FOV_Degrees": "number", "AutoExposureSpeed": "number", "AutoExposureBias": "number", "AutoExposureMaxBrightness": "number", "AutoExposureMinBrightness": "number", "MotionBlurAmount": "number", "TargetGamma": "number", "ProjectionMode": "string", "OrthoWidth": "number"},
+      "noise_settings": {"Enabled": "boolean", "ImageType": "integer", "RandContrib": "number", "RandSpeed": "number", "RandSize": "number", "RandDensity": "number", "HorzWaveContrib": "number", "HorzWaveStrength": "number", "HorzWaveVertSize": "number", "HorzWaveScreenSize": "number", "HorzNoiseLinesContrib": "number", "HorzNoiseLinesDensityY": "number", "HorzNoiseLinesDensityXY": "number", "HorzDistortionContrib": "number", "HorzDistortionStrength": "number"},
+      "camera": {"X": "number", "Y": "number", "Z": "number", "Roll": "number", "Pitch": "number", "Yaw": "number"},
+      "sensor": {"SensorType": "integer", "Enabled": "boolean", "X": "number", "Y": "number", "Z": "number", "Roll": "number", "Pitch": "number", "Yaw": "number", "DrawDebugPoints": "boolean", "DataFrame": "string"}
+    },
     "enums": {
       "SimMode": ["Multirotor"],
       "ClockType": ["", "SteppableClock", "ScalableClock"],

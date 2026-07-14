@@ -25,6 +25,8 @@ def exercise(port: int) -> None:
     settings = json.loads(client.getSettingsString())
     assert settings["SettingsVersion"] == 1.2
     assert settings["ApiServerPort"] == port
+    assert settings["ClockType"] == "SteppableClock"
+    assert settings["Vehicles"]["Drone1"]["VehicleType"] == "SimpleFlight"
 
     client.simPause(True)
     assert client.simIsPause() is True

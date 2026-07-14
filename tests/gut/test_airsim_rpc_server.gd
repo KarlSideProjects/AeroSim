@@ -126,3 +126,20 @@ func test_start_with_settings_validates_before_opening_listener() -> void:
     var settings_response: Array = server.dispatch([0, 10, "getSettingsString", []])
     assert_eq(settings_response[3], JSON.stringify(server.settings))
     server.stop()
+
+
+func test_player_snapshot_mutation_cannot_change_startup_settings() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var player_snapshot := {
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41454,
+        "RpcEnabled": true,
+    }
+
+    var result: Dictionary = server.start_with_settings(player_snapshot)
+    assert_true(result.ok)
+    player_snapshot["ApiServerPort"] = 41455
+    assert_eq(server.settings["ApiServerPort"], 41454)
+    server.stop()

@@ -83,12 +83,25 @@ func _ready() -> void:
     add_child(airsim_rpc_server)
     airsim_stop_file = _cold_start_arg("--airsim-stop-file")
     var airsim_port := int(_cold_start_arg("--airsim-rpc-port", str(AirSimRpcServer.DEFAULT_PORT)))
-    var rpc_result: Dictionary = airsim_rpc_server.start_with_settings({
+    var startup_settings := {
         "SettingsVersion": 1.2,
         "SimMode": "Multirotor",
         "ApiServerPort": airsim_port,
         "RpcEnabled": true,
-    })
+    }
+    var settings_path := _cold_start_arg("--airsim-settings-file")
+    if not settings_path.is_empty():
+        var settings_file := FileAccess.open(settings_path, FileAccess.READ)
+        if settings_file == null:
+            push_error("AirSim settings file could not be opened: %s" % settings_path)
+        else:
+            var parsed_settings = JSON.parse_string(settings_file.get_as_text())
+            settings_file.close()
+            if typeof(parsed_settings) != TYPE_DICTIONARY:
+                push_error("AirSim settings file must contain a JSON object")
+            else:
+                startup_settings = parsed_settings
+    var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
     if not rpc_result.ok:
         push_error("AirSim RPC startup failed: %s" % rpc_result.error)
     else:
@@ -190,16 +203,18 @@ func _process(_delta: float) -> void:
     _refresh_flight_hud()
 
 func _physics_process(_delta: float) -> void:
-    if airsim_session != null:
-        airsim_session.advance_frame()
-        if paused != airsim_session.is_paused():
-            set_paused(airsim_session.is_paused(), false)
     if reset_hold_frames > 0:
         reset_hold_frames -= 1
         if reset_hold_frames == 0 and drone_body != null and not paused:
             drone_body.freeze = false
             drone_body.sleeping = false
         return
+    var session_advanced := true
+    if airsim_session != null:
+        session_advanced = airsim_session.advance_frame()
+        if not session_advanced and airsim_session.is_paused():
+            set_paused(true, false)
+            return
     if native == null or paused or not takeoff_requested:
         return
     if not native.call("flight_control_armed"):
@@ -287,6 +302,8 @@ func _physics_process(_delta: float) -> void:
             Vector3(row[8], row[9], row[10]),
             Vector3(row[14], row[15], row[16])
         )
+    if airsim_session != null and airsim_session.is_paused():
+        set_paused(true, false)
     _update_status_diagram()
 
 func request_takeoff() -> void:

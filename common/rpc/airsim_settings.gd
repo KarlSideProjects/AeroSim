@@ -133,8 +133,13 @@ static func validate(raw: Dictionary) -> Dictionary:
     settings["ClockSpeed"] = raw.get("ClockSpeed", 1.0)
     settings["ApiServerPort"] = raw.get("ApiServerPort", DEFAULT_API_SERVER_PORT)
     settings["RpcEnabled"] = raw.get("RpcEnabled", true)
+    if _is_integer_number(settings["ApiServerPort"]):
+        settings["ApiServerPort"] = int(settings["ApiServerPort"])
 
     _reject_unknown_keys(raw, _manifest_keys(manifest, "root"), "root", errors)
+    for required_key in schema["required"]:
+        if not raw.has(required_key):
+            errors.append("%s is required" % required_key)
     _validate_manifest_types(raw, schema.get("types", {}), errors)
     _validate_settings_version(raw, errors, float(manifest["settings_version"]))
     _validate_sim_mode(raw, errors, _manifest_enum(schema, "SimMode"))
@@ -175,7 +180,7 @@ static func _load_manifest() -> Dictionary:
     if typeof(manifest.get("schema")) != TYPE_DICTIONARY:
         return {"ok": false, "error": "AirSim compatibility manifest has no type schema"}
     var schema: Dictionary = manifest["schema"]
-    if typeof(schema.get("types")) != TYPE_DICTIONARY or typeof(schema.get("required")) != TYPE_ARRAY or typeof(schema.get("enums")) != TYPE_DICTIONARY:
+    if typeof(schema.get("types")) != TYPE_DICTIONARY or typeof(schema.get("nested_types")) != TYPE_DICTIONARY or typeof(schema.get("required")) != TYPE_ARRAY or typeof(schema.get("enums")) != TYPE_DICTIONARY:
         return {"ok": false, "error": "AirSim compatibility manifest type schema is malformed"}
     for key in manifest["settings"].get("root", []):
         if not schema["types"].has(key):
@@ -204,24 +209,33 @@ static func _validate_manifest_types(raw: Dictionary, types: Dictionary, errors:
         if not types.has(key):
             continue
         var expected: String = types[key]
-        var value = raw[key]
-        var matches := true
-        match expected:
-            "number": matches = _is_finite_number(value)
-            "integer": matches = typeof(value) == TYPE_INT
-            "string": matches = typeof(value) == TYPE_STRING
-            "boolean": matches = typeof(value) == TYPE_BOOL
-            "object": matches = typeof(value) == TYPE_DICTIONARY
-            "array": matches = typeof(value) == TYPE_ARRAY
-            _:
-                matches = false
-        if not matches:
+        if not _manifest_type_matches(raw[key], expected):
             errors.append("%s must be a %s" % [key, expected])
+
+
+static func _validate_manifest_entry_types(value: Dictionary, schema: Dictionary, section: String, scope: String, errors: Array[String]) -> void:
+    var nested_types: Dictionary = schema["nested_types"]
+    var types: Dictionary = nested_types.get(section, {})
+    for key in value:
+        if types.has(key) and not _manifest_type_matches(value[key], types[key]):
+            errors.append("%s.%s must be a %s" % [scope, key, types[key]])
+
+
+static func _manifest_type_matches(value: Variant, expected: String) -> bool:
+    match expected:
+        "number": return _is_finite_number(value)
+        "integer": return _is_integer_number(value)
+        "string": return typeof(value) == TYPE_STRING
+        "boolean": return typeof(value) == TYPE_BOOL
+        "object": return typeof(value) == TYPE_DICTIONARY
+        "array": return typeof(value) == TYPE_ARRAY
+        _:
+            return false
 
 
 static func _validate_settings_version(raw: Dictionary, errors: Array[String], expected: float) -> void:
     if not raw.has("SettingsVersion"):
-        errors.append("SettingsVersion is required")
+        return
     elif not _is_finite_number(raw["SettingsVersion"]) or float(raw["SettingsVersion"]) != expected:
         errors.append("SettingsVersion must be numeric %s" % expected)
 
@@ -243,7 +257,7 @@ static func _validate_rpc(raw: Dictionary, errors: Array[String]) -> void:
         errors.append("RpcEnabled must be boolean")
     if raw.has("ApiServerPort"):
         var port = raw["ApiServerPort"]
-        if typeof(port) != TYPE_INT or int(port) < 1 or int(port) > 65535:
+        if not _is_integer_number(port) or int(port) < 1 or int(port) > 65535:
             errors.append("ApiServerPort must be an integer from 1 to 65535")
 
 
@@ -305,6 +319,7 @@ static func _validate_named_entries(value: Dictionary, allowed: Dictionary, scop
         if is_camera:
             _validate_camera_entry(entry, entry_scope, errors, manifest)
         else:
+            _validate_manifest_entry_types(entry, manifest["schema"], "sensor", entry_scope, errors)
             _validate_sensor_entry(entry, entry_scope, errors)
 
 
@@ -316,12 +331,14 @@ static func _validate_camera_entry(value: Dictionary, scope: String, errors: Arr
         else:
             var gimbal: Dictionary = value["Gimbal"]
             _reject_unknown_keys(gimbal, _manifest_keys(manifest, "gimbal"), "%s.Gimbal" % scope, errors)
+            _validate_manifest_entry_types(gimbal, manifest["schema"], "gimbal", "%s.Gimbal" % scope, errors)
             _validate_numeric_fields(gimbal, ["Stabilization", "Pitch", "Roll", "Yaw"], "%s.Gimbal" % scope, errors)
-    _validate_camera_list(value, "CaptureSettings", _manifest_keys(manifest, "capture_settings"), scope, errors)
-    _validate_camera_list(value, "NoiseSettings", _manifest_keys(manifest, "noise_settings"), scope, errors)
+    _validate_manifest_entry_types(value, manifest["schema"], "camera", scope, errors)
+    _validate_camera_list(value, "CaptureSettings", _manifest_keys(manifest, "capture_settings"), scope, errors, manifest)
+    _validate_camera_list(value, "NoiseSettings", _manifest_keys(manifest, "noise_settings"), scope, errors, manifest)
 
 
-static func _validate_camera_list(value: Dictionary, key: String, allowed: Dictionary, scope: String, errors: Array[String]) -> void:
+static func _validate_camera_list(value: Dictionary, key: String, allowed: Dictionary, scope: String, errors: Array[String], manifest: Dictionary) -> void:
     if not value.has(key):
         return
     if typeof(value[key]) != TYPE_ARRAY:
@@ -335,11 +352,12 @@ static func _validate_camera_list(value: Dictionary, key: String, allowed: Dicti
             continue
         var item_dict: Dictionary = item
         _reject_unknown_keys(item_dict, allowed, item_scope, errors)
+        _validate_manifest_entry_types(item_dict, manifest["schema"], "capture_settings" if key == "CaptureSettings" else "noise_settings", item_scope, errors)
         if key == "CaptureSettings":
-            if item_dict.has("ImageType") and typeof(item_dict["ImageType"]) != TYPE_INT:
+            if item_dict.has("ImageType") and not _is_integer_number(item_dict["ImageType"]):
                 errors.append("%s.ImageType must be an integer" % item_scope)
             for field in ["Width", "Height"]:
-                if item_dict.has(field) and typeof(item_dict[field]) != TYPE_INT:
+                if item_dict.has(field) and not _is_integer_number(item_dict[field]):
                     errors.append("%s.%s must be an integer" % [item_scope, field])
             _validate_numeric_fields(item_dict, ["FOV_Degrees", "AutoExposureSpeed", "AutoExposureBias", "AutoExposureMaxBrightness", "AutoExposureMinBrightness", "MotionBlurAmount", "TargetGamma", "OrthoWidth"], item_scope, errors)
             if item_dict.has("ProjectionMode") and typeof(item_dict["ProjectionMode"]) != TYPE_STRING:
@@ -347,13 +365,13 @@ static func _validate_camera_list(value: Dictionary, key: String, allowed: Dicti
         else:
             if item_dict.has("Enabled") and typeof(item_dict["Enabled"]) != TYPE_BOOL:
                 errors.append("%s.Enabled must be boolean" % item_scope)
-            if item_dict.has("ImageType") and typeof(item_dict["ImageType"]) != TYPE_INT:
+            if item_dict.has("ImageType") and not _is_integer_number(item_dict["ImageType"]):
                 errors.append("%s.ImageType must be an integer" % item_scope)
             _validate_numeric_fields(item_dict, ["RandContrib", "RandSpeed", "RandSize", "RandDensity", "HorzWaveContrib", "HorzWaveStrength", "HorzWaveVertSize", "HorzWaveScreenSize", "HorzNoiseLinesContrib", "HorzNoiseLinesDensityY", "HorzNoiseLinesDensityXY", "HorzDistortionContrib", "HorzDistortionStrength"], item_scope, errors)
 
 
 static func _validate_sensor_entry(value: Dictionary, scope: String, errors: Array[String]) -> void:
-    if value.has("SensorType") and typeof(value["SensorType"]) != TYPE_INT:
+    if value.has("SensorType") and not _is_integer_number(value["SensorType"]):
         errors.append("%s.SensorType must be an integer" % scope)
     for key in ["Enabled", "DrawDebugPoints"]:
         if value.has(key) and typeof(value[key]) != TYPE_BOOL:
@@ -373,6 +391,10 @@ static func _is_finite_number(value: Variant) -> bool:
     return typeof(value) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(value))
 
 
+static func _is_integer_number(value: Variant) -> bool:
+    return _is_finite_number(value) and is_equal_approx(float(value), roundf(float(value)))
+
+
 static func _validate_subwindows(raw: Dictionary, errors: Array[String], allowed: Dictionary) -> void:
     if not raw.has("SubWindows"):
         return
@@ -386,9 +408,9 @@ static func _validate_subwindows(raw: Dictionary, errors: Array[String], allowed
             continue
         var value: Dictionary = subwindow
         _reject_unknown_keys(value, allowed, "SubWindows[%d]" % index, errors)
-        if value.has("WindowID") and typeof(value["WindowID"]) != TYPE_INT:
+        if value.has("WindowID") and not _is_integer_number(value["WindowID"]):
             errors.append("SubWindows[%d].WindowID must be an integer" % index)
-        if value.has("ImageType") and typeof(value["ImageType"]) != TYPE_INT:
+        if value.has("ImageType") and not _is_integer_number(value["ImageType"]):
             errors.append("SubWindows[%d].ImageType must be an integer" % index)
         for key in ["Visible", "External"]:
             if value.has(key) and typeof(value[key]) != TYPE_BOOL:
@@ -396,7 +418,7 @@ static func _validate_subwindows(raw: Dictionary, errors: Array[String], allowed
         for key in ["CameraName", "VehicleName"]:
             if value.has(key) and typeof(value[key]) != TYPE_STRING:
                 errors.append("SubWindows[%d].%s must be a string" % [index, key])
-        if value.has("CameraID") and typeof(value["CameraID"]) != TYPE_INT:
+        if value.has("CameraID") and not _is_integer_number(value["CameraID"]):
             errors.append("SubWindows[%d].CameraID must be an integer" % index)
 
 

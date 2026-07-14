@@ -8,6 +8,7 @@ PORT="${AEROSIM_RPC_TEST_PORT:-41459}"
 TMP_DIR="$(mktemp -d)"
 READY_FILE="$TMP_DIR/ready"
 STOP_FILE="$TMP_DIR/stop"
+SETTINGS_FILE="$TMP_DIR/settings.json"
 VENV_DIR="$TMP_DIR/venv"
 GODOT_PID=""
 
@@ -33,8 +34,22 @@ fi
     setuptools wheel numpy opencv-contrib-python msgpack-rpc-python backports.ssl_match_hostname
 "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet airsim==1.8.1
 
+cat >"$SETTINGS_FILE" <<EOF
+{
+  "SettingsVersion": 1.2,
+  "SimMode": "Multirotor",
+  "ApiServerPort": $PORT,
+  "RpcEnabled": true,
+  "ClockType": "SteppableClock",
+  "Vehicles": {
+    "Drone1": {"VehicleType": "SimpleFlight", "Cameras": {}, "Sensors": {}}
+  }
+}
+EOF
+
 "$GODOT_BIN" --headless --path "$ROOT_DIR" \
-    -- --airsim-rpc-port "$PORT" --airsim-ready-file "$READY_FILE" --airsim-stop-file "$STOP_FILE" \
+    -- --airsim-rpc-port "$PORT" --airsim-settings-file "$SETTINGS_FILE" \
+    --airsim-ready-file "$READY_FILE" --airsim-stop-file "$STOP_FILE" \
     >"$TMP_DIR/godot.log" 2>&1 &
 GODOT_PID=$!
 
