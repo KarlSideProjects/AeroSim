@@ -32,6 +32,10 @@ bool same_sample_bits(const aerosim::TrajectorySample &a, const aerosim::Traject
             same_bits(a.state.angular_velocity.x, b.state.angular_velocity.x) &&
             same_bits(a.state.angular_velocity.y, b.state.angular_velocity.y) &&
             same_bits(a.state.angular_velocity.z, b.state.angular_velocity.z) &&
+            same_bits(a.state.motor_thrust_newtons[0], b.state.motor_thrust_newtons[0]) &&
+            same_bits(a.state.motor_thrust_newtons[1], b.state.motor_thrust_newtons[1]) &&
+            same_bits(a.state.motor_thrust_newtons[2], b.state.motor_thrust_newtons[2]) &&
+            same_bits(a.state.motor_thrust_newtons[3], b.state.motor_thrust_newtons[3]) &&
             a.substeps == b.substeps;
 }
 
@@ -42,6 +46,17 @@ void configure_power_model(aerosim::SimulationConfig &config) {
     config.battery_cells = 6.0;
     config.battery_cell_resistance_ohm = 0.0;
     config.max_total_current_a = 1.0;
+    config.per_motor.inertia_kg_m2 = {0.003, 0.003, 0.005};
+    config.per_motor.max_thrust_per_motor_newtons = config.max_total_thrust_newtons / 4.0;
+    config.per_motor.max_current_per_motor_a = 0.25;
+    config.per_motor.yaw_torque_per_newton = 0.01;
+    config.per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
 }
 
 aerosim::RecordedInputSequence standard_maneuver(std::int32_t frames) {
@@ -78,7 +93,12 @@ bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
         << sample.state.orientation.x << ", "
         << sample.state.orientation.y << ", "
         << sample.state.orientation.z << ", "
-        << sample.state.orientation.w << "]\n"
+        << sample.state.orientation.w << "],\n"
+        << "  \"motor_thrust_newtons\": ["
+        << sample.state.motor_thrust_newtons[0] << ", "
+        << sample.state.motor_thrust_newtons[1] << ", "
+        << sample.state.motor_thrust_newtons[2] << ", "
+        << sample.state.motor_thrust_newtons[3] << "]\n"
         << "}\n";
     return true;
 }

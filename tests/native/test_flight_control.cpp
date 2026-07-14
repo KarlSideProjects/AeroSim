@@ -27,11 +27,22 @@ double pitch_degrees(const aerosim::Quat &q) {
 
 void configure_power_model(aerosim::SimulationConfig &config) {
     config.hover_throttle = 0.5;
-    config.max_total_thrust_newtons = config.mass_kg * config.gravity_mps2 * 2.0;
+    config.max_total_thrust_newtons = 64.8;
     config.battery_nominal_voltage_v = 22.2;
     config.battery_cells = 6.0;
     config.battery_cell_resistance_ohm = 0.0;
-    config.max_total_current_a = 1.0;
+    config.max_total_current_a = 108.0;
+    config.per_motor.inertia_kg_m2 = {0.003, 0.003, 0.005};
+    config.per_motor.max_thrust_per_motor_newtons = 16.2;
+    config.per_motor.max_current_per_motor_a = 27.0;
+    config.per_motor.yaw_torque_per_newton = 0.01;
+    config.per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
 }
 
 } // namespace
@@ -219,8 +230,10 @@ int main() {
     acro_roll.throttle = 0.5;
     acro_roll.roll_stick = 1.0;
     acro_roll.rates = {1.0, 0.722222222222, 0.0};
-    const aerosim::TrajectorySample acro_sample =
-            acro_controller.step_acro_mode(acro_state, acro_clock, config, acro_roll);
+    aerosim::TrajectorySample acro_sample;
+    for (int frame = 0; frame < config.physics_hz / 2; ++frame) {
+        acro_sample = acro_controller.step_acro_mode(acro_state, acro_clock, config, acro_roll);
+    }
     const double roll_rate_degrees_per_second = acro_sample.state.angular_velocity.z * 180.0 / kPi;
     if (!near(roll_rate_degrees_per_second, 720.0, 720.0 * 0.05)) {
         return fail("G2.5 Acro full-stick roll must reach 720 degrees per second within 5%");

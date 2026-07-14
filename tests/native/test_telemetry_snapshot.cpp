@@ -1,5 +1,6 @@
 #include "aerosim_flight_control.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -26,6 +27,17 @@ void configure_power_model(aerosim::SimulationConfig &config) {
     config.battery_remaining_mah = 1040.0;
     config.max_total_current_a = 108.0;
     config.max_motor_rpm = 15000.0;
+    config.per_motor.inertia_kg_m2 = {0.003, 0.003, 0.005};
+    config.per_motor.max_thrust_per_motor_newtons = config.max_total_thrust_newtons / 4.0;
+    config.per_motor.max_current_per_motor_a = config.max_total_current_a / 4.0;
+    config.per_motor.yaw_torque_per_newton = 0.01;
+    config.per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
 }
 
 } // namespace
@@ -70,8 +82,12 @@ int main() {
     const double max_motor_speed_rad_s = config.max_motor_rpm * 2.0 * kPi / 60.0;
     for (const aerosim::MotorTelemetry &motor : snapshot.motors) {
         motor_sum += motor.thrust_newtons;
+        const double expected_current = config.per_motor.max_thrust_per_motor_newtons > 0.0
+                ? config.per_motor.max_current_per_motor_a *
+                        std::clamp(motor.thrust_newtons / config.per_motor.max_thrust_per_motor_newtons, 0.0, 1.0)
+                : 0.0;
         if (motor.thrust_newtons <= 0.0 || motor.speed_rad_s <= 0.0 || motor.speed_rad_s > max_motor_speed_rad_s ||
-                !near(motor.current_a, config.max_total_current_a * hover.throttle / 4.0, 1e-9) ||
+                !near(motor.current_a, expected_current, 1e-9) ||
                 motor.saturated) {
             return fail("TelemetrySnapshot motor thrust/rad_s/current/saturation must match controller truth");
         }

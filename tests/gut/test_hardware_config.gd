@@ -34,3 +34,14 @@ func test_schema_rejects_wrong_units() -> void:
         "units must match schema",
         "Wrong units must be rejected before they can silently corrupt physical calculations."
     )
+
+
+func test_derives_the_preset_backed_per_motor_model() -> void:
+    var power_model := loader.derive_power_model(HardwareConfig.FACTORY_DEFAULT)
+    var per_motor := loader.derive_per_motor_model(HardwareConfig.FACTORY_DEFAULT, power_model)
+
+    assert_true(per_motor.ok)
+    assert_eq(per_motor.spin_direction, [1.0, -1.0, -1.0, 1.0])
+    assert_eq(per_motor.position_frd.size(), 4)
+    assert_almost_eq(per_motor.max_thrust_per_motor_newtons, 16.2, 0.000001)
+    assert_almost_eq(per_motor.yaw_torque_per_newton, 0.1575 / 16.2, 0.000001)
