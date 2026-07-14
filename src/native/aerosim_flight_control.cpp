@@ -173,6 +173,32 @@ double betaflight_rate_degrees_per_second(double stick, const RateProfile &profi
     return angle_rate;
 }
 
+double betaflight_stick_for_rate_degrees_per_second(double rate_degrees_per_second, const RateProfile &profile) {
+    if (!std::isfinite(rate_degrees_per_second)) {
+        return 0.0;
+    }
+    const double target_sign = rate_degrees_per_second < 0.0 ? -1.0 : 1.0;
+    const double target = std::abs(rate_degrees_per_second);
+    const double maximum = betaflight_rate_degrees_per_second(1.0, profile);
+    if (!std::isfinite(maximum) || maximum <= 0.0) {
+        return 0.0;
+    }
+    if (target >= maximum) {
+        return target_sign;
+    }
+    double low = 0.0;
+    double high = 1.0;
+    for (int iteration = 0; iteration < 64; ++iteration) {
+        const double middle = (low + high) * 0.5;
+        if (betaflight_rate_degrees_per_second(middle, profile) < target) {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    return target_sign * (low + high) * 0.5;
+}
+
 bool FlightController::arm(double throttle) {
     if (!std::isfinite(throttle) || throttle < 0.0) {
         arm_reject_code_ = "invalid_throttle";
@@ -185,6 +211,10 @@ bool FlightController::arm(double throttle) {
     armed_ = true;
     arm_reject_code_ = "";
     return true;
+}
+
+void FlightController::disarm() {
+    armed_ = false;
 }
 
 bool FlightController::armed() const {

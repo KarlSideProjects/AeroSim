@@ -55,8 +55,14 @@ public:
             std::int32_t substep_hz,
             double total_thrust_newtons);
     bool arm_flight_control(double throttle);
+    void disarm_flight_control();
     bool flight_control_armed() const;
     godot::String flight_control_arm_reject_code() const;
+    double betaflight_stick_for_rate(
+            double rate_degrees_per_second,
+            double rc_rate,
+            double super_rate,
+            double expo) const;
     void reset_flight();
     void capture_altitude_hold();
     void configure_imu(const godot::Dictionary &config);

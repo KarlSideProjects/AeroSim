@@ -108,8 +108,12 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
             &AeroSimNative::step_simulation);
     ClassDB::bind_method(D_METHOD("arm_flight_control", "throttle"), &AeroSimNative::arm_flight_control);
+    ClassDB::bind_method(D_METHOD("disarm_flight_control"), &AeroSimNative::disarm_flight_control);
     ClassDB::bind_method(D_METHOD("flight_control_armed"), &AeroSimNative::flight_control_armed);
     ClassDB::bind_method(D_METHOD("flight_control_arm_reject_code"), &AeroSimNative::flight_control_arm_reject_code);
+    ClassDB::bind_method(
+            D_METHOD("betaflight_stick_for_rate", "rate_degrees_per_second", "rc_rate", "super_rate", "expo"),
+            &AeroSimNative::betaflight_stick_for_rate);
     ClassDB::bind_method(D_METHOD("reset_flight"), &AeroSimNative::reset_flight);
     ClassDB::bind_method(D_METHOD("capture_altitude_hold"), &AeroSimNative::capture_altitude_hold);
     ClassDB::bind_method(D_METHOD("configure_imu", "config"), &AeroSimNative::configure_imu);
@@ -237,12 +241,26 @@ bool AeroSimNative::arm_flight_control(double throttle) {
     return flight_controller_.arm(throttle);
 }
 
+void AeroSimNative::disarm_flight_control() {
+    flight_controller_.disarm();
+}
+
 bool AeroSimNative::flight_control_armed() const {
     return flight_controller_.armed();
 }
 
 String AeroSimNative::flight_control_arm_reject_code() const {
     return flight_controller_.arm_reject_code().c_str();
+}
+
+double AeroSimNative::betaflight_stick_for_rate(
+        double rate_degrees_per_second,
+        double rc_rate,
+        double super_rate,
+        double expo) const {
+    return aerosim::betaflight_stick_for_rate_degrees_per_second(
+            rate_degrees_per_second,
+            aerosim::RateProfile{rc_rate, super_rate, expo});
 }
 
 void AeroSimNative::reset_flight() {
