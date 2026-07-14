@@ -185,6 +185,11 @@ static func _load_manifest() -> Dictionary:
     for key in manifest["settings"].get("root", []):
         if not schema["types"].has(key):
             return {"ok": false, "error": "AirSim compatibility manifest has no type for '%s'" % key}
+    for section in ["origin_geopoint", "vehicle", "camera", "sensor", "gimbal", "capture_settings", "noise_settings", "subwindow", "recording"]:
+        var section_types: Dictionary = schema["nested_types"].get(section, {})
+        for key in manifest["settings"].get(section, []):
+            if not section_types.has(key):
+                return {"ok": false, "error": "AirSim compatibility manifest has no type for '%s.%s'" % [section, key]}
     return {"ok": true, "manifest": manifest}
 
 
