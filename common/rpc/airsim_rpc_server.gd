@@ -118,6 +118,12 @@ func stop() -> void:
     set_process(false)
 
 
+func reset_vehicle_control_state() -> void:
+    for pending in _pending_async_responses.duplicate():
+        _cancel_pending_task(pending, "RPC task canceled by flight lifecycle reset")
+    _configure_vehicles(settings)
+
+
 func is_running() -> bool:
     return _running
 
@@ -386,9 +392,7 @@ func dispatch(request: Array) -> Array:
             session.reset()
             if reset_handler.is_valid():
                 reset_handler.call()
-            for pending in _pending_async_responses.duplicate():
-                _cancel_pending_task(pending, "RPC task canceled by reset")
-            _configure_vehicles(settings)
+            reset_vehicle_control_state()
             return _success_response(message_id, null)
         "getServerVersion":
             if not params.is_empty():

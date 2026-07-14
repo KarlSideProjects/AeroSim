@@ -25,12 +25,13 @@ func configure(positions: Array, finish: Vector3, radius: float = 2.5) -> void:
 
 func start() -> void:
 	reset()
+	active = true
 
 
 func reset() -> void:
 	next_checkpoint_index = 0
 	elapsed_seconds = 0.0
-	active = true
+	active = false
 	finished = false
 
 

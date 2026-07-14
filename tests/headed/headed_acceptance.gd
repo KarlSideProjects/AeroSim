@@ -117,22 +117,29 @@ func _run() -> void:
 	_expect(runtime.time_trial != null and runtime.time_trial.checkpoint_positions.size() == 3, "Industrial Yard exposes a three-checkpoint Time Trial")
 	var trial_status: Label = runtime.get_node_or_null("FlightHud/StatusMargin/StatusPanel/StatusRows/TimeTrialStatus")
 	_expect(trial_status != null and trial_status.text.contains("TIME TRIAL") and trial_status.text.contains("NEXT 1/3"), "preflight HUD exposes the next Time Trial checkpoint")
+	var finish_position: Vector3 = runtime.loaded_map.get_node("TimeTrial/Finish").global_position
 	if runtime.time_trial != null:
-		for checkpoint in runtime.time_trial.checkpoint_positions:
-			runtime.time_trial.advance(checkpoint, 0.25)
-		var finish_position: Vector3 = runtime.loaded_map.get_node("TimeTrial/Finish").global_position
 		runtime.time_trial.advance(finish_position, 0.25)
+	_expect(runtime.screen == "preflight" and not runtime.time_trial.finished, "preflight cannot finish a Time Trial before takeoff")
+	runtime._airsim_disarm_requested = false
+	runtime.native.call("arm_flight_control", 0.0)
+	runtime.request_takeoff()
+	_complete_time_trial(runtime)
 	await _settle(2)
 	_expect(runtime.screen == "finish" and runtime.paused, "reaching Finish stops flight and opens the Time Trial result state")
+	await _snapshot("06_finish")
 	var finish_panel: Control = runtime.get_node_or_null("FlightHud/FinishPanel")
 	var finish_summary: Label = runtime.get_node_or_null("FlightHud/FinishPanel/Rows/Summary")
 	_expect(finish_panel != null and finish_panel.is_visible_in_tree() and finish_summary != null and finish_summary.text.contains("Time"), "finish panel shows the completed trial time")
+	_tap(KEY_P)
+	await _settle(2)
+	_expect(runtime.screen == "finish" and runtime.paused, "P cannot resume a finished Time Trial")
 	var finish_retry: Button = runtime.get_node_or_null("FlightHud/FinishPanel/Rows/Retry")
 	_expect(finish_retry != null and finish_retry.text == "RETRY", "finish panel exposes Retry")
 	if finish_retry != null:
 		_click(finish_retry)
 	await _settle(4)
-	_expect(runtime.screen == "flight" and not runtime.paused and runtime.time_trial.next_checkpoint_index == 0, "Retry respawns at the start and restarts the trial")
+	_expect(runtime.screen == "flight" and not runtime.paused and runtime.time_trial.active and runtime.time_trial.next_checkpoint_index == 0, "Retry respawns at the start and restarts the trial")
 	_tap(KEY_P)
 	await _settle(2)
 	var pause_panel: Control = runtime.get_node_or_null("FlightHud/PausePanel")
@@ -152,6 +159,34 @@ func _run() -> void:
 		_click(change_map_button)
 	await _settle(4)
 	_expect(runtime.screen == "preflight" and runtime.loaded_map_id == "industrial_yard" and not runtime.paused, "Change Map returns to the sole Industrial Yard preflight")
+	runtime._airsim_disarm_requested = false
+	runtime.native.call("arm_flight_control", 0.0)
+	runtime.request_takeoff()
+	_complete_time_trial(runtime)
+	await _settle(2)
+	var finish_change_map: Button = runtime.get_node_or_null("FlightHud/FinishPanel/Rows/ChangeMap")
+	_expect(finish_change_map != null and finish_change_map.is_visible_in_tree(), "finish panel exposes Change Map")
+	if finish_change_map != null:
+		_click(finish_change_map)
+	await _settle(4)
+	_expect(runtime.screen == "preflight" and runtime.loaded_map_id == "industrial_yard", "finish Change Map returns to preflight")
+	runtime._airsim_disarm_requested = false
+	runtime.native.call("arm_flight_control", 0.0)
+	runtime.request_takeoff()
+	_complete_time_trial(runtime)
+	await _settle(2)
+	var finish_exit: Button = runtime.get_node_or_null("FlightHud/FinishPanel/Rows/Exit")
+	_expect(finish_exit != null and finish_exit.is_visible_in_tree(), "finish panel exposes Exit")
+	runtime.quit_on_exit = false
+	if finish_exit != null:
+		_click(finish_exit)
+	await _settle(4)
+	_expect(runtime.screen == "main_menu" and runtime.loaded_map == null, "finish Exit unloads the map and returns to the main menu")
+	_tap(KEY_P)
+	await _settle(2)
+	_expect(runtime.screen == "main_menu", "P cannot resume after Exit")
+	runtime.enter_preflight()
+	await _settle(4)
 	var industrial_yard_frame := await _snapshot("01_industrial_yard_preflight")
 	_expect(_max_color_ratio(industrial_yard_frame) < 0.99, "Industrial Yard preflight capture is not monochrome")
 	_expect(not runtime.load_map("missing_map") and runtime.last_error_message.contains("missing_map"), "missing map load names the missing map explicitly")
@@ -219,6 +254,14 @@ func _parse_args() -> void:
 func _settle(frames: int) -> void:
 	for _frame in frames:
 		await process_frame
+
+func _complete_time_trial(runtime: Node) -> void:
+	if runtime.time_trial == null:
+		return
+	for checkpoint in runtime.time_trial.checkpoint_positions:
+		runtime.time_trial.advance(checkpoint, 1.0 / 240.0)
+	var finish_position: Vector3 = runtime.loaded_map.get_node("TimeTrial/Finish").global_position
+	runtime.time_trial.advance(finish_position, 1.0 / 240.0)
 
 func _snapshot(name: String) -> Image:
 	await RenderingServer.frame_post_draw

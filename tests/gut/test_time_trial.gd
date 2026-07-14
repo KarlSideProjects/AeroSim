@@ -37,7 +37,10 @@ func test_reset_starts_a_new_trial_from_zero_time() -> void:
 	trial.advance(Vector3(10, 0, 0), 2.0)
 	trial.reset()
 
-	assert_true(trial.active)
+	assert_false(trial.active)
 	assert_eq(trial.next_checkpoint_index, 0)
 	assert_false(trial.finished)
 	assert_almost_eq(trial.elapsed_seconds, 0.0, 0.000001)
+
+	trial.start()
+	assert_true(trial.active)

@@ -242,7 +242,7 @@ func _unhandled_input(event: InputEvent) -> void:
         return
     if event.is_action_pressed("flight_takeoff") and screen in ["preflight", "flight"]:
         arm_and_takeoff()
-    elif event.is_action_pressed("flight_pause"):
+    elif event.is_action_pressed("flight_pause") and screen == "flight":
         set_paused(not paused)
     elif event.is_action_pressed("flight_respawn"):
         respawn()
@@ -403,7 +403,7 @@ func _physics_process(delta: float) -> void:
     if native != null and native.has_method("refresh_imu_sample"):
         native.call("refresh_imu_sample")
     if time_trial != null and drone_body != null:
-        time_trial.advance(drone_body.global_position, delta)
+        time_trial.advance(drone_body.global_position, 1.0 / float(Engine.physics_ticks_per_second))
     _advance_airsim_sensors()
     _update_status_diagram()
 
@@ -453,6 +453,7 @@ func request_exit() -> void:
     takeoff_requested = false
     paused = true
     reset_hold_frames = 0
+    _reset_airsim_flight_state()
     if native != null:
         native.call("reset_flight")
     if drone_body != null:
@@ -543,21 +544,8 @@ func enter_preflight() -> void:
 
 func respawn() -> void:
     reset_count += 1
-    _airsim_api_control = false
+    _reset_airsim_flight_state()
     _airsim_disarm_requested = false
-    _airsim_command_state.clear()
-    _airsim_hold_controls.clear()
-    _airsim_command_remaining_frames = 0
-    _airsim_collision_seen = false
-    _airsim_contact_this_frame = false
-    _airsim_collision_normal = Vector3.ZERO
-    _airsim_collision_point = Vector3.ZERO
-    _airsim_last_velocity = Vector3.ZERO
-    _airsim_last_body_angular_velocity = Vector3.ZERO
-    _airsim_linear_acceleration = Vector3.ZERO
-    _airsim_angular_acceleration = Vector3.ZERO
-    if airsim_sensor_suite != null and airsim_rpc_server != null:
-        airsim_sensor_suite.configure(airsim_rpc_server.settings, [_airsim_vehicle_name])
     screen = "flight"
     flight_mode = "ANGLE"
     takeoff_requested = true
@@ -569,6 +557,8 @@ func respawn() -> void:
     update_fallback_status()
     if not reset_to_spawn():
         return
+    if time_trial != null:
+        time_trial.start()
     if drone_body != null:
         # ponytail: short reset hold; replace with real throttle input state when controller profiles land.
         reset_hold_frames = 30
@@ -578,11 +568,12 @@ func retry_time_trial() -> void:
     if loaded_map == null:
         enter_preflight()
         return
-    if native != null:
-        native.call("arm_flight_control", 0.0)
-    request_takeoff()
+    respawn()
 
 func change_map() -> void:
+    _reset_airsim_flight_state()
+    takeoff_requested = false
+    set_paused(false)
     enter_preflight()
 
 func load_map(map_id: String) -> bool:
@@ -648,7 +639,6 @@ func _configure_time_trial(map_root: Node3D) -> void:
     for child in route.get_children():
         if child is Marker3D and child.name.begins_with("Checkpoint"):
             checkpoints.append((child as Marker3D).global_position)
-    checkpoints.sort_custom(func(left: Vector3, right: Vector3) -> bool: return left.z < right.z)
     time_trial = TimeTrialController.new()
     time_trial.configure(checkpoints, finish.global_position, 2.5)
     time_trial.checkpoint_reached.connect(_on_trial_checkpoint_reached)
@@ -658,8 +648,7 @@ func _on_trial_checkpoint_reached(_index: int, _total: int) -> void:
     _refresh_flight_hud()
 
 func _on_trial_finished(elapsed_seconds: float) -> void:
-    if native != null and native.has_method("disarm_flight_control"):
-        native.call("disarm_flight_control")
+    _reset_airsim_flight_state()
     takeoff_requested = false
     set_paused(true)
     screen = "finish"
@@ -671,6 +660,27 @@ func _set_map_error(message: String) -> bool:
     last_error_message = message
     push_warning(message)
     return false
+
+func _reset_airsim_flight_state() -> void:
+    _airsim_api_control = false
+    _airsim_disarm_requested = true
+    _airsim_command_state.clear()
+    _airsim_hold_controls.clear()
+    _airsim_command_remaining_frames = 0
+    _airsim_collision_seen = false
+    _airsim_contact_this_frame = false
+    _airsim_collision_normal = Vector3.ZERO
+    _airsim_collision_point = Vector3.ZERO
+    _airsim_last_velocity = Vector3.ZERO
+    _airsim_last_body_angular_velocity = Vector3.ZERO
+    _airsim_linear_acceleration = Vector3.ZERO
+    _airsim_angular_acceleration = Vector3.ZERO
+    if airsim_rpc_server != null:
+        airsim_rpc_server.reset_vehicle_control_state()
+    if native != null and native.has_method("disarm_flight_control"):
+        native.call("disarm_flight_control")
+    if airsim_sensor_suite != null and airsim_rpc_server != null:
+        airsim_sensor_suite.configure(airsim_rpc_server.settings, [_airsim_vehicle_name])
 
 func update_fallback_status() -> void:
     last_profile_status = InputProfiles.fallback_status(gamepad_device_state.connected_joypads())
@@ -687,6 +697,8 @@ func toggle_altitude_hold() -> void:
     update_fallback_status()
 
 func set_paused(value: bool, sync_session: bool = true) -> void:
+    if not value and screen in ["finish", "main_menu", "settings", "controller_settings", "error"]:
+        return
     paused = value
     if sync_session and airsim_session != null:
         airsim_session.set_paused(value)
@@ -1211,6 +1223,8 @@ func _airsim_name_matches(name: String) -> bool:
 
 
 func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
+    if screen in ["finish", "main_menu", "settings", "controller_settings", "error"]:
+        return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
     _airsim_api_control = enabled
@@ -1225,6 +1239,8 @@ func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
 
 
 func _airsim_arm_disarm(armed: bool, name: String) -> Dictionary:
+    if screen in ["finish", "main_menu", "settings", "controller_settings", "error"]:
+        return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
     if native == null:
@@ -1291,6 +1307,8 @@ func _airsim_task_complete(name: String) -> bool:
 
 
 func _airsim_command(method: String, params: Array, name: String) -> Dictionary:
+    if screen in ["finish", "main_menu", "settings", "controller_settings", "error"]:
+        return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
     var args: Array = params.slice(0, params.size() - 1)
