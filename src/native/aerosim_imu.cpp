@@ -188,6 +188,7 @@ ImuSample ImuSimulator::sample(const RigidBodyState &state) {
             accel,
             delayed.position.y + barometer_bias_m_ + barometer_walk_m_ + normal(config_.barometer_noise_stddev_m),
             estimated_attitude_,
+            delayed.orientation,
     };
     ++sample_count_;
     return sample;

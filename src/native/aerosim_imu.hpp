@@ -33,6 +33,7 @@ struct ImuSample {
     Vec3 accel_mps2;
     double barometer_altitude_m = 0.0;
     Quat estimated_attitude;
+    Quat measurement_attitude;
 };
 
 class ImuSimulator {

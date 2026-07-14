@@ -31,3 +31,13 @@ func test_incomplete_frame_is_reported_without_consuming_partial_data() -> void:
 
     assert_false(decoded.ok)
     assert_true(decoded.incomplete)
+
+
+func test_packed_float32_arrays_use_msgpack_float32_values() -> void:
+    var encoded: PackedByteArray = MsgpackCodec.encode(PackedFloat32Array([1.0, 2.0]))
+
+    assert_true(encoded.has(0xca))
+    assert_false(encoded.has(0xcb))
+    var decoded: Dictionary = MsgpackCodec.decode(encoded)
+    assert_true(decoded.ok)
+    assert_eq(decoded.value, [1.0, 2.0])

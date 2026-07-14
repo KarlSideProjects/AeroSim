@@ -152,7 +152,7 @@ Every AirSim-class release provides RGB, depth, segmentation, IMU, GPS, magnetom
 
 **Minimum acceptance:** Each sensor has a published coordinate frame, units, timing model, configuration boundary, deterministic test fixture, and Lab Mode retrieval path. Camera, depth, segmentation, and LiDAR outputs must be geometrically consistent with the same scene.
 
-**Current evidence:** The native core simulates gyro, acceleration, attitude estimate, delay, configurable noise, drift, random walk, and barometric altitude. RGB, depth, segmentation, GPS, magnetometer, and LiDAR product interfaces are not present on the current branch.
+**Current evidence:** The native core simulates gyro, acceleration, attitude estimate, delay, configurable noise, drift, random walk, and barometric altitude. Issue #141 adds deterministic Lab Mode IMU, GPS, magnetometer, barometer, and LiDAR retrieval for one named vehicle, with the published NED/FRD/SI payload fields and configuration boundary. RGB, depth, and segmentation product interfaces remain future work.
 
 ### CAP-021: In-app Operations Dashboard
 
@@ -179,6 +179,8 @@ The camera API supports AirSim `Scene`, `DepthPlanar`, and `Segmentation` image 
 Every camera and sensor observation uses one simulation-time clock. Pausing freezes sensor time, deterministic frame or duration stepping advances it, and each configured sensor rate schedules observations independently of render rate and wall-clock speed. Dataset Recording identifies missing and dropped samples rather than hiding gaps.
 
 **Minimum acceptance:** Repeating the same seed, settings, commands, pause sequence, and step sequence produces identical sensor timestamps and sample counts; rate and alignment tests cover both vehicles; the dataset validator rejects non-monotonic timestamps and unreported gaps.
+
+**Current evidence:** `AirSimSession` is the shared simulation clock. Issue #141 schedules each non-camera sensor against that clock, keeps paused reads stable, validates configured rates and latency/startup values, and exposes sample/drop counters for deterministic gap checks. Multi-vehicle alignment and dataset validation remain future work.
 
 ## World and scene system
 

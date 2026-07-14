@@ -6,6 +6,7 @@ const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
 const AirSimCoordinateContract = preload("res://common/rpc/airsim_coordinate_contract.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
@@ -27,6 +28,7 @@ const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Ex
 var native: Object
 var airsim_session: AirSimSession
 var airsim_rpc_server: AirSimRpcServer
+var airsim_sensor_suite: AirSimSensorSuite
 var airsim_stop_file := ""
 var paused := false
 var exit_requested := false
@@ -96,6 +98,7 @@ func _ready() -> void:
         _reset_drone_body()
     airsim_session = AirSimSession.new(Engine.physics_ticks_per_second)
     airsim_rpc_server = AirSimRpcServer.new()
+    airsim_sensor_suite = AirSimSensorSuite.new()
     airsim_rpc_server.set_session(airsim_session, Callable(self, "respawn"))
     add_child(airsim_rpc_server)
     airsim_stop_file = _cold_start_arg("--airsim-stop-file")
@@ -137,10 +140,18 @@ func _ready() -> void:
         Callable(self, "_airsim_cancel_task"),
         Callable(self, "_airsim_task_complete")
     )
+    airsim_rpc_server.set_sensor_backend(Callable(self, "_airsim_sensor"))
     var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
     if not rpc_result.ok:
         push_error("AirSim RPC startup failed: %s" % rpc_result.error)
     else:
+        var sensor_result := airsim_sensor_suite.configure(airsim_rpc_server.settings, [_airsim_vehicle_name])
+        if not sensor_result.ok:
+            push_error("AirSim sensor startup failed: %s" % sensor_result.error)
+            airsim_rpc_server.stop()
+            get_tree().quit(1)
+            return
+        airsim_sensor_suite.advance(0.0, _airsim_state(_airsim_vehicle_name).get("state", {}))
         _write_airsim_ready_marker(_cold_start_arg("--airsim-ready-file"))
     var hardware_config := HardwareConfig.new()
     if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
@@ -257,6 +268,7 @@ func _physics_process(_delta: float) -> void:
             set_paused(true, false)
             return
     if native == null or paused or not takeoff_requested:
+        _advance_airsim_sensors()
         return
     _airsim_contact_this_frame = false
     if not native.call("flight_control_armed") and not _airsim_disarm_requested:
@@ -375,7 +387,18 @@ func _physics_process(_delta: float) -> void:
         _airsim_linear_acceleration = Vector3.ZERO
         _airsim_angular_acceleration = Vector3.ZERO
     _airsim_last_velocity = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
+    if native != null and native.has_method("refresh_imu_sample"):
+        native.call("refresh_imu_sample")
+    _advance_airsim_sensors()
     _update_status_diagram()
+
+
+func _advance_airsim_sensors() -> void:
+    if airsim_sensor_suite == null or airsim_session == null:
+        return
+    var sensor_state := _airsim_state(_airsim_vehicle_name)
+    if bool(sensor_state.get("ok", false)):
+        airsim_sensor_suite.advance(airsim_session.simulation_time_seconds, sensor_state.state)
 
 func request_takeoff() -> void:
     screen = "flight"
@@ -503,6 +526,8 @@ func respawn() -> void:
     _airsim_last_body_angular_velocity = Vector3.ZERO
     _airsim_linear_acceleration = Vector3.ZERO
     _airsim_angular_acceleration = Vector3.ZERO
+    if airsim_sensor_suite != null and airsim_rpc_server != null:
+        airsim_sensor_suite.configure(airsim_rpc_server.settings, [_airsim_vehicle_name])
     screen = "flight"
     flight_mode = "ANGLE"
     takeoff_requested = true
@@ -997,6 +1022,12 @@ func _airsim_cancel_task(name: String) -> void:
         _airsim_command_remaining_frames = 0
 
 
+func _airsim_sensor(sensor_type: int, sensor_name: String, vehicle_name: String) -> Dictionary:
+    if airsim_sensor_suite == null:
+        return {"ok": false, "error": "sensor backend is unavailable"}
+    return airsim_sensor_suite.sensor_result(vehicle_name, sensor_type, sensor_name)
+
+
 func _airsim_task_complete(name: String) -> bool:
     if not _airsim_name_matches(name):
         return false
@@ -1196,6 +1227,28 @@ func _airsim_state(name: String) -> Dictionary:
         "longitude": float(origin.get("Longitude", 0.0)),
         "altitude": float(origin.get("Altitude", 0.0)),
     }
+    var native_imu_sample := {}
+    if native != null and native.has_method("imu_sample"):
+        var raw_imu: Dictionary = native.call("imu_sample")
+        if bool(raw_imu.get("valid", false)):
+            var measurement_orientation := Quaternion(
+                float(raw_imu.get("measurement_orientation_x", 0.0)),
+                float(raw_imu.get("measurement_orientation_y", 0.0)),
+                float(raw_imu.get("measurement_orientation_z", 0.0)),
+                float(raw_imu.get("measurement_orientation_w", 1.0))
+            ).normalized()
+            var gravity_internal := measurement_orientation.inverse() * Vector3(0.0, 9.80665, 0.0)
+            var raw_acceleration := Vector3(
+                float(raw_imu.get("accel_x", 0.0)),
+                float(raw_imu.get("accel_y", 0.0)),
+                float(raw_imu.get("accel_z", 0.0))
+            ) - gravity_internal
+            native_imu_sample = {
+                "gyro": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(Vector3(raw_imu.get("gyro_x", 0.0), raw_imu.get("gyro_y", 0.0), raw_imu.get("gyro_z", 0.0)))),
+                "accel": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(raw_acceleration)),
+                "orientation": _airsim_quaternion(AirSimCoordinateContract.godot_orientation_to_ned(measurement_orientation)),
+                "barometer_altitude_m": float(raw_imu.get("barometer_altitude_m", -position.y)),
+            }
     var collision := {
         "has_collided": _airsim_collision_seen,
         "normal": _airsim_vector3(AirSimCoordinateContract.godot_direction_to_ned(_airsim_collision_normal)),
@@ -1217,6 +1270,7 @@ func _airsim_state(name: String) -> Dictionary:
             "angular_acceleration": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(_airsim_angular_acceleration)),
         },
         "gps_location": gps_location,
+        "imu_sample": native_imu_sample,
         "timestamp": int(round(airsim_session.simulation_time_seconds * 1_000_000_000.0)),
         "landed_state": 0 if position.y <= SPAWN_POSITION.y + 0.05 and linear_velocity.length() < 0.25 else 1,
         "rc_data": {"timestamp": 0, "pitch": 0.0, "roll": 0.0, "throttle": _flight_throttle(), "yaw": 0.0, "is_initialized": false, "is_valid": false},

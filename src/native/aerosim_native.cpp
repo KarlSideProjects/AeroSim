@@ -118,6 +118,8 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("capture_altitude_hold"), &AeroSimNative::capture_altitude_hold);
     ClassDB::bind_method(D_METHOD("configure_imu", "config"), &AeroSimNative::configure_imu);
     ClassDB::bind_method(D_METHOD("imu_configuration"), &AeroSimNative::imu_configuration);
+    ClassDB::bind_method(D_METHOD("imu_sample"), &AeroSimNative::imu_sample);
+    ClassDB::bind_method(D_METHOD("refresh_imu_sample"), &AeroSimNative::refresh_imu_sample);
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_per_motor_diagnostics"), &AeroSimNative::hardware_per_motor_diagnostics);
@@ -207,6 +209,8 @@ void AeroSimNative::reset_simulation() {
     simulation_state_ = {};
     simulation_clock_ = {};
     collision_authority_ = {};
+    last_imu_sample_ = {};
+    has_last_imu_sample_ = false;
 }
 
 PackedFloat64Array AeroSimNative::step_simulation(
@@ -267,6 +271,9 @@ void AeroSimNative::reset_flight() {
     flight_controller_.reset_flight(simulation_state_, simulation_clock_);
     collision_authority_ = {};
     imu_.reset(imu_config_.seed);
+    last_imu_sample_ = {};
+    has_last_imu_sample_ = false;
+    sample_imu();
     flight_control_used_estimated_attitude_ = false;
     flight_mode_ = "ANGLE";
 }
@@ -316,6 +323,38 @@ Dictionary AeroSimNative::imu_configuration() const {
     config["barometer_random_walk"] = imu_config_.barometer_random_walk_stddev_m;
     config["sample_delay_frames"] = imu_config_.delay_samples;
     return config;
+}
+
+Dictionary AeroSimNative::imu_sample() const {
+    Dictionary sample;
+    sample["valid"] = has_last_imu_sample_;
+    sample["time_seconds"] = last_imu_sample_.time_seconds;
+    sample["gyro_x"] = last_imu_sample_.gyro_rad_per_s.x;
+    sample["gyro_y"] = last_imu_sample_.gyro_rad_per_s.y;
+    sample["gyro_z"] = last_imu_sample_.gyro_rad_per_s.z;
+    sample["accel_x"] = last_imu_sample_.accel_mps2.x;
+    sample["accel_y"] = last_imu_sample_.accel_mps2.y;
+    sample["accel_z"] = last_imu_sample_.accel_mps2.z;
+    sample["barometer_altitude_m"] = last_imu_sample_.barometer_altitude_m;
+    sample["orientation_x"] = last_imu_sample_.estimated_attitude.x;
+    sample["orientation_y"] = last_imu_sample_.estimated_attitude.y;
+    sample["orientation_z"] = last_imu_sample_.estimated_attitude.z;
+    sample["orientation_w"] = last_imu_sample_.estimated_attitude.w;
+    sample["measurement_orientation_x"] = last_imu_sample_.measurement_attitude.x;
+    sample["measurement_orientation_y"] = last_imu_sample_.measurement_attitude.y;
+    sample["measurement_orientation_z"] = last_imu_sample_.measurement_attitude.z;
+    sample["measurement_orientation_w"] = last_imu_sample_.measurement_attitude.w;
+    return sample;
+}
+
+aerosim::ImuSample AeroSimNative::sample_imu() {
+    last_imu_sample_ = imu_.sample(simulation_state_);
+    has_last_imu_sample_ = true;
+    return last_imu_sample_;
+}
+
+void AeroSimNative::refresh_imu_sample() {
+    sample_imu();
 }
 
 Dictionary AeroSimNative::flight_control_diagnostics() const {
@@ -596,7 +635,7 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
 
     PackedFloat64Array row;
-    const aerosim::ImuSample imu_sample = imu_.sample(simulation_state_);
+    const aerosim::ImuSample imu_sample = sample_imu();
     flight_control_used_estimated_attitude_ = true;
     flight_mode_ = "ANGLE";
     const aerosim::TrajectorySample sample = flight_controller_.step_angle_mode(
@@ -643,6 +682,7 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
     command.yaw_stick = yaw_stick;
     command.rates = {rc_rate, super_rate, expo};
 
+    sample_imu();
     const aerosim::TrajectorySample sample = flight_controller_.step_acro_mode(
             simulation_state_,
             simulation_clock_,
@@ -710,7 +750,7 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     contact.resolved_angular_velocity = {resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z};
     contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
 
-    const aerosim::ImuSample imu_sample = imu_.sample(simulation_state_);
+    const aerosim::ImuSample imu_sample = sample_imu();
     flight_control_used_estimated_attitude_ = true;
     flight_mode_ = "ANGLE";
     const aerosim::CollisionStepResult result = collision_authority_.step(
@@ -771,7 +811,7 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
     command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
 
     PackedFloat64Array row;
-    const aerosim::ImuSample imu_sample = imu_.sample(simulation_state_);
+    const aerosim::ImuSample imu_sample = sample_imu();
     flight_control_used_estimated_attitude_ = true;
     flight_mode_ = "ALTITUDE_HOLD";
     const aerosim::TrajectorySample sample = flight_controller_.step_altitude_hold_mode(
@@ -875,6 +915,7 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
     contact.resolved_angular_velocity = {resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z};
     contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
 
+    sample_imu();
     flight_mode_ = "ACRO";
     const aerosim::CollisionStepResult result = collision_authority_.step_acro(
             simulation_state_,
@@ -957,7 +998,7 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     contact.resolved_angular_velocity = {resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z};
     contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
 
-    const aerosim::ImuSample imu_sample = imu_.sample(simulation_state_);
+    const aerosim::ImuSample imu_sample = sample_imu();
     flight_control_used_estimated_attitude_ = true;
     flight_mode_ = "ALTITUDE_HOLD";
     const aerosim::CollisionStepResult result = collision_authority_.step_altitude_hold(

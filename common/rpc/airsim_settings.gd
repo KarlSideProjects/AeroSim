@@ -101,6 +101,9 @@ const SENSOR_KEYS := {
     "Yaw": true,
     "DrawDebugPoints": true,
     "DataFrame": true,
+    "UpdateFrequency": true,
+    "UpdateLatency": true,
+    "StartupDelay": true,
 }
 
 const SUBWINDOW_KEYS := {
@@ -317,6 +320,9 @@ static func _validate_vehicles(raw: Dictionary, errors: Array[String], manifest:
 
 static func _validate_named_entries(value: Dictionary, allowed: Dictionary, scope: String, errors: Array[String], is_camera: bool, manifest: Dictionary) -> void:
     for entry_name in value:
+        if typeof(entry_name) != TYPE_STRING or String(entry_name).is_empty():
+            errors.append("%s names must be non-empty strings" % scope)
+            continue
         var entry = value[entry_name]
         if typeof(entry) != TYPE_DICTIONARY:
             errors.append("%s.%s must be an object" % [scope, entry_name])
@@ -378,13 +384,22 @@ static func _validate_camera_list(value: Dictionary, key: String, allowed: Dicti
 
 
 static func _validate_sensor_entry(value: Dictionary, scope: String, errors: Array[String]) -> void:
-    if value.has("SensorType") and not _is_integer_number(value["SensorType"]):
+    if not value.has("SensorType"):
+        errors.append("%s.SensorType is required" % scope)
+    elif not _is_integer_number(value["SensorType"]):
         errors.append("%s.SensorType must be an integer" % scope)
+    elif not [1, 2, 3, 4, 6].has(int(value["SensorType"])):
+        errors.append("%s.SensorType is unsupported" % scope)
     for key in ["Enabled", "DrawDebugPoints"]:
         if value.has(key) and typeof(value[key]) != TYPE_BOOL:
             errors.append("%s.%s must be boolean" % [scope, key])
     if value.has("DataFrame") and typeof(value["DataFrame"]) != TYPE_STRING:
         errors.append("%s.DataFrame must be a string" % scope)
+    if value.has("UpdateFrequency") and (not _is_finite_number(value["UpdateFrequency"]) or float(value["UpdateFrequency"]) <= 0.0):
+        errors.append("%s.UpdateFrequency must be positive" % scope)
+    for key in ["UpdateLatency", "StartupDelay"]:
+        if value.has(key) and (not _is_finite_number(value[key]) or float(value[key]) < 0.0):
+            errors.append("%s.%s must not be negative" % [scope, key])
     _validate_numeric_fields(value, ["X", "Y", "Z", "Roll", "Pitch", "Yaw"], scope, errors)
 
 
