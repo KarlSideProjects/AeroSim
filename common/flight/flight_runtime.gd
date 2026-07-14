@@ -4,7 +4,6 @@ const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
-<<<<<<< HEAD
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
@@ -31,7 +30,6 @@ const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Ex
 @onready var chase_camera := get_node_or_null("ChaseCamera") as Camera3D
 
 var native: Object
-<<<<<<< HEAD
 var airsim_session: AirSimSession
 var airsim_rpc_server: AirSimRpcServer
 var airsim_sensor_suite: AirSimSensorSuite
@@ -553,7 +551,6 @@ func respawn() -> void:
     flight_mode = "ANGLE"
     takeoff_requested = true
     set_paused(false)
-<<<<<<< HEAD
     if native != null:
         native.call("reset_flight")
         if native.has_method("disarm_flight_control"):
