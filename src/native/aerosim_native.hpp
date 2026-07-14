@@ -28,12 +28,15 @@ private:
     aerosim::CollisionAuthoritySwitch collision_authority_;
     aerosim::ImuConfig imu_config_;
     aerosim::ImuSimulator imu_;
+    aerosim::ImuSample last_imu_sample_;
+    bool has_last_imu_sample_ = false;
     bool imu_noise_enabled_ = false;
     bool imu_bias_enabled_ = false;
     bool imu_random_walk_enabled_ = false;
     bool imu_delay_enabled_ = false;
     bool flight_control_used_estimated_attitude_ = false;
     godot::String flight_mode_ = "ANGLE";
+    aerosim::ImuSample sample_imu();
 
 public:
     std::int32_t probe_value() const;
@@ -67,6 +70,8 @@ public:
     void capture_altitude_hold();
     void configure_imu(const godot::Dictionary &config);
     godot::Dictionary imu_configuration() const;
+    godot::Dictionary imu_sample() const;
+    void refresh_imu_sample();
     godot::Dictionary flight_control_diagnostics() const;
     godot::Dictionary hardware_power_diagnostics() const;
     godot::Dictionary hardware_per_motor_diagnostics() const;

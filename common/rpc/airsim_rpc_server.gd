@@ -34,6 +34,7 @@ var _api_control_handler: Callable
 var _arm_handler: Callable
 var _cancel_handler: Callable
 var _completion_handler: Callable
+var _sensor_handler: Callable
 
 
 func set_session(owner_session: AirSimSession, owner_reset_handler: Callable = Callable()) -> void:
@@ -56,6 +57,10 @@ func set_vehicle_backend(
     _arm_handler = arm_handler
     _cancel_handler = cancel_handler
     _completion_handler = completion_handler
+
+
+func set_sensor_backend(sensor_handler: Callable) -> void:
+    _sensor_handler = sensor_handler
 
 
 func validate_bind_address(address: String) -> Dictionary:
@@ -415,6 +420,16 @@ func dispatch(request: Array) -> Array:
             return _dispatch_vehicle_pose(message_id, params)
         "simGetCollisionInfo":
             return _dispatch_collision_info(message_id, params)
+        "getImuData":
+            return _dispatch_sensor(message_id, params, 2, "getImuData")
+        "getGpsData":
+            return _dispatch_sensor(message_id, params, 3, "getGpsData")
+        "getMagnetometerData":
+            return _dispatch_sensor(message_id, params, 4, "getMagnetometerData")
+        "getBarometerData":
+            return _dispatch_sensor(message_id, params, 1, "getBarometerData")
+        "getLidarData":
+            return _dispatch_sensor(message_id, params, 6, "getLidarData")
         "moveByMotorPWMs":
             return _error_response(message_id, "direct per-motor PWM is unsupported at the flight-controller boundary")
         "cancelLastTask":
@@ -560,6 +575,20 @@ func _dispatch_collision_info(message_id, params: Array) -> Array:
     if not state_result.ok:
         return _error_response(message_id, state_result.error)
     return _success_response(message_id, state_result.state["collision"].duplicate(true))
+
+
+func _dispatch_sensor(message_id, params: Array, sensor_type: int, method: String) -> Array:
+    if params.size() != 2 or typeof(params[0]) != TYPE_STRING or typeof(params[1]) != TYPE_STRING:
+        return _error_response(message_id, "%s expects sensor_name and vehicle_name" % method)
+    var vehicle := _resolve_vehicle(message_id, params[1])
+    if not vehicle.ok:
+        return vehicle.response
+    if not _sensor_handler.is_valid():
+        return _error_response(message_id, "sensor backend is unavailable")
+    var result = _sensor_handler.call(sensor_type, String(params[0]), String(vehicle.name))
+    if typeof(result) != TYPE_DICTIONARY or not bool(result.get("ok", false)):
+        return _error_response(message_id, String(result.get("error", "sensor backend rejected the request")) if typeof(result) == TYPE_DICTIONARY else "sensor backend returned an invalid result")
+    return _success_response(message_id, result["sensor"].duplicate(true))
 
 
 func _state_for_vehicle(name: String) -> Dictionary:

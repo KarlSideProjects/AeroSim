@@ -39,6 +39,24 @@ def exercise(port: int) -> None:
     assert client.simIsPause() is True
     client.simContinueForTime(2.0 / 240.0)
     assert client.simIsPause() is True
+    imu = client.getImuData(vehicle_name="Drone1")
+    gps = client.getGpsData(vehicle_name="Drone1")
+    magnetometer = client.getMagnetometerData(vehicle_name="Drone1")
+    barometer = client.getBarometerData(vehicle_name="Drone1")
+    lidar = client.getLidarData(vehicle_name="Drone1")
+    raw_imu = client.client.call("getImuData", "", "Drone1")
+    for sensor in [imu, gps, magnetometer, barometer, lidar]:
+        assert sensor.time_stamp >= 0
+    assert imu.orientation is not None
+    assert len(imu.angular_velocity.to_msgpack()) == 3
+    assert gps.is_valid is True
+    assert gps.gnss.geo_point is not None
+    assert len(magnetometer.magnetic_field_covariance) == 9
+    assert barometer.qnh > 0.0
+    assert len(lidar.point_cloud) % 3 == 0
+    assert len(lidar.segmentation) == len(lidar.point_cloud) // 3
+    assert raw_imu["sample_count"] >= 1
+    assert raw_imu["dropped_count"] == 0
     client.enableApiControl(True, vehicle_name="Drone1")
     assert client.isApiControlEnabled("Drone1") is True
     assert client.armDisarm(True, vehicle_name="Drone1") is True

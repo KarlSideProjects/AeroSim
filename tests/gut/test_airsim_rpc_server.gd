@@ -12,6 +12,7 @@ func _install_test_backend(server: AirSimRpcServer) -> void:
         Callable(self, "_test_arm"),
         Callable(self, "_test_cancel")
     )
+    server.set_sensor_backend(Callable(self, "_test_sensor"))
 
 
 func _test_api_control(_enabled: bool, _name: String) -> Dictionary:
@@ -28,6 +29,10 @@ func _test_command(_method: String, _params: Array, _name: String) -> Dictionary
 
 func _test_cancel(_name: String) -> void:
     pass
+
+
+func _test_sensor(sensor_type: int, sensor_name: String, _vehicle_name: String) -> Dictionary:
+    return {"ok": true, "sensor": {"sensor_type": sensor_type, "sensor_name": sensor_name, "time_stamp": 42}}
 
 
 func _test_state(_name: String) -> Dictionary:
@@ -247,6 +252,35 @@ func test_vehicle_commands_require_control_and_preserve_ned_state_payloads() -> 
     assert_eq(server.dispatch([0, 37, "land", [60.0, "Drone1"]]), [1, 37, null, null])
     assert_eq(server.dispatch([0, 39, "reset", []]), [1, 39, null, null])
     assert_eq(server.dispatch([0, 391, "isApiControlEnabled", ["Drone1"]]), [1, 391, null, false])
+
+
+func test_baseline_sensor_methods_preserve_pinned_client_payload_dispatch() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41459,
+        "RpcEnabled": false,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    _install_test_backend(server)
+
+    for request in [
+        ["getImuData", 2],
+        ["getGpsData", 3],
+        ["getMagnetometerData", 4],
+        ["getBarometerData", 1],
+        ["getLidarData", 6],
+    ]:
+        var response: Array = server.dispatch([0, 60 + int(request[1]), request[0], ["", "Drone1"]])
+        assert_eq(response[0], 1)
+        assert_eq(response[2], null)
+        assert_eq(response[3]["sensor_type"], request[1])
+
+    var invalid: Array = server.dispatch([0, 70, "getImuData", ["only-one-argument"]])
+    assert_string_contains(invalid[2], "sensor_name and vehicle_name")
 
 
 func test_async_vehicle_response_waits_for_a_simulation_frame() -> void:

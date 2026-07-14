@@ -136,6 +136,22 @@ func test_rejects_invalid_nested_noise_and_sensor_parameter_types() -> void:
     assert_string_contains(result.error, "Parameters")
 
 
+func test_rejects_named_sensor_without_a_sensor_type() -> void:
+    var result := AirSimSettings.validate({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {
+            "Drone1": {
+                "VehicleType": "SimpleFlight",
+                "Sensors": {"gps": {"Enabled": true}}
+            }
+        }
+    })
+
+    assert_false(result.ok)
+    assert_string_contains(result.error, "SensorType is required")
+
+
 func test_rejects_invalid_subwindow_and_recording_types() -> void:
     var result := AirSimSettings.validate({
         "SettingsVersion": 1.2,

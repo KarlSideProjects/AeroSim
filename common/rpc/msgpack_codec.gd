@@ -29,6 +29,8 @@ static func _encode_value(value: Variant, output: PackedByteArray) -> void:
         TYPE_FLOAT:
             output.append(0xcb)
             _append_float64(float(value), output)
+        TYPE_PACKED_FLOAT32_ARRAY:
+            _encode_float32_array(value, output)
         TYPE_STRING:
             _encode_string(String(value), output)
         TYPE_ARRAY:
@@ -101,6 +103,21 @@ static func _encode_array(value: Array, output: PackedByteArray) -> void:
         _encode_value(item, output)
 
 
+static func _encode_float32_array(value: PackedFloat32Array, output: PackedByteArray) -> void:
+    var length := value.size()
+    if length < 16:
+        output.append(0x90 | length)
+    elif length <= 0xffff:
+        output.append(0xdc)
+        _append_u16(length, output)
+    else:
+        output.append(0xdd)
+        _append_u32(length, output)
+    for item in value:
+        output.append(0xca)
+        _append_float32(float(item), output)
+
+
 static func _encode_dictionary(value: Dictionary, output: PackedByteArray) -> void:
     var keys := value.keys()
     var length := keys.size()
@@ -138,6 +155,13 @@ static func _append_float64(value: float, output: PackedByteArray) -> void:
     var buffer := StreamPeerBuffer.new()
     buffer.big_endian = true
     buffer.put_double(value)
+    output.append_array(buffer.data_array)
+
+
+static func _append_float32(value: float, output: PackedByteArray) -> void:
+    var buffer := StreamPeerBuffer.new()
+    buffer.big_endian = true
+    buffer.put_float(value)
     output.append_array(buffer.data_array)
 
 
