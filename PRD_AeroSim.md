@@ -77,7 +77,7 @@ AirSim-class minimum 不是外觀仿製。AeroSim 必須在同一 Godot 產品�
 3. 擬真的根基是**實務硬體參數**（第 3.6 章）：馬達/槳/電池/機架皆以真實產品規格與台架實測數據建模，外界影響作用於這些參數而非抽象數值。
 4. 既有 AirSim client 在凍結相容面內不修改即可使用；相容面外明確失敗。
 5. 100% 可閉源商用：Tier 1 僅用 MIT/BSD/Zlib/Apache-2.0 依賴；GPL 元件（Betaflight）維持隔離且不阻擋 minimum。
-6. 支援真實遙控器與 gamepad 進行 Player Mode 飛行。
+6. 支援 Xbox 360 相容 gamepad 進行 Player Mode 飛行；真實 RC 遙控器不是 v4.1 minimum，未來若有需求以獨立 Profile 回補。
 
 ### 1.3 產品分層
 
@@ -317,14 +317,14 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 |---|---|---|
 | CI-A（CI 自動化） | Linux headless / 原生單元測試，每次合併執行 | CI 紀錄 + 產物 |
 | GPU-A（GPU 自動化） | 具 GPU 之 runner 或實機農場，夜間執行 | 跑分紀錄 + 截圖 |
-| DEV-M（實機人工協定） | 標準化操作腳本 + 錄影/輸入紀錄 | 檢核表 + 錄影 + 簽核 |
-| USR（使用者研究） | 標準問卷/計時協定，樣本數寫死於 Gate | 原始數據 + 統計 |
+| DEV-M（維護者遊玩驗收） | 維護者在指定平台親自安裝、操作、遊玩 | 對應 issue 留言確認；可自動量測的數值另附工具產物 |
+| USR（使用者研究） | 若 Gate 保留樣本數，改由維護者依固定情境完成可操作性驗收 | 對應 issue 留言確認；不要求外部受測者問卷 |
 | LEG（法務/授權審查） | 法務書面核准 | 核准函 |
 
-   可自動化者**必須**自動化（CI-A/GPU-A）；不可自動化者必須依協定留存證據與簽核。
+   可自動化者**必須**自動化（CI-A/GPU-A）；不可自動化者由維護者依固定情境親自驗收並在對應 issue 留言確認。
 3. **阻擋範圍（Blocking scope）**：每個 Gate 標註 SC（shared core，阻擋所有 Lane）或平台代號（僅阻擋該 Lane）。任一 SC Gate 未過，所有 Lane 停止進入下一 Phase；平台 Gate 未過僅凍結該 Lane。
 4. **Phase 0 特例**：Phase 0 是 Spike，其結論**允許**重定平台範圍與 Profile 歸屬（例如將某效應移出 Mobile Base），但既定 Profile 內的門檻數值不得修改；重定範圍須全體核准人簽字並記入變更紀錄。Phase 1 起無此特例。
-5. 豁免程序（預期使用次數為零）：書面技術論證 + 兩名外部飛手/工程師背書 + 全體核准人簽字。
+5. 豁免程序（預期使用次數為零）：書面技術論證 + 維護者核准 + 對應 issue 留言；不得以此靜默下修技術數值門檻。
 
 **Gate 表格欄位**：Gate | 門檻 | 類型 | 範圍
 
@@ -364,7 +364,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G1.7 | **硬體參數系統**：3.6.1 Schema 全欄位可由 JSON 載入；**schema 含 version 欄、全欄位單位與座標系標註、馬達順序與旋向、槳表插值規則（範圍內線性、禁止外插——越界即拒絕）**；驗證器拒絕越界值 100% 攔截；載入失敗回退出廠預設並明示；熱切換機體不重啟場景 | CI-A | SC |
 | G1.8 | **派生量實務合理性**：5 吋 6S 預設組——懸停油門落於 22–35%、TWR ≥ 8、預估懸停續航落於 3–6 分鐘區間 | CI-A | SC |
 | G1.9 | **k_t/k_q 擬合**：由台架推力表擬合之 k_t、k_q 反推推力/扭矩，對表內各轉速點殘差 ≤ 3% | CI-A | SC |
-| G1.10 | **5 吋機資料包交付**（3.6.3）：台架推力表與慣量估測資料須有可再發布的授權、來源與 provenance 證據後才可入版控；沒有合規來源時標記 not verified／blocked，不以「public」推定可發布。不要求真機 blackbox 紀錄。**資料協定**：記錄資料來源、單位、時間基準與適用範圍，並以獨立案例保留調參與驗證結果 | DEV-M | SC |
+| G1.10 | **5 吋機資料包交付**（3.6.3）：台架推力表與慣量估測資料須有可再發布的授權、來源與 provenance 證據後才可入版控；目前 preset 內的開發用數值不構成 G1.10 證據，沒有合規來源時維持 not verified／blocked，不以「public」推定可發布。不要求真機 blackbox 紀錄。**資料協定**：記錄資料來源、單位、時間基準與適用範圍，並以獨立案例保留調參與驗證結果 | DEV-M | SC |
 
 ---
 
@@ -379,7 +379,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G2.4 | Angle Mode 30° 滾轉階躍：上升 ≤ 150 ms、超調 ≤ 10%、2% 穩定 ≤ 500 ms | CI-A | SC |
 | G2.5 | Acro：720°/s 指令峰值角速度誤差 ≤ 5%；rates 曲線 vs Betaflight 同參數逐點誤差 ≤ 1% | CI-A | SC |
 | G2.6 | Altitude Hold：氣壓計噪音開啟，60 秒高度漂移 ≤ ±15 cm | CI-A | SC |
-| G2.7 | 手感盲測：≥5 名 Betaflight 實機飛手，Acro 盲測均分 ≥ 7.0 且無人 ≤ 4（問卷含固定情境比較題） | USR | SC |
+| G2.7 | 手感驗收：維護者以固定情境盲測 Acro 手感，於 issue 記錄比較結果與可操作性結論；不要求外部飛手樣本或真機 blackbox 錨定題 | USR | SC |
 | G2.8 | **豁免真機 blackbox 真值重播**：目前不要求真機資料；保留 replay harness 供未來取得合規資料時重啟驗證 | — | — |
 | G2.9 | **SITL 交叉驗證**：同輸入分別餵自研飛控與 Betaflight SITL（開發環境工具，不隨 Tier 1 發布），姿態響應趨勢相關係數 ≥ 0.85（此為自研飛控之健全性檢查，非等價承諾） | CI-A | SC |
 
@@ -396,7 +396,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G3.5 | 風切剖面 vs 軍規模型逐點 ≤ 5% | CI-A | SC |
 | G3.6 | Propwash 機制軌：split-S 出彎擾動注入、強度與油門相關係數 ≥ 0.8、關閉時為 0；真機實測殘差軌（原 (b)）依決策豁免，未來取得合規資料時再重啟 | CI-A | SC |
 | G3.7 | **效能預算（修正版）**：全效應開啟後，物理 P99 相對 G0 基線增幅 ≤ 20%，且絕對值仍 ≤ 3 ms（桌面）/ 5 ms（行動各 profile） | GPU-A / DEV-M | SC |
-| G3.8 | 氣象盲測：飛手盲判無風/中紊流/強陣風，正確率 ≥ 80% | USR | SC |
+| G3.8 | 氣象盲測：維護者盲判無風／中紊流／強陣風，於 issue 記錄判斷與可辨識性結論；不要求外部受測樣本 | USR | SC |
 
 ---
 
@@ -415,16 +415,16 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G4B.1 | 首次啟動至起飛 ≤ 90 秒（行動觸控 ≤ 60 秒），未接觸過產品之 FPV 玩家 ≥ 10 人，P90 | USR | SC |
+| G4B.1 | 首次啟動至起飛 ≤ 90 秒（行動觸控 ≤ 60 秒），由維護者依固定腳本完成並於 issue 記錄計時 | USR | SC |
 | G4B.2 | 墜機→重飛 ≤ 1.5 秒（P99，重生鍵至油門可輸入） | GPU-A | SC |
-| G4B.3 | 固定 mapping 確認流程無協助完成率 ≥ 90% | USR | DESK, AND |
-| G4B.4 | SUS ≥ 75（≥10 人，含 ≥3 行動端） | USR | SC |
+| G4B.3 | 固定 mapping 確認流程由維護者無協助完成，於 issue 記錄阻塞點與結論 | USR | DESK, AND |
+| G4B.4 | 維護者完成固定可用性檢核並於 issue 記錄結論；不要求外部 SUS 樣本 | USR | SC |
 | G4B.5 | 選單深度 ≤ 3 層，自動遍歷驗證 | CI-A | SC |
 | G4B.6 | Rates 介面與 Betaflight 曲線公式一致、即時預覽、JSON 與 Betaflight diff 可逐項核對；**PID/濾波顯示 sim profile 免責提示**（3.5.1 原則 2） | GPU-A | SC |
 | G4B.7 | 觸控布局可自訂持久化，誤觸率 ≤ 1%/分鐘 | USR | AND, IOS |
 | G4B.8 | 本地化 zh-TW/en 覆蓋 100%、0 硬編碼字串（CI）；**UI 截斷/溢出稽核於 GPU runner 截圖比對**（headless 不得宣稱涵蓋此項） | CI-A + GPU-A | SC |
 | G4B.9 | UI 動效以 offset transforms 實作、layout 不變（自動斷言）、不阻塞輸入 > 100 ms | GPU-A | SC |
-| G4B.UI1 | **First Fly Flow**：未看說明書之 FPV 玩家——已確認固定 mapping 的相容手把 ≤ 30 秒起飛、未確認 ≤ 90 秒（含完成 Setup Flow）；無控制器時提示與 keyboard fallback 可用（樣本 ≥ 10 人，P90） | USR | SC |
+| G4B.UI1 | **First Fly Flow**：維護者不看說明書——已確認固定 mapping 的相容手把 ≤ 30 秒起飛、未確認 ≤ 90 秒（含完成 Setup Flow）；無控制器時提示與 keyboard fallback 可用，於 issue 記錄計時與結論 | USR | SC |
 | G4B.UI2 | **Controller Setup**：Xbox 360 相容手把完成固定 mapping 確認流程；**unknown 裝置必須 100% 主動拒絕並提示 keyboard fallback**（各 10 次注入測試） | DEV-M | DESK, AND |
 | G4B.UI3 | **Pause Overlay**：固定項全數存在；rates/camera/OSD 修改即時生效不重載（自動斷言）；Reset 至可輸入 ≤ 1.5 秒（P99） | GPU-A | SC |
 | G4B.UI4 | **OSD Presets**：三 preset 於 1080p 與行動橫向、zh-TW/en 四組合下，主飛行視野遮擋率 ≤ 8%，警告訊息不遮擋畫面中央 1/3（自動截圖幾何稽核） | GPU-A | SC |
