@@ -1,0 +1,3 @@
+# Use Codex for AI visual review
+
+Codex will perform AI Visual Verification from four deterministic screenshots and a provisional or Approved Visual Reference using a versioned rubric and strict JSON result. GitHub Actions will generate and validate the inputs but will not call a separate vision API; visual changes and releases require a triggered Codex review, and missing review evidence blocks the visual gate. Before the Playable Game Milestone, Codex owns the provisional review without requesting human approval. The report records the commit, hashes, rubric version, reviewer model identity, and reference status so a later model or reference change is visible rather than silently changing the standard.

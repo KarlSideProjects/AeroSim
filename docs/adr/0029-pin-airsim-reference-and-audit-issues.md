@@ -1,0 +1,3 @@
+# Pin the AirSim reference and audit upstream issues
+
+Compatibility research will use an external, read-only Microsoft AirSim checkout pinned to `v1.8.1` at commit `96235148a332fe7cb3d3525a0720e26faaca99e0`; it will not become a runtime, build, or scene dependency. Before adapting a source path, symbol, protocol behavior, setting, or fixture, the implementing work must search relevant open and closed AirSim issues and record the findings, license disposition, and resulting AeroSim tests. This makes known upstream defects and intentional compatibility quirks explicit rather than copying them silently.

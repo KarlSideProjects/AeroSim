@@ -1,70 +1,107 @@
 # 產品需求文件 (PRD) — Project AeroSim
-## 3D 擬真四軸無人機模擬遊戲與虛擬飛控系統
+## AirSim-class 多旋翼模擬平台與遊戲化飛行體驗
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v3.6（收斂為 Ubuntu Linux x86_64 優先交付；其他平台延後，不阻擋 Ubuntu 發行） |
-| 文件狀態 | 待核准 |
+| 版本 | v4.1（AirSim-class minimum；2026-07-14 執行規則補強） |
+| 文件狀態 | 產品邊界已核准；GitHub issue 同步中 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
-- v3.6（2026-07-13）：**Ubuntu-first 交付範圍**——目前只承諾 Ubuntu Linux x86_64 可安裝、啟動與遊玩；Windows、macOS、Android、iOS 改列為延後平台，不再阻擋本版開發、驗收或發行。G6、行動 Profile、Tier 2 SITL 與 OSD 驗收均收斂或延後，不留下非 Ubuntu 的 blocking Gate。
-- v3.5（2026-07-13）：**外部物理來源治理正式化**——依 `docs/decisions/2026-07-13-external-physics-source-governance.md`，將既有 A3–A5 Formula Port 與 Python Oracle 架構明文化：AeroSim C++ fixed-step core + Godot/Jolt 為唯一 Tier 1 runtime state 與 collision authority；外部 simulator 僅得作檔案級公式來源與固定版本、可離線開發／測試 Oracle。既有門檻數字完全不變，且本次不創造任何新數值 gate。
-- v3.4（2026-07-12）：**Xbox Default Profile**——固定映射確認取代八步校準精靈；移除端點/中心/RMS 採樣合約與反向注入測試（需求範圍縮減，比照 G2.8 豁免先例，非靜默下修）；保留固定 deadzone、Arm/Mode 去抖 ≤50ms、油門低位前置、unknown 裝置擋下。G4B.3／G4B.UI1／G4B.UI2／G5.6 措辭連動，時間/頻率門檻數值不變。驅動因素與風險註記詳 `docs/decisions/2026-07-12-xbox-default-profile.md`。
-- v3.3（2026-07-11）：輸入裝置定位改為一般 game 手把；移除 RadioMaster／FrSky、RadioProfile 與 16 通道門檻。Controller Setup、Channel Monitor 與實機閘門改以 Xbox 360 相容手把的可用軸與按鍵為準；鍵盤僅為 fallback。驅動因素（無 RC 實機＋產品即以手把為目標）與「裝置定義調整、非門檻下修」裁定詳 `docs/decisions/2026-07-11-standard-gamepad-input.md`。
-- v3.2 修訂（2026-07-11）：**Linux 實測主車道**——Linux 為唯一實測平台，實測序列固定「自動化 → Godot headed 測試 → 維護者遊玩驗收」；Windows/macOS/Android/iOS 降為 build＋CI 自動測試車道，平台實測 gate 標 N/A 凍結（非通過）。門檻數值不變，屬驗收平台範圍調整（PRD 1.4 Lane 獨立結構）。詳 `docs/decisions/2026-07-11-linux-primary-acceptance.md`。
+- v4.1：新增 Playable Game Milestone、延後人工審核至完整可玩後、固定外部 AirSim v1.8.1 reference checkout 與上游 open/closed issue 稽核，並固定 Codex Luna high 實作及 Sol high 疑難顧問規則。
+- v4.0：產品改為多旋翼模擬平台優先，新增 Player Mode／Lab Mode、AirSim 1.8.1 相容面、PX4 SITL、雙機、基準感測器、Operations Dashboard、Dataset Recording、單一 Industrial Test Range、Godot-native GLB pipeline、Codex AI 視覺 gate 與 Ubuntu x86_64 完整資格驗證；GA 三地圖改為一張正式地圖，主選單改為七入口。
 - v3.2：接受 v3.1 審查 C1–C4、H1–H4、H7–H10；H5 改分期不降級（3 張地圖仍為 GA Must）；H6 分期交付並移除溫度欄位（無熱模型即無真值）；新增已知物理近似邊界聲明。
 - v3.1：接受 v3.0 對抗式審查之操作 UI/UX 發現；新增機體狀態圖需求；明文界定「不做存檔」之範圍。
 - v3.0：接受對抗式審查報告之 Critical 1–4、High 5–8 及多數附加發現；新增第 3.6 章硬體參數系統；發行模式改為私下提供；修正 G2.3（Angle Mode ≠ 位置保持）、G0.6（跨平台浮點容忍）。
 - v2.2：新增 UI/UX 章節與 Phase 4B。
 - v2.1：Godot 4.7、C++ GDExtension、Linux headless CI。
 
+---
+
+## 0. v4.0 規範優先序與最低成果
+
+### 0.1 規範優先序
+
+1. 本 PRD 定義產品成果、範圍與 release gate。
+2. [`docs/product_capabilities.md`](docs/product_capabilities.md) 是功能與特性的逐項正本，記錄能力 ID、目前狀態與最低驗收證據。
+3. [`CONTEXT.md`](CONTEXT.md) 定義領域語言；`docs/adr/` 記錄不可逆或具取捨的決策。
+4. 本文件後段保留的 v3.x 物理、飛控、輸入、授權與發行 gate，在不衝突時繼續有效；任何衝突一律以 v4.0 與能力正本為準。
+
+### 0.2 AirSim-class minimum 定義
+
+AirSim-class minimum 不是外觀仿製。AeroSim 必須在同一 Godot 產品內同時交付：
+
+| 能力群 | 必備成果 | 能力 ID |
+|---|---|---|
+| 產品入口 | Player Mode、Lab Mode、Quick Fly、Map Catalog、七入口主選單、完整可玩里程碑 | CAP-001–006 |
+| 相容與控制 | `airsim==1.8.1` 凍結子集、PX4 SITL、雙機、NED/FRD/SI、local-only RPC、完整飛行指令面、經 issue 稽核的 AirSim reference | CAP-010–017 |
+| 感測與觀測 | RGB、DepthPlanar、Segmentation、IMU、GPS、magnetometer、barometer、LiDAR、Operations Dashboard、simulation-time 取樣 | CAP-020–023 |
+| 世界與場景 | 一張 Industrial Test Range、Godot-native glTF/GLB pipeline、Codex 視覺驗證、catalog objects、風雨霧與日照、自製雙機外觀 | CAP-030–036 |
+| 證據與資料 | deterministic Flight Replay、雙機同步 Dataset Recording、可攜 dataset package | CAP-040–042 |
+| 發行資格 | Ubuntu x86_64 完整 qualification、指定 runner 效能 gate、本機低規格不阻擋 | CAP-050–051 |
+
+上述 Confirmed target 全部轉為 Available，才可宣稱達到 AirSim-class minimum。只有物理單元測試、AirSim 風格 UI、可載入的灰盒場景或單張截圖都不構成完成。
+
+### 0.3 明確不包含
+
+- 汽車、道路交通與 `CarClient`。
+- AirSim 全 API、浮動最新版相容或任意外部模型匯入。
+- Unity UI／Unreal UMG、Blueprint、C++ 或 packaged `.pak` 自動轉換。
+- 三張 GA 地圖；第一版只有一張正式 Industrial Test Range，但保留 Map Catalog UI。
+- ArduPilot SITL、HITL、逐馬達 PWM、遠端 RPC、ROS bag、Parquet、資料庫。
+- `DepthVis`、disparity、surface normals、infrared、object detection、optical flow、distance sensor。
+
+### 0.4 開發參考、Agent 與人工審核順序
+
+- Microsoft AirSim 參考庫放在 AeroSim repo 外的 sibling `../AirSim-reference`，固定 tag `v1.8.1`、commit `96235148a332fe7cb3d3525a0720e26faaca99e0`，只讀使用且不得成為 build/runtime/scene dependency。
+- 引用或改寫 AirSim path、symbol、setting、protocol behavior 或 fixture 前，必須依 `docs/airsim_reference_policy.md` 搜尋相關 open 與 closed upstream issues，並在實作 issue／PR 留下 query、URL、適用性、授權與導出測試。
+- Codex 專案實作預設 `gpt-5.6-luna` high；只有具體、有限、模糊或高風險的問題可交給 read-only `gpt-5.6-sol` high 顧問，最後決策與驗證仍由主 Agent 負責。模型不可用時必須揭露，不得靜默冒稱。
+- CAP-006 前不要求人工視覺、UI 或可玩性審核；deterministic gates 與 Codex AI Visual Verification 仍持續產生 provisional evidence。Ubuntu packaged game 通過完整可玩流程後，才開始第一次人工完整遊玩與 Approved Visual Reference 核准。
+
 ### 範圍排除（Must-Not，避免範圍蔓延）
 以下**不列入**本產品需求：玩家進度/成就存檔、訓練課程系統、自動更新/回滾/簽章驗證、線上幽靈/排行榜/UGC 分享。
 
-**界線釐清**：「不做存檔」指玩家進度資料。**裝置與設定持久化（已確認固定映射與其 schema version、rates、OSD 配置、相機、語言、畫質）屬系統設定，必須跨 session 保留**——否則 G4B.UI1（已確認 ≤30 秒）、G5.5 無法成立。單場飛行內的暫態（當場 spawn 點、當場風況選擇）為 volatile，不持久化。
-
-### 目前交付範圍（Ubuntu-first）
-
-本版本唯一承諾的平台是 **Ubuntu Linux x86_64**。完成定義只有：在 Ubuntu 上能建置、啟動、使用 Xbox 360 相容 game 手把進入 Quick Fly、起飛、暫停、重置、退出，並可交付給客戶安裝遊玩。
-
-Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，但不屬於本版本交付物，也不阻擋 Ubuntu 的 Gate、CI、驗收或發行；相關平台 Gate 一律視為 deferred，不得把 build-only 或 N/A 寫成通過。
+**界線釐清**：「不做存檔」指玩家進度資料。**裝置與設定持久化（控制器校準、通道映射、rates、觸控布局、OSD preset 選擇）屬系統設定，必須跨 session 保留**——否則 G4B.UI1（已校準 ≤30 秒）、G5.5、G4B.7 無法成立。單場飛行內的暫態（當場 spawn 點、當場風況選擇）為 volatile，不持久化。
 
 ---
 
 ## 1. 專案概述
 
 ### 1.1 產品定位
-高擬真度 3D 四軸無人機模擬遊戲，核心賣點為**硬核物理**（螺旋槳動力學、氣動效應、氣象風場）與**真實飛控手感**，兼顧競速與闖關遊戲性。以私下授權方式提供給特定客戶／社群。
+多旋翼模擬平台優先、遊戲化入口預設。Player Mode 提供可直接遊玩的飛行迴圈；Lab Mode 讓既有 AirSim 1.8.1 Python client、PX4 SITL 與資料工作流控制同一世界。硬核物理、真實飛控手感與私下授權交付仍保留，但不再單獨定義產品完成。
 
 ### 1.2 核心目標
-1. 物理擬真第一優先：推力/反扭力、阻力、地面效應、尾流下洗、Propwash、穩態風 + Dryden 紊流 + 風切。
-2. 擬真的根基是**實務硬體參數**（第 3.6 章）：馬達/槳/電池/機架皆以真實產品規格與台架實測數據建模，外界影響（風、氣壓、電量）作用於這些參數而非抽象數值。
-3. 100% 可閉源商用：Tier 1 僅用 MIT/BSD/Zlib/Apache-2.0 依賴；GPL 元件（Betaflight）以獨立行程隔離為 Tier 2，**發布前須法務核准**。
-4. 支援 Xbox 360 相容的一般 USB／藍牙 game 手把進行飛行訓練。
+1. 交付一個可玩且可程式控制的共同模擬世界；任何功能不得只存在測試 harness 或 UI 假資料。
+2. 物理擬真：推力/反扭力、阻力、地面效應、尾流下洗、Propwash、穩態風 + Dryden 紊流 + 風切。
+3. 擬真的根基是**實務硬體參數**（第 3.6 章）：馬達/槳/電池/機架皆以真實產品規格與台架實測數據建模，外界影響作用於這些參數而非抽象數值。
+4. 既有 AirSim client 在凍結相容面內不修改即可使用；相容面外明確失敗。
+5. 100% 可閉源商用：Tier 1 僅用 MIT/BSD/Zlib/Apache-2.0 依賴；GPL 元件（Betaflight）維持隔離且不阻擋 minimum。
+6. 支援真實遙控器與 gamepad 進行 Player Mode 飛行。
 
-### 1.3 產品分層（Tier）
+### 1.3 產品分層
 
 | 層級 | 平台 | 飛控 | 授權狀態 |
 |---|---|---|---|
-| **Tier 1 基礎版（本 PRD 主體）** | Ubuntu Linux x86_64 | 自研高頻 PID 飛控（C++ GDExtension） | 全 MIT/BSD，完全閉源 |
-| **Tier 2 專業模組（延後）** | Ubuntu Linux x86_64 | Betaflight SITL 獨立行程橋接 | GPL-3.0，隔離發布，**須法務核准** |
-| **Tier 3 工業選配（後期評估）** | Ubuntu Linux x86_64 | PX4 SIH | BSD 3-Clause |
+| **AirSim-class minimum** | Ubuntu x86_64 | 自研飛控 + PX4 SITL、Player Mode + Lab Mode | 全部阻擋 Ubuntu qualification |
+| **Player Mode lanes** | Windows / Android | 自研高頻 PID 飛控 | 可獨立交付，不阻擋 Ubuntu minimum |
+| **Deferred professional module** | 桌面 | Betaflight SITL 獨立行程橋接 | GPL-3.0，隔離發布，須法務核准 |
 
-### 1.4 發布通道（Release Lanes）— 取代單一全平台閘門
+### 1.4 發布通道
 
-各 Lane 獨立推進與發布；**共用核心（shared core：GDExtension 飛控/物理/氣動）的 Gate 阻擋所有 Lane；平台專屬 Gate 只阻擋該 Lane**。
+Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、感測器、Dataset、場景與視覺 gate 的 Qualification Platform。其他 Lane 不得阻擋它。
 
 | Lane | 發行方式 | 狀態 |
 |---|---|---|
-| Ubuntu Linux GA（UBUNTU） | 直接提供 Ubuntu 安裝包 + 自建授權伺服器啟用（可複用既有 FastAPI 授權架構：註冊 → 簽發 → JWT 驗證） | 主線 |
-| Windows / macOS / Android / iOS | 未來平台；本版本不建置交付物、不做平台實機驗收 | deferred |
-| Tier 2 桌面模組 | 隨 Ubuntu Lane，獨立安裝包；另案啟用 | 延後 |
+| Ubuntu AirSim-class | 私下提供安裝包 + 授權啟用 | 唯一完整 qualification，阻擋 minimum |
+| Windows Player Mode | 私下提供桌面包 | 非阻擋，可獨立發布 |
+| Android Player Mode | 私下提供 APK | 非阻擋，可獨立發布 |
+| macOS / iOS | 未承諾 | Deferred |
+| Betaflight module | 桌面獨立安裝 | Deferred，須法務核准 |
 
-> **剛性約束 C-1**：iOS 禁止 spawn subprocess，任何 GPL 韌體嵌入即構成傳染。Tier 2 / Tier 3 永久禁止進入 iOS / Android。
+> **剛性約束 C-1**：iOS 禁止 spawn subprocess，任何 GPL 韌體嵌入即構成傳染。Betaflight module 永久禁止進入 iOS / Android。
 > **剛性約束 C-2**：Tier 1 依賴授權不屬 MIT/BSD/Zlib/Apache-2.0/公有領域者不得合入；CI 授權掃描違規即 build fail。
-> **剛性約束 C-3**：**私下提供仍構成 GPL 意義上的散布**。Tier 2 每次交付客戶，皆須同步履行 GPL-3.0 原始碼義務（見 G7.1）。
+> **剛性約束 C-3**：**私下提供仍構成 GPL 意義上的散布**。Deferred Betaflight module 每次交付客戶，皆須同步履行 GPL-3.0 原始碼義務（見 G7.1）。
 
 ---
 
@@ -78,11 +115,14 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 | 桌面渲染 | Forward+（Vulkan）+ SDFGI + Volumetric Fog | MIT | 無 |
 | 行動渲染 | Mobile Renderer + LightmapGI 烘焙光照 | MIT | 無 |
 | 行動觸控輸入 | Godot 4.7 內建 VirtualJoystick（Fixed/Dynamic/Following）；iOS 控制器經 SDL3 | MIT | 無 |
-| 氣動公式來源與 Oracle | gym-pybullet-drones、RotorPy 等外部 simulator 僅作檔案級 Formula Port 來源及固定版本、可離線開發／測試 Oracle；不得成為 Tier 1 runtime dependency、Python per-frame path 或第二 collision authority | 依 #56「參考開源實作」條款逐一查證；Formula Port 另依 3.1.1 記錄 provenance | 不得將 repo root MIT 視為常數表或資料的自動授權 |
+| 氣動公式來源 | gym-pybullet-drones 之 drag / ground effect / downwash（移植公式並以其 Python 原版為 CI 數值 Oracle） | MIT | 無 |
 | 風場 / 紊流 | Dryden（MIL-F-8785C）+ 穩態風 + 風切，自研 C++ 實作 | 公開軍規標準 | 無 |
 | 自研飛控 | C++ 串級 PID（角速度內環 + 角度外環）+ 互補濾波 / Mahony | 自有 | 無 |
-| Tier 2 飛控 | Betaflight SITL（獨立行程、UDP、無共享記憶體、無連結） | **GPL-3.0** | **發布前須法務核准**（見 G7.1） |
-| Tier 3 飛控 | PX4 SIH | BSD 3-Clause | 無 |
+| Minimum 外部飛控 | PX4 SITL（鎖版、Ubuntu、MAVLink） | BSD 3-Clause | AirSim-class 必備 |
+| Deferred 飛控 | Betaflight SITL（獨立行程、UDP、無共享記憶體、無連結） | **GPL-3.0** | **發布前須法務核准** |
+| Lab Mode RPC | AirSim 1.8.1 msgpack-rpc 相容子集，loopback only | MIT 相容實作 | 不得暴露非 loopback |
+| 場景資產 | Kenney City Kit (Industrial) + 自製 Godot 資產 | CC0 / 自有 | 來源、hash、license 入版控 |
+| 相容實作參考 | Microsoft AirSim `v1.8.1` @ `96235148…` 外部只讀 checkout | MIT | 每次引用先稽核 open/closed issues；不得成為依賴 |
 | 授權伺服器 | 自建 FastAPI + JWT（複用既有架構模式） | 自有 | 無 |
 
 ---
@@ -93,32 +133,27 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 
 ```
 ┌────────────────────────────┐        ┌─────────────────────────────┐
-│  遊戲客戶端 (Godot/GDScript)  │        │  飛控核心 (C++ GDExtension    │
+│  Player/Lab (Godot/GDScript) │        │  飛控核心 (C++ GDExtension    │
 │  · 渲染 60–120 FPS          │        │   / Tier2: SITL 獨立行程)     │
 │  · Jolt 碰撞 / 剛體 240 Hz   │◄──────►│  · PID 迴圈（見平台 Profile）  │
-│  · 場景 / 風場 / 遊戲邏輯     │  狀態   │  · IMU 模擬(噪音/漂移/延遲)    │
+│  · 場景 / Dashboard / RPC     │  狀態   │  · IMU 模擬(噪音/漂移/延遲)    │
 │  每 physics tick 觸發        │  交換   │  · 馬達/電池/槳 硬體參數模型    │
 │  N 次飛控子步進              │        │  · 自由空間六自由度積分         │
 └────────────────────────────┘        └─────────────────────────────┘
 ```
 
 - 語言分層：飛控核心 + 氣動 + 風場 + 硬體參數模型 = C++ GDExtension；遊戲邏輯/UI/關卡 = GDScript。禁止在 GDScript 實作逐子步進物理。
-- Tier 1 同行程零 IPC 延遲；Tier 2 換 SITL 獨立行程，UDP 封包協定與 Tier 1 內部介面同構，確保可插拔。
+- 自研飛控同行程零 IPC 延遲；PX4 SITL 經鎖定的 MAVLink bridge 接入相同 Vehicle Instance 契約。Godot Y-up 只存在內部，所有外部 API、PX4、Replay 與 Dataset 使用 NED world、FRD body、SI units。
 
-#### 3.1.1 Tier 1 runtime 與外部物理來源治理（v3.5）
-
-- **唯一 Tier 1 runtime authority**：AeroSim C++ fixed-step core 與 Godot/Jolt 共同構成唯一 Tier 1 runtime state 與 collision authority；自由飛行與接觸時的權威交接仍依 3.3，由此核心與 Jolt 完成。外部 simulator 不得取代、平行持有或仲裁 runtime state／collision state。
-- **Formula Port + offline Oracle**：gym-pybullet-drones、RotorPy 等外部 simulator 僅可作 source-file-level Formula Port 來源，以及鎖定上游版本、可離線執行的開發／測試 Oracle。它們不得成為 runtime dependency、Python per-frame path，或第二 collision authority。
-- **授權與上游查證的單一真相**：所有「參考開源實作」的授權、GPL 邊界與上游 issue（含 closed）查證，唯一依 #56 的「參考開源實作」條款執行；本節不建立或重複平行政策。Formula Port 的特有紀錄則必須逐一包含 source file、upstream commit、source-file header 與其 referenced source、license／attribution、unit／frame conversion，以及 Oracle／analytic validation。不明授權的常數或參數依 #56 僅可參考思路，不得當作產品資料；repo root 的 MIT 授權不會自動涵蓋常數表或資料。
-- **CI 稽核錨點（pending implementation）**：#116 負責 NOTICE manifest regression，#117 負責 Oracle integrity 與 offline cache，#119 負責 export artifact 的無 Python runtime dependency scan。上述 CI audit 均待其對應實作票落地；本 docs PR 未實作它們，亦不調整或新增數值 gate。
-
-### 3.2 Ubuntu 物理 Profile
+### 3.2 平台物理 Profile（取代單一硬指標）
 
 | Profile | PID 頻率 | Jolt tick | 氣動效應 | 適用 |
 |---|---|---|---|---|
-| Ubuntu Desktop Full | 1000 Hz | 240 Hz | 全開（A1–A10） | Ubuntu Linux x86_64 |
+| Desktop Full | 1000 Hz | 240 Hz | 全開（A1–A10） | 桌面各 Lane |
+| Mobile High | 1000 Hz | 240 Hz | 全開 | 旗艦行動裝置（執行期偵測） |
+| Mobile Base | 500 Hz + 陀螺儀插值 | 120 Hz | 全開，Dryden 更新降至 100 Hz | 基準行動裝置 |
 
-> Mobile High、Mobile Base 與跨 Profile fidelity 等價均為 deferred；重新啟用行動平台時再另行定義與驗收，不能阻擋 Ubuntu 交付。
+> **剛性約束 C-4**：Mobile Base 與 Desktop Full 對同一組輸入序列的姿態輸出偏差須通過 G0.9（fidelity 等價 Gate）。Profile 之間**不是**門檻鬆緊，而是兩組各自凍結的門檻。
 
 ### 3.3 碰撞權威切換規格（新增，回應審查 High 6）
 
@@ -149,7 +184,7 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 #### 3.5.1 設計原則（凍結後與 Gate 同等剛性）
 1. **Stick-time first**：墜機→重飛迴圈是本品類核心體驗。
 2. **對齊 FPV 社群慣例**：rates 曲線公式與匯入格式和 Betaflight 對齊（RC Rate / Super Rate / Expo 同名同義）。**PID / 濾波器參數標示為 sim profile，明文不保證與真機等價，UI 須顯示免責提示**（回應審查 High 8）。
-3. **Ubuntu 桌面 UI 優先**：目前不做行動版縮放或觸控自適應。
+3. **雙平台自適應而非縮放**。
 4. UI 動效用 Godot 4.7 Control offset transforms，禁止移動實際 layout 做動畫。
 
 #### 3.5.2 競品 UX 參考（僅參考互動流程與資訊架構，禁止複製美術資產）
@@ -170,32 +205,37 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 
 #### 3.5.4 人機操作 UI/UX（Human-Drone Operation，回應 v3.0 審查）
 
-**主選單第一層固定五入口**：`Quick Fly`、`Controller`、`Drone`、`Map`、`Settings`。
-- `Quick Fly`：預設機體 + 預設地圖 + 無風直接進場；若手把尚未確認預設配置，先導入確認畫面而非帶著失控狀態進場。
-- 無任何控制器時，UI 明確提示需要一般 game 手把，並提供鍵盤 fallback 模式（明示限制用途）。
+**主選單第一層固定七入口**：`Quick Fly`、`Lab Mode`、`Controller`、`Drone`、`Map`、`Settings`、`Quit`。
+- `Quick Fly`：預設機體 + 預設地圖 + 無風直接進場；若控制器未校準，先導入 Controller Setup 而非帶著失控狀態進場。
+- `Lab Mode`：進入完整 Operations Dashboard，顯示雙機、RPC、PX4、感測器、錄製與環境狀態。
+- `Map`：最低成果仍保留選擇畫面，但 catalog 只有 `Industrial Test Range`，不得顯示假地圖或 Coming Soon 卡片。
+- `Quit`：Ubuntu desktop 可由 UI 正常退出，不依賴開發者快捷鍵。
+- 無任何控制器時，UI 明確提示需要 gamepad/radio，並提供鍵盤/手把 fallback 模式（明示非擬真操控）。
 
-**Controller 確認流程（v3.4，取代校準精靈）**：偵測相容手把（`Input.is_joy_known()`，SDL mapping 存在）→ 確認畫面（顯示固定 Xbox 映射與四軸即時值，漂移肉眼可見）→ 玩家確認 → 建立 session `GamepadProfile` → preflight。unknown 裝置明確提示不支援＋keyboard fallback，禁止套用 Xbox 映射。
+**Controller Setup Flow（固定順序）**：偵測裝置 → 16 通道 live monitor → 搖桿指派 → 端點校準 → 反向偵測 → arm / mode switch 映射 → 油門低位安全檢查 → 測試懸停台。
 
-**固定映射合約（v3.4，取代校準驗收合約；範圍縮減依據見 `docs/decisions/2026-07-12-xbox-default-profile.md`）**：
-- 四軸映射固定於 Xbox 標準布局（唯一性由 SDL mapping 保證），profile 含 schema version。
-- 固定 deadzone：具名常數，raw 軸 0.08–0.10 區間內定值，寫入 profile schema（不得沿用 action 預設 0.5）。
-- Arm／Mode 預設按鍵不重複，按下與放開狀態可辨識，去抖 ≤ 50 ms。
+**校準驗收合約（Calibration Acceptance Contract，回應審查 C3）**——全數通過才允許寫入 calibrated profile，任一未過即擋存檔並標示原因：
+- 四軸唯一映射，零重複指派。
+- 端點：實測 min/max 覆蓋該軸行程 ≥ 95%；中心偏移 ≤ ±2% 滿量程；deadzone 可配置 0–10%。
+- 靜置抖動 RMS ≤ 0.5% 滿量程（1 秒取樣）。
+- Switch：≥ 2 個穩定狀態、去抖 ≤ 50 ms。
 - 油門低位檢查通過為 arm 之前置條件（未低位不得 arm，preflight 面板同步阻擋）。
-- unknown 裝置（無 SDL mapping）100% 擋下並提示 fallback，可注入測試判定。
+- 反向偵測可注入測試（G4B.UI2 之 100% 偵測率以本合約為判定標準）。
 
-**兩種輸入 Profile（Channel Monitor 依 Profile 呈現）**：
-- `GamepadProfile`：固定 Xbox 標準映射之四軸／按鍵的 raw / normalized / 固定 deadzone 與按鍵狀態；支援 sticky throttle 模式（油門不回中語意）；不含採樣校準資料（端點/中心/雜訊）。
+**三種輸入 Profile（回應審查 H4，Channel Monitor 依 Profile 呈現）**：
+- `RadioProfile`：16ch live bar / raw / normalized / deadzone / 中心 / 端點 / switch 狀態，完整校準合約。
+- `GamepadProfile`：軸/鍵顯示、sticky throttle 模式（油門不回中語意）、deadzone、鍵位綁定、UI 明示「非擬真操控」。
 - `KeyboardProfile`：離散輸入，僅保證可起飛/暫停/重生/退出，明示限制用途。
 
-**操作 Action Contract（回應審查 H2）**：pause / reset / change spawn / exit / arm / mode 於兩種 Profile 各有預設映射、可重綁、衝突偵測、畫面 glyph 提示；**所有飛行中救援動作（reset/pause）必須「手不離主控制器」可達**——game 手把按鍵不足時提供組合鍵（chord）或明確提示替代路徑。
+**操作 Action Contract（回應審查 H2）**：pause / reset / change spawn / exit / arm / mode 於三種 Profile 各有預設映射、可重綁、衝突偵測、畫面 glyph 提示；**所有飛行中救援動作（reset/pause）必須「手不離主控制器」可達**——radio 按鈕不足時提供組合鍵（chord）或明確提示替代路徑。
 
 **Quick Fly 狀態機（回應審查 H1）**：
 
 | 進入時狀態 | 出口 |
 |---|---|
-| 已確認固定映射控制器 | → 直接進場 |
-| 未確認固定映射 | → Controller Setup（完成→進場；取消→主選單） |
-| 無控制器 | → 提示 + Keyboard fallback 或返回 |
+| 已校準控制器 | → 直接進場 |
+| 未校準 | → Controller Setup（完成→進場；取消→主選單） |
+| 無控制器 | → 提示 + Gamepad/Keyboard fallback 或返回 |
 | 授權不可達 / 離線寬限過期 | → 明確錯誤畫面：Retry / Diagnostics / Exit（禁止靜默鎖死，見 G6.6） |
 | 地圖/機體 JSON 載入失敗 | → 錯誤明示 + 回退出廠預設（factory default）選項 |
 
@@ -264,7 +304,7 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 
 #### 3.6.3 雙基準機參數包（Phase 1 交付物）
 1. **5 吋穿越機資料包（主打）**：台架推力表、慣量估測（雙線擺法或 CAD）、真機 Betaflight blackbox 飛行紀錄（含 step response 與典型 propwash 動作）、階躍響應標定之 τ_m。作為 G2.8 / G3 雙軌驗收之外部真值。
-2. **Iris 級資料包**：沿用 PX4 iris.sdf 慣量（0.0291/0.0291/0.0552），供 Tier 3 與定高教學。
+2. **Iris 級資料包**：沿用 PX4 iris.sdf 慣量（0.0291/0.0291/0.0552），供 PX4 SITL 與定高驗證。
 
 ---
 
@@ -284,7 +324,6 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 | LEG（法務/授權審查） | 法務書面核准 | 核准函 |
 
    可自動化者**必須**自動化（CI-A/GPU-A）；不可自動化者必須依協定留存證據與簽核。
-   `deferred` 代表不納入本版本驗收，未來若要支援該平台須另行改版啟用；不視為通過。
 3. **阻擋範圍（Blocking scope）**：每個 Gate 標註 SC（shared core，阻擋所有 Lane）或平台代號（僅阻擋該 Lane）。任一 SC Gate 未過，所有 Lane 停止進入下一 Phase；平台 Gate 未過僅凍結該 Lane。
 4. **Phase 0 特例**：Phase 0 是 Spike，其結論**允許**重定平台範圍與 Profile 歸屬（例如將某效應移出 Mobile Base），但既定 Profile 內的門檻數值不得修改；重定範圍須全體核准人簽字並記入變更紀錄。Phase 1 起無此特例。
 5. 豁免程序（預期使用次數為零）：書面技術論證 + 兩名外部飛手/工程師背書 + 全體核准人簽字。
@@ -295,24 +334,22 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 
 ### Phase 0 — 技術可行性驗證（Spike）
 
-**目標**：證明 Godot 4.7 + Jolt + C++ GDExtension 在 Ubuntu Linux x86_64 撐得起目前交付 Profile；其他平台不屬於本版驗收。
-
-**目前環境執行註記（2026-07-10）**：桌面實機驗收以本機 Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX with Radeon Graphics、NVIDIA GeForce RTX 4060 Ti 為唯一基準。Windows、macOS、Android 與 iOS 本版不做 build-only 或實機驗收；未來若重新列入範圍，須另行建立平台 Gate 與驗收環境。
+**目標**：證明 Godot 4.7 + Jolt + C++ GDExtension 可支撐 Ubuntu 可玩切片、決定性核心與後續 AirSim-class integration。
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms（凍結本機：Ubuntu 26.04、Ryzen 9 7945HX、RTX 4060 Ti） | GPU-A | SC |
-| G0.2 | Mobile High 與 Mobile Base | deferred，本版不驗收 | — |
-| G0.3 | 1000 Hz 子步進下四元數積分 10 分鐘無 NaN、範數漂移 < 1e-6 | CI-A | SC |
-| G0.4 | Ubuntu 桌面渲染管線與場景資產打通 | GPU-A | SC |
-| G0.5 | Xbox 360 相容 USB game 手把於 Ubuntu desktop 識別必要的類比軸與按鍵 | DEV-M | UBUNTU |
-| G0.6a | **Ubuntu 核心決定性**：GDExtension 於 Ubuntu Linux 建置通過同一組單元測試，同平台重播 bitwise 一致；統一 `-ffp-contract=off` 等旗標 | CI-A | SC |
-| G0.6b | Windows / macOS / Android / iOS 平台建置 smoke | deferred，本版不驗收 | — |
+| G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms（基準機 Ryzen 5 5600） | GPU-A | SC |
+| G0.2 | Mobile High 與 Mobile Base 兩 profile 於基準行動裝置：物理 P99 ≤ 5 ms 且整體 ≥ 60 FPS（量測定義同 G0.1；以 Perfetto 拆解物理/渲染占比） | DEV-M→GPU-A | AND, iOS |
+| G0.3 | 1000/500 Hz 子步進下四元數積分 10 分鐘無 NaN、範數漂移 < 1e-6 | CI-A | SC |
+| G0.4 | 桌面/行動雙渲染管線同場景資產打通 | GPU-A | SC |
+| G0.5 | Xbox 360 相容 gamepad 於 Ubuntu 完成固定 mapping 確認與飛行輸入；RadioMaster/FrSky 為後續 controller qualification | DEV-M | LIN |
+| G0.6a | **Ubuntu 核心決定性**：同平台同 seed/input bitwise 一致；保留 `-ffp-contract=off` 等嚴格浮點旗標。Windows/Android cross-platform replay 可持續監測但不阻擋 Ubuntu qualification | CI-A | LIN |
+| G0.6b | **逐 Lane 建置 smoke**：macOS 建置 + 同組測試（僅擋 MAC Lane）；iOS 建置 + 同組測試（**G0.10 Go 後才啟用**，僅擋 IOS Lane） | CI-A | MAC / IOS |
 | G0.7 | Linux headless 可無視窗執行完整物理模擬並輸出數據 | CI-A | SC |
 | G0.8 | **碰撞權威切換**（回應 High 6）：四場景各 100 次隨機化重複——(a) 30 m/s 正撞牆、(b) 5° 掠角擦地、(c) 撞桿反彈、(d) 翻滾觸地後恢復。全數：無 NaN、速度/角速度有限、動能不增加（restitution 容忍 +1%）、交接後 0.5 秒內飛控可重新響應輸入、同種子重播結果一致 | CI-A | SC |
-| G0.9 | Mobile Base vs Desktop Full fidelity 等價 | deferred，本版不驗收 | — |
-| G0.P | **可玩垂直切片（Playable Slice，回應審查 C2）**：冷啟動 → 主選單 → Quick Fly → 預設機/預設圖（佔位美術可）→ spawn → 油門低位 → arm → 起飛 → pause → reset → exit 全流程可走通，於本機 Ubuntu desktop 以維護者操作、輸入 log + build hash 驗收。**本 Gate 只驗操作性，不驗手感**（PID 粗調可）；此 Gate 未過，Phase 1 之後的深度物理工作不得超過團隊工時 20% | DEV-M | SC |
-| G0.10 | iOS Lane 決策文件 | deferred，本版不驗收 | — |
+| G0.9 | **Fidelity 等價**：Mobile Base vs Desktop Full 同輸入序列（60 秒標準機動）姿態軌跡 RMSE ≤ 1.5°、位置 RMSE ≤ 15 cm（**僅擋行動 Lane**；Desktop 主線不受此 Gate 阻擋） | CI-A | AND, IOS |
+| G0.P | **可玩垂直切片**：Ubuntu 冷啟動 → 七入口主選單 → Map 選擇 → Quick Fly → spawn → arm → 起飛 → pause → reset → exit 全流程可走通，保存錄影、輸入 log 與 build hash。此 Gate 驗操作性，不取代正式場景、Dashboard 或 AirSim-class gate | DEV-M | LIN |
+| G0.10 | iOS Lane 決策文件：Ad Hoc / TestFlight 路線之裝置數、審查風險、成本評估，做出 Go/No-Go 並簽核 | LEG | IOS |
 
 ---
 
@@ -346,7 +383,7 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 | G2.6 | Altitude Hold：氣壓計噪音開啟，60 秒高度漂移 ≤ ±15 cm | CI-A | SC |
 | G2.7 | 手感盲測：≥5 名 Betaflight 實機飛手，Acro 盲測均分 ≥ 7.0 且無人 ≤ 4（問卷含真機 blackbox 回放錨定題） | USR | SC |
 | G2.8 | **Blackbox 重播真值**：取 G1.10 真機紀錄之搖桿輸入重播入模擬器，陀螺儀三軸軌跡相關係數 ≥ 0.90、角速度 RMSE ≤ 真機峰值角速度之 8%。**判定一律以 holdout 組為準（標定組結果僅供參考），開迴路（模型辨識）與閉迴路（含飛控）重播分開報告** | CI-A | SC |
-| G2.9 | Betaflight SITL 交叉驗證（Tier 2） | deferred，本版不驗收 | — |
+| G2.9 | **SITL 交叉驗證**：同輸入分別餵自研飛控與 Betaflight SITL（開發環境工具，不隨 Tier 1 發布），姿態響應趨勢相關係數 ≥ 0.85（此為自研飛控之健全性檢查，非等價承諾） | CI-A | SC |
 
 ---
 
@@ -360,7 +397,7 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 | G3.4 | **Dryden（determinism 修正版）**：固定 seed、Welch 法（段長 2¹⁴、50% overlap、Hann 窗）估 PSD，0.1–10 rad/s 各 bin 與理論譜偏差 ≤ 10%（95% 信賴區間內），輕/中/重三檔；同 seed 重跑 bitwise 一致 | CI-A | SC |
 | G3.5 | 風切剖面 vs 軍規模型逐點 ≤ 5% | CI-A | SC |
 | G3.6 | Propwash 雙軌：(a) 機制測試——split-S 出彎擾動注入、強度與油門相關係數 ≥ 0.8、關閉時為 0；(b) **實測殘差**——重播 G1.10 之 propwash 動作 blackbox，擾動頻段（10–80 Hz）陀螺儀 PSD 能量比真機對應值落於 0.5–2.0 倍區間 | CI-A | SC |
-| G3.7 | **效能預算（修正版）**：全效應開啟後，本機 Ubuntu 桌面物理 P99 相對 G0 基線增幅 ≤ 20%，且絕對值仍 ≤ 3 ms | GPU-A / DEV-M | UBUNTU |
+| G3.7 | **效能預算（修正版）**：全效應開啟後，物理 P99 相對 G0 基線增幅 ≤ 20%，且絕對值仍 ≤ 3 ms（桌面）/ 5 ms（行動各 profile） | GPU-A / DEV-M | SC |
 | G3.8 | 氣象盲測：飛手盲判無風/中紊流/強陣風，正確率 ≥ 80% | USR | SC |
 
 ---
@@ -369,31 +406,32 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G4.1 | 本機 Ubuntu 桌面（Ryzen 9 7945HX + RTX 4060 Ti）完整場景全效果 1080p ≥ 120 FPS（P99 ≥ 90） | GPU-A | UBUNTU |
-| G4.2 | 行動基準機效能 | deferred，本版不驗收 | — |
-| G4.3 | **分期**：切片階段 ≥1 張 Free Flight 地圖 + reset-to-spawn + exit；**GA 前 ≥3 張完整地圖**（含 ≥1 條 Time Trial 路線：checkpoint 方向箭頭 + finish panel `Retry / Change Map / Exit`）+ 計時/檢查點/重生 QA 清單 100%；地圖卡含 3.5.4 規定資訊；場內方向指示可用 | DEV-M | SC |
+| G4.1 | Reference Performance Profile（Ubuntu、6-core CPU、16 GB RAM、RTX 3060 12 GB-class）Player Mode 1080p default quality 穩定 60 FPS；僅指定 runner 可阻擋，本機規格不足回報 not-qualified | GPU-A | LIN |
+| G4.2 | 行動基準機同場景 ≥ 60 FPS（P99 ≥ 45），30 分鐘熱節流後 ≥ 50 FPS | DEV-M | AND, IOS |
+| G4.3 | GA 交付一張 `Industrial Test Range`：launch area、warehouse/street、obstacle corridor、短 Time Trial route、reset-to-spawn、方向指示與 finish panel；Map Catalog 保留且只有一個真實 entry | GPU-A + DEV-M | LIN |
 | G4.4 | FPV 攝影機：uptilt/FOV/OSD；桌面含類比雜訊濾鏡 | GPU-A | SC |
-| G4.5 | 雙渲染管線資產同源，人工分支 0 | CI-A | SC |
+| G4.5 | Kenney City Kit (Industrial) CC0 為主要資產，缺口只用 Godot primitives／自製資產；clean checkout 自動 import，不依賴 Unity／Unreal 轉換 | CI-A + GPU-A | LIN |
+| G4.6 | **Playable Game Milestone**：Ubuntu package 由冷啟動完成七入口 → Controller／Drone／單一 Map 選擇 → Quick Fly → production vehicle 飛行／碰撞／pause／respawn → 短 Time Trial finish → quit；全程無 placeholder 或 developer-only state，Codex Critical/High = 0。此 gate 通過後才開始第一次人工完整審核與初始 Approved Visual Reference 核准 | CI-A + GPU-A + Codex | LIN |
 
 ### Phase 4B — UI/UX
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G4B.1 | Ubuntu 首次啟動至起飛 ≤ 90 秒，未接觸過產品之 FPV 玩家 ≥ 10 人，P90 | USR | UBUNTU |
+| G4B.1 | 首次啟動至起飛 ≤ 90 秒（行動觸控 ≤ 60 秒），未接觸過產品之 FPV 玩家 ≥ 10 人，P90 | USR | SC |
 | G4B.2 | 墜機→重飛 ≤ 1.5 秒（P99，重生鍵至油門可輸入） | GPU-A | SC |
-| G4B.3 | 確認流程無協助完成率 ≥ 90% | USR | UBUNTU |
-| G4B.4 | Ubuntu SUS ≥ 75（≥10 人） | USR | UBUNTU |
+| G4B.3 | 校準精靈無協助完成率 ≥ 90% | USR | DESK, AND |
+| G4B.4 | SUS ≥ 75（≥10 人，含 ≥3 行動端） | USR | SC |
 | G4B.5 | 選單深度 ≤ 3 層，自動遍歷驗證 | CI-A | SC |
 | G4B.6 | Rates 介面與 Betaflight 曲線公式一致、即時預覽、JSON 與 Betaflight diff 可逐項核對；**PID/濾波顯示 sim profile 免責提示**（3.5.1 原則 2） | GPU-A | SC |
-| G4B.7 | 觸控布局可自訂持久化，誤觸率 ≤ 1%/分鐘 | deferred，本版不驗收 | — |
+| G4B.7 | 觸控布局可自訂持久化，誤觸率 ≤ 1%/分鐘 | USR | AND, IOS |
 | G4B.8 | 本地化 zh-TW/en 覆蓋 100%、0 硬編碼字串（CI）；**UI 截斷/溢出稽核於 GPU runner 截圖比對**（headless 不得宣稱涵蓋此項） | CI-A + GPU-A | SC |
 | G4B.9 | UI 動效以 offset transforms 實作、layout 不變（自動斷言）、不阻塞輸入 > 100 ms | GPU-A | SC |
-| G4B.UI1 | **First Fly Flow**：未看說明書之 FPV 玩家——已確認手把 ≤ 30 秒起飛、未確認 ≤ 90 秒（含完成確認流程）；無控制器時提示與 fallback 可用（樣本 ≥ 10 人，P90） | USR | SC |
-| G4B.UI2 | **Controller 確認流程（v3.4）**：Ubuntu 上 Xbox 360 相容手把（`is_joy_known`）完成固定映射確認即飛；確認畫面顯示四軸即時值；**unknown 裝置 100% 擋下並提示 fallback**（注入測試） | DEV-M | UBUNTU |
+| G4B.UI1 | **First Fly Flow**：未看說明書之 FPV 玩家——已校準控制器 ≤ 30 秒起飛、未校準 ≤ 90 秒（含完成 Setup Flow）；無控制器時提示與 fallback 可用（樣本 ≥ 10 人，P90） | USR | SC |
+| G4B.UI2 | **Controller Setup**：RadioMaster / FrSky 實機各一完成 3.5.4 全流程；**故意設置之軸反向與端點不足，UI 檢核必須 100% 主動偵測提示**（各 10 次注入測試） | DEV-M | DESK, AND |
 | G4B.UI3 | **Pause Overlay**：固定項全數存在；rates/camera/OSD 修改即時生效不重載（自動斷言）；Reset 至可輸入 ≤ 1.5 秒（P99） | GPU-A | SC |
-| G4B.UI4 | **OSD Presets**：三 preset 於 Ubuntu 1080p、zh-TW/en 兩組合下，主飛行視野遮擋率 ≤ 8%，警告訊息不遮擋畫面中央 1/3（自動截圖幾何稽核） | GPU-A | UBUNTU |
-| G4B.UI5 | **選擇流程**：Quick Fly 一鍵進預設場；選機/選圖/選模式/選風況/起飛於單層畫面完成，全流程確認次數 ≤ 3 | GPU-A + USR | SC |
-| G4B.UI6 | **機體狀態圖**：(a) 真值一致——狀態圖各數值 vs 物理層遙測快照逐項相等（容忍僅顯示取整），A1–A10 任一效應關閉時對應指示歸零（自動化逐效應開關測試）；(b) 更新率 ≥ 30 Hz、資料延遲 ≤ 100 ms；(c) 完整版與迷你版渲染成本合計 ≤ 0.5 ms/幀（Ubuntu Profile）；(d) 迷你版於 Debug OSD 下不違反 G4B.UI4 遮擋門檻 | CI-A + GPU-A | SC |
+| G4B.UI4 | **OSD Presets**：三 preset 於 1080p 與行動橫向、zh-TW/en 四組合下，主飛行視野遮擋率 ≤ 8%，警告訊息不遮擋畫面中央 1/3（自動截圖幾何稽核） | GPU-A | SC |
+| G4B.UI5 | **選擇流程**：主選單七入口固定；Quick Fly 一鍵進預設場；Drone／Map／mode／weather 可選，Map screen 在單一 entry 時仍可用；全流程確認次數 ≤ 3 | GPU-A + USR | LIN |
+| G4B.UI6 | **機體狀態圖**：(a) 真值一致——狀態圖各數值 vs 物理層遙測快照逐項相等（容忍僅顯示取整），A1–A10 任一效應關閉時對應指示歸零（自動化逐效應開關測試）；(b) 更新率 ≥ 30 Hz、資料延遲 ≤ 100 ms；(c) 完整版與迷你版渲染成本合計 ≤ 0.5 ms/幀（各平台 Profile）；(d) 迷你版於 Debug OSD 下不違反 G4B.UI4 遮擋門檻 | CI-A + GPU-A | SC |
 
 ---
 
@@ -401,13 +439,13 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G5.1 | **Ubuntu 控制器閘門**：Ubuntu Linux 以 Xbox 360 相容 game 手把完成四軸與 Arm／Mode 按鍵映射、固定映射確認與斷線重連 | DEV-M | UBUNTU |
-| G5.2 | Android OTG game 手把 | deferred，本版不驗收 | — |
-| G5.3 | iOS MFi / VirtualJoystick | deferred，本版不驗收 | — |
-| G5.4 | Ubuntu 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）≤ 40 ms；行動平台 deferred | DEV-M | UBUNTU |
-| G5.5 | 輸入映射匯出/匯入、斷線重連不丟設定（已確認固定映射＋schema version 跨 session 持久化，見範圍排除之界線釐清） | CI-A | SC |
-| G5.6 | **Channel Monitor 一等 UI**：固定映射四軸／按鍵的 live bar、raw、normalized、固定 deadzone 與按鍵狀態即時顯示，更新率 ≥ 30 Hz；自動檢核三項提示（油門低位、arm 映射、mode 映射）功能驗證 | GPU-A + DEV-M | SC |
-| G5.7 | **斷線 fail loud**：Ubuntu 飛行中拔除控制器 → 500 ms 內畫面警示 + 顯示重連狀態；重插後 ≤ 2 秒恢復輸入且映射不丟失（各 20 次） | DEV-M | UBUNTU |
+| G5.1 | **逐 OS 控制器閘門**：Windows / macOS / Linux 各自——radio 實機（RadioMaster、FrSky 至少各一）+ 通用 gamepad 一款，完成 16 通道映射 + 反向 + 端點校準（依校準合約判定）+ 斷線重連；**任一 OS 未過僅凍結該 OS Lane** | DEV-M | WIN / MAC / LIN |
+| G5.2 | Android OTG joystick 同 G5.1 | DEV-M | AND |
+| G5.3 | iOS（若 Lane 續行）：MFi（SDL3 路徑）+ VirtualJoystick（Fixed/Dynamic 雙模式）可完成 G2.3 姿態保持測試 | DEV-M | IOS |
+| G5.4 | 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）：桌面 ≤ 40 ms、行動 ≤ 60 ms | DEV-M | 各 Lane |
+| G5.5 | 輸入映射匯出/匯入、斷線重連不丟設定（校準/映射跨 session 持久化，見範圍排除之界線釐清） | CI-A | SC |
+| G5.6 | **Channel Monitor 一等 UI**：16 通道 live bar / raw / normalized / deadzone / 中心 / 端點全數即時顯示，更新率 ≥ 30 Hz；自動檢核四項提示（油門低位、arm 映射、mode 映射、軸重複）功能驗證 | GPU-A + DEV-M | SC |
+| G5.7 | **斷線 fail loud**：飛行中拔除控制器 → 500 ms 內畫面警示 + 顯示重連狀態；重插後 ≤ 2 秒恢復輸入且校準不丟失（各 20 次） | DEV-M | 各 Lane |
 
 ---
 
@@ -415,19 +453,36 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G6.1 | Ubuntu Linux x86_64 安裝包 ≤ 300 MB | CI-A | UBUNTU |
-| G6.2 | Android APK 與側載文件 | deferred，本版不驗收 | — |
+| G6.1 | Ubuntu x86_64 安裝包 ≤ 300 MB；其他 Player Mode lane 各自驗收 | CI-A | LIN |
+| G6.2 | Android APK ≤ 300 MB，側載安裝流程文件化（含簽章與未知來源指引） | CI-A + DEV-M | AND |
 | G6.3 | 授權掃描：Tier 1 產物 0 GPL/LGPL/AGPL；NOTICE 自動生成 | CI-A | SC |
-| G6.4 | Ubuntu Linux 冷啟動至可飛 ≤ 15 秒 | GPU-A / DEV-M | UBUNTU |
-| G6.5 | Ubuntu 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件） | DEV-M | UBUNTU |
+| G6.4 | 冷啟動至可飛：桌面 ≤ 15 秒、行動 ≤ 20 秒 | GPU-A / DEV-M | 各 Lane |
+| G6.5 | 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件） | DEV-M | 各 Lane |
 | G6.6 | **授權伺服器**：註冊→簽發→JWT 驗證全流程可用；離線寬限期機制（斷網 ≤ 72 小時可玩）；伺服器不可達時明確提示而非靜默鎖死 | CI-A + DEV-M | SC |
 | G6.7 | 交付流程演練：從客戶名單到發送安裝檔+授權金鑰之 SOP 全程演練一次成功，含撤銷授權 | DEV-M | SC |
-| G6.8 | **診斷支援包（回應審查 H10）**：`Settings > Diagnostics > Export Support Bundle` 一鍵匯出——build hash、OS/GPU/裝置資訊、授權狀態、近期 log、控制器 raw 取樣、已確認固定映射（schema version、axis/button roles、deadzone；不含採樣校準資料）、最後錯誤；**自動化稽核：bundle 內 0 個 secrets / JWT / 個資（遮罩驗證）** | CI-A + DEV-M | SC |
-| G6.9 | **設定持久化表（回應審查 H9）**：Persistent（已確認固定映射與其 schema version、rates、OSD 配置、相機、語言、畫質）與 Volatile（本局 spawn/臨時風況/當場計時與遙測）逐項落地一致；settings schema 含 version；factory reset 可用；匯入失敗回退預設並明示 | CI-A | SC |
+| G6.8 | **診斷支援包（回應審查 H10）**：`Settings > Diagnostics > Export Support Bundle` 一鍵匯出——build hash、OS/GPU/裝置資訊、授權狀態、近期 log、控制器 raw 取樣、輸入映射與校準、最後錯誤；**自動化稽核：bundle 內 0 個 secrets / JWT / 個資（遮罩驗證）** | CI-A + DEV-M | SC |
+| G6.9 | **設定持久化表（回應審查 H9）**：Persistent（校準/映射/rates/OSD 配置/相機/觸控布局/語言/畫質）與 Volatile（本局 spawn/臨時風況/當場計時與遙測）逐項落地一致；settings schema 含 version；factory reset 可用；匯入失敗回退預設並明示 | CI-A | SC |
 
 ---
 
-### Phase 7 —（桌面限定）Betaflight SITL 專業模組
+### Phase 7 — AirSim-class platform minimum
+
+| Gate | 門檻 | 類型 | 範圍 |
+|---|---|---|---|
+| A7.1 | Player Mode 與 Lab Mode 使用同一 simulation session；七入口、單一 Map Catalog、雙機識別與 Operations Dashboard 全部可操作，無 placeholder state | CI-A + GPU-A | LIN |
+| A7.2 | `airsim==1.8.1` unmodified client 連線至 loopback-only RPC（default `127.0.0.1:41451`），支援 manifest 內 connection/pause/step/reset/settings；未知 API、setting、non-loopback bind fail loud | CI-A | LIN |
+| A7.3 | 兩個 named vehicles 完成 takeoff/land/hover/home/position/path/velocity/yaw/attitude/body-rate+throttle async commands，cancel/join 與隔離語意正確；逐馬達 PWM 明確 unsupported | CI-A + GPU-A | LIN |
+| A7.4 | 外部 payload 全部 NED world、FRD body、SI；simulation time 控制 pause/frames/duration 與各 sensor rate，同 seed/commands/steps 產生相同 timestamp、sample count 與狀態 | CI-A | SC |
+| A7.5 | 每台車提供 Scene、DepthPlanar、Segmentation、IMU、GPS、magnetometer、barometer、LiDAR；PNG/raw/float 行為、幾何一致性、segmentation ID、noise/rate、雙機 isolation 全部通過 fixture | CI-A + GPU-A | LIN |
+| A7.6 | 鎖定 PX4 版本完成 SITL connect → arm → deterministic mission → land；Dashboard 顯示具名狀態與失敗原因；ArduPilot/HITL 不納入 | CI-A + DEV-M | LIN |
+| A7.7 | Lab Mode 只能從 checked-in catalog spawn/move/query/destroy objects；風、雨、霧、日照時間可由 UI/API 控制，進入 Replay/Dataset，未知 asset/path 明確拒絕 | CI-A + GPU-A | LIN |
+| A7.8 | Flight Replay 可重建雙機、commands、environment、objects 與 collisions；Dataset Recording 產生 versioned directory（manifest/JSONL/PNG/PFM/float32 LiDAR），validator 能拒絕 incomplete、gap、identity 或檔案錯誤 | CI-A | LIN |
+| A7.9 | 每個 PR 執行 structure/dependency/collision/render/basic-image checks；視覺相關變更與每次 release 具四張固定 GPU screenshots 與 Codex strict JSON review，Critical/High = 0。G4.6 前使用 provisional reference 且不要求人工；G4.6 後才建立 Approved Visual Reference，後續重大 replacement 須人工核准 | GPU-A + Codex | LIN |
+| A7.10 | 指定 Reference Performance Profile：Player Mode 1080p default 60 FPS；文件化雙機 sensor workload real-time factor ≥ 1.0。本機低規格只可 not-qualified，不得因硬體規格阻擋功能開發 | GPU-A | LIN |
+
+---
+
+### Phase 8 —（桌面限定）Betaflight SITL 專業模組
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
@@ -441,18 +496,21 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 
 ## 5. 驗收方法學
 
-0. **CI 平台範圍（Ubuntu-first）**：Ubuntu Linux headless 承擔數值模擬、頻譜分析、GDExtension 單元測試、資產載入 smoke、選單樹遍歷；Ubuntu 真實 display/GPU 承擔渲染、截圖、UI 視覺與效能 Gate。Windows、macOS、Android、iOS 不列入本版本 CI 或交付驗收。
+0. **CI 平台範圍（修正版）**：Linux headless 僅承擔——數值模擬、頻譜分析、GDExtension 單元測試、資產載入 smoke、選單樹遍歷。渲染/截圖/UI 視覺/效能類 Gate 一律 GPU runner 或實機（DEV-M/GPU-A）。Web 不列入任何目標。
 1. 測試報告：每 Gate 一份，含環境、版本雜湊、原始數據、判定；未過附根因與修改計畫。
 2. 重測循環：修改 → 該 Phase 全 Gate 回歸 → 報告。
-3. 基準機凍結：Ubuntu 26.04 LTS、Ryzen 9 7945HX + RTX 4060 Ti（driver 580.159.03）。其他平台不建立替代基準，也不列為本版本驗收項目。
+3. 效能資格機凍結：Ubuntu x86_64、6-core CPU、16 GB RAM、RTX 3060 12 GB-class。效能 gate 只在具名 runner 阻擋；其他本機執行功能／決定性測試並回報 not-qualified。未來 Player Mode lane 的平台基準各自凍結，不阻擋 Ubuntu。
 4. 盲測規範：受測者不知修改內容；問卷含真機 blackbox 回放錨定題。
 5. 版本鎖定：Godot 4.7 之 patch 版本與 export template hash 記錄於 repo；引擎升級觸發 G0–G3 全量重跑。
+6. AirSim 引用證據：每個受影響 issue／PR 必須列出 v1.8.1 path／symbol／commit、open/closed issue queries、相關 URL 與 disposition、license attribution 及導出測試；無結果只代表查過，不代表無缺陷。
+7. Agent 證據：Codex 報告記錄實際 model identity 與 reasoning profile；Sol 建議須附問題邊界與主 Agent 的採納或拒絕理由。
 
 ## 6. 風險登記簿（節錄）
 
 | 風險 | 影響 | 緩解 |
 |---|---|---|
-| 非 Ubuntu 平台需求 | 全平台 Gate | v3.6 先 deferred；待有明確客戶需求與維護資源後再另行啟用 |
+| Mobile Base profile 仍超預算 | G0.2 | Phase 0 特例程序重定行動 Lane 範圍（總則 4.0-4），門檻數值不動 |
+| iOS 私下發行法律路徑受限 | G0.10 | Phase 0 完成 Go/No-Go；No-Go 則 iOS Lane 關閉，資源轉桌面/Android |
 | GPL 語意耦合疑慮 | G7.1 | 法務前置核准；協定文件公開；Configurator 外置 |
 | 台架推力表數據取得 | G1.10 | 優先使用公開馬達台架數據庫；必要時自購測試台實測 |
 | Shi/Forster 參數為 Crazyflie 尺度 | G3.1–G3.3 | 公式結構不變、以 5 吋機資料包重擬合係數（Phase 1 交付） |
@@ -463,9 +521,11 @@ Windows、macOS、Android、iOS 的程式碼或建置可保留作未來工作，
 | 專案 | 用途 | 授權 |
 |---|---|---|
 | Godot 4.7（鎖版）、godot-cpp | 引擎 / 飛控核心 | MIT |
+| Microsoft AirSim 1.8.1 @ `96235148a332fe7cb3d3525a0720e26faaca99e0` | Python client、RPC/settings 相容與實作參考；引用前查 upstream issues | MIT |
+| PX4 | minimum SITL 飛控 | BSD-3-Clause |
+| Kenney City Kit (Industrial) | Industrial Test Range 主要 3D 資產 | CC0 |
 | gym-pybullet-drones | 氣動公式 + CI Python Oracle | MIT |
 | Betaflight（SITL） | Tier 2 真韌體；Phase 2 交叉驗證工具 | GPL-3.0（隔離） |
-| PX4 SIH | Tier 3 | BSD 3-Clause |
 | SimITL / KwadSim / pr0p 文獻 | 雙模擬子步進架構參考 | 參考 |
 | MIL-F-8785C / MIL-HDBK-1797 | Dryden / 風切 | 公開標準 |
 | Flowstate | 開源 UX 參考（HUD） | 開源 |
