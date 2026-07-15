@@ -24,7 +24,7 @@ std::int32_t int_value(const Dictionary &dict, const char *key, std::int32_t fal
 }
 
 aerosim::Vec3 vec3_value(const Dictionary &dict, const char *key, const aerosim::Vec3 &fallback) {
-    if (!dict.has(key)) {
+    if (!dict.has(key) || dict[key].get_type() != Variant::VECTOR3) {
         return fallback;
     }
     const Vector3 value = dict[key];
@@ -101,7 +101,9 @@ void apply_wind(
         const aerosim::SimulationClock &clock,
         const aerosim::WindField &wind_field) {
     const double sample_hz = config.substep_hz > 0 ? static_cast<double>(config.substep_hz) : 1.0;
-    config.wind_world_mps = wind_field.sample(static_cast<double>(clock.total_substeps) / sample_hz, state.position);
+    const double time_seconds = static_cast<double>(clock.total_substeps) / sample_hz;
+    config.wind_world_mps = wind_field.sample(time_seconds, state.position);
+    config.wind_turbulence_mps = wind_field.turbulence(time_seconds);
 }
 
 Dictionary motor_telemetry_dict(const aerosim::MotorTelemetry &motor) {
@@ -526,7 +528,7 @@ void AeroSimNative::configure_wind(const Dictionary &config) {
     if (config.has("preset") && !valid_wind_preset(requested_preset)) {
         return;
     }
-    const aerosim::Vec3 steady_wind = vec3_value(config, "steady_wind", {});
+    const aerosim::Vec3 steady_wind = vec3_value(config, "steady_wind", wind_field_.steady_wind());
     if (!std::isfinite(steady_wind.x) || !std::isfinite(steady_wind.y) || !std::isfinite(steady_wind.z)) {
         return;
     }

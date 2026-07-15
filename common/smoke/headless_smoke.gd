@@ -1301,6 +1301,15 @@ func _verify_runtime_actions() -> bool:
         push_error("Smoke runtime must expose Map wind preset selection")
         scene.queue_free()
         return false
+    if not scene.load_map("industrial_yard"):
+        push_error("Normal Industrial Yard loading must succeed before map wind selection")
+        scene.queue_free()
+        return false
+    var descriptor_wind_config: Dictionary = scene.native.call("wind_configuration")
+    if descriptor_wind_config.get("preset", "") != "calm":
+        push_error("Normal map loading must apply the descriptor wind_preset")
+        scene.queue_free()
+        return false
     scene.open_map_menu()
     await process_frame
     var severe_wind_button := scene.get_node_or_null("MapMenu/WindPresets/Severe") as Button
@@ -1335,16 +1344,25 @@ func _verify_runtime_actions() -> bool:
         push_error("Non-finite wind vectors must not enter the native wind configuration")
         scene.queue_free()
         return false
+    scene.native.call("configure_wind", {
+        "preset": "severe",
+        "steady_wind": Vector3(1.0, 2.0, 3.0),
+    })
+    scene.native.call("configure_wind", {"preset": "severe"})
+    var partial_config: Dictionary = scene.native.call("wind_configuration")
+    if not _same_imu_value(partial_config.get("steady_wind", Vector3.ZERO), Vector3(1.0, 2.0, 3.0)):
+        push_error("Omitted wind fields must preserve the existing native configuration")
+        scene.queue_free()
+        return false
     if not scene.load_map("industrial_yard"):
-        push_error("Loading Industrial Yard must succeed before descriptor wind ownership is checked")
+        push_error("Reloading Industrial Yard must preserve the selected wind preset")
         scene.queue_free()
         return false
-    var descriptor_wind_config: Dictionary = scene.native.call("wind_configuration")
-    if descriptor_wind_config.get("preset", "") != "calm":
-        push_error("Normal map loading must apply the descriptor wind_preset")
+    descriptor_wind_config = scene.native.call("wind_configuration")
+    if descriptor_wind_config.get("preset", "") != "severe":
+        push_error("Map wind selection must survive normal map loading")
         scene.queue_free()
         return false
-    scene.select_map("industrial_yard", "severe")
     var quick_fly_button := scene.get_node_or_null("MainMenu/Entries/QuickFly") as Button
     if quick_fly_button == null or quick_fly_button.text != "Quick Fly":
         push_error("Cold-start main menu must expose an interactive Quick Fly button")

@@ -412,11 +412,11 @@ void FlightController::maybe_publish_telemetry(
 
     snapshot.ground_effect_gain = a4_ground_effect_lift_newtons(config.a4_ground_effect, sample.state.position.y);
     snapshot.wind_world_mps = config.wind_world_mps;
-    snapshot.wind_body_mps = world_to_body(sample.state.orientation, config.wind_world_mps);
+    snapshot.wind_body_mps = y_up_to_frd(world_to_body(sample.state.orientation, config.wind_world_mps));
     snapshot.turbulence_intensity = std::sqrt(
-            config.wind_world_mps.x * config.wind_world_mps.x +
-            config.wind_world_mps.y * config.wind_world_mps.y +
-            config.wind_world_mps.z * config.wind_world_mps.z);
+            config.wind_turbulence_mps.x * config.wind_turbulence_mps.x +
+            config.wind_turbulence_mps.y * config.wind_turbulence_mps.y +
+            config.wind_turbulence_mps.z * config.wind_turbulence_mps.z);
     const Vec3 relative_air_velocity{
             sample.state.velocity.x - config.wind_world_mps.x,
             sample.state.velocity.y - config.wind_world_mps.y,

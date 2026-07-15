@@ -45,6 +45,7 @@ var airsim_camera_surface: AirSimCameraSurface
 var airsim_stop_file := ""
 var loaded_map: Node3D
 var loaded_map_id := ""
+var selected_wind_preset := ""
 var time_trial: TimeTrialController
 var paused := false
 var exit_requested := false
@@ -689,6 +690,9 @@ func enter_preflight() -> void:
     _refresh_flight_hud()
 
 func select_map(map_id: String, wind_preset: String) -> void:
+    if map_id != DEFAULT_FREE_FLIGHT_MAP_ID or not WIND_PRESETS.has(wind_preset):
+        return
+    selected_wind_preset = wind_preset
     if native != null:
         native.call("configure_wind", {
             "preset": wind_preset,
@@ -709,7 +713,7 @@ func open_map_menu() -> void:
         var button := Button.new()
         button.name = preset.capitalize()
         button.text = preset.capitalize()
-        button.pressed.connect(select_map.bind("smoke", preset))
+        button.pressed.connect(select_map.bind(DEFAULT_FREE_FLIGHT_MAP_ID, preset))
         presets.add_child(button)
 
 func respawn() -> void:
@@ -770,8 +774,9 @@ func load_map(map_id: String) -> bool:
     loaded_map = map_root
     loaded_map_id = map_id
     if native != null:
+        var applied_wind_preset := selected_wind_preset if not selected_wind_preset.is_empty() else str(descriptor.wind_preset)
         native.call("configure_wind", {
-            "preset": str(descriptor.wind_preset),
+            "preset": applied_wind_preset,
             "steady_wind": scene_steady_wind_mps,
         })
     _configure_time_trial(map_root)

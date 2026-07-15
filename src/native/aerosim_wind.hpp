@@ -88,6 +88,7 @@ public:
     const WindConfig &config() const;
     void set_steady_wind(const Vec3 &wind);
     Vec3 steady_wind() const;
+    Vec3 turbulence(double time_seconds) const;
     Vec3 sample(double time_seconds, const Vec3 &position) const;
 };
 

@@ -229,6 +229,14 @@ Vec3 WindField::steady_wind() const {
     return config_.steady_wind_mps;
 }
 
+Vec3 WindField::turbulence(double time_seconds) const {
+    if (!dryden_) {
+        return {};
+    }
+    const Vec3 semantic = dryden_->sample_at(time_seconds);
+    return {semantic.x, semantic.z, semantic.y};
+}
+
 Vec3 WindField::sample(double time_seconds, const Vec3 &position) const {
     Vec3 wind = config_.steady_wind_mps;
     if (config_.shear_enabled &&
@@ -240,10 +248,10 @@ Vec3 WindField::sample(double time_seconds, const Vec3 &position) const {
         wind.z *= scale;
     }
     if (dryden_) {
-        const Vec3 turbulence = dryden_->sample_at(time_seconds);
-        wind.x += turbulence.x;
-        wind.y += turbulence.z;
-        wind.z += turbulence.y;
+        const Vec3 world_turbulence = turbulence(time_seconds);
+        wind.x += world_turbulence.x;
+        wind.y += world_turbulence.y;
+        wind.z += world_turbulence.z;
     }
     return wind;
 }
