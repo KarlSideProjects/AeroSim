@@ -5,8 +5,6 @@
 namespace aerosim {
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-
 Quat conjugate(const Quat &q) {
     return {-q.x, -q.y, -q.z, q.w};
 }
@@ -31,7 +29,8 @@ Vec3 rotate_inverse(const Quat &q, const Vec3 &v) {
 Vec3 a3_drag_force_body(
         const A3DragConfig &config,
         const Quat &body_attitude,
-        const Vec3 &world_velocity) {
+        const Vec3 &relative_air_velocity_world,
+        const std::array<double, 4> &motor_speed_rad_s) {
     if (!config.enabled) {
         return {};
     }
@@ -42,17 +41,17 @@ Vec3 a3_drag_force_body(
     }
 
     double rotor_speed_sum = 0.0;
-    for (double rpm : config.motor_rpm) {
-        if (!std::isfinite(rpm) || rpm < 0.0) {
+    for (double speed : motor_speed_rad_s) {
+        if (!std::isfinite(speed) || speed < 0.0) {
             return {};
         }
-        rotor_speed_sum += 2.0 * kPi * rpm / 60.0;
+        rotor_speed_sum += speed;
     }
 
     const Vec3 drag_scaled_world{
-            -config.coefficient.x * rotor_speed_sum * world_velocity.x,
-            -config.coefficient.y * rotor_speed_sum * world_velocity.y,
-            -config.coefficient.z * rotor_speed_sum * world_velocity.z,
+            -config.coefficient.x * rotor_speed_sum * relative_air_velocity_world.x,
+            -config.coefficient.y * rotor_speed_sum * relative_air_velocity_world.y,
+            -config.coefficient.z * rotor_speed_sum * relative_air_velocity_world.z,
     };
     return rotate_inverse(body_attitude, drag_scaled_world);
 }
@@ -111,7 +110,8 @@ A3ForwardFlightEquilibrium a3_forward_flight_equilibrium(
         const A3DragConfig &config,
         double mass_kg,
         double gravity_mps2,
-        double forward_speed_mps) {
+        double forward_speed_mps,
+        const std::array<double, 4> &motor_speed_rad_s) {
     if (!config.enabled ||
             !std::isfinite(mass_kg) || mass_kg <= 0.0 ||
             !std::isfinite(gravity_mps2) || gravity_mps2 <= 0.0 ||
@@ -121,11 +121,11 @@ A3ForwardFlightEquilibrium a3_forward_flight_equilibrium(
     }
 
     double rotor_speed_sum = 0.0;
-    for (double rpm : config.motor_rpm) {
-        if (!std::isfinite(rpm) || rpm < 0.0) {
+    for (double speed : motor_speed_rad_s) {
+        if (!std::isfinite(speed) || speed < 0.0) {
             return {};
         }
-        rotor_speed_sum += 2.0 * kPi * rpm / 60.0;
+        rotor_speed_sum += speed;
     }
 
     const double drag_newtons = config.coefficient.x * rotor_speed_sum * forward_speed_mps;

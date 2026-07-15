@@ -163,7 +163,7 @@ func _configure_effects(native: Object) -> bool:
         _fail("--effects must be off or on")
         return false
     var enabled := _effects == "on"
-    if not native.call("set_a3_drag_model", enabled, 0.0001, 0.0001, 0.00012, 10000.0, 10000.0, 10000.0, 10000.0):
+    if not native.call("set_a3_drag_model", enabled, 0.0001, 0.0001, 0.00012):
         _fail("cannot configure A3 drag")
         return false
     if not native.call("set_a4_ground_effect_model", enabled, 3.16e-10, 11.36859, 0.0231348, 0.0231348, 12000.0, 12000.0, 12000.0, 12000.0):

@@ -131,7 +131,7 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("hardware_per_motor_diagnostics"), &AeroSimNative::hardware_per_motor_diagnostics);
     ClassDB::bind_method(D_METHOD("telemetry_snapshot"), &AeroSimNative::telemetry_snapshot);
     ClassDB::bind_method(
-            D_METHOD("set_a3_drag_model", "enabled", "coefficient_x", "coefficient_y", "coefficient_z", "motor_0_rpm", "motor_1_rpm", "motor_2_rpm", "motor_3_rpm"),
+            D_METHOD("set_a3_drag_model", "enabled", "coefficient_x_kg", "coefficient_y_kg", "coefficient_z_kg"),
             &AeroSimNative::set_a3_drag_model);
     ClassDB::bind_method(D_METHOD("a3_drag_configuration"), &AeroSimNative::a3_drag_configuration);
     ClassDB::bind_method(
@@ -227,7 +227,9 @@ PackedFloat64Array AeroSimNative::step_simulation(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
-    config.a3_drag = a3_drag_config_;
+    if (!flight_controller_.armed()) {
+        simulation_state_.motor_thrust_newtons = {};
+    }
     config.a4_ground_effect = a4_ground_effect_config_;
 
     PackedFloat64Array row;
@@ -263,7 +265,6 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
-    config.a3_drag = a3_drag_config_;
     config.a4_ground_effect = a4_ground_effect_config_;
     const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
     const aerosim::TrajectorySample sample = aerosim::step_per_motor_physics_frame(
@@ -324,7 +325,6 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
-    config.a3_drag = a3_drag_config_;
     config.a4_ground_effect = a4_ground_effect_config_;
     aerosim::CollisionContact contact;
     contact.touching = touching;
@@ -577,43 +577,31 @@ Dictionary AeroSimNative::telemetry_snapshot() const {
 
 bool AeroSimNative::set_a3_drag_model(
         bool enabled,
-        double coefficient_x,
-        double coefficient_y,
-        double coefficient_z,
-        double motor_0_rpm,
-        double motor_1_rpm,
-        double motor_2_rpm,
-        double motor_3_rpm) {
+        double coefficient_x_kg,
+        double coefficient_y_kg,
+        double coefficient_z_kg) {
     const double values[] = {
-            coefficient_x,
-            coefficient_y,
-            coefficient_z,
-            motor_0_rpm,
-            motor_1_rpm,
-            motor_2_rpm,
-            motor_3_rpm,
+            coefficient_x_kg,
+            coefficient_y_kg,
+            coefficient_z_kg,
     };
     for (double value : values) {
         if (!std::isfinite(value) || value < 0.0) {
             return false;
         }
     }
-    a3_drag_config_.enabled = enabled;
-    a3_drag_config_.coefficient = {coefficient_x, coefficient_y, coefficient_z};
-    a3_drag_config_.motor_rpm = {motor_0_rpm, motor_1_rpm, motor_2_rpm, motor_3_rpm};
-    return true;
+    return hardware_config_.set_a3_drag_model(
+            enabled, {coefficient_x_kg, coefficient_y_kg, coefficient_z_kg});
 }
 
 Dictionary AeroSimNative::a3_drag_configuration() const {
     Dictionary config;
-    config["enabled"] = a3_drag_config_.enabled;
-    config["coefficient_x"] = a3_drag_config_.coefficient.x;
-    config["coefficient_y"] = a3_drag_config_.coefficient.y;
-    config["coefficient_z"] = a3_drag_config_.coefficient.z;
-    config["motor_0_rpm"] = a3_drag_config_.motor_rpm[0];
-    config["motor_1_rpm"] = a3_drag_config_.motor_rpm[1];
-    config["motor_2_rpm"] = a3_drag_config_.motor_rpm[2];
-    config["motor_3_rpm"] = a3_drag_config_.motor_rpm[3];
+    const aerosim::A3DragConfig &a3_drag = hardware_config_.a3_drag;
+    config["enabled"] = a3_drag.enabled;
+    config["coefficient_x_kg"] = a3_drag.coefficient.x;
+    config["coefficient_y_kg"] = a3_drag.coefficient.y;
+    config["coefficient_z_kg"] = a3_drag.coefficient.z;
+    config["motor_speed_source"] = "live_motor_thrust_state";
     return config;
 }
 
@@ -748,7 +736,6 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
-    config.a3_drag = a3_drag_config_;
     config.a4_ground_effect = a4_ground_effect_config_;
 
     aerosim::FlightCommand command;
@@ -795,7 +782,6 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
-    config.a3_drag = a3_drag_config_;
     config.a4_ground_effect = a4_ground_effect_config_;
 
     aerosim::AcroCommand command;
@@ -854,7 +840,6 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
-    config.a3_drag = a3_drag_config_;
     config.a4_ground_effect = a4_ground_effect_config_;
 
     aerosim::FlightCommand command;
@@ -924,7 +909,6 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
-    config.a3_drag = a3_drag_config_;
     config.a4_ground_effect = a4_ground_effect_config_;
 
     aerosim::FlightCommand command;
@@ -969,7 +953,6 @@ PackedFloat64Array AeroSimNative::simulate_trajectory(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
-    config.a3_drag = a3_drag_config_;
     config.a4_ground_effect = a4_ground_effect_config_;
 
     PackedFloat64Array rows;
@@ -1018,7 +1001,6 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
-    config.a3_drag = a3_drag_config_;
     config.a4_ground_effect = a4_ground_effect_config_;
 
     aerosim::AcroCommand command;
@@ -1102,7 +1084,6 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
-    config.a3_drag = a3_drag_config_;
     config.a4_ground_effect = a4_ground_effect_config_;
 
     aerosim::FlightCommand command;

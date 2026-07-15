@@ -32,7 +32,6 @@ struct RigidBodyState {
 struct A3DragConfig {
     bool enabled = false;
     Vec3 coefficient;
-    std::array<double, 4> motor_rpm = {0.0, 0.0, 0.0, 0.0};
 };
 
 struct A4GroundEffectConfig {
@@ -87,6 +86,7 @@ struct SimulationConfig {
     PerMotorPhysicsConfig per_motor;
     A3DragConfig a3_drag;
     A4GroundEffectConfig a4_ground_effect;
+    Vec3 wind_world_mps;
     RigidBodyState initial_state;
 };
 
@@ -101,6 +101,7 @@ struct HardwareConfig {
     double battery_remaining_mah = 0.0;
     double max_total_current_a = 0.0;
     double max_motor_rpm = 0.0;
+    A3DragConfig a3_drag;
     PerMotorPhysicsConfig per_motor;
 
     bool set_mass_kg(double value) {
@@ -156,6 +157,17 @@ struct HardwareConfig {
         return true;
     }
 
+    bool set_a3_drag_model(bool enabled, const Vec3 &coefficient) {
+        if (!std::isfinite(coefficient.x) || coefficient.x < 0.0 ||
+                !std::isfinite(coefficient.y) || coefficient.y < 0.0 ||
+                !std::isfinite(coefficient.z) || coefficient.z < 0.0) {
+            return false;
+        }
+        a3_drag.enabled = enabled;
+        a3_drag.coefficient = coefficient;
+        return true;
+    }
+
     SimulationConfig simulation_config() const {
         SimulationConfig config;
         config.mass_kg = mass_kg;
@@ -168,6 +180,7 @@ struct HardwareConfig {
         config.battery_remaining_mah = battery_remaining_mah;
         config.max_total_current_a = max_total_current_a;
         config.max_motor_rpm = max_motor_rpm;
+        config.a3_drag = a3_drag;
         config.per_motor = per_motor;
         return config;
     }
@@ -189,6 +202,10 @@ Vec3 frd_to_y_up(const Vec3 &frd);
 Vec3 y_up_to_frd(const Vec3 &y_up);
 double first_order_motor_response(double current, double target, double tau_s, double dt_s);
 double available_thrust_cap_newtons(const SimulationConfig &config, double throttle);
+double motor_speed_rad_s_from_thrust(
+        double thrust_newtons,
+        double max_thrust_per_motor_newtons,
+        double max_motor_rpm);
 TrajectorySample step_physics_frame(
         RigidBodyState &state,
         SimulationClock &clock,

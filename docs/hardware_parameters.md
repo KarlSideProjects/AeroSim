@@ -29,6 +29,8 @@ Every drone preset must define these top-level categories:
 - `propeller`: diameter, pitch, blade count, mass, bench table.
 - `battery`: cell count, capacity, C rating, cell resistance, nominal voltage, discharge curve.
 - `esc`: current limit, protocol, update rate.
+- `aerodynamics`: static A3 switch and three-axis coefficients in `kg`; rotor
+  speed is runtime state, never a preset field.
 - `aircraft`: AUW, inertia diagonal, center-of-gravity offset, four motor positions.
 - `sensors`: gyro rate, IMU noise density, bias drift, random walk, barometer noise.
 - `fpv`: camera uptilt and FOV.
@@ -65,3 +67,12 @@ least squares over `rpm^2`, then derives:
 the native runtime rejects it. Angle Mode uses the derived hover throttle and
 thrust cap, so changing the preset changes the native flight behavior without
 hardcoding a 5-inch airframe in native code.
+
+## A3 Drag
+
+The A3 coefficient has units of `kg` for the frozen relation
+`F = coefficient * rad/s * relative_air_velocity`. Presets currently keep A3
+disabled with zero coefficients because no calibrated production coefficient
+has been approved. Tests and experimental callers may enable the model through
+the native static setter; live rotor speed then comes only from per-motor
+thrust state at each physics substep.

@@ -13,6 +13,10 @@ Vec3 operator+(const Vec3 &a, const Vec3 &b) {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
 }
 
+Vec3 operator-(const Vec3 &a, const Vec3 &b) {
+    return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
 Vec3 operator*(const Vec3 &v, double scale) {
     return {v.x * scale, v.y * scale, v.z * scale};
 }
@@ -44,7 +48,16 @@ Vec3 rotate(const Quat &q, const Vec3 &v) {
 void integrate(RigidBodyState &state, const SimulationConfig &config, double dt) {
     const double ground_lift = a4_ground_effect_lift_newtons(config.a4_ground_effect, state.position.y);
     const Vec3 thrust_world = rotate(state.orientation, {0.0, config.total_thrust_newtons + ground_lift, 0.0});
-    const Vec3 drag_world = rotate(state.orientation, a3_drag_force_body(config.a3_drag, state.orientation, state.velocity));
+    std::array<double, 4> motor_speeds{};
+    for (std::size_t index = 0; index < motor_speeds.size(); ++index) {
+        motor_speeds[index] = motor_speed_rad_s_from_thrust(
+                state.motor_thrust_newtons[index],
+                config.per_motor.max_thrust_per_motor_newtons,
+                config.max_motor_rpm);
+    }
+    const Vec3 relative_air_velocity = state.velocity - config.wind_world_mps;
+    const Vec3 drag_world = rotate(state.orientation, a3_drag_force_body(
+            config.a3_drag, state.orientation, relative_air_velocity, motor_speeds));
     const Vec3 force_world = thrust_world + drag_world;
     const Vec3 acceleration{
             force_world.x / config.mass_kg,
@@ -224,8 +237,17 @@ void integrate_per_motor(
 
     const double ground_lift = a4_ground_effect_lift_newtons(config.a4_ground_effect, state.position.y);
     body_force.y += ground_lift;
+    const Vec3 relative_air_velocity = state.velocity - config.wind_world_mps;
+    std::array<double, 4> motor_speeds{};
+    for (std::size_t index = 0; index < motor_speeds.size(); ++index) {
+        motor_speeds[index] = motor_speed_rad_s_from_thrust(
+                state.motor_thrust_newtons[index],
+                config.per_motor.max_thrust_per_motor_newtons,
+                config.max_motor_rpm);
+    }
     const Vec3 force_world = rotate(state.orientation, body_force) +
-            rotate(state.orientation, a3_drag_force_body(config.a3_drag, state.orientation, state.velocity));
+            rotate(state.orientation, a3_drag_force_body(
+                    config.a3_drag, state.orientation, relative_air_velocity, motor_speeds));
     const Vec3 acceleration{
             force_world.x / config.mass_kg,
             force_world.y / config.mass_kg - config.gravity_mps2,
@@ -288,6 +310,21 @@ double available_thrust_cap_newtons(const SimulationConfig &config, double throt
             current_a * config.battery_cell_resistance_ohm * config.battery_cells;
     const double voltage_ratio = std::clamp(loaded_voltage / config.battery_nominal_voltage_v, 0.0, 1.0);
     return raw_cap * voltage_ratio * voltage_ratio;
+}
+
+double motor_speed_rad_s_from_thrust(
+        double thrust_newtons,
+        double max_thrust_per_motor_newtons,
+        double max_motor_rpm) {
+    if (!std::isfinite(thrust_newtons) || thrust_newtons < 0.0 ||
+            !std::isfinite(max_thrust_per_motor_newtons) || max_thrust_per_motor_newtons <= 0.0 ||
+            !std::isfinite(max_motor_rpm) || max_motor_rpm <= 0.0) {
+        return 0.0;
+    }
+    constexpr double kRadiansPerSecondPerRpm = 2.0 * 3.14159265358979323846 / 60.0;
+    const double motor_rpm = max_motor_rpm *
+            std::sqrt(std::clamp(thrust_newtons / max_thrust_per_motor_newtons, 0.0, 1.0));
+    return motor_rpm * kRadiansPerSecondPerRpm;
 }
 
 std::vector<TrajectorySample> simulate_trajectory(const SimulationConfig &config) {

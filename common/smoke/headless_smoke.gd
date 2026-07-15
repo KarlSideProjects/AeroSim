@@ -651,7 +651,7 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
             push_error("AeroSimNative.%s must exist for A3 drag public configuration" % method)
             return false
 
-    if not native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012, 10000.0, 10000.0, 10000.0, 10000.0):
+    if not native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012):
         push_error("A3 drag public path must accept a disabled valid configuration")
         return false
     var disabled: Dictionary = native.call("a3_drag_configuration")
@@ -661,12 +661,12 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
 
     native.call("reset_simulation")
     native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    var off_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.0)
+    var off_row: PackedFloat64Array = native.call("step_px4_actuator_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5)
     if absf(float(off_row[8]) - 10.0) > 1e-9:
         push_error("A3 disabled must not decelerate the public coasting path")
         return false
 
-    if not native.call("set_a3_drag_model", true, 0.0001, 0.0001, 0.00012, 10000.0, 10000.0, 10000.0, 10000.0):
+    if not native.call("set_a3_drag_model", true, 0.0001, 0.0001, 0.00012):
         push_error("A3 drag public path must accept an enabled valid configuration")
         return false
     var enabled: Dictionary = native.call("a3_drag_configuration")
@@ -676,9 +676,9 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
 
     native.call("reset_simulation")
     native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    var on_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.0)
+    var on_row: PackedFloat64Array = native.call("step_px4_actuator_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5)
     if float(on_row[8]) >= float(off_row[8]):
-        push_error("A3 enabled must decelerate the public coasting path")
+        push_error("A3 enabled must decelerate the public path using live motor state")
         return false
     return true
 
@@ -1799,7 +1799,7 @@ func _verify_hardware_config_public_path() -> bool:
     if not loader.last_ok or race_preset.version == preset.version:
         push_error("5 inch race hardware preset must load as a distinct built-in preset")
         return false
-    for key in ["frame", "motor", "propeller", "battery", "esc", "aircraft", "sensors", "fpv"]:
+    for key in ["frame", "motor", "propeller", "battery", "esc", "aerodynamics", "aircraft", "sensors", "fpv"]:
         if not preset.has(key):
             push_error("5 inch hardware preset missing 3.6.1 category: %s" % key)
             return false
@@ -1807,6 +1807,9 @@ func _verify_hardware_config_public_path() -> bool:
         if not preset.has(key):
             push_error("5 inch hardware preset missing required metadata: %s" % key)
             return false
+    if preset.aerodynamics.a3.enabled or float(preset.aerodynamics.a3.coefficient_kg.x) < 0.0:
+        push_error("Hardware preset must keep uncalibrated A3 coefficients finite, non-negative, and disabled")
+        return false
     if loader.prop_sample_at_rpm(preset, 1000.0).ok:
         push_error("Prop table must reject rpm requests below the measured table")
         return false
@@ -1937,6 +1940,15 @@ func _verify_hardware_config_public_path() -> bool:
     var reset_count_before: int = scene.reset_count
     if not loader.apply_to_runtime(scene, "res://config/drones/5_inch_6s.json"):
         push_error("Runtime must hot-switch the built-in 5 inch hardware preset")
+        scene.queue_free()
+        return false
+    var startup_a3: Dictionary = scene.native.call("a3_drag_configuration")
+    if (bool(startup_a3.get("enabled", false)) != bool(preset.aerodynamics.a3.enabled) or
+            abs(float(startup_a3.get("coefficient_x_kg", -1.0)) - float(preset.aerodynamics.a3.coefficient_kg.x)) > 1e-12 or
+            abs(float(startup_a3.get("coefficient_y_kg", -1.0)) - float(preset.aerodynamics.a3.coefficient_kg.y)) > 1e-12 or
+            abs(float(startup_a3.get("coefficient_z_kg", -1.0)) - float(preset.aerodynamics.a3.coefficient_kg.z)) > 1e-12 or
+            startup_a3.get("motor_speed_source", "") != "live_motor_thrust_state"):
+        push_error("Runtime startup preset must apply static A3 settings and retain live motor speed ownership")
         scene.queue_free()
         return false
     if scene.native != native_before or scene.reset_count != reset_count_before or scene.get_meta("hardware_config_version", "") != preset.version:

@@ -6,7 +6,7 @@ const USABLE_BATTERY_FRACTION := 0.80
 
 const FACTORY_DEFAULT := {
     "version": "factory-default",
-    "units": {"mass": "kg", "length": "m", "area": "m^2", "thrust": "N", "torque": "Nm", "rpm": "rpm", "current": "A", "resistance": "ohm", "time": "s", "frequency": "Hz", "angle": "deg"},
+    "units": {"mass": "kg", "length": "m", "area": "m^2", "thrust": "N", "torque": "Nm", "rpm": "rpm", "current": "A", "resistance": "ohm", "time": "s", "frequency": "Hz", "angle": "deg", "a3_drag_coefficient": "kg"},
     "coordinate_frame": {"world": "Godot Y-up", "body": "FRD: +X forward, +Y right, +Z down"},
     "motor_order": ["rear_right", "front_right", "rear_left", "front_left"],
     "spin_direction": ["cw", "ccw", "ccw", "cw"],
@@ -49,6 +49,7 @@ const FACTORY_DEFAULT := {
         ]
     },
     "esc": {"current_limit_a": 45, "protocol": "DShot600", "update_rate_hz": 600},
+    "aerodynamics": {"a3": {"enabled": false, "coefficient_kg": {"x": 0.0, "y": 0.0, "z": 0.0}}},
     "aircraft": {
         "mass_kg": 0.72,
         "inertia_kg_m2": {"x": 0.0030, "y": 0.0030, "z": 0.0050},
@@ -264,6 +265,24 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             last_error = "native runtime rejected telemetry model"
             push_error(last_error)
             return false
+        if not runtime.native.has_method("set_a3_drag_model"):
+            last_ok = false
+            last_error = "native runtime missing A3 drag model setter"
+            push_error(last_error)
+            return false
+        var a3: Dictionary = current.get("aerodynamics", {}).get("a3", {})
+        var a3_coefficient: Dictionary = a3.get("coefficient_kg", {})
+        if not runtime.native.call(
+                "set_a3_drag_model",
+                bool(a3.enabled),
+                float(a3_coefficient.x),
+                float(a3_coefficient.y),
+                float(a3_coefficient.z)
+            ):
+            last_ok = false
+            last_error = "native runtime rejected A3 drag model"
+            push_error(last_error)
+            return false
     runtime.set_meta("hardware_config_version", current.version)
     runtime.set_meta("hardware_config_path", path)
     return true
@@ -301,6 +320,10 @@ func _validate(config: Dictionary, schema: Dictionary) -> String:
         return "spin direction must match motor order"
     if config.prop_table_interpolation != "linear_no_extrapolation":
         return "prop table interpolation must be linear_no_extrapolation"
+    for path in schema.boolean_paths:
+        var boolean_value: Variant = _dig(config, path)
+        if not (boolean_value is bool):
+            return "%s must be boolean" % path
     for spec_value in schema.numeric_ranges:
         var spec: Dictionary = spec_value
         var value: Variant = _dig(config, spec.path)
@@ -315,6 +338,22 @@ func _validate(config: Dictionary, schema: Dictionary) -> String:
     var layout_error := _validate_motor_layout(config.aircraft.motor_layout)
     if layout_error != "":
         return layout_error
+    var a3_error := _validate_a3(config.aerodynamics.a3)
+    if a3_error != "":
+        return a3_error
+    return ""
+
+func _validate_a3(a3: Variant) -> String:
+    if not (a3 is Dictionary) or not a3.has("enabled") or not (a3.enabled is bool):
+        return "aerodynamics.a3.enabled must be boolean"
+    if not a3.has("coefficient_kg") or not (a3.coefficient_kg is Dictionary):
+        return "aerodynamics.a3.coefficient_kg is required"
+    for axis in ["x", "y", "z"]:
+        if not a3.coefficient_kg.has(axis):
+            return "aerodynamics.a3.coefficient_kg.%s is required" % axis
+        var value: Variant = a3.coefficient_kg[axis]
+        if not (value is float or value is int) or not is_finite(float(value)) or float(value) < 0.0:
+            return "aerodynamics.a3.coefficient_kg.%s must be finite and non-negative" % axis
     return ""
 
 func _validate_propeller_table(table: Array, ranges: Dictionary) -> String:

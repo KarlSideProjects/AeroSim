@@ -41,8 +41,17 @@ int main() {
         return fail("hardware config must accept a positive mass");
     }
     configure_per_motor_model(hardware);
+    if (hardware.set_a3_drag_model(true, {NAN, 1.0e-4, 1.0e-4}) ||
+            hardware.set_a3_drag_model(true, {-1.0e-4, 1.0e-4, 1.0e-4}) ||
+            !hardware.set_a3_drag_model(true, {1.0e-4, 1.0e-4, 1.2e-4})) {
+        return fail("hardware config must reject invalid A3 coefficients and preserve valid static settings");
+    }
 
     aerosim::SimulationConfig config = hardware.simulation_config();
+    if (!config.a3_drag.enabled || !near(config.a3_drag.coefficient.x, 1.0e-4, 1e-12) ||
+            !near(config.a3_drag.coefficient.z, 1.2e-4, 1e-12)) {
+        return fail("hardware config must carry static A3 settings into every simulation config");
+    }
     config.seconds = 1.0;
     config.physics_hz = 240;
     config.substep_hz = 1000;

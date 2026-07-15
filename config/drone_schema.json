@@ -11,7 +11,8 @@
     "resistance": "ohm",
     "time": "s",
     "frequency": "Hz",
-    "angle": "deg"
+    "angle": "deg",
+    "a3_drag_coefficient": "kg"
   },
   "expected_coordinate_frame": {
     "world": "Godot Y-up",
@@ -19,6 +20,7 @@
   },
   "expected_motor_order": ["rear_right", "front_right", "rear_left", "front_left"],
   "expected_spin_direction": ["cw", "ccw", "ccw", "cw"],
+  "boolean_paths": ["aerodynamics.a3.enabled"],
   "required_paths": [
     "version",
     "units",
@@ -52,6 +54,10 @@
     "esc.current_limit_a",
     "esc.protocol",
     "esc.update_rate_hz",
+    "aerodynamics.a3.enabled",
+    "aerodynamics.a3.coefficient_kg.x",
+    "aerodynamics.a3.coefficient_kg.y",
+    "aerodynamics.a3.coefficient_kg.z",
     "aircraft.mass_kg",
     "aircraft.inertia_kg_m2.x",
     "aircraft.inertia_kg_m2.y",

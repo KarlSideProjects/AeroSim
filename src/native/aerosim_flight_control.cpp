@@ -11,7 +11,6 @@ namespace aerosim {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr double kRadiansPerSecondPerRpm = 2.0 * kPi / 60.0;
 constexpr double kAngleP = 20.0;
 constexpr double kRateP = 0.600;
 constexpr double kRateI = 0.020;
@@ -359,10 +358,7 @@ void FlightController::maybe_publish_telemetry(
     snapshot.mode = mode;
 
     const double throttle_clamped = armed_ ? std::clamp(throttle, 0.0, 1.0) : 0.0;
-    const double available_thrust = available_thrust_cap_newtons(config, throttle_clamped);
-    const double max_total_thrust = available_thrust > 0.0 ? available_thrust : config.max_total_thrust_newtons;
-    const double max_per_motor_thrust = max_total_thrust / static_cast<double>(snapshot.motors.size());
-    const double max_motor_rpm = config.max_motor_rpm > 0.0 ? config.max_motor_rpm : 0.0;
+    std::array<double, 4> motor_speeds{};
     for (std::size_t index = 0; index < snapshot.motors.size(); ++index) {
         MotorTelemetry &motor = snapshot.motors[index];
         motor.thrust_newtons = armed_ ? sample.state.motor_thrust_newtons[index] : 0.0;
@@ -370,17 +366,26 @@ void FlightController::maybe_publish_telemetry(
                 ? std::clamp(motor.thrust_newtons / config.per_motor.max_thrust_per_motor_newtons, 0.0, 1.0)
                 : 0.0;
         motor.current_a = armed_ ? config.per_motor.max_current_per_motor_a * thrust_fraction : 0.0;
-        const double motor_rpm = max_per_motor_thrust > 0.0
-                ? max_motor_rpm * std::sqrt(std::clamp(motor.thrust_newtons / max_per_motor_thrust, 0.0, 1.0))
-                : 0.0;
-        motor.speed_rad_s = motor_rpm * kRadiansPerSecondPerRpm;
+        motor_speeds[index] = motor_speed_rad_s_from_thrust(
+                motor.thrust_newtons,
+                config.per_motor.max_thrust_per_motor_newtons,
+                config.max_motor_rpm);
+        motor.speed_rad_s = motor_speeds[index];
         motor.saturated = armed_ && (motor_saturation_latched_[index] || throttle_clamped >= 1.0 - 1e-9 ||
                 (config.per_motor.max_thrust_per_motor_newtons > 0.0 &&
                         motor.thrust_newtons >= config.per_motor.max_thrust_per_motor_newtons - 1e-9));
     }
 
     snapshot.ground_effect_gain = a4_ground_effect_lift_newtons(config.a4_ground_effect, sample.state.position.y);
-    snapshot.drag_body_n = a3_drag_force_body(config.a3_drag, sample.state.orientation, sample.state.velocity);
+    const Vec3 relative_air_velocity{
+            sample.state.velocity.x - config.wind_world_mps.x,
+            sample.state.velocity.y - config.wind_world_mps.y,
+            sample.state.velocity.z - config.wind_world_mps.z};
+    snapshot.drag_body_n = a3_drag_force_body(
+            config.a3_drag,
+            sample.state.orientation,
+            relative_air_velocity,
+            motor_speeds);
     snapshot.battery.voltage_v = loaded_voltage_v(config, throttle_clamped);
     snapshot.battery.sag_v = std::max(0.0, config.battery_nominal_voltage_v - snapshot.battery.voltage_v);
     snapshot.battery.remaining_mah = config.battery_remaining_mah;

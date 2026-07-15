@@ -12,12 +12,14 @@ struct A3ForwardFlightEquilibrium {
 Vec3 a3_drag_force_body(
         const A3DragConfig &config,
         const Quat &body_attitude,
-        const Vec3 &world_velocity);
+        const Vec3 &relative_air_velocity_world,
+        const std::array<double, 4> &motor_speed_rad_s);
 A3ForwardFlightEquilibrium a3_forward_flight_equilibrium(
         const A3DragConfig &config,
         double mass_kg,
         double gravity_mps2,
-        double forward_speed_mps);
+        double forward_speed_mps,
+        const std::array<double, 4> &motor_speed_rad_s);
 double a4_ground_effect_lift_newtons(
         const A4GroundEffectConfig &config,
         double height_m);

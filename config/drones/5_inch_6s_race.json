@@ -11,7 +11,8 @@
     "resistance": "ohm",
     "time": "s",
     "frequency": "Hz",
-    "angle": "deg"
+    "angle": "deg",
+    "a3_drag_coefficient": "kg"
   },
   "coordinate_frame": {
     "world": "Godot Y-up",
@@ -62,6 +63,12 @@
     "current_limit_a": 60,
     "protocol": "DShot600",
     "update_rate_hz": 600
+  },
+  "aerodynamics": {
+    "a3": {
+      "enabled": false,
+      "coefficient_kg": {"x": 0.0, "y": 0.0, "z": 0.0}
+    }
   },
   "aircraft": {
     "mass_kg": 0.68,
