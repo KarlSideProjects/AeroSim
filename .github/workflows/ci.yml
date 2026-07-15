@@ -197,10 +197,11 @@ jobs:
           cp -a build/headed/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux/"
           echo "::notice::Stored headed-linux screenshots in $AEROSIM_CI_ARTIFACT_RUN_DIR"
 
-      - name: Headless smoke
+      - name: Headless physics qualification
         run: |
           scripts/run_headless_smoke.sh --output build/headless_smoke.json --csv-output build/headless_trajectory.csv --seconds 60
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["native_probe"])')" = "47"
+          test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["physics_ticks_per_second"])')" = "240"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["simulated_frames"])')" = "14400"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["desktop_substep_hz"])')" = "1000"
           test "$(python3 -c 'import json; print(json.load(open("build/headless_smoke.json"))["desktop_substeps"])')" = "60000"

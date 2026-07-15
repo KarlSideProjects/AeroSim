@@ -22,6 +22,17 @@ import sys
 
 args = sys.argv[1:]
 
+expected_fixed_fps = os.environ.get("FAKE_GODOT_EXPECT_FIXED_FPS")
+if expected_fixed_fps is not None:
+    if args.count("--fixed-fps") != 1:
+        raise SystemExit(23)
+    fixed_fps_index = args.index("--fixed-fps")
+    if (
+        fixed_fps_index + 1 >= len(args)
+        or args[fixed_fps_index + 1] != expected_fixed_fps
+    ):
+        raise SystemExit(23)
+
 if "--log-file" in args:
     log_path = Path(args[args.index("--log-file") + 1])
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,7 +127,7 @@ class CiStrategyTest(unittest.TestCase):
         gut_position = self.linux_job.find("run: scripts/run_gut_tests.sh")
         if gut_position >= 0:
             for later_step in (
-                "Headless smoke",
+                "Headless physics qualification",
                 "Headed acceptance (Xvfb + lavapipe)",
                 "Performance harness smoke (Xvfb + lavapipe)",
                 "Install Godot export templates",
@@ -210,6 +221,34 @@ class CiStrategyTest(unittest.TestCase):
         # Headless intentionally exercises HardwareConfig's push_error + fallback path.
         self._assert_runtime_runner_contract(HEADLESS_RUNNER, reject_console_errors=False)
 
+    def test_headless_runner_uses_fixed_240_hz_clock_without_real_time_sync(self):
+        completed, _ = self._run_runner(
+            HEADLESS_RUNNER,
+            "true",
+            "Godot Engine fake\n",
+            expected_fixed_fps="240",
+        )
+        self.assertEqual(0, completed.returncode)
+
+    def test_headless_qualification_keeps_core_coverage_and_clock_contract(self):
+        step_match = re.search(
+            r"^      - name: Headless physics qualification\n"
+            r"(?:(?!^      - ).)*(?=^      - |\Z)",
+            self.linux_job,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(step_match)
+        step = step_match.group(0) if step_match else ""
+        for contract in (
+            "--seconds 60",
+            '["physics_ticks_per_second"])\')" = "240"',
+            '["simulated_frames"])\')" = "14400"',
+            '["desktop_substeps"])\')" = "60000"',
+            '["jolt_collision_trials"])\')" = "800"',
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, step)
+
     def _assert_runtime_runner_contract(self, runner: Path, reject_console_errors: bool):
         success_scenarios = (
             ("structured true", "Godot Engine fake\n"),
@@ -246,7 +285,14 @@ class CiStrategyTest(unittest.TestCase):
         with self.subTest(scenario="non-zero process", contract="retained Godot log"):
             self.assertIn("Godot Engine fake\n", logs)
 
-    def _run_runner(self, runner: Path, result: str, log_text: str, exit_status: int = 0):
+    def _run_runner(
+        self,
+        runner: Path,
+        result: str,
+        log_text: str,
+        exit_status: int = 0,
+        expected_fixed_fps: str | None = None,
+    ):
         with tempfile.TemporaryDirectory() as temporary_directory:
             workdir = Path(temporary_directory)
             fake_godot = workdir / "fake_godot.py"
@@ -259,6 +305,8 @@ class CiStrategyTest(unittest.TestCase):
                 FAKE_GODOT_LOG=log_text,
                 FAKE_GODOT_EXIT=str(exit_status),
             )
+            if expected_fixed_fps is not None:
+                environment["FAKE_GODOT_EXPECT_FIXED_FPS"] = expected_fixed_fps
             completed = subprocess.run(
                 [str(runner)],
                 cwd=workdir,
