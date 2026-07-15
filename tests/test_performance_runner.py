@@ -39,7 +39,7 @@ class PerformanceRunnerTest(unittest.TestCase):
     def test_a6_activation_uses_the_public_native_path_before_and_during_measurement(self):
         self.assertIn('func _activate_a6() -> bool:', BENCHMARK_SOURCE)
         self.assertIn('native.call("set_a6_propwash_model", enabled, 12.0, 2.0, 0.5)', BENCHMARK_SOURCE)
-        self.assertIn('native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.866025403784, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)', BENCHMARK_SOURCE)
+        self.assertIn('native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)', BENCHMARK_SOURCE)
         self.assertIn('native.call("step_angle_mode", 240, 1000, 0.75, 0.0, 0.0, 0.0)', BENCHMARK_SOURCE)
         self.assertGreaterEqual(BENCHMARK_SOURCE.count('_activate_a6()'), 2)
 
