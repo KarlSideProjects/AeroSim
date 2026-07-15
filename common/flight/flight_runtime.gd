@@ -28,6 +28,9 @@ const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Exit"
+const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
+
+@export var scene_steady_wind_mps := Vector3.ZERO
 
 @onready var fallback_status_label: Label3D = %FallbackStatus
 @onready var drone_body = get_node_or_null("DroneBody")
@@ -42,6 +45,7 @@ var airsim_camera_surface: AirSimCameraSurface
 var airsim_stop_file := ""
 var loaded_map: Node3D
 var loaded_map_id := ""
+var selected_wind_preset := ""
 var time_trial: TimeTrialController
 var paused := false
 var exit_requested := false
@@ -685,6 +689,33 @@ func enter_preflight() -> void:
     update_fallback_status()
     _refresh_flight_hud()
 
+func select_map(map_id: String, wind_preset: String) -> void:
+    if map_id != DEFAULT_FREE_FLIGHT_MAP_ID or not WIND_PRESETS.has(wind_preset):
+        return
+    selected_wind_preset = wind_preset
+    if native != null:
+        native.call("configure_wind", {
+            "preset": wind_preset,
+            "steady_wind": scene_steady_wind_mps,
+        })
+
+func open_map_menu() -> void:
+    if has_node("MapMenu"):
+        return
+    var layer := CanvasLayer.new()
+    layer.name = "MapMenu"
+    layer.layer = 20
+    add_child(layer)
+    var presets := VBoxContainer.new()
+    presets.name = "WindPresets"
+    layer.add_child(presets)
+    for preset in WIND_PRESETS:
+        var button := Button.new()
+        button.name = preset.capitalize()
+        button.text = preset.capitalize()
+        button.pressed.connect(select_map.bind(DEFAULT_FREE_FLIGHT_MAP_ID, preset))
+        presets.add_child(button)
+
 func respawn() -> void:
     reset_count += 1
     _reset_airsim_flight_state()
@@ -725,7 +756,7 @@ func change_map() -> void:
 
 func load_map(map_id: String) -> bool:
     var maps := FreeFlightMap.new()
-    maps.load_descriptor(map_id)
+    var descriptor: Dictionary = maps.load_descriptor(map_id)
     if not maps.last_ok:
         return _set_map_error("Cannot load Free Flight map %s: %s" % [map_id, maps.last_error])
     var scene_path := str(MAP_SCENE_PATHS.get(map_id, ""))
@@ -742,6 +773,12 @@ func load_map(map_id: String) -> bool:
     add_child(map_root)
     loaded_map = map_root
     loaded_map_id = map_id
+    if native != null:
+        var applied_wind_preset := selected_wind_preset if not selected_wind_preset.is_empty() else str(descriptor.wind_preset)
+        native.call("configure_wind", {
+            "preset": applied_wind_preset,
+            "steady_wind": scene_steady_wind_mps,
+        })
     _configure_time_trial(map_root)
     return reset_to_spawn()
 
@@ -876,6 +913,8 @@ func _build_main_menu() -> void:
         entries.add_child(button)
         if entry == "Quick Fly":
             button.pressed.connect(quick_fly)
+        elif entry == "Map":
+            button.pressed.connect(open_map_menu)
         elif entry == "Controller":
             button.pressed.connect(begin_controller_confirmation)
         elif entry == "Settings":

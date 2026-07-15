@@ -9,6 +9,7 @@ native_sources=(
     src/native/aerosim_simulation.cpp
     src/native/aerosim_flight_control.cpp
     src/native/aerosim_imu.cpp
+    src/native/aerosim_wind.cpp
     src/native/aerosim_collision.cpp
     src/native/aerosim_replay.cpp
 )

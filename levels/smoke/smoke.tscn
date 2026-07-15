@@ -32,6 +32,7 @@ size = Vector3(0.02, 0.02, 24)
 
 [node name="SmokeRoot" type="Node3D"]
 script = ExtResource("1_2nq71")
+scene_steady_wind_mps = Vector3(4, 0, -2)
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
 rotation = Vector3(-0.8, 0.45, 0)

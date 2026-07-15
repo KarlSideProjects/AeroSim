@@ -43,6 +43,27 @@ func _run() -> void:
 	_expect(runtime.native != null, "native runtime is registered")
 	_expect(root.get_camera_3d() != null, "cold start has an active Camera3D")
 	_expect(runtime.screen == "main_menu", "cold start opens the main menu")
+	var map_button: Button = runtime.get_node_or_null("MainMenu/Entries/Map")
+	_expect(map_button != null, "main menu exposes Map button")
+	if map_button != null:
+		_click(map_button)
+	await _settle(10)
+	var severe_wind_button: Button = runtime.get_node_or_null("MapMenu/WindPresets/Severe")
+	_expect(severe_wind_button != null, "Map exposes Severe wind preset")
+	if severe_wind_button != null:
+		_click(severe_wind_button)
+	await _settle(10)
+	await _snapshot("00_map_severe")
+	var wind_config: Dictionary = runtime.native.call("wind_configuration") if runtime.native != null else {}
+	_expect(
+		wind_config.get("preset", "") == "severe" and wind_config.get("steady_wind", Vector3.ZERO).distance_to(runtime.scene_steady_wind_mps) <= 1e-9,
+		"Map selection applies the scene steady wind vector to native runtime"
+	)
+	var map_menu := runtime.get_node_or_null("MapMenu")
+	if map_menu != null:
+		map_menu.queue_free()
+		await process_frame
+
 	var known_device_id := await _inject_known_gamepad()
 	_expect(known_device_id >= 0, "virtual SDL gamepad registers as a known controller")
 	device_state.replace_snapshot([known_device_id], [known_device_id])

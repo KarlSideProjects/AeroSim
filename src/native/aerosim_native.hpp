@@ -6,10 +6,12 @@
 #include "aerosim_flight_control.hpp"
 #include "aerosim_imu.hpp"
 #include "aerosim_simulation.hpp"
+#include "aerosim_wind.hpp"
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_float64_array.hpp>
+#include <godot_cpp/variant/vector3.hpp>
 
 class AeroSimNative : public godot::RefCounted {
     GDCLASS(AeroSimNative, godot::RefCounted)
@@ -29,6 +31,8 @@ private:
     aerosim::ImuSimulator imu_;
     aerosim::ImuSample last_imu_sample_;
     bool has_last_imu_sample_ = false;
+    aerosim::WindField wind_field_;
+    godot::String wind_preset_name_ = "custom";
     bool imu_noise_enabled_ = false;
     bool imu_bias_enabled_ = false;
     bool imu_random_walk_enabled_ = false;
@@ -101,6 +105,9 @@ public:
     godot::Dictionary imu_configuration() const;
     godot::Dictionary imu_sample() const;
     void refresh_imu_sample();
+    void configure_wind(const godot::Dictionary &config);
+    godot::Dictionary wind_configuration() const;
+    godot::Vector3 sample_wind(double time_seconds, double position_x, double position_y, double position_z) const;
     godot::Dictionary flight_control_diagnostics() const;
     godot::Dictionary hardware_power_diagnostics() const;
     godot::Dictionary hardware_per_motor_diagnostics() const;

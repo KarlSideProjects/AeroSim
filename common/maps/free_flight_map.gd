@@ -39,6 +39,8 @@ func validate_descriptor(descriptor: Dictionary) -> String:
     for field in ["id", "name", "type", "recommended_aircraft", "wind_preset", "mode"]:
         if not (descriptor[field] is String) or str(descriptor[field]).strip_edges().is_empty():
             return "%s must be a non-empty string" % field
+    if not ["calm", "light", "moderate", "severe"].has(str(descriptor.wind_preset)):
+        return "wind_preset must be one of calm, light, moderate, severe"
     if not (descriptor.spawn_count is int or descriptor.spawn_count is float):
         return "spawn_count must be a positive integer"
     var spawn_count := float(descriptor.spawn_count)

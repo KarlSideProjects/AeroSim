@@ -122,6 +122,29 @@ int main() {
         return fail("TelemetrySnapshot disabled effects must publish zero indicators");
     }
 
+    aerosim::SimulationConfig windy_config = config;
+    windy_config.wind_world_mps = {1.0, 2.0, 3.0};
+    windy_config.wind_turbulence_mps = {0.1, 0.2, 0.3};
+    aerosim::RigidBodyState windy_state;
+    aerosim::SimulationClock windy_clock;
+    aerosim::FlightController windy_controller;
+    if (!windy_controller.arm(0.0)) {
+        return fail("wind telemetry setup must arm from low throttle");
+    }
+    for (int frame = 0; frame < config.physics_hz; ++frame) {
+        windy_controller.step_angle_mode(windy_state, windy_clock, windy_config, hover);
+    }
+    const aerosim::TelemetrySnapshot &windy_snapshot = windy_controller.telemetry_snapshot();
+    if (!near(windy_snapshot.wind_world_mps.x, 1.0, 1e-12) ||
+            !near(windy_snapshot.wind_world_mps.y, 2.0, 1e-12) ||
+            !near(windy_snapshot.wind_world_mps.z, 3.0, 1e-12) ||
+            !near(windy_snapshot.wind_body_mps.x, 1.0, 1e-12) ||
+            !near(windy_snapshot.wind_body_mps.y, -3.0, 1e-12) ||
+            !near(windy_snapshot.wind_body_mps.z, 2.0, 1e-12) ||
+            !near(windy_snapshot.turbulence_intensity, std::sqrt(0.14), 1e-12)) {
+        return fail("TelemetrySnapshot must publish configured wind in world/body frames and intensity");
+    }
+
     aerosim::FlightCommand saturated;
     saturated.throttle = 1.0;
     saturated.pitch_degrees = 90.0;

@@ -11,6 +11,22 @@ namespace aerosim {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
+
+Quat multiply(const Quat &a, const Quat &b) {
+    return {
+            a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+            a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+            a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    };
+}
+
+Vec3 world_to_body(const Quat &attitude, const Vec3 &world) {
+    const Quat vector{world.x, world.y, world.z, 0.0};
+    const Quat conjugate{-attitude.x, -attitude.y, -attitude.z, attitude.w};
+    const Quat rotated = multiply(multiply(conjugate, vector), attitude);
+    return {rotated.x, rotated.y, rotated.z};
+}
 constexpr double kAngleP = 20.0;
 constexpr double kRateP = 0.600;
 constexpr double kRateI = 0.020;
@@ -395,6 +411,12 @@ void FlightController::maybe_publish_telemetry(
     }
 
     snapshot.ground_effect_gain = a4_ground_effect_lift_newtons(config.a4_ground_effect, sample.state.position.y);
+    snapshot.wind_world_mps = config.wind_world_mps;
+    snapshot.wind_body_mps = y_up_to_frd(world_to_body(sample.state.orientation, config.wind_world_mps));
+    snapshot.turbulence_intensity = std::sqrt(
+            config.wind_turbulence_mps.x * config.wind_turbulence_mps.x +
+            config.wind_turbulence_mps.y * config.wind_turbulence_mps.y +
+            config.wind_turbulence_mps.z * config.wind_turbulence_mps.z);
     const Vec3 relative_air_velocity{
             sample.state.velocity.x - config.wind_world_mps.x,
             sample.state.velocity.y - config.wind_world_mps.y,

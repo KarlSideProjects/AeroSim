@@ -87,6 +87,7 @@ struct SimulationConfig {
     A3DragConfig a3_drag;
     A4GroundEffectConfig a4_ground_effect;
     Vec3 wind_world_mps;
+    Vec3 wind_turbulence_mps;
     RigidBodyState initial_state;
 };
 
