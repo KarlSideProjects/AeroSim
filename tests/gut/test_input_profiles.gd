@@ -15,6 +15,9 @@ class FakeDeviceState:
     func is_joy_known(device_id: int) -> bool:
         return known_device_ids.has(device_id)
 
+    func joy_name(_device_id: int) -> String:
+        return "Xbox Test Controller"
+
 
 func test_no_controller_status_names_the_keyboard_fallback() -> void:
     assert_eq(

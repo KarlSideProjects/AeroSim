@@ -2,6 +2,7 @@ extends Node3D
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
+const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
@@ -63,6 +64,7 @@ var status_diagram: CanvasLayer
 var main_menu_layer: CanvasLayer
 var main_menu_entries_container: VBoxContainer
 var settings_panel: Control
+var settings_status_label: Label
 var controller_settings_panel: Control
 var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
@@ -84,9 +86,17 @@ var controller_settings_device_label: Label
 var controller_settings_mapping_label: Label
 var controller_settings_deadzone_label: Label
 var controller_settings_button_status_label: Label
+var controller_safety_panel: Control
+var controller_safety_label: Label
 var last_arm_button_press_ms := -1000000
 var last_mode_button_press_ms := -1000000
 var gamepad_button_time_source: Callable
+var settings_store: RefCounted
+var persisted_gamepad_profile: InputProfiles.GamepadProfile
+var keyboard_fallback_explicitly_selected := false
+var controller_safety_latched := false
+var controller_reconnected := false
+var disconnected_gamepad_device_id := -1
 var _airsim_vehicle_name := ""
 var _airsim_api_control := false
 var _airsim_disarm_requested := false
@@ -105,6 +115,8 @@ var _airsim_collision_point := Vector3.ZERO
 
 func _ready() -> void:
     Input.joy_connection_changed.connect(_on_joy_connection_changed)
+    settings_store = SettingsStoreScript.new()
+    _load_player_settings()
     _build_main_menu()
     _build_flight_hud()
     _build_status_diagram()
@@ -190,6 +202,26 @@ func _ready() -> void:
     _update_chase_camera()
     _refresh_flight_hud()
     call_deferred("_run_cold_start_probe")
+
+
+func _load_player_settings() -> void:
+    var result: Dictionary = settings_store.load_document()
+    var saved = result.document.get("confirmed_gamepad")
+    if saved != null:
+        persisted_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(saved)
+    if not result.ok and result.recovered:
+        last_error_message = "Settings recovered to factory defaults: %s" % result.error
+
+
+func _save_gamepad_profile(profile: InputProfiles.GamepadProfile) -> Dictionary:
+    var loaded: Dictionary = settings_store.load_document()
+    var document: Dictionary = loaded.document
+    document["confirmed_gamepad"] = profile.to_persisted_dict()
+    var result: Dictionary = settings_store.save_document(document)
+    if result.ok:
+        persisted_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(document["confirmed_gamepad"])
+        keyboard_fallback_explicitly_selected = false
+    return result
 
 func _run_cold_start_probe() -> void:
     var report_path := _cold_start_report_path()
@@ -567,9 +599,17 @@ func request_takeoff() -> void:
     _refresh_flight_hud()
 
 func arm_and_takeoff() -> void:
+    if controller_safety_latched:
+        last_error_message = "Arm blocked: controller_resume_required"
+        _refresh_flight_hud()
+        return
     if native == null:
         last_error_message = "Quick Fly cannot arm: native runtime unavailable"
         screen = "error"
+        _refresh_flight_hud()
+        return
+    if not _has_active_gamepad_profile() and not keyboard_fallback_explicitly_selected:
+        last_error_message = "Arm blocked: keyboard_fallback_requires_confirmation"
         _refresh_flight_hud()
         return
     if _has_active_gamepad_profile() and not _profile_throttle_is_low():
@@ -620,6 +660,11 @@ func quick_fly() -> void:
             _show_keyboard_fallback("Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)")
         return
     if session_gamepad_profile == null or session_gamepad_device_id != device_id:
+        if persisted_gamepad_profile != null:
+            session_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(persisted_gamepad_profile.to_persisted_dict())
+            session_gamepad_device_id = device_id
+            enter_preflight()
+            return
         begin_controller_confirmation(device_id)
         return
     enter_preflight()
@@ -647,6 +692,12 @@ func accept_controller_confirmation() -> void:
         session_gamepad_device_id = -1
         _show_keyboard_fallback("Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)")
         return
+    var save_result := _save_gamepad_profile(profile)
+    if not save_result.ok:
+        last_error_message = "Controller profile was not persisted: %s" % save_result.error
+        screen = "error"
+        _refresh_flight_hud()
+        return
     session_gamepad_profile = profile
     session_gamepad_device_id = controller_confirmation_device_id
     controller_confirmation_panel.hide()
@@ -655,17 +706,23 @@ func accept_controller_confirmation() -> void:
 func use_keyboard_fallback() -> void:
     session_gamepad_profile = null
     session_gamepad_device_id = -1
+    keyboard_fallback_explicitly_selected = false
     if controller_confirmation_panel != null:
         controller_confirmation_panel.hide()
     _show_keyboard_fallback("KeyboardProfile fallback selected (non-sim control)")
 
 func _show_keyboard_fallback(message: String) -> void:
+    keyboard_fallback_explicitly_selected = false
     last_error_message = message
     screen = "fallback_prompt"
     _refresh_flight_hud()
 
 func accept_fallback() -> void:
     if screen == "fallback_prompt":
+        keyboard_fallback_explicitly_selected = true
+        controller_safety_latched = false
+        controller_reconnected = false
+        disconnected_gamepad_device_id = -1
         enter_preflight()
         return
     last_error_message = "No fallback prompt is active"
@@ -686,6 +743,10 @@ func enter_preflight() -> void:
     _refresh_flight_hud()
 
 func respawn() -> void:
+    if controller_safety_latched:
+        last_error_message = "Respawn blocked: controller_resume_required"
+        _refresh_flight_hud()
+        return
     reset_count += 1
     _reset_airsim_flight_state()
     _airsim_disarm_requested = false
@@ -835,7 +896,8 @@ func _reset_airsim_flight_state() -> void:
 
 func update_fallback_status() -> void:
     last_profile_status = InputProfiles.fallback_status(gamepad_device_state.connected_joypads())
-    fallback_status_label.text = "%s | Mode: %s" % [last_profile_status, flight_mode]
+    if fallback_status_label != null:
+        fallback_status_label.text = "%s | Mode: %s" % [last_profile_status, flight_mode]
 
 func toggle_altitude_hold() -> void:
     if native == null or not takeoff_requested:
@@ -890,7 +952,7 @@ func _build_settings_panel() -> void:
     panel.offset_left = 20.0
     panel.offset_top = 20.0
     panel.offset_right = 360.0
-    panel.offset_bottom = 180.0
+    panel.offset_bottom = 230.0
     settings_panel = panel
     main_menu_layer.add_child(panel)
 
@@ -908,6 +970,17 @@ func _build_settings_panel() -> void:
     controller_button.text = "CONTROLLER"
     controller_button.pressed.connect(show_controller_settings)
     rows.add_child(controller_button)
+
+    var factory_reset_button := Button.new()
+    factory_reset_button.name = "FactoryReset"
+    factory_reset_button.text = "FACTORY RESET SETTINGS"
+    factory_reset_button.pressed.connect(factory_reset_player_settings)
+    rows.add_child(factory_reset_button)
+
+    settings_status_label = Label.new()
+    settings_status_label.name = "Status"
+    settings_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(settings_status_label)
 
     var back_button := Button.new()
     back_button.name = "Back"
@@ -978,6 +1051,19 @@ func show_controller_settings() -> void:
 
 func reset_to_xbox_default() -> void:
     begin_controller_confirmation(_first_connected_device())
+
+
+func factory_reset_player_settings() -> void:
+    var result: Dictionary = settings_store.factory_reset()
+    if not result.ok:
+        last_error_message = "Settings factory reset failed: %s" % result.error
+        screen = "error"
+        _refresh_flight_hud()
+        return
+    persisted_gamepad_profile = null
+    last_error_message = "Settings reset to factory defaults"
+    screen = "settings"
+    _refresh_flight_hud()
 
 func _build_controller_confirmation() -> void:
     var panel := PanelContainer.new()
@@ -1065,6 +1151,7 @@ func _build_flight_hud() -> void:
     arm_takeoff_button.pressed.connect(_handle_primary_action)
     rows.add_child(arm_takeoff_button)
     _build_pause_panel()
+    _build_controller_safety_panel()
     _build_finish_panel()
 
 func _build_pause_panel() -> void:
@@ -1105,6 +1192,26 @@ func _build_pause_panel() -> void:
     exit.text = "EXIT"
     exit.pressed.connect(request_exit)
     rows.add_child(exit)
+
+
+func _build_controller_safety_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "ControllerSafetyPanel"
+    panel.set_anchors_preset(Control.PRESET_CENTER)
+    panel.offset_left = -220.0
+    panel.offset_top = -80.0
+    panel.offset_right = 220.0
+    panel.offset_bottom = 80.0
+    controller_safety_panel = panel
+    flight_hud_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+    controller_safety_label = Label.new()
+    controller_safety_label.name = "Message"
+    rows.add_child(controller_safety_label)
 
 func _build_finish_panel() -> void:
     var panel := PanelContainer.new()
@@ -1164,16 +1271,22 @@ func _refresh_flight_hud() -> void:
         main_menu_entries_container.visible = screen == "main_menu"
     if settings_panel != null:
         settings_panel.visible = screen == "settings"
+    if settings_status_label != null:
+        settings_status_label.text = last_error_message if not last_error_message.is_empty() else "Settings ready"
     if controller_settings_panel != null:
         controller_settings_panel.visible = screen == "controller_settings"
     if flight_hud_layer != null:
         flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings"]
     if pause_panel != null:
         pause_panel.visible = paused and screen == "flight"
+    if controller_safety_panel != null:
+        controller_safety_panel.visible = controller_safety_latched
+    if controller_safety_label != null:
+        controller_safety_label.text = last_error_message
     if finish_panel != null:
         finish_panel.visible = screen == "finish"
     key_hints_label.text = KEY_HINTS_TEXT
-    arm_takeoff_button.disabled = screen == "main_menu"
+    arm_takeoff_button.disabled = screen == "main_menu" or (controller_safety_latched and screen != "fallback_prompt")
     if time_trial_status_label != null:
         time_trial_status_label.visible = time_trial != null and screen in ["preflight", "flight", "finish"]
         if time_trial != null:
@@ -1202,6 +1315,9 @@ func _refresh_flight_hud() -> void:
     elif screen == "finish":
         arm_status_label.text = "TIME TRIAL COMPLETE"
         arm_takeoff_button.text = "RETRY"
+    elif screen == "controller_disconnected":
+        arm_status_label.text = last_error_message
+        arm_takeoff_button.text = "WAIT FOR CONTROLLER"
     else:
         arm_status_label.text = "Quick Fly: choose Quick Fly, then arm at low throttle"
         arm_takeoff_button.text = "ARM / TAKEOFF (T)"
@@ -1227,8 +1343,46 @@ func _first_connected_device() -> int:
             return device_id
     return devices[0] if not devices.is_empty() else -1
 
-func _on_joy_connection_changed(_device_id: int, _connected: bool) -> void:
+func _on_joy_connection_changed(device_id: int, connected: bool) -> void:
+    handle_controller_connection_changed(device_id, connected)
+
+
+func handle_controller_connection_changed(device_id: int, connected: bool) -> void:
+    if connected:
+        if not controller_safety_latched or device_id != disconnected_gamepad_device_id:
+            update_fallback_status()
+            return
+        var profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)
+        if profile == null:
+            session_gamepad_profile = null
+            session_gamepad_device_id = -1
+            last_error_message = "Unsupported controller reconnected; remain disarmed and frozen"
+        else:
+            session_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(persisted_gamepad_profile.to_persisted_dict()) if persisted_gamepad_profile != null else profile
+            session_gamepad_device_id = device_id
+            controller_reconnected = true
+            screen = "preflight"
+            last_error_message = "Controller reconnected; throttle LOW then press ARM/RESUME"
+        update_fallback_status()
+        _refresh_flight_hud()
+        return
+
+    if device_id != session_gamepad_device_id:
+        update_fallback_status()
+        return
+    disconnected_gamepad_device_id = device_id
+    controller_safety_latched = true
+    controller_reconnected = false
+    session_gamepad_profile = null
+    session_gamepad_device_id = -1
+    keyboard_fallback_explicitly_selected = false
+    takeoff_requested = false
+    _reset_airsim_flight_state()
+    set_paused(true)
+    screen = "controller_disconnected"
+    last_error_message = "Controller disconnected; vehicle disarmed and frozen"
     update_fallback_status()
+    _refresh_flight_hud()
 
 func _refresh_controller_confirmation() -> void:
     if controller_confirmation_panel == null or not controller_confirmation_panel.visible or controller_confirmation_profile == null:
@@ -1289,6 +1443,14 @@ func _handle_gamepad_button(event: InputEventJoypadButton) -> bool:
         return true
     if is_arm:
         last_arm_button_press_ms = now_ms
+        if controller_safety_latched:
+            if not _profile_throttle_is_low():
+                last_error_message = "Resume blocked: throttle_not_low"
+                _refresh_flight_hud()
+                return true
+            controller_safety_latched = false
+            controller_reconnected = false
+            last_error_message = ""
         if screen in ["preflight", "flight"]:
             arm_and_takeoff()
     else:
@@ -1398,10 +1560,12 @@ func _airsim_name_matches(name: String) -> bool:
 
 
 func _airsim_lifecycle_stopped() -> bool:
-    return screen in ["finish", "settings", "controller_settings", "error"] or (screen == "main_menu" and exit_requested)
+    return screen in ["finish", "settings", "controller_settings", "controller_disconnected", "error"] or (screen == "main_menu" and exit_requested)
 
 
 func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
+    if controller_safety_latched and enabled:
+        return {"ok": false, "error": "controller_resume_required"}
     if _airsim_lifecycle_stopped():
         return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
@@ -1420,6 +1584,8 @@ func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
 
 
 func _airsim_arm_disarm(armed: bool, name: String) -> Dictionary:
+    if controller_safety_latched and armed:
+        return {"ok": false, "error": "controller_resume_required"}
     if _airsim_lifecycle_stopped():
         return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
@@ -1494,6 +1660,8 @@ func _airsim_task_complete(name: String) -> bool:
 
 
 func _airsim_command(method: String, params: Array, name: String) -> Dictionary:
+    if controller_safety_latched:
+        return {"ok": false, "error": "controller_resume_required"}
     if _airsim_lifecycle_stopped() or (screen == "main_menu" and method != "takeoff"):
         return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):

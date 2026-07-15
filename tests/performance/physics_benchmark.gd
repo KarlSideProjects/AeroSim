@@ -84,13 +84,14 @@ func _run() -> void:
         return
     runtime.quick_fly()
     await process_frame
-    if runtime.screen != "controller_confirmation":
-        _fail("benchmark must enter Xbox default profile confirmation before preflight")
+    if runtime.screen == "controller_confirmation":
+        runtime.accept_controller_confirmation()
+        await process_frame
+    elif runtime.screen != "preflight":
+        _fail("benchmark must restore or confirm the Xbox default profile before preflight")
         return
-    runtime.accept_controller_confirmation()
-    await process_frame
     if runtime.screen != "preflight" or runtime.session_gamepad_profile == null or runtime.takeoff_requested:
-        _fail("benchmark must confirm the Xbox default profile before entering low-throttle preflight")
+        _fail("benchmark must enter low-throttle preflight with the Xbox default profile")
         return
     runtime.arm_and_takeoff()
     var physics_profiler := PhysicsFrameProfiler.new()
