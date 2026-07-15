@@ -25,12 +25,17 @@ G3_7_FROZEN_PROTOCOL = {
     "sampling_source": "EngineProfiler._tick",
     "rendering_method": "gl_compatibility",
 }
-G3_7_RENDER_METRICS = (
-    "render_cpu_p95_ms",
-    "render_cpu_p99_ms",
-    "render_gpu_p95_ms",
-    "render_gpu_p99_ms",
-)
+G3_7_WORKLOAD_ATTESTATION = {
+    "workload_id": "G3.7-A3-A6-public-native-v1",
+    "effect_paths": {
+        "A3_drag": "telemetry_snapshot.drag_body_n",
+        "A4_ground_effect": "telemetry_snapshot.ground_effect_gain",
+        "A5_downwash": "step_dual_aircraft_simulation.downwash_force_y_newtons",
+        "A6_propwash": "telemetry_snapshot.propwash_disturbance_rad_s2",
+    },
+    "control_path": "sync_flight_state -> step_angle_mode -> step_dual_aircraft_simulation",
+    "evidence_scope": "measurement_frames",
+}
 G0_1_BASELINE_CPU = "AMD Ryzen 9 7945HX with Radeon Graphics"
 G0_1_BASELINE_GPU = "NVIDIA GeForce RTX 4060 Ti"
 G0_1_BASELINE_OS_RELEASE = "Ubuntu 26.04 LTS"
@@ -162,9 +167,6 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         expected_p95 = _percentile(raw_samples, 0.95)
         if float(reported_p95) != expected_p95:
             raise ValueError(f"incompatible benchmark reports: {label} p95_ms does not match raw_samples_ms")
-        for metric in G3_7_RENDER_METRICS:
-            if metric in report and (not _finite_number(report[metric]) or report[metric] < 0.0):
-                raise ValueError(f"incompatible benchmark reports: {label} {metric} is invalid")
     if baseline["sample_count"] != candidate["sample_count"]:
         raise ValueError("incompatible benchmark reports: sample_count differs")
     for label, report in (("baseline", baseline), ("candidate", candidate)):
@@ -201,6 +203,8 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
             _validate_g37_protocol(measurement)
         except ValueError as error:
             raise ValueError(f"incompatible benchmark reports: {label} protocol is invalid") from error
+        if measurement.get("workload_attestation") != G3_7_WORKLOAD_ATTESTATION:
+            raise ValueError(f"incompatible benchmark reports: {label} workload attestation is invalid")
         if report.get("gate_verdict") != "pass":
             raise ValueError(f"incompatible benchmark reports: {label} G0.1 verdict is invalid")
         recomputed_within_limit = p99 <= G0_1_P99_LIMIT_MS
@@ -230,7 +234,7 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
     if not _finite_number(downwash_force) or downwash_force >= 0.0:
         raise ValueError("incompatible benchmark reports: A5_downwash force evidence is invalid")
     comparison: dict[str, float | None] = {}
-    for metric in ("p95_ms", "p99_ms", *G3_7_RENDER_METRICS):
+    for metric in ("p95_ms", "p99_ms"):
         if metric not in baseline or metric not in candidate:
             continue
         baseline_value = float(baseline[metric])

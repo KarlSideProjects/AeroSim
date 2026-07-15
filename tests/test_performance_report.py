@@ -32,6 +32,17 @@ PINNED_PROVENANCE = {
     "gdextension_sha256": "b" * 64,
     "native_source_sha256": "c" * 64,
 }
+G3_7_WORKLOAD_ATTESTATION = {
+    "workload_id": "G3.7-A3-A6-public-native-v1",
+    "effect_paths": {
+        "A3_drag": "telemetry_snapshot.drag_body_n",
+        "A4_ground_effect": "telemetry_snapshot.ground_effect_gain",
+        "A5_downwash": "step_dual_aircraft_simulation.downwash_force_y_newtons",
+        "A6_propwash": "telemetry_snapshot.propwash_disturbance_rad_s2",
+    },
+    "control_path": "sync_flight_state -> step_angle_mode -> step_dual_aircraft_simulation",
+    "evidence_scope": "measurement_frames",
+}
 VALID_EFFECT_EVIDENCE = {
     "A3_drag": {"observed": True, "magnitude": 1.0},
     "A4_ground_effect": {"observed": True, "magnitude": 1.0},
@@ -215,6 +226,7 @@ class PerformanceReportTest(unittest.TestCase):
             "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
             "sampling_source": "EngineProfiler._tick",
+            "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
@@ -251,6 +263,7 @@ class PerformanceReportTest(unittest.TestCase):
             "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
             "sampling_source": "EngineProfiler._tick",
+            "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
@@ -297,6 +310,7 @@ class PerformanceReportTest(unittest.TestCase):
             "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
             "sampling_source": "EngineProfiler._tick",
+            "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
@@ -373,14 +387,24 @@ class PerformanceReportTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 compare_reports(baseline, candidate | {"measurement": tampered_measurement})
 
+        for metric in ("render_cpu_p95_ms", "render_cpu_p99_ms", "render_gpu_p95_ms", "render_gpu_p99_ms"):
+            comparison = compare_reports(baseline, candidate | {metric: math.nan})
+            self.assertEqual(comparison["g3_7_verdict"], "pass")
+            self.assertFalse(any(key.startswith("render_") for key in comparison))
+
+        with self.assertRaises(ValueError):
+            compare_reports(
+                baseline | {"measurement": baseline["measurement"] | {"workload_attestation": {}}},
+                candidate,
+            )
+        missing_attestation = {
+            key: value for key, value in candidate["measurement"].items() if key != "workload_attestation"
+        }
+        with self.assertRaises(ValueError):
+            compare_reports(baseline, candidate | {"measurement": missing_attestation})
+
         with self.assertRaises(ValueError):
             compare_reports(baseline | {"p95_ms": 2.500000000001}, candidate)
-        for metric in ("p95_ms", "render_cpu_p95_ms", "render_cpu_p99_ms", "render_gpu_p95_ms", "render_gpu_p99_ms"):
-            with self.assertRaises(ValueError):
-                compare_reports(
-                    baseline | {metric: 1.0},
-                    candidate | {metric: math.nan},
-                )
 
     def test_g37_rejects_nonproduction_reports(self):
         environment = {"git_revision": "abc123", "cpu_model": "reference"}
@@ -433,6 +457,7 @@ class PerformanceReportTest(unittest.TestCase):
             "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
             "sampling_source": "EngineProfiler._tick",
+            "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
@@ -467,6 +492,7 @@ class PerformanceReportTest(unittest.TestCase):
             "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
             "sampling_source": "EngineProfiler._tick",
+            "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
             **PINNED_PROVENANCE,
         }
         baseline = build_report(

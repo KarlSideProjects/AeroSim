@@ -27,6 +27,7 @@ class PerformanceRunnerTest(unittest.TestCase):
         self.assertIn('"effect_evidence"', BENCHMARK_SOURCE)
         self.assertIn('"A5_downwash"', BENCHMARK_SOURCE)
         self.assertIn('"A6_propwash"', BENCHMARK_SOURCE)
+        self.assertIn('"workload_attestation"', BENCHMARK_SOURCE)
 
     def test_effect_evidence_is_sticky_across_measurement_frames(self):
         self.assertIn('"A3_drag": {"observed": false, "magnitude": 0.0}', BENCHMARK_SOURCE)
@@ -44,8 +45,10 @@ class PerformanceRunnerTest(unittest.TestCase):
 
     def test_effect_evidence_resets_after_warmup_before_measurement(self):
         self.assertIn('func reset_effect_evidence() -> void:', BENCHMARK_SOURCE)
-        reset_index = BENCHMARK_SOURCE.index('effect_workload.reset_effect_evidence()')
+        warmup_index = BENCHMARK_SOURCE.index('for _frame in warmup_frames:')
+        reset_index = BENCHMARK_SOURCE.rfind('effect_workload.reset_effect_evidence()')
         measurement_index = BENCHMARK_SOURCE.index('var first_measured_frame :=')
+        self.assertGreater(reset_index, warmup_index)
         self.assertLess(reset_index, measurement_index)
 
     def test_short_headed_run_records_jolt_samples_with_vsync_disabled(self):

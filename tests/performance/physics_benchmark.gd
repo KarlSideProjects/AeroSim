@@ -1,6 +1,17 @@
 extends SceneTree
 
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const G3_7_WORKLOAD_ATTESTATION := {
+    "workload_id": "G3.7-A3-A6-public-native-v1",
+    "effect_paths": {
+        "A3_drag": "telemetry_snapshot.drag_body_n",
+        "A4_ground_effect": "telemetry_snapshot.ground_effect_gain",
+        "A5_downwash": "step_dual_aircraft_simulation.downwash_force_y_newtons",
+        "A6_propwash": "telemetry_snapshot.propwash_disturbance_rad_s2",
+    },
+    "control_path": "sync_flight_state -> step_angle_mode -> step_dual_aircraft_simulation",
+    "evidence_scope": "measurement_frames",
+}
 
 
 class PhysicsFrameProfiler:
@@ -241,6 +252,7 @@ func _run() -> void:
         "gdextension_sha256": _gdextension_sha256,
         "native_source_sha256": _native_source_sha256,
         "scenario": "effects_%s" % _effects,
+        "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
         "active_effects": effect_workload.active_effects(),
         "effect_evidence": effect_workload.effect_evidence,
         "physics_engine": ProjectSettings.get_setting("physics/3d/physics_engine"),
