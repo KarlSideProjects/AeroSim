@@ -137,6 +137,12 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_hardware_per_motor_model", "model"), &AeroSimNative::set_hardware_per_motor_model);
     ClassDB::bind_method(D_METHOD("reset_simulation"), &AeroSimNative::reset_simulation);
     ClassDB::bind_method(
+            D_METHOD("set_dual_aircraft_positions", "upper_x", "upper_y", "upper_z", "lower_x", "lower_y", "lower_z"),
+            &AeroSimNative::set_dual_aircraft_positions);
+    ClassDB::bind_method(
+            D_METHOD("step_dual_aircraft_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
+            &AeroSimNative::step_dual_aircraft_simulation);
+    ClassDB::bind_method(
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
             &AeroSimNative::step_simulation);
     ClassDB::bind_method(
@@ -249,9 +255,79 @@ bool AeroSimNative::set_hardware_per_motor_model(const Dictionary &model) {
 void AeroSimNative::reset_simulation() {
     simulation_state_ = {};
     simulation_clock_ = {};
+    dual_aircraft_state_ = {};
+    dual_aircraft_clock_ = {};
     collision_authority_ = {};
     last_imu_sample_ = {};
     has_last_imu_sample_ = false;
+}
+
+bool AeroSimNative::set_dual_aircraft_positions(
+        double upper_x,
+        double upper_y,
+        double upper_z,
+        double lower_x,
+        double lower_y,
+        double lower_z) {
+    const double values[] = {upper_x, upper_y, upper_z, lower_x, lower_y, lower_z};
+    for (double value : values) {
+        if (!std::isfinite(value)) {
+            return false;
+        }
+    }
+    dual_aircraft_state_ = {};
+    dual_aircraft_state_.upper.position = {upper_x, upper_y, upper_z};
+    dual_aircraft_state_.lower.position = {lower_x, lower_y, lower_z};
+    dual_aircraft_clock_ = {};
+    return true;
+}
+
+PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
+        std::int32_t physics_hz,
+        std::int32_t substep_hz,
+        double total_thrust_newtons) {
+    if (!std::isfinite(total_thrust_newtons) || total_thrust_newtons < 0.0) {
+        return {};
+    }
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    config.physics_hz = physics_hz;
+    config.substep_hz = substep_hz;
+    config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
+    config.a4_ground_effect = a4_ground_effect_config_;
+    config.a5_downwash = a5_downwash_config_;
+    aerosim::DualAircraftConfig dual_config{config, config};
+    apply_wind(dual_config.upper, dual_aircraft_state_.upper, dual_aircraft_clock_, wind_field_);
+    apply_wind(dual_config.lower, dual_aircraft_state_.lower, dual_aircraft_clock_, wind_field_);
+    if (dual_config.upper.per_motor.max_thrust_per_motor_newtons <= 0.0) {
+        return {};
+    }
+    const double command_value = config.total_thrust_newtons /
+            (4.0 * dual_config.upper.per_motor.max_thrust_per_motor_newtons);
+    if (!std::isfinite(command_value) || command_value < 0.0 || command_value > 1.0) {
+        return {};
+    }
+    const aerosim::DualMotorCommands commands{
+            {{command_value, command_value, command_value, command_value}},
+            {{command_value, command_value, command_value, command_value}},
+    };
+    const aerosim::DualAircraftTrajectorySample sample = aerosim::step_dual_aircraft_per_motor_physics_frame(
+            dual_aircraft_state_, dual_aircraft_clock_, dual_config, commands);
+    if (sample.substeps == 0 && physics_hz > 0 && substep_hz > 0) {
+        return {};
+    }
+    PackedFloat64Array row;
+    row.append(sample.time_seconds);
+    row.append(sample.state.upper.position.x);
+    row.append(sample.state.upper.position.y);
+    row.append(sample.state.upper.position.z);
+    row.append(sample.state.lower.position.x);
+    row.append(sample.state.lower.position.y);
+    row.append(sample.state.lower.position.z);
+    row.append(sample.state.lower.velocity.y);
+    row.append(sample.downwash_force_y_newtons);
+    row.append(sample.minimum_downwash_force_y_newtons);
+    row.append(static_cast<double>(sample.substeps));
+    return row;
 }
 
 PackedFloat64Array AeroSimNative::step_simulation(

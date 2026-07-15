@@ -22,6 +22,8 @@ protected:
 private:
     aerosim::RigidBodyState simulation_state_;
     aerosim::SimulationClock simulation_clock_;
+    aerosim::DualAircraftState dual_aircraft_state_;
+    aerosim::SimulationClock dual_aircraft_clock_;
     aerosim::HardwareConfig hardware_config_;
     aerosim::FlightController flight_controller_;
     aerosim::A4GroundEffectConfig a4_ground_effect_config_;
@@ -56,6 +58,17 @@ public:
     bool set_hardware_telemetry_model(double max_motor_rpm, double battery_remaining_mah);
     bool set_hardware_per_motor_model(const godot::Dictionary &model);
     void reset_simulation();
+    bool set_dual_aircraft_positions(
+            double upper_x,
+            double upper_y,
+            double upper_z,
+            double lower_x,
+            double lower_y,
+            double lower_z);
+    godot::PackedFloat64Array step_dual_aircraft_simulation(
+            std::int32_t physics_hz,
+            std::int32_t substep_hz,
+            double total_thrust_newtons);
     godot::PackedFloat64Array step_simulation(
             std::int32_t physics_hz,
             std::int32_t substep_hz,
