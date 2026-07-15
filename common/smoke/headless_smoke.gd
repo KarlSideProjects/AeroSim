@@ -458,6 +458,12 @@ func _verify_flight_control_public_path(native: Object) -> bool:
     if bypass_row[2] > 0.0:
         push_error("Public step_simulation must not bypass arm safety with direct thrust")
         return false
+    if native.call("step_simulation", 0, 1000, 0.0).size() != 0 or native.call("step_simulation", 240, 0, 0.0).size() != 0:
+        push_error("Public step_simulation must reject non-positive simulation rates")
+        return false
+    if native.call("step_angle_mode", 0, 1000, 0.0, 0.0, 0.0, 0.0).size() != 0 or native.call("step_acro_mode", 240, 0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.7, 0.0).size() != 0:
+        push_error("Public flight-control paths must reject non-positive simulation rates")
+        return false
 
     native.call("reset_flight")
     if not native.call("arm_flight_control", 0.0):
@@ -892,6 +898,33 @@ func _verify_px4_actuator_public_path(native: Object) -> bool:
         push_error("AeroSimNative.step_collision_px4_actuator_mode must expose the PX4 actuator path")
         return false
     native.call("reset_flight")
+    var invalid_collision_row: PackedFloat64Array = native.call(
+        "step_collision_px4_actuator_mode",
+        0,
+        1000,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        true,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -1.0
+    )
+    if invalid_collision_row.size() != 0:
+        push_error("Public collision path must reject non-positive simulation rates before touching contact state")
+        return false
     var row: PackedFloat64Array = native.call(
         "step_collision_px4_actuator_mode",
         Engine.physics_ticks_per_second,

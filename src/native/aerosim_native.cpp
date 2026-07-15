@@ -335,6 +335,9 @@ PackedFloat64Array AeroSimNative::step_simulation(
         std::int32_t physics_hz,
         std::int32_t substep_hz,
         double total_thrust_newtons) {
+    if (physics_hz <= 0 || substep_hz <= 0) {
+        return {};
+    }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
@@ -371,6 +374,9 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
         double motor_1,
         double motor_2,
         double motor_3) {
+    if (physics_hz <= 0 || substep_hz <= 0) {
+        return {};
+    }
     const double values[] = {motor_0, motor_1, motor_2, motor_3};
     for (double value : values) {
         if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
@@ -432,6 +438,9 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
         double max_kinetic_energy_joules) {
+    if (physics_hz <= 0 || substep_hz <= 0) {
+        return {};
+    }
     const double values[] = {motor_0, motor_1, motor_2, motor_3};
     for (double value : values) {
         if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
@@ -893,6 +902,9 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
         double roll_degrees,
         double pitch_degrees,
         double yaw_rate_degrees_per_second) {
+    if (physics_hz <= 0 || substep_hz <= 0) {
+        return {};
+    }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
@@ -940,6 +952,9 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
         double rc_rate,
         double super_rate,
         double expo) {
+    if (physics_hz <= 0 || substep_hz <= 0) {
+        return {};
+    }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
@@ -999,6 +1014,9 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
         double max_kinetic_energy_joules) {
+    if (physics_hz <= 0 || substep_hz <= 0) {
+        return {};
+    }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
@@ -1069,6 +1087,9 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
         double roll_degrees,
         double pitch_degrees,
         double yaw_rate_degrees_per_second) {
+    if (physics_hz <= 0 || substep_hz <= 0) {
+        return {};
+    }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
@@ -1175,6 +1196,9 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
         double max_kinetic_energy_joules) {
+    if (physics_hz <= 0 || substep_hz <= 0) {
+        return {};
+    }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
@@ -1259,6 +1283,9 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
         double max_kinetic_energy_joules) {
+    if (physics_hz <= 0 || substep_hz <= 0) {
+        return {};
+    }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;

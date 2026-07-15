@@ -253,6 +253,22 @@ int main() {
     aerosim::FlightCommand hover;
     hover.throttle = 0.5;
 
+    aerosim::SimulationConfig invalid_rate_config = config;
+    invalid_rate_config.physics_hz = 0;
+    aerosim::CollisionContact invalid_contact;
+    invalid_contact.touching = true;
+    const aerosim::CollisionStepResult invalid_rate_result = authority.step(
+            state,
+            clock,
+            controller,
+            invalid_rate_config,
+            hover,
+            invalid_contact);
+    if (invalid_rate_result.sample.substeps != 0 || clock.total_substeps != 0 ||
+            invalid_rate_result.authority != aerosim::PhysicsAuthority::FlightCore) {
+        return fail("collision paths must fail closed before touching contact state for invalid rates");
+    }
+
     aerosim::CollisionContact wall;
     wall.touching = true;
     wall.normal = {-1.0, 0.0, 0.0};

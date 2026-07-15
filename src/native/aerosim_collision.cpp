@@ -58,6 +58,9 @@ TrajectorySample sample_jolt_frame(
         const RigidBodyState &state,
         SimulationClock &clock,
         const SimulationConfig &config) {
+    if (config.physics_hz <= 0 || config.substep_hz <= 0) {
+        return {};
+    }
     const double substeps_per_frame = static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz);
     clock.substep_accumulator += substeps_per_frame;
     const auto frame_substeps = static_cast<std::uint64_t>(std::floor(clock.substep_accumulator + 1e-12));
@@ -137,6 +140,9 @@ CollisionStepResult CollisionAuthoritySwitch::step(
         const FlightCommand &command,
         const CollisionContact &contact,
         const Quat &estimated_attitude) {
+    if (config.physics_hz <= 0 || config.substep_hz <= 0) {
+        return {authority_, {}, {}, {}};
+    }
     if (contact.touching) {
         if (authority_ != PhysicsAuthority::Jolt) {
             controller.reset_integrators();
@@ -172,6 +178,9 @@ CollisionStepResult CollisionAuthoritySwitch::step_altitude_hold(
         double measured_altitude_m,
         const CollisionContact &contact,
         const Quat &estimated_attitude) {
+    if (config.physics_hz <= 0 || config.substep_hz <= 0) {
+        return {authority_, {}, {}, {}};
+    }
     if (contact.touching) {
         if (authority_ != PhysicsAuthority::Jolt) {
             controller.reset_integrators();
@@ -215,6 +224,9 @@ CollisionStepResult CollisionAuthoritySwitch::step_acro(
         const SimulationConfig &config,
         const AcroCommand &command,
         const CollisionContact &contact) {
+    if (config.physics_hz <= 0 || config.substep_hz <= 0) {
+        return {authority_, {}, {}, {}};
+    }
     if (contact.touching) {
         if (authority_ != PhysicsAuthority::Jolt) {
             controller.reset_integrators();
@@ -247,6 +259,9 @@ CollisionStepResult CollisionAuthoritySwitch::step_per_motor(
         const SimulationConfig &config,
         const MotorCommands &commands,
         const CollisionContact &contact) {
+    if (config.physics_hz <= 0 || config.substep_hz <= 0) {
+        return {authority_, {}, {}, {}};
+    }
     if (contact.touching) {
         authority_ = PhysicsAuthority::Jolt;
         clear_frames_ = 0;
