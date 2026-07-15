@@ -53,6 +53,11 @@ class EffectWorkload:
             "random_walk_enabled": false,
             "delay_enabled": false,
         })
+        native.call("configure_wind", {
+            "preset": "calm",
+            "steady_wind": Vector3.ZERO,
+            "shear_enabled": false,
+        })
         native.call("reset_flight")
         if not native.call("set_a5_downwash_model", enabled, 0.0231348, 2267.18, 0.16, -0.11):
             return false
@@ -65,9 +70,7 @@ class EffectWorkload:
     func _activate_a6() -> bool:
         if not native.call("set_a6_propwash_model", enabled, 12.0, 2.0, 0.5):
             return false
-        # Keep the public-path fixture aligned with the IMU's initialized identity estimate;
-        # velocity and angular velocity still satisfy the calibrated A6 wake-entry gates.
-        native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)
+        native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.866025403784, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)
         var single_row: PackedFloat64Array = native.call("step_angle_mode", 240, 1000, 0.75, 0.0, 0.0, 0.0)
         if single_row.is_empty():
             return false
