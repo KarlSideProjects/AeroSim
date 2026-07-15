@@ -31,6 +31,7 @@ class EffectWorkload:
 
     var native: Object
     var enabled := false
+    var activation_failed := false
     var effect_evidence: Dictionary = {}
 
     func reset_effect_evidence() -> void:
@@ -44,6 +45,7 @@ class EffectWorkload:
     func configure(native_runtime: Object, effects_enabled: bool) -> bool:
         native = native_runtime
         enabled = effects_enabled
+        activation_failed = false
         reset_effect_evidence()
         native.call("configure_imu", {
             "noise_enabled": false,
@@ -82,6 +84,7 @@ class EffectWorkload:
             return
         var previous_evidence := effect_evidence.duplicate(true)
         if not _activate_a6():
+            activation_failed = true
             return
         var dual_row: PackedFloat64Array = native.call("step_dual_aircraft_simulation", 240, 1000, 0.72 * 9.80665)
         var telemetry: Dictionary = native.call("telemetry_snapshot")
@@ -234,7 +237,7 @@ func _run() -> void:
     if physics_samples.size() != frames:
         _fail("per-frame profiler captured %d of %d physics frames" % [physics_samples.size(), frames])
         return
-    if _effects == "on" and effect_workload.active_effects().size() != 4:
+    if _effects == "on" and (effect_workload.activation_failed or effect_workload.active_effects().size() != 4):
         _fail("enabled benchmark workload did not observe all A3-A6 effects: %s" % effect_workload.effect_evidence)
         return
 

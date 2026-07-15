@@ -50,6 +50,28 @@ class PerformanceRunnerTest(unittest.TestCase):
         self.assertNotIn('return not enabled or propwash.length() > 0.0', activation_source)
         self.assertIn('return true', activation_source)
 
+    def test_activation_failure_latches_before_final_effect_gate(self):
+        self.assertIn('var activation_failed := false', BENCHMARK_SOURCE)
+        configure_start = BENCHMARK_SOURCE.index('func configure(native_runtime: Object, effects_enabled: bool) -> bool:')
+        configure_end = BENCHMARK_SOURCE.index('    func _activate_a6() -> bool:', configure_start)
+        configure_source = BENCHMARK_SOURCE[configure_start:configure_end]
+        self.assertIn('enabled = effects_enabled\n        activation_failed = false', configure_source)
+
+        physics_start = BENCHMARK_SOURCE.index('    func _physics_process(_delta: float) -> void:')
+        physics_end = BENCHMARK_SOURCE.index('    func active_effects() -> Array[String]:', physics_start)
+        physics_source = BENCHMARK_SOURCE[physics_start:physics_end]
+        self.assertIn('if not _activate_a6():\n            activation_failed = true\n            return', physics_source)
+
+        final_gate_start = BENCHMARK_SOURCE.index('if _effects == "on" and', physics_end)
+        final_gate_end = BENCHMARK_SOURCE.index('\n\n    var output :=', final_gate_start)
+        final_gate = BENCHMARK_SOURCE[final_gate_start:final_gate_end]
+        self.assertIn('effect_workload.activation_failed', final_gate)
+        self.assertIn('effect_workload.active_effects().size() != 4', final_gate)
+        self.assertLess(
+            final_gate.index('effect_workload.activation_failed'),
+            final_gate.index('effect_workload.active_effects().size() != 4'),
+        )
+
     def test_disabled_workload_returns_before_per_frame_effect_work(self):
         physics_index = BENCHMARK_SOURCE.index('func _physics_process(_delta: float) -> void:')
         self.assertIn('if not enabled:\n            return', BENCHMARK_SOURCE[physics_index:])
