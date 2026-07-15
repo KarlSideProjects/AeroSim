@@ -134,10 +134,12 @@ int main() {
     wind_force_config.physics_hz = 100;
     wind_force_config.substep_hz = 1000;
     wind_force_config.gravity_mps2 = 0.0;
-    wind_force_config.wind_mps = {3.0, 0.0, 0.0};
+    wind_force_config.wind_world_mps = {3.0, 0.0, 0.0};
+    wind_force_config.max_motor_rpm = 10000.0;
+    wind_force_config.per_motor.max_thrust_per_motor_newtons = 1.0;
+    wind_force_config.initial_state.motor_thrust_newtons = {1.0, 1.0, 1.0, 1.0};
     wind_force_config.a3_drag.enabled = true;
     wind_force_config.a3_drag.coefficient = {1.0e-6, 1.0e-6, 1.2e-6};
-    wind_force_config.a3_drag.motor_rpm = {10000.0, 10000.0, 10000.0, 10000.0};
     const auto wind_force = aerosim::simulate_trajectory(wind_force_config);
     if (wind_force.empty() ||
             wind_force.back().state.velocity.x <= 0.005 ||

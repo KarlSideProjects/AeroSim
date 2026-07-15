@@ -97,7 +97,7 @@ void apply_wind(
         const aerosim::SimulationClock &clock,
         const aerosim::WindField &wind_field) {
     const double sample_hz = config.substep_hz > 0 ? static_cast<double>(config.substep_hz) : 1.0;
-    config.wind_mps = wind_field.sample(static_cast<double>(clock.total_substeps) / sample_hz, state.position);
+    config.wind_world_mps = wind_field.sample(static_cast<double>(clock.total_substeps) / sample_hz, state.position);
 }
 
 Dictionary motor_telemetry_dict(const aerosim::MotorTelemetry &motor) {
