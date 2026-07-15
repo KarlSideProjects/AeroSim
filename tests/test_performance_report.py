@@ -197,31 +197,27 @@ class PerformanceReportTest(unittest.TestCase):
             build_report(raw, BASELINE_ENVIRONMENT | {"nvidia_driver_version": "570.133.07"})
 
     def test_comparison_reports_on_off_percentile_deltas(self):
-        environment = {"git_revision": "abc123", "cpu_model": "reference"}
+        environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
         common = {
-            "benchmark_mode": "reference",
+            "benchmark_mode": "gate",
             "warmup_seconds": 10.0,
             "measured_seconds": 60.0,
             "physics_engine": "Jolt Physics",
             "physics_ticks_per_second": 240,
             "substep_hz": 1000,
             "vsync_mode": 0,
-            "video_adapter": "NVIDIA GeForce RTX 4060 Ti",
+            "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
-            "godot_version": "4.7.stable",
-            "godot_sha256": "godot-sha",
-            "godot_cpp_revision": "godot-cpp-revision",
-            "gdextension_sha256": "extension-sha",
-            "native_source_sha256": "source-sha",
+            **PINNED_PROVENANCE,
         }
         baseline = build_report(
-            common | {"samples_ms": [1.0, 2.0], "scenario": "effects_off", "active_effects": []},
+            common | {"samples_ms": [1.0, 1.0], "scenario": "effects_off", "active_effects": []},
             environment,
         )
         candidate = build_report(
             common
             | {
-                "samples_ms": [2.0, 4.0],
+                "samples_ms": [2.0, 2.0],
                 "scenario": "effects_on",
                 "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
                 "effect_evidence": {effect: {"observed": True} for effect in [
@@ -233,27 +229,23 @@ class PerformanceReportTest(unittest.TestCase):
 
         comparison = compare_reports(baseline, candidate)
 
-        self.assertEqual(comparison["p95_delta_ms"], 2.0)
-        self.assertEqual(comparison["p99_delta_ms"], 2.0)
+        self.assertEqual(comparison["p95_delta_ms"], 1.0)
+        self.assertEqual(comparison["p99_delta_ms"], 1.0)
         self.assertEqual(comparison["p99_delta_percent"], 100.0)
 
     def test_g37_passes_at_absolute_and_relative_boundaries(self):
-        environment = {"git_revision": "abc123", "cpu_model": "reference"}
+        environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
         common = {
-            "benchmark_mode": "reference",
+            "benchmark_mode": "gate",
             "warmup_seconds": 10.0,
             "measured_seconds": 60.0,
             "physics_engine": "Jolt Physics",
             "physics_ticks_per_second": 240,
             "substep_hz": 1000,
             "vsync_mode": 0,
-            "video_adapter": "NVIDIA GeForce RTX 4060 Ti",
+            "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
-            "godot_version": "4.7.stable",
-            "godot_sha256": "godot-sha",
-            "godot_cpp_revision": "godot-cpp-revision",
-            "gdextension_sha256": "extension-sha",
-            "native_source_sha256": "source-sha",
+            **PINNED_PROVENANCE,
         }
         baseline = build_report(
             common | {"samples_ms": [2.5], "scenario": "effects_off", "active_effects": []},
@@ -285,7 +277,7 @@ class PerformanceReportTest(unittest.TestCase):
         self.assertEqual(relative_fail["g3_7_verdict"], "fail")
         self.assertFalse(relative_fail["g3_7_increase_within_limit"])
 
-    def test_g37_fails_closed_for_missing_incompatible_or_zero_baseline(self):
+    def test_g37_rejects_nonproduction_reports(self):
         environment = {"git_revision": "abc123", "cpu_model": "reference"}
         common = {
             "benchmark_mode": "reference",
@@ -302,6 +294,42 @@ class PerformanceReportTest(unittest.TestCase):
             "godot_cpp_revision": "godot-cpp-revision",
             "gdextension_sha256": "extension-sha",
             "native_source_sha256": "source-sha",
+        }
+        for mode in ("reference", "smoke"):
+            baseline = build_report(
+                common | {"benchmark_mode": mode, "samples_ms": [2.5], "scenario": "effects_off", "active_effects": []},
+                environment,
+            )
+            candidate = build_report(
+                common
+                | {
+                    "benchmark_mode": mode,
+                    "samples_ms": [3.0],
+                    "scenario": "effects_on",
+                    "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
+                    "effect_evidence": {effect: {"observed": True} for effect in [
+                        "A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"
+                    ]},
+                },
+                environment,
+            )
+
+            with self.assertRaisesRegex(ValueError, "G3.7 requires passing G0.1 production reports"):
+                compare_reports(baseline, candidate)
+
+    def test_g37_fails_closed_for_missing_incompatible_or_zero_baseline(self):
+        environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
+        common = {
+            "benchmark_mode": "gate",
+            "warmup_seconds": 10.0,
+            "measured_seconds": 60.0,
+            "physics_engine": "Jolt Physics",
+            "physics_ticks_per_second": 240,
+            "substep_hz": 1000,
+            "vsync_mode": 0,
+            "video_adapter": BASELINE_GPU,
+            "rendering_method": "gl_compatibility",
+            **PINNED_PROVENANCE,
         }
         baseline = build_report(
             common | {"samples_ms": [2.0], "scenario": "effects_off", "active_effects": []},
@@ -325,22 +353,18 @@ class PerformanceReportTest(unittest.TestCase):
             compare_reports(baseline | {"p99_ms": 0.0}, candidate)
 
     def test_g37_requires_observed_enabled_effects(self):
-        environment = {"git_revision": "abc123", "cpu_model": "reference"}
+        environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
         common = {
-            "benchmark_mode": "reference",
+            "benchmark_mode": "gate",
             "warmup_seconds": 10.0,
             "measured_seconds": 60.0,
             "physics_engine": "Jolt Physics",
             "physics_ticks_per_second": 240,
             "substep_hz": 1000,
             "vsync_mode": 0,
-            "video_adapter": "NVIDIA GeForce RTX 4060 Ti",
+            "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
-            "godot_version": "4.7.stable",
-            "godot_sha256": "godot-sha",
-            "godot_cpp_revision": "godot-cpp-revision",
-            "gdextension_sha256": "extension-sha",
-            "native_source_sha256": "source-sha",
+            **PINNED_PROVENANCE,
         }
         baseline = build_report(
             common | {"samples_ms": [2.0], "scenario": "effects_off", "active_effects": []},
@@ -395,7 +419,7 @@ class PerformanceReportTest(unittest.TestCase):
             },
             environment,
         )
-        with self.assertRaisesRegex(ValueError, "benchmark_mode"):
+        with self.assertRaisesRegex(ValueError, "G3.7 requires passing G0.1 production reports"):
             compare_reports(smoke_off, candidate)
 
 

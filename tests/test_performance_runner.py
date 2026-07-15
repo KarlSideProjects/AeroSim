@@ -35,6 +35,13 @@ class PerformanceRunnerTest(unittest.TestCase):
         self.assertIn('maxf(propwash.length(), float(previous_evidence.get("A6_propwash"', BENCHMARK_SOURCE)
         self.assertIn('effect_workload.process_physics_priority = 100', BENCHMARK_SOURCE)
 
+    def test_a6_activation_uses_the_public_native_path_before_and_during_measurement(self):
+        self.assertIn('func _activate_a6() -> bool:', BENCHMARK_SOURCE)
+        self.assertIn('native.call("set_a6_propwash_model", enabled, 12.0, 2.0, 0.5)', BENCHMARK_SOURCE)
+        self.assertIn('native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.866025403784, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)', BENCHMARK_SOURCE)
+        self.assertIn('native.call("step_angle_mode", 240, 1000, 0.75, 0.0, 0.0, 0.0)', BENCHMARK_SOURCE)
+        self.assertGreaterEqual(BENCHMARK_SOURCE.count('_activate_a6()'), 2)
+
     def test_short_headed_run_records_jolt_samples_with_vsync_disabled(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "raw.json"
@@ -99,8 +106,6 @@ class PerformanceRunnerTest(unittest.TestCase):
                     "0.1",
                     "--effects",
                     "on",
-                    "--baseline-report",
-                    str(output),
                     "--output",
                     str(candidate_output),
                 ],
@@ -113,7 +118,6 @@ class PerformanceRunnerTest(unittest.TestCase):
             )
             self.assertEqual(candidate.returncode, 0, candidate.stderr)
             candidate_report = json.loads(candidate_output.read_text(encoding="utf-8"))
-            self.assertIn("p99_delta_ms", candidate_report["comparison_to_baseline"])
             self.assertEqual(
                 candidate_report["measurement"]["active_effects"],
                 ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
@@ -122,6 +126,39 @@ class PerformanceRunnerTest(unittest.TestCase):
                 evidence["observed"]
                 for evidence in candidate_report["measurement"]["effect_evidence"].values()
             ))
+
+            repeat_output = Path(directory) / "repeat.json"
+            repeat = subprocess.run(
+                [
+                    str(ROOT / "scripts" / "run_performance_benchmark.sh"),
+                    "--mode",
+                    "smoke",
+                    "--warmup-seconds",
+                    "0",
+                    "--seconds",
+                    "0.1",
+                    "--effects",
+                    "on",
+                    "--output",
+                    str(repeat_output),
+                ],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(repeat.returncode, 0, repeat.stderr)
+            repeat_report = json.loads(repeat_output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                repeat_report["measurement"]["active_effects"],
+                candidate_report["measurement"]["active_effects"],
+            )
+            self.assertEqual(
+                repeat_report["measurement"]["effect_evidence"],
+                candidate_report["measurement"]["effect_evidence"],
+            )
 
     def test_default_gate_mode_rejects_shortened_gate_protocol(self):
         with tempfile.TemporaryDirectory() as directory:

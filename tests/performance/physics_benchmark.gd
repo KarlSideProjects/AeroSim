@@ -38,22 +38,35 @@ class EffectWorkload:
             "delay_enabled": false,
         })
         native.call("reset_flight")
-        if not native.call("set_a6_propwash_model", enabled, 12.0, 2.0, 0.5):
-            return false
         if not native.call("set_a5_downwash_model", enabled, 0.0231348, 2267.18, 0.16, -0.11):
             return false
         if not native.call("set_dual_aircraft_positions", 0.0, 2.0, 0.0, 0.0, 0.0, 0.0):
             return false
         if not native.call("arm_flight_control", 0.0):
             return false
-        return true
+        return _activate_a6()
+
+    func _activate_a6() -> bool:
+        if not native.call("set_a6_propwash_model", enabled, 12.0, 2.0, 0.5):
+            return false
+        native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.866025403784, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)
+        var single_row: PackedFloat64Array = native.call("step_angle_mode", 240, 1000, 0.75, 0.0, 0.0, 0.0)
+        if single_row.is_empty():
+            return false
+        var telemetry: Dictionary = native.call("telemetry_snapshot")
+        var propwash: Vector3 = telemetry.get("propwash_disturbance_rad_s2", Vector3.ZERO)
+        effect_evidence["A6_propwash"] = {
+            "observed": enabled and propwash.length() > 0.0,
+            "magnitude": propwash.length(),
+        }
+        return not enabled or propwash.length() > 0.0
 
     func _physics_process(_delta: float) -> void:
         if native == null:
             return
         var previous_evidence := effect_evidence.duplicate(true)
-        native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.866025403784, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)
-        var _single_row: PackedFloat64Array = native.call("step_angle_mode", 240, 1000, 0.75, 0.0, 0.0, 0.0)
+        if not _activate_a6():
+            return
         var dual_row: PackedFloat64Array = native.call("step_dual_aircraft_simulation", 240, 1000, 0.72 * 9.80665)
         var telemetry: Dictionary = native.call("telemetry_snapshot")
         var drag_body: Vector3 = telemetry.get("drag_body_n", Vector3.ZERO)

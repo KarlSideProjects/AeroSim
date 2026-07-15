@@ -127,6 +127,9 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
     candidate_p99 = float(candidate["p99_ms"])
     if baseline_p99 <= 0.0:
         raise ValueError("incompatible benchmark reports: baseline p99_ms must be greater than zero")
+    for report in (baseline, candidate):
+        if report.get("gate") != "G0.1" or report.get("gate_eligible") is not True or report.get("gate_verdict") != "pass":
+            raise ValueError("G3.7 requires passing G0.1 production reports")
     baseline_measurement = baseline.get("measurement")
     candidate_measurement = candidate.get("measurement")
     if not isinstance(baseline_measurement, dict) or not isinstance(candidate_measurement, dict):
