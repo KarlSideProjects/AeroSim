@@ -224,6 +224,11 @@ int main() {
     if (!near(actual_downwash, expected_downwash, 1e-12) || !(actual_downwash < 0.0)) {
         return fail("G3.3 A5 dual-aircraft lift reduction must follow the DSL/gym-pybullet-drones downwash model and switch");
     }
+    aerosim::A5DownwashConfig invalid_downwash = downwash;
+    invalid_downwash.coeff_1 = -1.0;
+    if (aerosim::a5_downwash_force_y_newtons(invalid_downwash, {0.1, 2.0, 0.0}, {0.0, 0.0, 0.0}) != 0.0) {
+        return fail("A5 negative force magnitude coefficient must fail closed");
+    }
 
     auto run_dual_crossing = [&downwash](bool enabled) {
         aerosim::SimulationConfig config;

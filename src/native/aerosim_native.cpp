@@ -286,7 +286,8 @@ PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
         std::int32_t physics_hz,
         std::int32_t substep_hz,
         double total_thrust_newtons) {
-    if (!std::isfinite(total_thrust_newtons) || total_thrust_newtons < 0.0) {
+    if (physics_hz <= 0 || substep_hz <= 0 ||
+            !std::isfinite(total_thrust_newtons) || total_thrust_newtons < 0.0) {
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
@@ -825,6 +826,9 @@ bool AeroSimNative::set_a5_downwash_model(
         }
     }
     if (prop_radius_m <= 0.0) {
+        return false;
+    }
+    if (coeff_1 < 0.0) {
         return false;
     }
     a5_downwash_config_.enabled = enabled;

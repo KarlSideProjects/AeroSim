@@ -86,7 +86,7 @@ double a5_downwash_force_y_newtons(
         const Vec3 &lower_position) {
     if (!config.enabled ||
             !std::isfinite(config.prop_radius_m) || config.prop_radius_m <= 0.0 ||
-            !std::isfinite(config.coeff_1) ||
+            !std::isfinite(config.coeff_1) || config.coeff_1 < 0.0 ||
             !std::isfinite(config.coeff_2) ||
             !std::isfinite(config.coeff_3)) {
         return 0.0;

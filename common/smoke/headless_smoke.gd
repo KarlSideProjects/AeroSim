@@ -824,6 +824,12 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     if dual_row.size() < 11 or float(dual_row[8]) >= 0.0 or float(dual_row[9]) > float(dual_row[8]):
         push_error("A5 dual frame path must consume the enabled configuration")
         return false
+    if native.call("step_dual_aircraft_simulation", 0, 1000, 0.72 * 9.80665).size() != 0:
+        push_error("A5 dual frame path must reject non-positive physics rates")
+        return false
+    if native.call("set_a5_downwash_model", true, prop_radius, -1.0, 0.16, -0.11):
+        push_error("A5 public path must reject a negative force magnitude coefficient")
+        return false
     return true
 
 func _verify_collision_public_path(native: Object) -> bool:
