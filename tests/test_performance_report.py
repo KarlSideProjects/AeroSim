@@ -488,6 +488,8 @@ class PerformanceReportTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "G3.7 gate reports require exactly 14400 samples"):
             build_report(candidate_raw | {"samples_ms": [2.1]}, environment)
+        with self.assertRaisesRegex(ValueError, "warmup_seconds does not match"):
+            build_report(candidate_raw | {"warmup_seconds": 0.0}, environment)
 
         with self.assertRaisesRegex(ValueError, "raw_samples_ms"):
             compare_reports({"environment": environment, "scenario": "effects_off", "sample_count": 1, "measurement": {}}, candidate)

@@ -102,6 +102,8 @@ def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, 
         _validate_gate_eligibility(raw, environment)
         if raw.get("workload_attestation") == G3_7_WORKLOAD_ATTESTATION and len(measurements) != G3_7_SAMPLE_COUNT:
             raise ValueError(f"G3.7 gate reports require exactly {G3_7_SAMPLE_COUNT} samples")
+        if raw.get("workload_attestation") == G3_7_WORKLOAD_ATTESTATION:
+            _validate_g37_protocol(raw)
     render_summaries: dict[str, float] = {}
     for key, prefix in (
         ("render_cpu_samples_ms", "render_cpu"),
