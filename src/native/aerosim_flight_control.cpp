@@ -11,7 +11,6 @@ namespace aerosim {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr double kRadiansPerSecondPerRpm = 2.0 * kPi / 60.0;
 constexpr double kAngleP = 20.0;
 constexpr double kRateP = 0.600;
 constexpr double kRateI = 0.020;
@@ -215,6 +214,21 @@ bool FlightController::arm(double throttle) {
 
 void FlightController::disarm() {
     armed_ = false;
+    motor_thrust_newtons_ = 0.0;
+    altitude_hold_captured_ = false;
+    altitude_hold_target_m_ = 0.0;
+    altitude_hold_filtered_altitude_m_ = 0.0;
+    altitude_hold_vertical_speed_mps_ = 0.0;
+    altitude_hold_trim_throttle_ = 0.0;
+    altitude_hold_just_captured_ = false;
+    rate_integral_ = {};
+    previous_target_rates_y_up_ = {};
+    motor_saturation_latched_ = {};
+    pid_saturation_latched_ = {};
+    pid_timing_stats_ = {};
+    telemetry_buffers_ = {};
+    telemetry_read_index_ = 0;
+    next_telemetry_publish_s_ = 0.0;
 }
 
 bool FlightController::armed() const {
@@ -240,6 +254,9 @@ double FlightController::motor_thrust_newtons() const {
 }
 
 void FlightController::capture_altitude_hold(double target_altitude_m) {
+    if (!armed_) {
+        return;
+    }
     altitude_hold_captured_ = std::isfinite(target_altitude_m);
     altitude_hold_target_m_ = altitude_hold_captured_ ? target_altitude_m : 0.0;
     altitude_hold_filtered_altitude_m_ = altitude_hold_target_m_;
@@ -359,10 +376,7 @@ void FlightController::maybe_publish_telemetry(
     snapshot.mode = mode;
 
     const double throttle_clamped = armed_ ? std::clamp(throttle, 0.0, 1.0) : 0.0;
-    const double available_thrust = available_thrust_cap_newtons(config, throttle_clamped);
-    const double max_total_thrust = available_thrust > 0.0 ? available_thrust : config.max_total_thrust_newtons;
-    const double max_per_motor_thrust = max_total_thrust / static_cast<double>(snapshot.motors.size());
-    const double max_motor_rpm = config.max_motor_rpm > 0.0 ? config.max_motor_rpm : 0.0;
+    std::array<double, 4> motor_speeds{};
     for (std::size_t index = 0; index < snapshot.motors.size(); ++index) {
         MotorTelemetry &motor = snapshot.motors[index];
         motor.thrust_newtons = armed_ ? sample.state.motor_thrust_newtons[index] : 0.0;
@@ -370,17 +384,26 @@ void FlightController::maybe_publish_telemetry(
                 ? std::clamp(motor.thrust_newtons / config.per_motor.max_thrust_per_motor_newtons, 0.0, 1.0)
                 : 0.0;
         motor.current_a = armed_ ? config.per_motor.max_current_per_motor_a * thrust_fraction : 0.0;
-        const double motor_rpm = max_per_motor_thrust > 0.0
-                ? max_motor_rpm * std::sqrt(std::clamp(motor.thrust_newtons / max_per_motor_thrust, 0.0, 1.0))
-                : 0.0;
-        motor.speed_rad_s = motor_rpm * kRadiansPerSecondPerRpm;
+        motor_speeds[index] = motor_speed_rad_s_from_thrust(
+                motor.thrust_newtons,
+                config.per_motor.max_thrust_per_motor_newtons,
+                config.max_motor_rpm);
+        motor.speed_rad_s = motor_speeds[index];
         motor.saturated = armed_ && (motor_saturation_latched_[index] || throttle_clamped >= 1.0 - 1e-9 ||
                 (config.per_motor.max_thrust_per_motor_newtons > 0.0 &&
                         motor.thrust_newtons >= config.per_motor.max_thrust_per_motor_newtons - 1e-9));
     }
 
     snapshot.ground_effect_gain = a4_ground_effect_lift_newtons(config.a4_ground_effect, sample.state.position.y);
-    snapshot.drag_body_n = a3_drag_force_body(config.a3_drag, sample.state.orientation, sample.state.velocity);
+    const Vec3 relative_air_velocity{
+            sample.state.velocity.x - config.wind_world_mps.x,
+            sample.state.velocity.y - config.wind_world_mps.y,
+            sample.state.velocity.z - config.wind_world_mps.z};
+    snapshot.drag_body_n = a3_drag_force_body(
+            config.a3_drag,
+            sample.state.orientation,
+            relative_air_velocity,
+            motor_speeds);
     snapshot.battery.voltage_v = loaded_voltage_v(config, throttle_clamped);
     snapshot.battery.sag_v = std::max(0.0, config.battery_nominal_voltage_v - snapshot.battery.voltage_v);
     snapshot.battery.remaining_mah = config.battery_remaining_mah;
@@ -417,9 +440,12 @@ TrajectorySample FlightController::step_angle_mode(
         const SimulationConfig &config,
         const FlightCommand &command,
         const Quat &estimated_attitude) {
+    if (!armed_) {
+        state.motor_thrust_newtons = {};
+    }
     SimulationConfig frame_config = config;
     const double throttle = std::clamp(command.throttle, 0.0, 1.0);
-    pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
+    pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
     const Vec3 desired_rates_y_up{
@@ -437,7 +463,7 @@ TrajectorySample FlightController::step_angle_mode(
                 pid_output,
                 pid_saturated);
         const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
-        if (target_dt > 0.0) {
+        if (armed_ && target_dt > 0.0) {
             pid_timing_stats_.p99_jitter_fraction = std::max(
                     pid_timing_stats_.p99_jitter_fraction,
                     std::abs(dt - target_dt) / target_dt);
@@ -458,9 +484,12 @@ TrajectorySample FlightController::step_acro_mode(
         SimulationClock &clock,
         const SimulationConfig &config,
         const AcroCommand &command) {
+    if (!armed_) {
+        state.motor_thrust_newtons = {};
+    }
     SimulationConfig frame_config = config;
     const double throttle = std::clamp(command.throttle, 0.0, 1.0);
-    pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
+    pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
     const Vec3 desired_rates_y_up{
@@ -478,7 +507,7 @@ TrajectorySample FlightController::step_acro_mode(
                 pid_output,
                 pid_saturated);
         const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
-        if (target_dt > 0.0) {
+        if (armed_ && target_dt > 0.0) {
             pid_timing_stats_.p99_jitter_fraction = std::max(
                     pid_timing_stats_.p99_jitter_fraction,
                     std::abs(dt - target_dt) / target_dt);
@@ -501,48 +530,60 @@ TrajectorySample FlightController::step_altitude_hold_mode(
         const FlightCommand &command,
         double measured_altitude_m,
         const Quat &estimated_attitude) {
-    if (!altitude_hold_captured_) {
-        capture_altitude_hold(measured_altitude_m);
+    if (!armed_) {
+        state.motor_thrust_newtons = {};
+        altitude_hold_captured_ = false;
+        altitude_hold_target_m_ = 0.0;
+        altitude_hold_filtered_altitude_m_ = 0.0;
+        altitude_hold_vertical_speed_mps_ = 0.0;
+        altitude_hold_trim_throttle_ = 0.0;
+        altitude_hold_just_captured_ = false;
     }
-    if (config.hover_throttle > 0.0) {
-        if (altitude_hold_trim_throttle_ <= 0.0) {
+    double target_throttle = 0.0;
+    SimulationConfig frame_config = config;
+    if (armed_) {
+        if (!altitude_hold_captured_) {
+            capture_altitude_hold(measured_altitude_m);
+        }
+        if (config.hover_throttle > 0.0) {
+            if (altitude_hold_trim_throttle_ <= 0.0) {
+                altitude_hold_trim_throttle_ = std::clamp(command.throttle, 0.0, 1.0);
+            }
+        }
+
+        const double control_dt = frame_config.physics_hz > 0
+                ? 1.0 / static_cast<double>(frame_config.physics_hz)
+                : (frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0);
+        const double estimate_alpha = alpha_from_tau(control_dt, kAltitudeHoldEstimateTauS);
+        const double vertical_speed_mps = std::isfinite(state.velocity.y) ? state.velocity.y : 0.0;
+        altitude_hold_filtered_altitude_m_ += vertical_speed_mps * control_dt;
+        altitude_hold_filtered_altitude_m_ +=
+                (measured_altitude_m - altitude_hold_filtered_altitude_m_) * estimate_alpha;
+        altitude_hold_vertical_speed_mps_ = vertical_speed_mps;
+        const double hover_thrust = frame_config.mass_kg * frame_config.gravity_mps2;
+        const double current_throttle = hover_thrust > 0.0 && frame_config.hover_throttle > 0.0
+                ? std::clamp(motor_thrust_newtons_ * frame_config.hover_throttle / hover_thrust, 0.0, 1.0)
+                : std::clamp(command.throttle, 0.0, 1.0);
+        double altitude_error_m = altitude_hold_target_m_ - altitude_hold_filtered_altitude_m_;
+        const bool inside_noise_band = std::abs(altitude_error_m) <= kAltitudeHoldNoiseDeadbandM;
+        if (inside_noise_band) {
+            altitude_error_m = 0.0;
+        }
+        target_throttle = current_throttle;
+        if (altitude_hold_just_captured_) {
             altitude_hold_trim_throttle_ = std::clamp(command.throttle, 0.0, 1.0);
+            target_throttle = altitude_hold_trim_throttle_;
+            altitude_hold_just_captured_ = false;
+        } else {
+            target_throttle = std::clamp(
+                    altitude_hold_trim_throttle_ +
+                            altitude_error_m * kAltitudeHoldKp -
+                            altitude_hold_vertical_speed_mps_ * kAltitudeHoldKd,
+                    0.0,
+                    1.0);
         }
     }
-
-    SimulationConfig frame_config = config;
-    const double control_dt = frame_config.physics_hz > 0
-            ? 1.0 / static_cast<double>(frame_config.physics_hz)
-            : (frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0);
-    const double estimate_alpha = alpha_from_tau(control_dt, kAltitudeHoldEstimateTauS);
-    const double vertical_speed_mps = std::isfinite(state.velocity.y) ? state.velocity.y : 0.0;
-    altitude_hold_filtered_altitude_m_ += vertical_speed_mps * control_dt;
-    altitude_hold_filtered_altitude_m_ +=
-            (measured_altitude_m - altitude_hold_filtered_altitude_m_) * estimate_alpha;
-    altitude_hold_vertical_speed_mps_ = vertical_speed_mps;
-    const double hover_thrust = frame_config.mass_kg * frame_config.gravity_mps2;
-    const double current_throttle = hover_thrust > 0.0 && frame_config.hover_throttle > 0.0
-            ? std::clamp(motor_thrust_newtons_ * frame_config.hover_throttle / hover_thrust, 0.0, 1.0)
-            : std::clamp(command.throttle, 0.0, 1.0);
-    double altitude_error_m = altitude_hold_target_m_ - altitude_hold_filtered_altitude_m_;
-    const bool inside_noise_band = std::abs(altitude_error_m) <= kAltitudeHoldNoiseDeadbandM;
-    if (inside_noise_band) {
-        altitude_error_m = 0.0;
-    }
-    double target_throttle = current_throttle;
-    if (altitude_hold_just_captured_) {
-        altitude_hold_trim_throttle_ = std::clamp(command.throttle, 0.0, 1.0);
-        target_throttle = altitude_hold_trim_throttle_;
-        altitude_hold_just_captured_ = false;
-    } else {
-        target_throttle = std::clamp(
-                altitude_hold_trim_throttle_ +
-                        altitude_error_m * kAltitudeHoldKp -
-                        altitude_hold_vertical_speed_mps_ * kAltitudeHoldKd,
-                0.0,
-                1.0);
-    }
-    pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
+    pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
     const Vec3 desired_rates_y_up{
@@ -559,9 +600,11 @@ TrajectorySample FlightController::step_altitude_hold_mode(
                 dt,
                 pid_output,
                 pid_saturated);
-        pid_saturated[1] = pid_saturated[1] || target_throttle <= 0.0 || target_throttle >= 1.0;
+        if (armed_) {
+            pid_saturated[1] = pid_saturated[1] || target_throttle <= 0.0 || target_throttle >= 1.0;
+        }
         const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
-        if (target_dt > 0.0) {
+        if (armed_ && target_dt > 0.0) {
             pid_timing_stats_.p99_jitter_fraction = std::max(
                     pid_timing_stats_.p99_jitter_fraction,
                     std::abs(dt - target_dt) / target_dt);

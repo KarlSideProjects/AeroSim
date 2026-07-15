@@ -22,7 +22,6 @@ private:
     aerosim::SimulationClock simulation_clock_;
     aerosim::HardwareConfig hardware_config_;
     aerosim::FlightController flight_controller_;
-    aerosim::A3DragConfig a3_drag_config_;
     aerosim::A4GroundEffectConfig a4_ground_effect_config_;
     aerosim::A5DownwashConfig a5_downwash_config_;
     aerosim::CollisionAuthoritySwitch collision_authority_;
@@ -57,6 +56,7 @@ public:
             std::int32_t physics_hz,
             std::int32_t substep_hz,
             double total_thrust_newtons);
+    // PX4 actuator modes, including the collision variant, receive arming authority from the PX4 bridge, not the local flight controller.
     godot::PackedFloat64Array step_px4_actuator_mode(
             std::int32_t physics_hz,
             std::int32_t substep_hz,
@@ -105,15 +105,7 @@ public:
     godot::Dictionary hardware_power_diagnostics() const;
     godot::Dictionary hardware_per_motor_diagnostics() const;
     godot::Dictionary telemetry_snapshot() const;
-    bool set_a3_drag_model(
-            bool enabled,
-            double coefficient_x,
-            double coefficient_y,
-            double coefficient_z,
-            double motor_0_rpm,
-            double motor_1_rpm,
-            double motor_2_rpm,
-            double motor_3_rpm);
+    bool set_a3_drag_model(bool enabled, double coefficient_x_kg, double coefficient_y_kg, double coefficient_z_kg);
     godot::Dictionary a3_drag_configuration() const;
     bool set_a4_ground_effect_model(
             bool enabled,

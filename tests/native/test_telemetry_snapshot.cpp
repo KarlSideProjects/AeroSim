@@ -86,7 +86,12 @@ int main() {
                 ? config.per_motor.max_current_per_motor_a *
                         std::clamp(motor.thrust_newtons / config.per_motor.max_thrust_per_motor_newtons, 0.0, 1.0)
                 : 0.0;
+        const double expected_speed = aerosim::motor_speed_rad_s_from_thrust(
+                motor.thrust_newtons,
+                config.per_motor.max_thrust_per_motor_newtons,
+                config.max_motor_rpm);
         if (motor.thrust_newtons <= 0.0 || motor.speed_rad_s <= 0.0 || motor.speed_rad_s > max_motor_speed_rad_s ||
+                !near(motor.speed_rad_s, expected_speed, 1e-9) ||
                 !near(motor.current_a, expected_current, 1e-9) ||
                 motor.saturated) {
             return fail("TelemetrySnapshot motor thrust/rad_s/current/saturation must match controller truth");

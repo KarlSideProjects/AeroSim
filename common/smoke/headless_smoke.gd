@@ -468,7 +468,37 @@ func _verify_flight_control_public_path(native: Object) -> bool:
         push_error("Armed Angle Mode throttle should produce lift")
         return false
 
+    native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.0, 0.0, 0.0, 1.0, 0.722222222222, 0.0)
+    native.call("disarm_flight_control")
+    if native.call("flight_control_armed"):
+        push_error("Disarm must clear native flight-control armed state immediately")
+        return false
+    var disarmed_diagnostics: Dictionary = native.call("flight_control_diagnostics")
+    var disarmed_snapshot: Dictionary = native.call("telemetry_snapshot")
+    var disarmed_motors: Array = disarmed_snapshot.get("motors", [])
+    if (
+            float(disarmed_diagnostics.get("motor_thrust_newtons", 1.0)) != 0.0 or
+            bool(disarmed_snapshot.get("armed", true)) or
+            String(disarmed_diagnostics.get("flight_mode", "")) != "ANGLE" or
+            bool(disarmed_diagnostics.get("uses_estimated_attitude", true)) or
+            String(disarmed_snapshot.get("mode", "")) != "ANGLE" or
+            disarmed_motors.size() != 4
+        ):
+        push_error("Disarm must clear native diagnostics, mode metadata, and telemetry immediately")
+        return false
+    for motor_value in disarmed_motors:
+        if (
+                float(motor_value.get("thrust_newtons", 1.0)) != 0.0 or
+                float(motor_value.get("speed_rad_s", 1.0)) != 0.0 or
+                float(motor_value.get("current_a", 1.0)) != 0.0
+            ):
+            push_error("Disarm must clear telemetry motor state immediately")
+            return false
+
     native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("Native flight control must re-arm after immediate disarm cleanup")
+        return false
     if not native.call("flight_control_armed"):
         push_error("reset_flight should keep armed state for immediate throttle follow")
         return false
@@ -651,7 +681,7 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
             push_error("AeroSimNative.%s must exist for A3 drag public configuration" % method)
             return false
 
-    if not native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012, 10000.0, 10000.0, 10000.0, 10000.0):
+    if not native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012):
         push_error("A3 drag public path must accept a disabled valid configuration")
         return false
     var disabled: Dictionary = native.call("a3_drag_configuration")
@@ -661,12 +691,12 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
 
     native.call("reset_simulation")
     native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    var off_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.0)
+    var off_row: PackedFloat64Array = native.call("step_px4_actuator_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5)
     if absf(float(off_row[8]) - 10.0) > 1e-9:
         push_error("A3 disabled must not decelerate the public coasting path")
         return false
 
-    if not native.call("set_a3_drag_model", true, 0.0001, 0.0001, 0.00012, 10000.0, 10000.0, 10000.0, 10000.0):
+    if not native.call("set_a3_drag_model", true, 0.0001, 0.0001, 0.00012):
         push_error("A3 drag public path must accept an enabled valid configuration")
         return false
     var enabled: Dictionary = native.call("a3_drag_configuration")
@@ -676,9 +706,32 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
 
     native.call("reset_simulation")
     native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-    var on_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.0)
+    var on_row: PackedFloat64Array = native.call("step_px4_actuator_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5)
     if float(on_row[8]) >= float(off_row[8]):
-        push_error("A3 enabled must decelerate the public coasting path")
+        push_error("A3 enabled must decelerate the public path using live motor state")
+        return false
+
+    native.call("disarm_flight_control")
+    native.call("reset_simulation")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var px4_external_row: PackedFloat64Array = native.call("step_px4_actuator_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5)
+    if float(px4_external_row[8]) >= 10.0:
+        push_error("PX4 actuator mode must use PX4 external arming authority after local disarm")
+        return false
+    if not native.call("arm_flight_control", 0.0):
+        push_error("Native flight control must re-arm before aggregate A3 path verification")
+        return false
+
+    native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012)
+    native.call("reset_simulation")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var aggregate_off_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 10.0)
+    native.call("set_a3_drag_model", true, 0.0001, 0.0001, 0.00012)
+    native.call("reset_simulation")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var aggregate_on_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 10.0)
+    if float(aggregate_on_row[8]) >= float(aggregate_off_row[8]):
+        push_error("A3 enabled aggregate thrust path must decelerate using live motor state")
         return false
     return true
 
@@ -1799,7 +1852,7 @@ func _verify_hardware_config_public_path() -> bool:
     if not loader.last_ok or race_preset.version == preset.version:
         push_error("5 inch race hardware preset must load as a distinct built-in preset")
         return false
-    for key in ["frame", "motor", "propeller", "battery", "esc", "aircraft", "sensors", "fpv"]:
+    for key in ["frame", "motor", "propeller", "battery", "esc", "aerodynamics", "aircraft", "sensors", "fpv"]:
         if not preset.has(key):
             push_error("5 inch hardware preset missing 3.6.1 category: %s" % key)
             return false
@@ -1807,6 +1860,9 @@ func _verify_hardware_config_public_path() -> bool:
         if not preset.has(key):
             push_error("5 inch hardware preset missing required metadata: %s" % key)
             return false
+    if preset.aerodynamics.a3.enabled or float(preset.aerodynamics.a3.coefficient_kg.x) < 0.0:
+        push_error("Hardware preset must keep uncalibrated A3 coefficients finite, non-negative, and disabled")
+        return false
     if loader.prop_sample_at_rpm(preset, 1000.0).ok:
         push_error("Prop table must reject rpm requests below the measured table")
         return false
@@ -1937,6 +1993,15 @@ func _verify_hardware_config_public_path() -> bool:
     var reset_count_before: int = scene.reset_count
     if not loader.apply_to_runtime(scene, "res://config/drones/5_inch_6s.json"):
         push_error("Runtime must hot-switch the built-in 5 inch hardware preset")
+        scene.queue_free()
+        return false
+    var startup_a3: Dictionary = scene.native.call("a3_drag_configuration")
+    if (bool(startup_a3.get("enabled", false)) != bool(preset.aerodynamics.a3.enabled) or
+            abs(float(startup_a3.get("coefficient_x_kg", -1.0)) - float(preset.aerodynamics.a3.coefficient_kg.x)) > 1e-12 or
+            abs(float(startup_a3.get("coefficient_y_kg", -1.0)) - float(preset.aerodynamics.a3.coefficient_kg.y)) > 1e-12 or
+            abs(float(startup_a3.get("coefficient_z_kg", -1.0)) - float(preset.aerodynamics.a3.coefficient_kg.z)) > 1e-12 or
+            startup_a3.get("motor_speed_source", "") != "live_motor_thrust_state"):
+        push_error("Runtime startup preset must apply static A3 settings and retain live motor speed ownership")
         scene.queue_free()
         return false
     if scene.native != native_before or scene.reset_count != reset_count_before or scene.get_meta("hardware_config_version", "") != preset.version:

@@ -45,3 +45,26 @@ func test_derives_the_preset_backed_per_motor_model() -> void:
     assert_eq(per_motor.position_frd.size(), 4)
     assert_almost_eq(per_motor.max_thrust_per_motor_newtons, 16.2, 0.000001)
     assert_almost_eq(per_motor.yaw_torque_per_newton, 0.1575 / 16.2, 0.000001)
+
+
+func test_schema_requires_static_a3_coefficients_without_dynamic_rpm() -> void:
+    var config: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+
+    assert_false(config.aerodynamics.a3.enabled)
+    assert_true(config.aerodynamics.a3.coefficient_kg.has("x"))
+    assert_false(config.aerodynamics.a3.has("motor_rpm"))
+    assert_eq(loader.validate_config(config), "")
+
+
+func test_schema_rejects_invalid_a3_values() -> void:
+    var negative: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    negative.aerodynamics.a3.coefficient_kg.x = -0.1
+    assert_true(loader.validate_config(negative).contains("coefficient_kg.x"))
+
+    var non_boolean: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    non_boolean.aerodynamics.a3.enabled = 1
+    assert_true(loader.validate_config(non_boolean).contains("enabled"))
+
+    var missing: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    missing.aerodynamics.a3.erase("coefficient_kg")
+    assert_true(loader.validate_config(missing).contains("coefficient_kg"))

@@ -102,6 +102,82 @@ int main() {
     hover.roll_degrees = 0.0;
     hover.pitch_degrees = 0.0;
 
+    aerosim::RigidBodyState disarm_state;
+    aerosim::SimulationClock disarm_clock;
+    aerosim::FlightController disarm_controller;
+    aerosim::SimulationConfig disarm_config = config;
+    disarm_config.motor_tau_s = 0.03;
+    if (!disarm_controller.arm(0.0)) {
+        return fail("disarm state setup should arm from low throttle");
+    }
+    for (int frame = 0; frame < 30; ++frame) {
+        disarm_controller.step_angle_mode(disarm_state, disarm_clock, disarm_config, hover);
+    }
+    disarm_controller.disarm();
+    if (disarm_controller.motor_thrust_newtons() != 0.0 || disarm_controller.telemetry_snapshot().armed) {
+        return fail("disarm must immediately clear controller diagnostics and telemetry armed state");
+    }
+    for (const aerosim::MotorTelemetry &motor : disarm_controller.telemetry_snapshot().motors) {
+        if (motor.thrust_newtons != 0.0 || motor.speed_rad_s != 0.0 || motor.current_a != 0.0) {
+            return fail("disarm must immediately clear telemetry motor state");
+        }
+    }
+    for (int frame = 0; frame < 10; ++frame) {
+        disarm_controller.step_angle_mode(disarm_state, disarm_clock, disarm_config, hover);
+    }
+    for (double thrust : disarm_state.motor_thrust_newtons) {
+        if (thrust != 0.0) {
+            return fail("disarm must clear live motor thrust before the next physics step");
+        }
+    }
+    for (const aerosim::MotorTelemetry &motor : disarm_controller.telemetry_snapshot().motors) {
+        if (motor.thrust_newtons != 0.0 || motor.speed_rad_s != 0.0 || motor.current_a != 0.0) {
+            return fail("disarmed telemetry must match cleared live motor state");
+        }
+    }
+
+    aerosim::RigidBodyState altitude_disarm_state;
+    aerosim::SimulationClock altitude_disarm_clock;
+    aerosim::FlightController altitude_disarm_controller;
+    aerosim::FlightCommand disarmed_hold_command;
+    disarmed_hold_command.throttle = 0.9;
+    altitude_disarm_controller.step_altitude_hold_mode(
+            altitude_disarm_state,
+            altitude_disarm_clock,
+            config,
+            disarmed_hold_command,
+            100.0,
+            aerosim::Quat{});
+    if (altitude_disarm_controller.pid_timing_stats().samples != 0 ||
+            altitude_disarm_controller.telemetry_snapshot().pid[1].saturated) {
+        return fail("disarmed altitude hold must not publish PID timing or collective saturation");
+    }
+    altitude_disarm_controller.capture_altitude_hold(100.0);
+    if (!altitude_disarm_controller.arm(0.0)) {
+        return fail("altitude hold must re-arm after disarmed cache setup");
+    }
+    aerosim::FlightCommand rearm_hold_command;
+    rearm_hold_command.throttle = 0.1;
+    for (int frame = 0; frame < 120; ++frame) {
+        altitude_disarm_controller.step_altitude_hold_mode(
+                altitude_disarm_state,
+                altitude_disarm_clock,
+                config,
+                rearm_hold_command,
+                0.0,
+                aerosim::Quat{});
+    }
+    altitude_disarm_controller.step_altitude_hold_mode(
+            altitude_disarm_state,
+            altitude_disarm_clock,
+            config,
+            rearm_hold_command,
+            0.0,
+            aerosim::Quat{});
+    if (altitude_disarm_controller.motor_thrust_newtons() > config.max_total_thrust_newtons * 0.2) {
+        return fail("disarmed altitude hold must not repopulate stale trim before re-arm");
+    }
+
     aerosim::RigidBodyState tilted_state;
     const double ten_degrees = 10.0 * kPi / 180.0;
     tilted_state.orientation.x = std::sin(ten_degrees * 0.5);
