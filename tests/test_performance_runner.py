@@ -75,14 +75,12 @@ class PerformanceRunnerTest(unittest.TestCase):
             final_gate.index('effect_workload.active_effects().size() != 4'),
         )
 
-    def test_disabled_workload_returns_before_per_frame_effect_work(self):
+    def test_disabled_workload_keeps_control_path_for_apples_to_apples_timing(self):
         physics_index = BENCHMARK_SOURCE.index('func _physics_process(_delta: float) -> void:')
-        self.assertIn('if not enabled:\n            return', BENCHMARK_SOURCE[physics_index:])
-        disabled_return_index = BENCHMARK_SOURCE.index('if not enabled:\n            return', physics_index)
         activation_index = BENCHMARK_SOURCE.index('if not _activate_a6():', physics_index)
         dual_step_index = BENCHMARK_SOURCE.index('native.call("step_dual_aircraft_simulation"', physics_index)
-        self.assertLess(disabled_return_index, activation_index)
-        self.assertLess(disabled_return_index, dual_step_index)
+        self.assertNotIn('if not enabled:\n            return', BENCHMARK_SOURCE[physics_index:])
+        self.assertLess(activation_index, dual_step_index)
 
     def test_effect_evidence_resets_after_warmup_before_measurement(self):
         self.assertIn('func reset_effect_evidence() -> void:', BENCHMARK_SOURCE)
