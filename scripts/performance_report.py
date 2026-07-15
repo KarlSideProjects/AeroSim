@@ -11,6 +11,32 @@ from pathlib import Path
 
 
 G0_1_P99_LIMIT_MS = 3.0
+G3_7_P99_LIMIT_MS = 3.0
+G3_7_MAX_INCREASE_PERCENT = 20.0
+G3_7_SAMPLE_COUNT = 14_400
+G3_7_EFFECTS = ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"]
+G3_7_FROZEN_PROTOCOL = {
+    "benchmark_mode": "gate",
+    "warmup_seconds": 10.0,
+    "measured_seconds": 60.0,
+    "physics_engine": "Jolt Physics",
+    "physics_ticks_per_second": 240,
+    "substep_hz": 1000,
+    "vsync_mode": 0,
+    "sampling_source": "EngineProfiler._tick",
+    "rendering_method": "forward_plus",
+}
+G3_7_WORKLOAD_ATTESTATION = {
+    "workload_id": "G3.7-A3-A6-public-native-v1",
+    "effect_paths": {
+        "A3_drag": "telemetry_snapshot.drag_body_n",
+        "A4_ground_effect": "telemetry_snapshot.ground_effect_gain",
+        "A5_downwash": "step_dual_aircraft_simulation.downwash_force_y_newtons",
+        "A6_propwash": "telemetry_snapshot.propwash_disturbance_rad_s2",
+    },
+    "control_path": "sync_flight_state -> step_angle_mode -> step_dual_aircraft_simulation",
+    "evidence_scope": "measurement_frames",
+}
 G0_1_BASELINE_CPU = "AMD Ryzen 9 7945HX with Radeon Graphics"
 G0_1_BASELINE_GPU = "NVIDIA GeForce RTX 4060 Ti"
 G0_1_BASELINE_OS_RELEASE = "Ubuntu 26.04 LTS"
@@ -18,6 +44,10 @@ G0_1_BASELINE_NVIDIA_DRIVER = "580.159.03"
 PINNED_GODOT_VERSION = "4.7.stable.official.5b4e0cb0f"
 PINNED_GODOT_BINARY_SHA256 = "f85bbc6b15e22416c7d797cd60b63286dd67b9cb13498847056c18520ae55a75"
 PINNED_GODOT_CPP_REVISION = "ba0edfed90512ec64aba51d4295a3e7e30112f86"
+
+
+def _finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
 def _percentile(samples: list[float], fraction: float) -> float:
@@ -29,7 +59,7 @@ def _validated_samples(raw: dict[str, Any], key: str) -> list[float]:
     samples = raw.get(key)
     if not isinstance(samples, list) or not samples:
         raise ValueError(f"{key} must be a non-empty list")
-    if not all(isinstance(sample, (int, float)) and math.isfinite(sample) and sample >= 0.0 for sample in samples):
+    if not all(_finite_number(sample) and sample >= 0.0 for sample in samples):
         raise ValueError(f"{key} must contain finite non-negative values")
     return [float(sample) for sample in samples]
 
@@ -57,6 +87,12 @@ def _validate_gate_eligibility(raw: dict[str, Any], environment: dict[str, Any])
         )
 
 
+def _validate_g37_protocol(measurement: dict[str, Any]) -> None:
+    for key, expected in G3_7_FROZEN_PROTOCOL.items():
+        if measurement.get(key) != expected:
+            raise ValueError(f"incompatible benchmark reports: {key} does not match frozen G3.7 protocol")
+
+
 def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, Any]:
     benchmark_mode = raw.get("benchmark_mode")
     if benchmark_mode not in {"gate", "reference", "smoke"}:
@@ -64,6 +100,10 @@ def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, 
     measurements = _validated_samples(raw, "samples_ms")
     if benchmark_mode == "gate":
         _validate_gate_eligibility(raw, environment)
+        if raw.get("workload_attestation") == G3_7_WORKLOAD_ATTESTATION and len(measurements) != G3_7_SAMPLE_COUNT:
+            raise ValueError(f"G3.7 gate reports require exactly {G3_7_SAMPLE_COUNT} samples")
+        if raw.get("workload_attestation") == G3_7_WORKLOAD_ATTESTATION:
+            _validate_g37_protocol(raw)
     render_summaries: dict[str, float] = {}
     for key, prefix in (
         ("render_cpu_samples_ms", "render_cpu"),
@@ -105,40 +145,104 @@ def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, 
     return report
 
 
-def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, float | None]:
+def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     if baseline.get("environment") != candidate.get("environment"):
         raise ValueError("baseline and candidate environments must match")
     if baseline.get("scenario") != "effects_off" or candidate.get("scenario") != "effects_on":
         raise ValueError("comparison requires an effects_off baseline and effects_on candidate")
-    if baseline.get("sample_count") != candidate.get("sample_count"):
-        raise ValueError("incompatible benchmark reports: sample_count differs")
+    for label, report in (("baseline", baseline), ("candidate", candidate)):
+        sample_count = report.get("sample_count")
+        if not isinstance(sample_count, int) or isinstance(sample_count, bool) or sample_count <= 0:
+            raise ValueError(f"incompatible benchmark reports: {label} sample_count is required")
+        try:
+            raw_samples = _validated_samples(report, "raw_samples_ms")
+        except ValueError as error:
+            raise ValueError(f"incompatible benchmark reports: {label} raw_samples_ms is invalid") from error
+        if sample_count != len(raw_samples):
+            raise ValueError(f"incompatible benchmark reports: {label} sample_count does not match raw_samples_ms")
+        reported_p99 = report.get("p99_ms")
+        if not _finite_number(reported_p99) or reported_p99 < 0.0:
+            raise ValueError(f"incompatible benchmark reports: {label} p99_ms is required")
+        expected_p99 = _percentile(raw_samples, 0.99)
+        if float(reported_p99) != expected_p99:
+            raise ValueError(f"incompatible benchmark reports: {label} p99_ms does not match raw_samples_ms")
+        reported_p95 = report.get("p95_ms")
+        if not _finite_number(reported_p95) or reported_p95 < 0.0:
+            raise ValueError(f"incompatible benchmark reports: {label} p95_ms is required")
+        expected_p95 = _percentile(raw_samples, 0.95)
+        if float(reported_p95) != expected_p95:
+            raise ValueError(f"incompatible benchmark reports: {label} p95_ms does not match raw_samples_ms")
+    for label, report in (("baseline", baseline), ("candidate", candidate)):
+        p99 = report.get("p99_ms")
+        if not _finite_number(p99) or p99 < 0.0:
+            raise ValueError(f"incompatible benchmark reports: {label} p99_ms is required")
+    baseline_p99 = float(baseline["p99_ms"])
+    candidate_p99 = float(candidate["p99_ms"])
+    if baseline_p99 <= 0.0:
+        raise ValueError("incompatible benchmark reports: baseline p99_ms must be greater than zero")
     baseline_measurement = baseline.get("measurement")
     candidate_measurement = candidate.get("measurement")
     if not isinstance(baseline_measurement, dict) or not isinstance(candidate_measurement, dict):
         raise ValueError("incompatible benchmark reports: measurement metadata is required")
-    invariant_keys = (
-        "benchmark_mode",
-        "warmup_seconds",
-        "measured_seconds",
-        "physics_engine",
-        "physics_ticks_per_second",
-        "substep_hz",
-        "vsync_mode",
-        "video_adapter",
-        "rendering_method",
-        "godot_version",
-        "godot_sha256",
-        "godot_cpp_revision",
-        "gdextension_sha256",
-        "native_source_sha256",
-    )
-    for key in invariant_keys:
-        if key not in baseline_measurement or key not in candidate_measurement:
-            raise ValueError(f"incompatible benchmark reports: {key} is required")
-        if baseline_measurement[key] != candidate_measurement[key]:
-            raise ValueError(f"incompatible benchmark reports: {key} differs")
+    for label, report, p99, measurement in (
+        ("baseline", baseline, baseline_p99, baseline_measurement),
+        ("candidate", candidate, candidate_p99, candidate_measurement),
+    ):
+        if (
+            measurement.get("benchmark_mode") != "gate"
+            or report.get("gate") != "G0.1"
+            or report.get("reference_only") is not False
+            or report.get("gate_eligible") is not True
+        ):
+            raise ValueError("G3.7 requires passing G0.1 production reports")
+        if report.get("sample_count") != G3_7_SAMPLE_COUNT:
+            raise ValueError(f"incompatible benchmark reports: {label} sample_count must be {G3_7_SAMPLE_COUNT}")
+        environment = report.get("environment")
+        if not isinstance(environment, dict):
+            raise ValueError(f"incompatible benchmark reports: {label} environment is required")
+        try:
+            _validate_gate_eligibility(measurement, environment)
+        except ValueError as error:
+            raise ValueError(f"incompatible benchmark reports: {label} is not G0.1 gate eligible") from error
+        try:
+            _validate_g37_protocol(measurement)
+        except ValueError as error:
+            raise ValueError(f"incompatible benchmark reports: {label} protocol is invalid") from error
+        if measurement.get("workload_attestation") != G3_7_WORKLOAD_ATTESTATION:
+            raise ValueError(f"incompatible benchmark reports: {label} workload attestation is invalid")
+        if report.get("gate_verdict") != "pass":
+            raise ValueError(f"incompatible benchmark reports: {label} G0.1 verdict is invalid")
+        recomputed_within_limit = p99 <= G0_1_P99_LIMIT_MS
+        if report.get("p99_within_limit") is not recomputed_within_limit:
+            raise ValueError(f"incompatible benchmark reports: {label} p99 limit evidence is invalid")
+        if not recomputed_within_limit:
+            raise ValueError(f"incompatible benchmark reports: {label} p99 exceeds the G0.1 limit")
+    for key in ("gdextension_sha256", "native_source_sha256"):
+        if baseline_measurement.get(key) != candidate_measurement.get(key):
+            raise ValueError(f"incompatible benchmark reports: {key} differs between baseline and candidate")
+    if baseline_measurement.get("active_effects") != []:
+        raise ValueError("incompatible benchmark reports: effects_off baseline must have no active effects")
+    if candidate_measurement.get("active_effects") != G3_7_EFFECTS:
+        raise ValueError("incompatible benchmark reports: effects_on candidate must activate A3-A6")
+    effect_evidence = candidate_measurement.get("effect_evidence")
+    if (
+        not isinstance(effect_evidence, dict)
+        or any(
+            not isinstance(effect_evidence.get(effect), dict)
+            or effect_evidence[effect].get("observed") is not True
+            for effect in G3_7_EFFECTS
+        )
+    ):
+        raise ValueError("incompatible benchmark reports: effect evidence must prove A3-A6 activation")
+    for effect in ("A3_drag", "A4_ground_effect", "A6_propwash"):
+        magnitude = effect_evidence[effect].get("magnitude")
+        if not _finite_number(magnitude) or magnitude <= 0.0:
+            raise ValueError(f"incompatible benchmark reports: {effect} magnitude evidence is invalid")
+    downwash_force = effect_evidence["A5_downwash"].get("force_y_newtons")
+    if not _finite_number(downwash_force) or downwash_force >= 0.0:
+        raise ValueError("incompatible benchmark reports: A5_downwash force evidence is invalid")
     comparison: dict[str, float | None] = {}
-    for metric in ("p95_ms", "p99_ms", "render_cpu_p95_ms", "render_cpu_p99_ms", "render_gpu_p95_ms", "render_gpu_p99_ms"):
+    for metric in ("p95_ms", "p99_ms"):
         if metric not in baseline or metric not in candidate:
             continue
         baseline_value = float(baseline[metric])
@@ -146,6 +250,15 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         prefix = metric.removesuffix("_ms")
         comparison[f"{prefix}_delta_ms"] = delta
         comparison[f"{prefix}_delta_percent"] = None if baseline_value == 0.0 else delta * 100.0 / baseline_value
+    p99_delta = candidate_p99 - baseline_p99
+    p99_delta_percent = p99_delta * 100.0 / baseline_p99
+    comparison["g3_7_p99_within_limit"] = candidate_p99 <= G3_7_P99_LIMIT_MS
+    comparison["g3_7_increase_within_limit"] = p99_delta_percent <= G3_7_MAX_INCREASE_PERCENT
+    comparison["g3_7_verdict"] = (
+        "pass"
+        if comparison["g3_7_p99_within_limit"] and comparison["g3_7_increase_within_limit"]
+        else "fail"
+    )
     return comparison
 
 
@@ -245,7 +358,8 @@ def main() -> int:
     args.output.write_text(json.dumps(report, separators=(",", ":")) + "\n", encoding="utf-8")
     if args.chart_output:
         write_chart(report, args.chart_output)
-    return 1 if report.get("gate_verdict") == "fail" else 0
+    comparison_failed = report.get("comparison_to_baseline", {}).get("g3_7_verdict") == "fail"
+    return 1 if report.get("gate_verdict") == "fail" or comparison_failed else 0
 
 
 if __name__ == "__main__":

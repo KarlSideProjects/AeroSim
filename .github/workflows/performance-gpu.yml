@@ -1,4 +1,4 @@
-name: G0.1 Local Ubuntu Gate
+name: G0.1/G3.7 Local Ubuntu Gate
 
 on:
   schedule:
@@ -83,7 +83,7 @@ jobs:
 
           expected_effects = {
               "off": [],
-              "on": ["A3_drag", "A4_ground_effect"],
+              "on": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
           }
           for mode, effects in expected_effects.items():
               report = json.loads(Path(f"build/performance-gpu/effects-{mode}.json").read_text())
@@ -96,6 +96,15 @@ jobs:
               assert report["environment"]["os_release"] == "Ubuntu 26.04 LTS"
               assert report["environment"]["nvidia_driver_version"] == "580.159.03"
               assert report["measurement"]["active_effects"] == effects
+              if mode == "on":
+                  assert all(
+                      evidence["observed"]
+                      for evidence in report["measurement"]["effect_evidence"].values()
+                  )
+          candidate = json.loads(Path("build/performance-gpu/effects-on.json").read_text())
+          assert candidate["comparison_to_baseline"]["g3_7_verdict"] == "pass"
+          assert candidate["comparison_to_baseline"]["g3_7_p99_within_limit"] is True
+          assert candidate["comparison_to_baseline"]["g3_7_increase_within_limit"] is True
           PY
 
       - name: Store GPU performance artifacts locally
