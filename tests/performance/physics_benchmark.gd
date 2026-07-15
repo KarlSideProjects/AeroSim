@@ -78,6 +78,8 @@ class EffectWorkload:
     func _physics_process(_delta: float) -> void:
         if native == null:
             return
+        if not enabled:
+            return
         var previous_evidence := effect_evidence.duplicate(true)
         if not _activate_a6():
             return

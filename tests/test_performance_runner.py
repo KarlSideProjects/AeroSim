@@ -43,6 +43,15 @@ class PerformanceRunnerTest(unittest.TestCase):
         self.assertIn('native.call("step_angle_mode", 240, 1000, 0.75, 0.0, 0.0, 0.0)', BENCHMARK_SOURCE)
         self.assertGreaterEqual(BENCHMARK_SOURCE.count('_activate_a6()'), 2)
 
+    def test_disabled_workload_returns_before_per_frame_effect_work(self):
+        physics_index = BENCHMARK_SOURCE.index('func _physics_process(_delta: float) -> void:')
+        self.assertIn('if not enabled:\n            return', BENCHMARK_SOURCE[physics_index:])
+        disabled_return_index = BENCHMARK_SOURCE.index('if not enabled:\n            return', physics_index)
+        activation_index = BENCHMARK_SOURCE.index('if not _activate_a6():', physics_index)
+        dual_step_index = BENCHMARK_SOURCE.index('native.call("step_dual_aircraft_simulation"', physics_index)
+        self.assertLess(disabled_return_index, activation_index)
+        self.assertLess(disabled_return_index, dual_step_index)
+
     def test_effect_evidence_resets_after_warmup_before_measurement(self):
         self.assertIn('func reset_effect_evidence() -> void:', BENCHMARK_SOURCE)
         warmup_index = BENCHMARK_SOURCE.index('for _frame in warmup_frames:')
