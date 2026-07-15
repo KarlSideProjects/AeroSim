@@ -809,6 +809,9 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     if not native.call("set_a5_downwash_model", false, prop_radius, 2267.18, 0.16, -0.11):
         push_error("A5 public path must accept a disabled valid configuration")
         return false
+    if native.call("set_a5_downwash_model", false, INF, 2267.18, 0.16, -0.11) or native.call("set_a5_downwash_model", false, prop_radius, INF, 0.16, -0.11):
+        push_error("A5 public setter must reject non-finite configuration values")
+        return false
     var a5_disabled: Dictionary = native.call("a5_downwash_configuration")
     if bool(a5_disabled.get("enabled", true)) != false:
         push_error("A5 configuration must echo the disabled switch")
@@ -833,6 +836,9 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     if dual_row.size() < 11 or float(dual_row[8]) >= 0.0 or float(dual_row[9]) > float(dual_row[8]):
         push_error("A5 dual frame path must consume the enabled configuration")
         return false
+    if native.call("step_dual_aircraft_simulation", Engine.physics_ticks_per_second, 0, 0.72 * 9.80665).size() != 0:
+        push_error("A5 dual frame path must reject non-positive substep rates")
+        return false
     if native.call("step_dual_aircraft_simulation", 0, 1000, 0.72 * 9.80665).size() != 0:
         push_error("A5 dual frame path must reject non-positive physics rates")
         return false
@@ -847,15 +853,15 @@ func _verify_collision_public_path(native: Object) -> bool:
         return false
     native.call("reset_flight")
     native.call("set_collision_release_frames", 5)
-    var invalid_angle_args: Array = [0, 1000, 0.0, 0.0, 0.0, 0.0, true, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
+    var invalid_angle_args: Array = [0, 1000, 0.0, 0.0, 0.0, 0.0, true, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
     if native.callv("step_collision_angle_mode", invalid_angle_args).size() != 0:
         push_error("Public collision Angle path must reject non-positive simulation rates")
         return false
-    var invalid_acro_args: Array = [0, 1000, 0.0, 0.0, 0.0, 0.0, 1.0, 0.7, 0.0, true, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
+    var invalid_acro_args: Array = [0, 1000, 0.0, 0.0, 0.0, 0.0, 1.0, 0.7, 0.0, true, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
     if native.callv("step_collision_acro_mode", invalid_acro_args).size() != 0:
         push_error("Public collision Acro path must reject non-positive simulation rates")
         return false
-    var invalid_altitude_args: Array = [0, 1000, 0.0, 0.0, 0.0, 0.0, true, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
+    var invalid_altitude_args: Array = [0, 1000, 0.0, 0.0, 0.0, 0.0, true, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
     if native.callv("step_collision_altitude_hold_mode", invalid_altitude_args).size() != 0:
         push_error("Public collision altitude-hold path must reject non-positive simulation rates")
         return false
