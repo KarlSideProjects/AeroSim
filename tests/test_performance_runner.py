@@ -147,8 +147,9 @@ class PerformanceRunnerTest(unittest.TestCase):
                     str(ROOT / "scripts" / "run_performance_benchmark.sh"),
                     "--mode",
                     "smoke",
+                    # A6 needs a short motor-lag warmup; keep the measured smoke window at 0.1s.
                     "--warmup-seconds",
-                    "0",
+                    "1.0",
                     "--seconds",
                     "0.1",
                     "--effects",
@@ -180,8 +181,9 @@ class PerformanceRunnerTest(unittest.TestCase):
                     str(ROOT / "scripts" / "run_performance_benchmark.sh"),
                     "--mode",
                     "smoke",
+                    # Match the candidate warmup so repeat evidence covers delayed A6 activation.
                     "--warmup-seconds",
-                    "0",
+                    "1.0",
                     "--seconds",
                     "0.1",
                     "--effects",
