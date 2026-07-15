@@ -23,6 +23,10 @@ PINNED_GODOT_BINARY_SHA256 = "f85bbc6b15e22416c7d797cd60b63286dd67b9cb1349884705
 PINNED_GODOT_CPP_REVISION = "ba0edfed90512ec64aba51d4295a3e7e30112f86"
 
 
+def _finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+
+
 def _percentile(samples: list[float], fraction: float) -> float:
     ordered = sorted(samples)
     return ordered[math.ceil(len(ordered) * fraction) - 1]
@@ -32,7 +36,7 @@ def _validated_samples(raw: dict[str, Any], key: str) -> list[float]:
     samples = raw.get(key)
     if not isinstance(samples, list) or not samples:
         raise ValueError(f"{key} must be a non-empty list")
-    if not all(isinstance(sample, (int, float)) and math.isfinite(sample) and sample >= 0.0 for sample in samples):
+    if not all(_finite_number(sample) and sample >= 0.0 for sample in samples):
         raise ValueError(f"{key} must contain finite non-negative values")
     return [float(sample) for sample in samples]
 
@@ -117,11 +121,23 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         sample_count = report.get("sample_count")
         if not isinstance(sample_count, int) or sample_count <= 0:
             raise ValueError(f"incompatible benchmark reports: {label} sample_count is required")
+        try:
+            raw_samples = _validated_samples(report, "raw_samples_ms")
+        except ValueError as error:
+            raise ValueError(f"incompatible benchmark reports: {label} raw_samples_ms is invalid") from error
+        if sample_count != len(raw_samples):
+            raise ValueError(f"incompatible benchmark reports: {label} sample_count does not match raw_samples_ms")
+        reported_p99 = report.get("p99_ms")
+        if not _finite_number(reported_p99) or reported_p99 < 0.0:
+            raise ValueError(f"incompatible benchmark reports: {label} p99_ms is required")
+        expected_p99 = _percentile(raw_samples, 0.99)
+        if not math.isclose(float(reported_p99), expected_p99, rel_tol=1e-12, abs_tol=1e-12):
+            raise ValueError(f"incompatible benchmark reports: {label} p99_ms does not match raw_samples_ms")
     if baseline["sample_count"] != candidate["sample_count"]:
         raise ValueError("incompatible benchmark reports: sample_count differs")
     for label, report in (("baseline", baseline), ("candidate", candidate)):
         p99 = report.get("p99_ms")
-        if not isinstance(p99, (int, float)) or not math.isfinite(p99) or p99 < 0.0:
+        if not _finite_number(p99) or p99 < 0.0:
             raise ValueError(f"incompatible benchmark reports: {label} p99_ms is required")
     baseline_p99 = float(baseline["p99_ms"])
     candidate_p99 = float(candidate["p99_ms"])
@@ -142,12 +158,12 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
             or report.get("gate_eligible") is not True
         ):
             raise ValueError("G3.7 requires passing G0.1 production reports")
-        if report.get("p99_within_limit") is not True:
-            raise ValueError(f"incompatible benchmark reports: {label} p99 limit evidence is invalid")
-        recomputed_verdict = "pass" if p99 <= G0_1_P99_LIMIT_MS else "fail"
-        if report.get("gate_verdict") != "pass" and recomputed_verdict != "pass":
+        if report.get("gate_verdict") != "pass":
             raise ValueError(f"incompatible benchmark reports: {label} G0.1 verdict is invalid")
-        if recomputed_verdict != "pass":
+        recomputed_within_limit = p99 <= G0_1_P99_LIMIT_MS
+        if report.get("p99_within_limit") is not recomputed_within_limit:
+            raise ValueError(f"incompatible benchmark reports: {label} p99 limit evidence is invalid")
+        if not recomputed_within_limit:
             raise ValueError(f"incompatible benchmark reports: {label} p99 exceeds the G0.1 limit")
     invariant_keys = (
         "benchmark_mode",
@@ -184,6 +200,13 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         )
     ):
         raise ValueError("incompatible benchmark reports: effect evidence must prove A3-A6 activation")
+    for effect in ("A3_drag", "A4_ground_effect", "A6_propwash"):
+        magnitude = effect_evidence[effect].get("magnitude")
+        if not _finite_number(magnitude) or magnitude <= 0.0:
+            raise ValueError(f"incompatible benchmark reports: {effect} magnitude evidence is invalid")
+    downwash_force = effect_evidence["A5_downwash"].get("force_y_newtons")
+    if not _finite_number(downwash_force) or downwash_force >= 0.0:
+        raise ValueError("incompatible benchmark reports: A5_downwash force evidence is invalid")
     comparison: dict[str, float | None] = {}
     for metric in ("p95_ms", "p99_ms", "render_cpu_p95_ms", "render_cpu_p99_ms", "render_gpu_p95_ms", "render_gpu_p99_ms"):
         if metric not in baseline or metric not in candidate:

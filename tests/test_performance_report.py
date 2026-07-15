@@ -32,6 +32,12 @@ PINNED_PROVENANCE = {
     "gdextension_sha256": "b" * 64,
     "native_source_sha256": "c" * 64,
 }
+VALID_EFFECT_EVIDENCE = {
+    "A3_drag": {"observed": True, "magnitude": 1.0},
+    "A4_ground_effect": {"observed": True, "magnitude": 1.0},
+    "A5_downwash": {"observed": True, "force_y_newtons": -1.0},
+    "A6_propwash": {"observed": True, "magnitude": 1.0},
+}
 
 
 class PerformanceReportTest(unittest.TestCase):
@@ -220,9 +226,7 @@ class PerformanceReportTest(unittest.TestCase):
                 "samples_ms": [2.0, 2.0],
                 "scenario": "effects_on",
                 "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
-                "effect_evidence": {effect: {"observed": True} for effect in [
-                    "A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"
-                ]},
+                "effect_evidence": VALID_EFFECT_EVIDENCE,
             },
             environment,
         )
@@ -257,9 +261,7 @@ class PerformanceReportTest(unittest.TestCase):
                 "samples_ms": [3.0],
                 "scenario": "effects_on",
                 "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
-                "effect_evidence": {effect: {"observed": True} for effect in [
-                    "A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"
-                ]},
+                "effect_evidence": VALID_EFFECT_EVIDENCE,
             },
             environment,
         )
@@ -270,13 +272,17 @@ class PerformanceReportTest(unittest.TestCase):
         self.assertTrue(comparison["g3_7_p99_within_limit"])
         self.assertTrue(comparison["g3_7_increase_within_limit"])
 
-        with self.assertRaisesRegex(ValueError, "p99 exceeds"):
+        with self.assertRaisesRegex(ValueError, "p99_ms does not match"):
             compare_reports(baseline, candidate | {"p99_ms": 3.01})
-        relative_fail = compare_reports(baseline | {"p99_ms": 1.0}, candidate)
+        relative_baseline = build_report(
+            common | {"samples_ms": [1.0], "scenario": "effects_off", "active_effects": []},
+            environment,
+        )
+        relative_fail = compare_reports(relative_baseline, candidate)
         self.assertEqual(relative_fail["g3_7_verdict"], "fail")
         self.assertFalse(relative_fail["g3_7_increase_within_limit"])
 
-    def test_g37_rejects_forged_or_over_limit_production_reports(self):
+    def test_g37_rejects_tampered_or_forged_production_reports(self):
         environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
         common = {
             "benchmark_mode": "gate",
@@ -300,9 +306,7 @@ class PerformanceReportTest(unittest.TestCase):
                 "samples_ms": [3.0],
                 "scenario": "effects_on",
                 "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
-                "effect_evidence": {effect: {"observed": True} for effect in [
-                    "A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"
-                ]},
+                "effect_evidence": VALID_EFFECT_EVIDENCE,
             },
             environment,
         )
@@ -312,6 +316,25 @@ class PerformanceReportTest(unittest.TestCase):
                 compare_reports(report | {"p99_ms": 3.01}, other)
             with self.assertRaises(ValueError):
                 compare_reports(report | {"gate_eligible": False}, other)
+            with self.assertRaises(ValueError):
+                compare_reports(report | {"raw_samples_ms": [99.0]}, other)
+
+        with self.assertRaises(ValueError):
+            compare_reports(baseline | {"gate_verdict": "fail"}, candidate)
+
+        invalid_evidence = [
+            {effect: {"observed": True} for effect in VALID_EFFECT_EVIDENCE},
+            {
+                "A3_drag": {"observed": True, "magnitude": 0.0},
+                "A4_ground_effect": {"observed": True, "magnitude": math.nan},
+                "A5_downwash": {"observed": True, "force_y_newtons": 0.0},
+                "A6_propwash": {"observed": True, "magnitude": -1.0},
+            },
+        ]
+        for evidence in invalid_evidence:
+            tampered_measurement = candidate["measurement"] | {"effect_evidence": evidence}
+            with self.assertRaises(ValueError):
+                compare_reports(baseline, candidate | {"measurement": tampered_measurement})
 
     def test_g37_rejects_nonproduction_reports(self):
         environment = {"git_revision": "abc123", "cpu_model": "reference"}
@@ -343,9 +366,7 @@ class PerformanceReportTest(unittest.TestCase):
                     "samples_ms": [3.0],
                     "scenario": "effects_on",
                     "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
-                    "effect_evidence": {effect: {"observed": True} for effect in [
-                        "A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"
-                    ]},
+                    "effect_evidence": VALID_EFFECT_EVIDENCE,
                 },
                 environment,
             )
@@ -375,17 +396,15 @@ class PerformanceReportTest(unittest.TestCase):
             "samples_ms": [2.1],
             "scenario": "effects_on",
             "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
-            "effect_evidence": {effect: {"observed": True} for effect in [
-                "A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"
-            ]},
+            "effect_evidence": VALID_EFFECT_EVIDENCE,
         }
         candidate = build_report(candidate_raw, environment)
 
-        with self.assertRaisesRegex(ValueError, "p99_ms"):
+        with self.assertRaisesRegex(ValueError, "raw_samples_ms"):
             compare_reports({"environment": environment, "scenario": "effects_off", "sample_count": 1, "measurement": {}}, candidate)
         with self.assertRaisesRegex(ValueError, "sample_count"):
             compare_reports(baseline, candidate | {"sample_count": 2})
-        with self.assertRaisesRegex(ValueError, "zero"):
+        with self.assertRaisesRegex(ValueError, "p99_ms does not match"):
             compare_reports(baseline | {"p99_ms": 0.0}, candidate)
 
     def test_g37_requires_observed_enabled_effects(self):
