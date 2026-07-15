@@ -1,5 +1,6 @@
 #include "aerosim_aerodynamics.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace aerosim {
@@ -106,6 +107,71 @@ double a5_downwash_force_y_newtons(
     const double attenuation = std::exp(-0.5 * std::pow(delta_xz / beta, 2.0));
     const double force_y = -alpha * attenuation;
     return std::isfinite(force_y) ? force_y : 0.0;
+}
+
+Vec3 a6_propwash_angular_acceleration_rad_s2(
+        const A6PropwashConfig &config,
+        const RigidBodyState &state,
+        const Vec3 &relative_air_velocity_world,
+        double collective) {
+    if (!config.enabled ||
+            !std::isfinite(config.full_collective_angular_accel_rad_s2) ||
+            config.full_collective_angular_accel_rad_s2 <= 0.0 ||
+            !std::isfinite(config.minimum_wake_entry_speed_mps) ||
+            config.minimum_wake_entry_speed_mps <= 0.0 ||
+            !std::isfinite(config.minimum_transverse_rate_rad_s) ||
+            config.minimum_transverse_rate_rad_s <= 0.0 ||
+            !std::isfinite(collective) || collective <= 0.0) {
+        return {};
+    }
+    const double norm_squared = state.orientation.x * state.orientation.x +
+            state.orientation.y * state.orientation.y +
+            state.orientation.z * state.orientation.z +
+            state.orientation.w * state.orientation.w;
+    if (!std::isfinite(norm_squared) || norm_squared <= 0.0 ||
+            !std::isfinite(state.angular_velocity.x) ||
+            !std::isfinite(state.angular_velocity.y) ||
+            !std::isfinite(state.angular_velocity.z) ||
+            !std::isfinite(relative_air_velocity_world.x) ||
+            !std::isfinite(relative_air_velocity_world.y) ||
+            !std::isfinite(relative_air_velocity_world.z)) {
+        return {};
+    }
+    const Vec3 body_up{
+            2.0 * (state.orientation.x * state.orientation.y - state.orientation.w * state.orientation.z) /
+                    norm_squared,
+            (norm_squared - 2.0 * (state.orientation.x * state.orientation.x +
+                    state.orientation.z * state.orientation.z)) / norm_squared,
+            2.0 * (state.orientation.y * state.orientation.z + state.orientation.w * state.orientation.x) /
+                    norm_squared,
+    };
+    const double wake_entry_speed = std::max(0.0, -(
+            relative_air_velocity_world.x * body_up.x +
+            relative_air_velocity_world.y * body_up.y +
+            relative_air_velocity_world.z * body_up.z));
+    const Vec3 transverse_rate_frd{
+            y_up_to_frd(state.angular_velocity).x,
+            y_up_to_frd(state.angular_velocity).y,
+            0.0,
+    };
+    const double transverse_rate = std::sqrt(
+            transverse_rate_frd.x * transverse_rate_frd.x +
+            transverse_rate_frd.y * transverse_rate_frd.y);
+    if (!std::isfinite(wake_entry_speed) || wake_entry_speed < config.minimum_wake_entry_speed_mps ||
+            !std::isfinite(transverse_rate) || transverse_rate < config.minimum_transverse_rate_rad_s) {
+        return {};
+    }
+    const double magnitude = config.full_collective_angular_accel_rad_s2 * std::clamp(collective, 0.0, 1.0);
+    const Vec3 disturbance_frd{
+            magnitude * transverse_rate_frd.x / transverse_rate,
+            magnitude * transverse_rate_frd.y / transverse_rate,
+            0.0,
+    };
+    const Vec3 disturbance = frd_to_y_up(disturbance_frd);
+    if (!std::isfinite(disturbance.x) || !std::isfinite(disturbance.y) || !std::isfinite(disturbance.z)) {
+        return {};
+    }
+    return disturbance;
 }
 
 A3ForwardFlightEquilibrium a3_forward_flight_equilibrium(

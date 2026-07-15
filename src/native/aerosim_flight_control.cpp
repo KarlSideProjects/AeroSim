@@ -288,6 +288,13 @@ const TelemetrySnapshot &FlightController::telemetry_snapshot() const {
     return telemetry_buffers_[telemetry_read_index_];
 }
 
+void FlightController::clear_propwash_telemetry() {
+    const int write_index = 1 - telemetry_read_index_;
+    telemetry_buffers_[write_index] = telemetry_buffers_[telemetry_read_index_];
+    telemetry_buffers_[write_index].propwash_disturbance_rad_s2 = {};
+    telemetry_read_index_ = write_index;
+}
+
 MotorCommands FlightController::control_substep(
         RigidBodyState &state,
         const SimulationConfig &config,
@@ -417,6 +424,7 @@ void FlightController::maybe_publish_telemetry(
             config.wind_turbulence_mps.x * config.wind_turbulence_mps.x +
             config.wind_turbulence_mps.y * config.wind_turbulence_mps.y +
             config.wind_turbulence_mps.z * config.wind_turbulence_mps.z);
+    snapshot.propwash_disturbance_rad_s2 = sample.propwash_disturbance_rad_s2;
     const Vec3 relative_air_velocity{
             sample.state.velocity.x - config.wind_world_mps.x,
             sample.state.velocity.y - config.wind_world_mps.y,

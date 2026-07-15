@@ -36,6 +36,9 @@ bool same_sample_bits(const aerosim::TrajectorySample &a, const aerosim::Traject
             same_bits(a.state.motor_thrust_newtons[1], b.state.motor_thrust_newtons[1]) &&
             same_bits(a.state.motor_thrust_newtons[2], b.state.motor_thrust_newtons[2]) &&
             same_bits(a.state.motor_thrust_newtons[3], b.state.motor_thrust_newtons[3]) &&
+            same_bits(a.propwash_disturbance_rad_s2.x, b.propwash_disturbance_rad_s2.x) &&
+            same_bits(a.propwash_disturbance_rad_s2.y, b.propwash_disturbance_rad_s2.y) &&
+            same_bits(a.propwash_disturbance_rad_s2.z, b.propwash_disturbance_rad_s2.z) &&
             a.substeps == b.substeps;
 }
 

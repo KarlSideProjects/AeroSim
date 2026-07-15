@@ -56,6 +56,16 @@ func test_schema_requires_static_a3_coefficients_without_dynamic_rpm() -> void:
     assert_eq(loader.validate_config(config), "")
 
 
+func test_schema_requires_static_a6_propwash_calibration() -> void:
+    var config: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+
+    assert_false(config.aerodynamics.a6.enabled)
+    assert_eq(loader.validate_config(config), "")
+
+    config.aerodynamics.a6.minimum_transverse_rate_rad_s = -0.1
+    assert_true(loader.validate_config(config).contains("minimum_transverse_rate_rad_s"))
+
+
 func test_schema_rejects_invalid_a3_values() -> void:
     var negative: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
     negative.aerodynamics.a3.coefficient_kg.x = -0.1

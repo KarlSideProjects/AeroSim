@@ -758,7 +758,7 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
     return true
 
 func _verify_a4_a5_public_path(native: Object) -> bool:
-    for method in ["set_a4_ground_effect_model", "a4_ground_effect_configuration", "set_a5_downwash_model", "a5_downwash_configuration", "a5_downwash_force_y", "set_dual_aircraft_positions", "step_dual_aircraft_simulation", "sync_flight_state"]:
+    for method in ["set_a4_ground_effect_model", "a4_ground_effect_configuration", "set_a5_downwash_model", "a5_downwash_configuration", "a5_downwash_force_y", "set_a6_propwash_model", "a6_propwash_configuration", "set_dual_aircraft_positions", "step_dual_aircraft_simulation", "sync_flight_state"]:
         if not native.has_method(method):
             push_error("AeroSimNative.%s must exist for A4/A5 public configuration" % method)
             return false
@@ -829,6 +829,32 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     if float(native.call("a5_downwash_force_y", 0.1, 2.0, 0.0, 0.0, 0.0, 0.0)) >= 0.0:
         push_error("A5 enabled public path must reduce the lower aircraft lift")
         return false
+    if not native.call("set_a6_propwash_model", false, 12.0, 2.0, 0.5):
+        push_error("A6 public path must accept a disabled valid configuration")
+        return false
+    var a6_disabled: Dictionary = native.call("a6_propwash_configuration")
+    if bool(a6_disabled.get("enabled", true)) or native.call("telemetry_snapshot").get("propwash_disturbance_rad_s2", Vector3.ONE) != Vector3.ZERO:
+        push_error("A6 disabled public path must expose an exact-zero configuration and telemetry")
+        return false
+    if not native.call("set_a6_propwash_model", true, 12.0, 2.0, 0.5):
+        push_error("A6 public path must accept an enabled valid configuration")
+        return false
+    native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("A6 public path must arm from low throttle")
+        return false
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.866025403784, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)
+    native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.75, 0.0, 0.0, 0.0)
+    var a6_snapshot: Dictionary = native.call("telemetry_snapshot")
+    if a6_snapshot.get("propwash_disturbance_rad_s2", Vector3.ZERO) == Vector3.ZERO:
+        push_error("A6 enabled public path must apply and publish the configured disturbance")
+        return false
+    if not native.call("set_a6_propwash_model", false, 0.0, 0.0, 0.0):
+        push_error("A6 public path must accept disabling the model")
+        return false
+    if native.call("telemetry_snapshot").get("propwash_disturbance_rad_s2", Vector3.ONE) != Vector3.ZERO:
+        push_error("A6 disable transition must clear published disturbance immediately")
+        return false
     if not native.call("set_dual_aircraft_positions", 0.0, 2.0, 0.0, 0.0, 0.0, 0.0):
         push_error("A5 dual path must accept finite upper/lower positions")
         return false
@@ -845,6 +871,7 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     if native.call("set_a5_downwash_model", true, prop_radius, -1.0, 0.16, -0.11):
         push_error("A5 public path must reject a negative force magnitude coefficient")
         return false
+    native.call("set_a6_propwash_model", false, 0.0, 0.0, 0.0)
     return true
 
 func _verify_collision_public_path(native: Object) -> bool:
@@ -2150,6 +2177,14 @@ func _verify_hardware_config_public_path() -> bool:
             abs(float(startup_a3.get("coefficient_z_kg", -1.0)) - float(preset.aerodynamics.a3.coefficient_kg.z)) > 1e-12 or
             startup_a3.get("motor_speed_source", "") != "live_motor_thrust_state"):
         push_error("Runtime startup preset must apply static A3 settings and retain live motor speed ownership")
+        scene.queue_free()
+        return false
+    var startup_a6: Dictionary = scene.native.call("a6_propwash_configuration")
+    if (bool(startup_a6.get("enabled", true)) != bool(preset.aerodynamics.a6.enabled) or
+            abs(float(startup_a6.get("full_collective_angular_accel_rad_s2", -1.0)) - float(preset.aerodynamics.a6.full_collective_angular_accel_rad_s2)) > 1e-12 or
+            abs(float(startup_a6.get("minimum_wake_entry_speed_mps", -1.0)) - float(preset.aerodynamics.a6.minimum_wake_entry_speed_mps)) > 1e-12 or
+            abs(float(startup_a6.get("minimum_transverse_rate_rad_s", -1.0)) - float(preset.aerodynamics.a6.minimum_transverse_rate_rad_s)) > 1e-12):
+        push_error("Runtime startup preset must apply static A6 settings and retain the disabled production default")
         scene.queue_free()
         return false
     if scene.native != native_before or scene.reset_count != reset_count_before or scene.get_meta("hardware_config_version", "") != preset.version:

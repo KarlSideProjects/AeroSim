@@ -127,6 +127,12 @@ public:
     godot::Dictionary telemetry_snapshot() const;
     bool set_a3_drag_model(bool enabled, double coefficient_x_kg, double coefficient_y_kg, double coefficient_z_kg);
     godot::Dictionary a3_drag_configuration() const;
+    bool set_a6_propwash_model(
+            bool enabled,
+            double full_collective_angular_accel_rad_s2,
+            double minimum_wake_entry_speed_mps,
+            double minimum_transverse_rate_rad_s);
+    godot::Dictionary a6_propwash_configuration() const;
     bool set_a4_ground_effect_model(
             bool enabled,
             double kf,

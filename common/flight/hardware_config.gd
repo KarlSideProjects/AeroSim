@@ -49,7 +49,15 @@ const FACTORY_DEFAULT := {
         ]
     },
     "esc": {"current_limit_a": 45, "protocol": "DShot600", "update_rate_hz": 600},
-    "aerodynamics": {"a3": {"enabled": false, "coefficient_kg": {"x": 0.0, "y": 0.0, "z": 0.0}}},
+    "aerodynamics": {
+        "a3": {"enabled": false, "coefficient_kg": {"x": 0.0, "y": 0.0, "z": 0.0}},
+        "a6": {
+            "enabled": false,
+            "full_collective_angular_accel_rad_s2": 0.0,
+            "minimum_wake_entry_speed_mps": 0.0,
+            "minimum_transverse_rate_rad_s": 0.0
+        }
+    },
     "aircraft": {
         "mass_kg": 0.72,
         "inertia_kg_m2": {"x": 0.0030, "y": 0.0030, "z": 0.0050},
@@ -283,6 +291,23 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             last_error = "native runtime rejected A3 drag model"
             push_error(last_error)
             return false
+        if not runtime.native.has_method("set_a6_propwash_model") or not runtime.native.has_method("a6_propwash_configuration"):
+            last_ok = false
+            last_error = "native runtime missing A6 propwash model setter"
+            push_error(last_error)
+            return false
+        var a6: Dictionary = current.get("aerodynamics", {}).get("a6", {})
+        if not runtime.native.call(
+                "set_a6_propwash_model",
+                bool(a6.enabled),
+                float(a6.full_collective_angular_accel_rad_s2),
+                float(a6.minimum_wake_entry_speed_mps),
+                float(a6.minimum_transverse_rate_rad_s)
+            ):
+            last_ok = false
+            last_error = "native runtime rejected A6 propwash model"
+            push_error(last_error)
+            return false
     runtime.set_meta("hardware_config_version", current.version)
     runtime.set_meta("hardware_config_path", path)
     return true
@@ -341,6 +366,9 @@ func _validate(config: Dictionary, schema: Dictionary) -> String:
     var a3_error := _validate_a3(config.aerodynamics.a3)
     if a3_error != "":
         return a3_error
+    var a6_error := _validate_a6(config.aerodynamics.a6)
+    if a6_error != "":
+        return a6_error
     return ""
 
 func _validate_a3(a3: Variant) -> String:
@@ -354,6 +382,14 @@ func _validate_a3(a3: Variant) -> String:
         var value: Variant = a3.coefficient_kg[axis]
         if not (value is float or value is int) or not is_finite(float(value)) or float(value) < 0.0:
             return "aerodynamics.a3.coefficient_kg.%s must be finite and non-negative" % axis
+    return ""
+
+func _validate_a6(a6: Variant) -> String:
+    if not (a6 is Dictionary) or not a6.has("enabled") or not (a6.enabled is bool):
+        return "aerodynamics.a6.enabled must be boolean"
+    for key in ["full_collective_angular_accel_rad_s2", "minimum_wake_entry_speed_mps", "minimum_transverse_rate_rad_s"]:
+        if not a6.has(key) or not (a6[key] is float or a6[key] is int) or not is_finite(float(a6[key])) or float(a6[key]) < 0.0:
+            return "aerodynamics.a6.%s must be finite and non-negative" % key
     return ""
 
 func _validate_propeller_table(table: Array, ranges: Dictionary) -> String:

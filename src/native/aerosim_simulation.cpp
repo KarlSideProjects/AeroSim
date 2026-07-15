@@ -260,6 +260,22 @@ void integrate_per_motor(
     state.angular_velocity.x += body_torque.x / config.per_motor.inertia_kg_m2.x * dt;
     state.angular_velocity.y += body_torque.y / config.per_motor.inertia_kg_m2.y * dt;
     state.angular_velocity.z += body_torque.z / config.per_motor.inertia_kg_m2.z * dt;
+    double collective = 0.0;
+    if (config.per_motor.max_thrust_per_motor_newtons > 0.0) {
+        for (double thrust : state.motor_thrust_newtons) {
+            collective += std::clamp(
+                    thrust / config.per_motor.max_thrust_per_motor_newtons,
+                    0.0,
+                    1.0);
+        }
+        collective /= static_cast<double>(state.motor_thrust_newtons.size());
+    }
+    state.propwash_disturbance_rad_s2 = a6_propwash_angular_acceleration_rad_s2(
+            config.a6_propwash,
+            state,
+            state.velocity - config.wind_world_mps,
+            collective);
+    state.angular_velocity = state.angular_velocity + state.propwash_disturbance_rad_s2 * dt;
     const Quat omega{state.angular_velocity.x, state.angular_velocity.y, state.angular_velocity.z, 0.0};
     const Quat q_dot = multiply(state.orientation, omega);
     state.orientation = normalized({
@@ -379,6 +395,7 @@ TrajectorySample step_per_motor_physics_frame(
 
     const RigidBodyState initial_state = state;
     const SimulationClock initial_clock = clock;
+    Vec3 propwash_sum;
     const double substeps_per_frame = static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz);
     const double dt = 1.0 / static_cast<double>(config.substep_hz);
     clock.substep_accumulator += substeps_per_frame;
@@ -392,12 +409,17 @@ TrajectorySample step_per_motor_physics_frame(
             return {};
         }
         integrate_per_motor(state, config, commands, {}, dt);
+        propwash_sum = propwash_sum + state.propwash_disturbance_rad_s2;
     }
     clock.total_substeps += static_cast<std::uint64_t>(frame_substeps);
+    const Vec3 propwash_average = frame_substeps > 0
+            ? propwash_sum * (1.0 / static_cast<double>(frame_substeps))
+            : Vec3{};
     return {
             static_cast<double>(clock.total_substeps) * dt,
             state,
             clock.total_substeps,
+            propwash_average,
     };
 }
 
@@ -495,6 +517,7 @@ TrajectorySample step_physics_frame(
             static_cast<double>(clock.total_substeps) * dt,
             state,
             clock.total_substeps,
+            {},
     };
 }
 

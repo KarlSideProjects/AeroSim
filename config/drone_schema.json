@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "expected_units": {
     "mass": "kg",
     "length": "m",
@@ -20,7 +20,7 @@
   },
   "expected_motor_order": ["rear_right", "front_right", "rear_left", "front_left"],
   "expected_spin_direction": ["cw", "ccw", "ccw", "cw"],
-  "boolean_paths": ["aerodynamics.a3.enabled"],
+  "boolean_paths": ["aerodynamics.a3.enabled", "aerodynamics.a6.enabled"],
   "required_paths": [
     "version",
     "units",
@@ -58,6 +58,10 @@
     "aerodynamics.a3.coefficient_kg.x",
     "aerodynamics.a3.coefficient_kg.y",
     "aerodynamics.a3.coefficient_kg.z",
+    "aerodynamics.a6.enabled",
+    "aerodynamics.a6.full_collective_angular_accel_rad_s2",
+    "aerodynamics.a6.minimum_wake_entry_speed_mps",
+    "aerodynamics.a6.minimum_transverse_rate_rad_s",
     "aircraft.mass_kg",
     "aircraft.inertia_kg_m2.x",
     "aircraft.inertia_kg_m2.y",
@@ -110,7 +114,10 @@
     {"path": "sensors.random_walk", "min": 0.0, "max": 10.0},
     {"path": "sensors.barometer_noise_m", "min": 0.0, "max": 100.0},
     {"path": "fpv.camera_angle_deg", "min": 0.0, "max": 90.0},
-    {"path": "fpv.fov_deg", "min": 30.0, "max": 180.0}
+    {"path": "fpv.fov_deg", "min": 30.0, "max": 180.0},
+    {"path": "aerodynamics.a6.full_collective_angular_accel_rad_s2", "min": 0.0, "max": 1000.0},
+    {"path": "aerodynamics.a6.minimum_wake_entry_speed_mps", "min": 0.0, "max": 100.0},
+    {"path": "aerodynamics.a6.minimum_transverse_rate_rad_s", "min": 0.0, "max": 1000.0}
   ],
   "propeller_table_ranges": {
     "rpm": {"min": 1.0, "max": 100000.0},

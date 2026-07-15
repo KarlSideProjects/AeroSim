@@ -176,6 +176,10 @@ void AeroSimNative::_bind_methods() {
             &AeroSimNative::set_a3_drag_model);
     ClassDB::bind_method(D_METHOD("a3_drag_configuration"), &AeroSimNative::a3_drag_configuration);
     ClassDB::bind_method(
+            D_METHOD("set_a6_propwash_model", "enabled", "full_collective_angular_accel_rad_s2", "minimum_wake_entry_speed_mps", "minimum_transverse_rate_rad_s"),
+            &AeroSimNative::set_a6_propwash_model);
+    ClassDB::bind_method(D_METHOD("a6_propwash_configuration"), &AeroSimNative::a6_propwash_configuration);
+    ClassDB::bind_method(
             D_METHOD("set_a4_ground_effect_model", "enabled", "kf", "ground_effect_coeff", "prop_radius_m", "height_clip_m", "motor_0_rpm", "motor_1_rpm", "motor_2_rpm", "motor_3_rpm"),
             &AeroSimNative::set_a4_ground_effect_model);
     ClassDB::bind_method(D_METHOD("a4_ground_effect_configuration"), &AeroSimNative::a4_ground_effect_configuration);
@@ -768,6 +772,36 @@ Dictionary AeroSimNative::a3_drag_configuration() const {
     config["coefficient_y_kg"] = a3_drag.coefficient.y;
     config["coefficient_z_kg"] = a3_drag.coefficient.z;
     config["motor_speed_source"] = "live_motor_thrust_state";
+    return config;
+}
+
+bool AeroSimNative::set_a6_propwash_model(
+        bool enabled,
+        double full_collective_angular_accel_rad_s2,
+        double minimum_wake_entry_speed_mps,
+        double minimum_transverse_rate_rad_s) {
+    const aerosim::A6PropwashConfig config{
+            enabled,
+            full_collective_angular_accel_rad_s2,
+            minimum_wake_entry_speed_mps,
+            minimum_transverse_rate_rad_s,
+    };
+    if (!hardware_config_.set_a6_propwash_model(enabled, config)) {
+        return false;
+    }
+    if (!enabled) {
+        flight_controller_.clear_propwash_telemetry();
+    }
+    return true;
+}
+
+Dictionary AeroSimNative::a6_propwash_configuration() const {
+    Dictionary config;
+    const aerosim::A6PropwashConfig &a6 = hardware_config_.a6_propwash;
+    config["enabled"] = a6.enabled;
+    config["full_collective_angular_accel_rad_s2"] = a6.full_collective_angular_accel_rad_s2;
+    config["minimum_wake_entry_speed_mps"] = a6.minimum_wake_entry_speed_mps;
+    config["minimum_transverse_rate_rad_s"] = a6.minimum_transverse_rate_rad_s;
     return config;
 }
 
