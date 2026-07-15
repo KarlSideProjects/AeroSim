@@ -31,6 +31,8 @@ static func _encode_value(value: Variant, output: PackedByteArray) -> void:
             _append_float64(float(value), output)
         TYPE_PACKED_FLOAT32_ARRAY:
             _encode_float32_array(value, output)
+        TYPE_PACKED_BYTE_ARRAY:
+            _encode_binary(value, output)
         TYPE_STRING:
             _encode_string(String(value), output)
         TYPE_ARRAY:
@@ -116,6 +118,20 @@ static func _encode_float32_array(value: PackedFloat32Array, output: PackedByteA
     for item in value:
         output.append(0xca)
         _append_float32(float(item), output)
+
+
+static func _encode_binary(value: PackedByteArray, output: PackedByteArray) -> void:
+    var length := value.size()
+    if length <= 0xff:
+        output.append(0xc4)
+        output.append(length)
+    elif length <= 0xffff:
+        output.append(0xc5)
+        _append_u16(length, output)
+    else:
+        output.append(0xc6)
+        _append_u32(length, output)
+    output.append_array(value)
 
 
 static func _encode_dictionary(value: Dictionary, output: PackedByteArray) -> void:
@@ -215,6 +231,12 @@ class _Reader extends RefCounted:
                 return _read_float(4)
             0xcb:
                 return _read_float(8)
+            0xc4:
+                return _read_bytes(_read_unsigned(1))
+            0xc5:
+                return _read_bytes(_read_unsigned(2))
+            0xc6:
+                return _read_bytes(_read_unsigned(4))
             0xd9:
                 return _read_string(_read_unsigned(1))
             0xda:

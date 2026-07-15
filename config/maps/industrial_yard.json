@@ -5,5 +5,14 @@
   "recommended_aircraft": "5_inch_6s",
   "wind_preset": "calm",
   "spawn_count": 1,
-  "mode": "free_flight"
+  "mode": "free_flight",
+  "segmentation_objects": [
+    {"path": "Ground", "name": "Ground", "segmentation_id": 1},
+    {"path": "SpawnPlatform", "name": "SpawnPlatform", "segmentation_id": 2},
+    {"path": "CargoContainers/ContainerBlue", "name": "ContainerBlue", "segmentation_id": 3},
+    {"path": "CargoContainers/ContainerOrange", "name": "ContainerOrange", "segmentation_id": 4},
+    {"path": "LowGate", "name": "LowGate", "segmentation_id": 5},
+    {"path": "TurnMarker", "name": "TurnMarker", "segmentation_id": 6},
+    {"path": "Tower", "name": "Tower", "segmentation_id": 7}
+  ]
 }

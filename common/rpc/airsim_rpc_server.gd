@@ -35,6 +35,7 @@ var _arm_handler: Callable
 var _cancel_handler: Callable
 var _completion_handler: Callable
 var _sensor_handler: Callable
+var _camera_handler: Callable
 
 
 func set_session(owner_session: AirSimSession, owner_reset_handler: Callable = Callable()) -> void:
@@ -61,6 +62,10 @@ func set_vehicle_backend(
 
 func set_sensor_backend(sensor_handler: Callable) -> void:
     _sensor_handler = sensor_handler
+
+
+func set_camera_backend(camera_handler: Callable) -> void:
+    _camera_handler = camera_handler
 
 
 func validate_bind_address(address: String) -> Dictionary:
@@ -424,6 +429,8 @@ func dispatch(request: Array) -> Array:
             return _dispatch_vehicle_pose(message_id, params)
         "simGetCollisionInfo":
             return _dispatch_collision_info(message_id, params)
+        "simGetImages":
+            return _dispatch_images(message_id, params)
         "getImuData":
             return _dispatch_sensor(message_id, params, 2, "getImuData")
         "getGpsData":
@@ -594,6 +601,27 @@ func _dispatch_sensor(message_id, params: Array, sensor_type: int, method: Strin
     if typeof(result) != TYPE_DICTIONARY or not bool(result.get("ok", false)):
         return _error_response(message_id, String(result.get("error", "sensor backend rejected the request")) if typeof(result) == TYPE_DICTIONARY else "sensor backend returned an invalid result")
     return _success_response(message_id, result["sensor"].duplicate(true))
+
+
+func _dispatch_images(message_id, params: Array) -> Array:
+    if params.size() == 3 and typeof(params[0]) != TYPE_ARRAY:
+        return _error_response(message_id, "simGetImages requests must be an array")
+    if params.size() != 3 or typeof(params[1]) != TYPE_STRING or typeof(params[2]) != TYPE_BOOL:
+        return _error_response(message_id, "simGetImages expects requests, vehicle_name, and external")
+    if params[2]:
+        return _error_response(message_id, "simGetImages external cameras are unsupported")
+    var vehicle := _resolve_vehicle(message_id, params[1])
+    if not vehicle.ok:
+        return vehicle.response
+    if not _camera_handler.is_valid():
+        return _error_response(message_id, "camera backend is unavailable")
+    var result = _camera_handler.call(params[0], String(vehicle.name), false)
+    if typeof(result) != TYPE_DICTIONARY or not bool(result.get("ok", false)):
+        return _error_response(message_id, String(result.get("error", "camera backend rejected the request")) if typeof(result) == TYPE_DICTIONARY else "camera backend returned an invalid result")
+    var responses = result.get("responses", [])
+    if typeof(responses) != TYPE_ARRAY:
+        return _error_response(message_id, "camera backend returned invalid image responses")
+    return _success_response(message_id, responses)
 
 
 func _state_for_vehicle(name: String) -> Dictionary:

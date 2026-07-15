@@ -7,6 +7,7 @@ const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd"
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
+const AirSimCameraSurface = preload("res://common/rpc/airsim_camera_surface.gd")
 const AirSimCoordinateContract = preload("res://common/rpc/airsim_coordinate_contract.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
@@ -37,6 +38,7 @@ var airsim_session: AirSimSession
 var airsim_rpc_server: AirSimRpcServer
 var airsim_sensor_suite: AirSimSensorSuite
 var px4_sitl_bridge: Px4SitlBridge
+var airsim_camera_surface: AirSimCameraSurface
 var airsim_stop_file := ""
 var loaded_map: Node3D
 var loaded_map_id := ""
@@ -115,6 +117,8 @@ func _ready() -> void:
     airsim_session = AirSimSession.new(Engine.physics_ticks_per_second)
     airsim_rpc_server = AirSimRpcServer.new()
     airsim_sensor_suite = AirSimSensorSuite.new()
+    airsim_camera_surface = AirSimCameraSurface.new()
+    add_child(airsim_camera_surface)
     airsim_rpc_server.set_session(airsim_session, Callable(self, "respawn"))
     add_child(airsim_rpc_server)
     airsim_stop_file = _cold_start_arg("--airsim-stop-file")
@@ -169,6 +173,14 @@ func _ready() -> void:
             get_tree().quit(1)
             return
         airsim_sensor_suite.advance(0.0, _airsim_state(_airsim_vehicle_name).get("state", {}))
+        airsim_camera_surface.configure(
+            self,
+            Callable(self, "_airsim_camera_source"),
+            Callable(self, "_airsim_camera_vehicle"),
+            airsim_session,
+            airsim_rpc_server.settings,
+            Callable(self, "_airsim_camera_origin"))
+        airsim_rpc_server.set_camera_backend(Callable(airsim_camera_surface, "capture"))
         _write_airsim_ready_marker(_cold_start_arg("--airsim-ready-file"))
     var hardware_config := HardwareConfig.new()
     if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
@@ -1343,6 +1355,20 @@ func _update_chase_camera() -> void:
     chase_camera.current = true
     chase_camera.global_position = drone_body.global_position + CHASE_CAMERA_OFFSET
     chase_camera.look_at(drone_body.global_position, Vector3.UP)
+
+
+func _airsim_camera_source() -> Camera3D:
+    return chase_camera
+
+
+func _airsim_camera_vehicle(vehicle_name: String):
+    if not _airsim_name_matches(vehicle_name):
+        return null
+    return drone_body
+
+
+func _airsim_camera_origin() -> Vector3:
+    return _spawn_position()
 
 func _flight_control_armed() -> bool:
     if px4_sitl_bridge != null:

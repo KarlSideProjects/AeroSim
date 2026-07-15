@@ -53,6 +53,7 @@
     "getMultirotorState",
     "simGetVehiclePose",
     "simGetCollisionInfo",
+    "simGetImages",
     "getImuData",
     "getGpsData",
     "getMagnetometerData",
