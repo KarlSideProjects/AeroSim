@@ -148,11 +148,25 @@ int main() {
             disarmed_hold_command,
             100.0,
             aerosim::Quat{});
+    if (altitude_disarm_controller.pid_timing_stats().samples != 0 ||
+            altitude_disarm_controller.telemetry_snapshot().pid[1].saturated) {
+        return fail("disarmed altitude hold must not publish PID timing or collective saturation");
+    }
+    altitude_disarm_controller.capture_altitude_hold(100.0);
     if (!altitude_disarm_controller.arm(0.0)) {
         return fail("altitude hold must re-arm after disarmed cache setup");
     }
     aerosim::FlightCommand rearm_hold_command;
     rearm_hold_command.throttle = 0.1;
+    for (int frame = 0; frame < 120; ++frame) {
+        altitude_disarm_controller.step_altitude_hold_mode(
+                altitude_disarm_state,
+                altitude_disarm_clock,
+                config,
+                rearm_hold_command,
+                0.0,
+                aerosim::Quat{});
+    }
     altitude_disarm_controller.step_altitude_hold_mode(
             altitude_disarm_state,
             altitude_disarm_clock,

@@ -254,6 +254,9 @@ double FlightController::motor_thrust_newtons() const {
 }
 
 void FlightController::capture_altitude_hold(double target_altitude_m) {
+    if (!armed_) {
+        return;
+    }
     altitude_hold_captured_ = std::isfinite(target_altitude_m);
     altitude_hold_target_m_ = altitude_hold_captured_ ? target_altitude_m : 0.0;
     altitude_hold_filtered_altitude_m_ = altitude_hold_target_m_;
@@ -442,7 +445,7 @@ TrajectorySample FlightController::step_angle_mode(
     }
     SimulationConfig frame_config = config;
     const double throttle = std::clamp(command.throttle, 0.0, 1.0);
-    pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
+    pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
     const Vec3 desired_rates_y_up{
@@ -460,7 +463,7 @@ TrajectorySample FlightController::step_angle_mode(
                 pid_output,
                 pid_saturated);
         const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
-        if (target_dt > 0.0) {
+        if (armed_ && target_dt > 0.0) {
             pid_timing_stats_.p99_jitter_fraction = std::max(
                     pid_timing_stats_.p99_jitter_fraction,
                     std::abs(dt - target_dt) / target_dt);
@@ -486,7 +489,7 @@ TrajectorySample FlightController::step_acro_mode(
     }
     SimulationConfig frame_config = config;
     const double throttle = std::clamp(command.throttle, 0.0, 1.0);
-    pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
+    pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
     const Vec3 desired_rates_y_up{
@@ -504,7 +507,7 @@ TrajectorySample FlightController::step_acro_mode(
                 pid_output,
                 pid_saturated);
         const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
-        if (target_dt > 0.0) {
+        if (armed_ && target_dt > 0.0) {
             pid_timing_stats_.p99_jitter_fraction = std::max(
                     pid_timing_stats_.p99_jitter_fraction,
                     std::abs(dt - target_dt) / target_dt);
@@ -580,7 +583,7 @@ TrajectorySample FlightController::step_altitude_hold_mode(
                     1.0);
         }
     }
-    pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
+    pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
     const Vec3 desired_rates_y_up{
@@ -597,9 +600,11 @@ TrajectorySample FlightController::step_altitude_hold_mode(
                 dt,
                 pid_output,
                 pid_saturated);
-        pid_saturated[1] = pid_saturated[1] || target_throttle <= 0.0 || target_throttle >= 1.0;
+        if (armed_) {
+            pid_saturated[1] = pid_saturated[1] || target_throttle <= 0.0 || target_throttle >= 1.0;
+        }
         const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
-        if (target_dt > 0.0) {
+        if (armed_ && target_dt > 0.0) {
             pid_timing_stats_.p99_jitter_fraction = std::max(
                     pid_timing_stats_.p99_jitter_fraction,
                     std::abs(dt - target_dt) / target_dt);
