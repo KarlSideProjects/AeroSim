@@ -107,6 +107,7 @@ var _airsim_vehicle_name := ""
 var _airsim_vehicle_names: Array[String] = []
 var _airsim_secondary_native: Object
 var _airsim_vehicle_contexts: Dictionary = {}
+var _airsim_secondary_a5_configuration: Dictionary = {}
 var _airsim_api_control := false
 var _airsim_disarm_requested := false
 var _airsim_command_state: Dictionary = {}
@@ -242,10 +243,13 @@ func _configure_secondary_native(hardware_config: RefCounted) -> void:
         return
     var primary_native := native
     native = _airsim_secondary_native
-    var applied := hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET)
+    var applied_result: Variant = hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET)
+    var applied: bool = bool(applied_result)
     native = primary_native
     if not applied:
         last_error_message = "second named vehicle hardware preset failed: %s" % hardware_config.last_error
+        return
+    if not _sync_secondary_a5_model():
         return
     secondary_drone_body.visible = true
     if secondary_chase_camera != null:
@@ -256,6 +260,36 @@ func _secondary_body(vehicle_name: String):
     if _airsim_vehicle_names.size() > 1 and vehicle_name == String(_airsim_vehicle_names[1]):
         return secondary_drone_body
     return null
+
+
+func _sync_secondary_a5_model() -> bool:
+    if native == null or _airsim_secondary_native == null:
+        return false
+    if not native.has_method("a5_downwash_configuration") or not _airsim_secondary_native.has_method("set_a5_downwash_model"):
+        last_error_message = "A5 downwash runtime hooks are unavailable"
+        return false
+    var configuration_result: Variant = native.call("a5_downwash_configuration")
+    if typeof(configuration_result) != TYPE_DICTIONARY:
+        last_error_message = "A5 downwash configuration is not a dictionary"
+        return false
+    var configuration: Dictionary = configuration_result
+    if configuration == _airsim_secondary_a5_configuration:
+        return true
+    var enabled := bool(configuration.get("enabled", false))
+    var prop_radius := float(configuration.get("prop_radius_m", 0.0))
+    var coeff_1 := float(configuration.get("coeff_1", 0.0))
+    var coeff_2 := float(configuration.get("coeff_2", 0.0))
+    var coeff_3 := float(configuration.get("coeff_3", 0.0))
+    if not enabled and prop_radius <= 0.0:
+        _airsim_secondary_a5_configuration = configuration.duplicate(true)
+        return true
+    var apply_result: Variant = _airsim_secondary_native.call(
+        "set_a5_downwash_model", enabled, prop_radius, coeff_1, coeff_2, coeff_3)
+    if not bool(apply_result):
+        last_error_message = "secondary A5 downwash model rejected validated configuration"
+        return false
+    _airsim_secondary_a5_configuration = configuration.duplicate(true)
+    return true
 
 
 func _is_primary_airsim_vehicle(vehicle_name: String) -> bool:
@@ -644,6 +678,8 @@ func _step_secondary_airsim_vehicle(vehicle_name: String) -> void:
     body.freeze = false
     body.sleeping = false
     _sync_named_native(body, _airsim_secondary_native)
+    if not _sync_secondary_a5_model():
+        return
     if _airsim_secondary_native.has_method("set_a5_downwash_source_position") and drone_body != null:
         _airsim_secondary_native.call(
             "set_a5_downwash_source_position",
@@ -710,19 +746,19 @@ func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
     var args: Array = command_state.get("args", [])
     match method:
         "takeoff":
-            return _airsim_velocity_controls(Vector3(0.0, clampf((3.0 - body.global_position.y) * 1.5, -3.0, 3.0), 0.0), 0.0)
+            return _airsim_velocity_controls(Vector3(0.0, clampf((3.0 - body.global_position.y) * 1.5, -3.0, 3.0), 0.0), 0.0, null, body)
         "land":
-            return _airsim_velocity_controls(Vector3(0.0, clampf(-body.global_position.y * 1.5, -3.0, 3.0), 0.0), 0.0)
+            return _airsim_velocity_controls(Vector3(0.0, clampf(-body.global_position.y * 1.5, -3.0, 3.0), 0.0), 0.0, null, body)
         "hover":
-            return _airsim_velocity_controls(Vector3.ZERO, 0.0)
+            return _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
         "moveByVelocity":
-            return _airsim_velocity_controls(AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), float(args[2]))), 0.0, args[5])
+            return _airsim_velocity_controls(AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), float(args[2]))), 0.0, args[5], body)
         "moveByVelocityZ":
-            return _airsim_velocity_controls(AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - body.global_position.y) * 4.0, args[5])
+            return _airsim_velocity_controls(AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - body.global_position.y) * 4.0, args[5], body)
         "moveByVelocityBodyFrame":
-            return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), float(args[2]))), 0.0, args[5])
+            return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), float(args[2]))), 0.0, args[5], body)
         "moveByVelocityZBodyFrame":
-            return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - body.global_position.y) * 4.0, args[5])
+            return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - body.global_position.y) * 4.0, args[5], body)
         "moveByAngleRatesThrottle":
             return {"mode": "ANGLE", "throttle": float(args[3]), "roll": clampf(rad_to_deg(float(args[0])) * 0.1, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES), "pitch": clampf(rad_to_deg(float(args[1])) * 0.1, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES), "yaw_rate": rad_to_deg(float(args[2]))}
     return _airsim_neutral_controls()
@@ -2167,11 +2203,12 @@ func _airsim_controls_for_frame() -> Dictionary:
     return {}
 
 
-func _airsim_velocity_controls(velocity_world: Vector3, vertical_correction: float, yaw_mode: Variant = null) -> Dictionary:
+func _airsim_velocity_controls(velocity_world: Vector3, vertical_correction: float, yaw_mode: Variant = null, body = null) -> Dictionary:
     var desired := velocity_world
-    var measured_velocity: Vector3 = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
+    var measured_body = body if body != null else drone_body
+    var measured_velocity: Vector3 = measured_body.linear_velocity if measured_body != null else Vector3.ZERO
     var horizontal_velocity_error := Vector3(desired.x - measured_velocity.x, 0.0, desired.z - measured_velocity.z)
-    var measured_vertical_velocity: float = drone_body.linear_velocity.y if drone_body != null else 0.0
+    var measured_vertical_velocity: float = measured_velocity.y
     var vertical_velocity_error: float = desired.y - measured_vertical_velocity
     var throttle := clampf(0.50 + vertical_velocity_error * 0.15 + clampf(vertical_correction, -0.5, 0.5), 0.0, 1.0)
     return {
@@ -2179,19 +2216,20 @@ func _airsim_velocity_controls(velocity_world: Vector3, vertical_correction: flo
         "throttle": throttle,
         "roll": clampf(-horizontal_velocity_error.x * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
         "pitch": clampf(horizontal_velocity_error.z * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
-        "yaw_rate": _airsim_yaw_rate_from_mode(yaw_mode),
+        "yaw_rate": _airsim_yaw_rate_from_mode(yaw_mode, measured_body),
     }
 
 
-func _airsim_yaw_rate_from_mode(yaw_mode: Variant) -> float:
+func _airsim_yaw_rate_from_mode(yaw_mode: Variant, body = null) -> float:
     if typeof(yaw_mode) != TYPE_DICTIONARY:
         return 0.0
     var requested := float(yaw_mode.get("yaw_or_rate", 0.0))
     if bool(yaw_mode.get("is_rate", true)):
         return clampf(-requested, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
-    if drone_body == null:
+    var yaw_body = body if body != null else drone_body
+    if yaw_body == null:
         return 0.0
-    var delta_yaw := wrapf(AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(requested) - drone_body.rotation.y, -PI, PI)
+    var delta_yaw := wrapf(AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(requested) - yaw_body.rotation.y, -PI, PI)
     return clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
 
 

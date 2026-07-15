@@ -36,5 +36,11 @@ AirSim v1.8.1 is MIT-licensed. This change copies no AirSim source, assets, or b
 - `tests/gut/test_airsim_rpc_server.gd`: two named vehicles retain independent API-control and command routing; empty and unknown names fail explicitly.
 - `tests/gut/test_airsim_settings.gd`: duplicate, empty, missing, and unknown vehicle-name validation.
 - `tests/gut/test_airsim_sensor_suite.gd`: per-vehicle sensor streams sample their own state at a shared session time.
+- `tests/gut/test_flight_runtime_named_controls.gd`: secondary velocity and yaw control reads secondary measured state.
 - `tests/native/test_replay.cpp`: replay recordings carry vehicle identity.
+- `common/smoke/headless_smoke.gd`: public A5 source-position path checks effects-off zero and effects-on crossing trajectory loss.
 - Existing native dual-aerodynamics tests cover A5 effects-off zero, crossing-trajectory loss, and per-substep sensitivity.
+
+## Explicit partials
+
+The dashboard has an explicit primary `vehicle_name` identity in its telemetry snapshot, but a user-facing dashboard vehicle selector is not part of this slice. Dataset export/recording identity hooks beyond the replay sequence vehicle name are also not implemented. No synthetic dashboard or dataset data was added; both remain follow-up work.

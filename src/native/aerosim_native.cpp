@@ -287,6 +287,7 @@ void AeroSimNative::set_a5_downwash_source_position(double x, double y, double z
 }
 
 void AeroSimNative::apply_downwash_provider(aerosim::SimulationConfig &config) const {
+    config.a5_downwash = a5_downwash_config_;
     if (!downwash_source_enabled_) {
         config.external_force_provider = {};
         return;
