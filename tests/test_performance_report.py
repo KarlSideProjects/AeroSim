@@ -49,6 +49,11 @@ VALID_EFFECT_EVIDENCE = {
     "A5_downwash": {"observed": True, "force_y_newtons": -1.0},
     "A6_propwash": {"observed": True, "magnitude": 1.0},
 }
+G3_7_SAMPLE_COUNT = 14_400
+
+
+def g37_samples(value):
+    return [value] * G3_7_SAMPLE_COUNT
 
 
 class PerformanceReportTest(unittest.TestCase):
@@ -224,19 +229,19 @@ class PerformanceReportTest(unittest.TestCase):
             "substep_hz": 1000,
             "vsync_mode": 0,
             "video_adapter": BASELINE_GPU,
-            "rendering_method": "gl_compatibility",
+            "rendering_method": "forward_plus",
             "sampling_source": "EngineProfiler._tick",
             "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
-            common | {"samples_ms": [1.0, 1.0], "scenario": "effects_off", "active_effects": []},
+            common | {"samples_ms": g37_samples(1.0), "scenario": "effects_off", "active_effects": []},
             environment,
         )
         candidate = build_report(
             common
             | {
-                "samples_ms": [2.0, 2.0],
+                "samples_ms": g37_samples(2.0),
                 "scenario": "effects_on",
                 "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
                 "effect_evidence": VALID_EFFECT_EVIDENCE,
@@ -261,19 +266,19 @@ class PerformanceReportTest(unittest.TestCase):
             "substep_hz": 1000,
             "vsync_mode": 0,
             "video_adapter": BASELINE_GPU,
-            "rendering_method": "gl_compatibility",
+            "rendering_method": "forward_plus",
             "sampling_source": "EngineProfiler._tick",
             "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
-            common | {"samples_ms": [2.5], "scenario": "effects_off", "active_effects": []},
+            common | {"samples_ms": g37_samples(2.5), "scenario": "effects_off", "active_effects": []},
             environment,
         )
         candidate = build_report(
             common
             | {
-                "samples_ms": [3.0],
+                "samples_ms": g37_samples(3.0),
                 "scenario": "effects_on",
                 "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
                 "effect_evidence": VALID_EFFECT_EVIDENCE,
@@ -290,7 +295,7 @@ class PerformanceReportTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "p99_ms does not match"):
             compare_reports(baseline, candidate | {"p99_ms": 3.01})
         relative_baseline = build_report(
-            common | {"samples_ms": [1.0], "scenario": "effects_off", "active_effects": []},
+            common | {"samples_ms": g37_samples(1.0), "scenario": "effects_off", "active_effects": []},
             environment,
         )
         relative_fail = compare_reports(relative_baseline, candidate)
@@ -308,19 +313,19 @@ class PerformanceReportTest(unittest.TestCase):
             "substep_hz": 1000,
             "vsync_mode": 0,
             "video_adapter": BASELINE_GPU,
-            "rendering_method": "gl_compatibility",
+            "rendering_method": "forward_plus",
             "sampling_source": "EngineProfiler._tick",
             "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
-            common | {"samples_ms": [2.5], "scenario": "effects_off", "active_effects": []},
+            common | {"samples_ms": g37_samples(2.5), "scenario": "effects_off", "active_effects": []},
             environment,
         )
         candidate = build_report(
             common
             | {
-                "samples_ms": [3.0],
+                "samples_ms": g37_samples(3.0),
                 "scenario": "effects_on",
                 "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
                 "effect_evidence": VALID_EFFECT_EVIDENCE,
@@ -417,7 +422,7 @@ class PerformanceReportTest(unittest.TestCase):
             "substep_hz": 1000,
             "vsync_mode": 0,
             "video_adapter": "NVIDIA GeForce RTX 4060 Ti",
-            "rendering_method": "gl_compatibility",
+            "rendering_method": "forward_plus",
             "godot_version": "4.7.stable",
             "godot_sha256": "godot-sha",
             "godot_cpp_revision": "godot-cpp-revision",
@@ -455,17 +460,17 @@ class PerformanceReportTest(unittest.TestCase):
             "substep_hz": 1000,
             "vsync_mode": 0,
             "video_adapter": BASELINE_GPU,
-            "rendering_method": "gl_compatibility",
+            "rendering_method": "forward_plus",
             "sampling_source": "EngineProfiler._tick",
             "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
-            common | {"samples_ms": [2.0], "scenario": "effects_off", "active_effects": []},
+            common | {"samples_ms": g37_samples(2.0), "scenario": "effects_off", "active_effects": []},
             environment,
         )
         candidate_raw = common | {
-            "samples_ms": [2.1],
+            "samples_ms": g37_samples(2.1),
             "scenario": "effects_on",
             "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
             "effect_evidence": VALID_EFFECT_EVIDENCE,
@@ -476,6 +481,8 @@ class PerformanceReportTest(unittest.TestCase):
             compare_reports({"environment": environment, "scenario": "effects_off", "sample_count": 1, "measurement": {}}, candidate)
         with self.assertRaisesRegex(ValueError, "sample_count"):
             compare_reports(baseline, candidate | {"sample_count": 2})
+        with self.assertRaisesRegex(ValueError, "sample_count must be 14400"):
+            compare_reports(baseline | {"sample_count": 1, "raw_samples_ms": [2.0]}, candidate)
         with self.assertRaisesRegex(ValueError, "p99_ms does not match"):
             compare_reports(baseline | {"p99_ms": 0.0}, candidate)
 
@@ -490,19 +497,19 @@ class PerformanceReportTest(unittest.TestCase):
             "substep_hz": 1000,
             "vsync_mode": 0,
             "video_adapter": BASELINE_GPU,
-            "rendering_method": "gl_compatibility",
+            "rendering_method": "forward_plus",
             "sampling_source": "EngineProfiler._tick",
             "workload_attestation": G3_7_WORKLOAD_ATTESTATION,
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
-            common | {"samples_ms": [2.0], "scenario": "effects_off", "active_effects": []},
+            common | {"samples_ms": g37_samples(2.0), "scenario": "effects_off", "active_effects": []},
             environment,
         )
         candidate = build_report(
             common
             | {
-                "samples_ms": [2.1],
+                "samples_ms": g37_samples(2.1),
                 "scenario": "effects_on",
                 "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
             },

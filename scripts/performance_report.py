@@ -13,6 +13,7 @@ from pathlib import Path
 G0_1_P99_LIMIT_MS = 3.0
 G3_7_P99_LIMIT_MS = 3.0
 G3_7_MAX_INCREASE_PERCENT = 20.0
+G3_7_SAMPLE_COUNT = 14_400
 G3_7_EFFECTS = ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"]
 G3_7_FROZEN_PROTOCOL = {
     "benchmark_mode": "gate",
@@ -23,7 +24,7 @@ G3_7_FROZEN_PROTOCOL = {
     "substep_hz": 1000,
     "vsync_mode": 0,
     "sampling_source": "EngineProfiler._tick",
-    "rendering_method": "gl_compatibility",
+    "rendering_method": "forward_plus",
 }
 G3_7_WORKLOAD_ATTESTATION = {
     "workload_id": "G3.7-A3-A6-public-native-v1",
@@ -167,8 +168,6 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         expected_p95 = _percentile(raw_samples, 0.95)
         if float(reported_p95) != expected_p95:
             raise ValueError(f"incompatible benchmark reports: {label} p95_ms does not match raw_samples_ms")
-    if baseline["sample_count"] != candidate["sample_count"]:
-        raise ValueError("incompatible benchmark reports: sample_count differs")
     for label, report in (("baseline", baseline), ("candidate", candidate)):
         p99 = report.get("p99_ms")
         if not _finite_number(p99) or p99 < 0.0:
@@ -192,6 +191,8 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
             or report.get("gate_eligible") is not True
         ):
             raise ValueError("G3.7 requires passing G0.1 production reports")
+        if report.get("sample_count") != G3_7_SAMPLE_COUNT:
+            raise ValueError(f"incompatible benchmark reports: {label} sample_count must be {G3_7_SAMPLE_COUNT}")
         environment = report.get("environment")
         if not isinstance(environment, dict):
             raise ValueError(f"incompatible benchmark reports: {label} environment is required")
