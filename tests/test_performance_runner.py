@@ -43,6 +43,13 @@ class PerformanceRunnerTest(unittest.TestCase):
         self.assertIn('native.call("step_angle_mode", 240, 1000, 0.75, 0.0, 0.0, 0.0)', BENCHMARK_SOURCE)
         self.assertGreaterEqual(BENCHMARK_SOURCE.count('_activate_a6()'), 2)
 
+    def test_zero_initial_propwash_does_not_fail_a6_setup(self):
+        activation_start = BENCHMARK_SOURCE.index('    func _activate_a6() -> bool:')
+        activation_end = BENCHMARK_SOURCE.index('    func _physics_process', activation_start)
+        activation_source = BENCHMARK_SOURCE[activation_start:activation_end]
+        self.assertNotIn('return not enabled or propwash.length() > 0.0', activation_source)
+        self.assertIn('return true', activation_source)
+
     def test_disabled_workload_returns_before_per_frame_effect_work(self):
         physics_index = BENCHMARK_SOURCE.index('func _physics_process(_delta: float) -> void:')
         self.assertIn('if not enabled:\n            return', BENCHMARK_SOURCE[physics_index:])

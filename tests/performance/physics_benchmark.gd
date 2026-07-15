@@ -73,7 +73,7 @@ class EffectWorkload:
             "observed": enabled and propwash.length() > 0.0,
             "magnitude": propwash.length(),
         }
-        return not enabled or propwash.length() > 0.0
+        return true
 
     func _physics_process(_delta: float) -> void:
         if native == null:
