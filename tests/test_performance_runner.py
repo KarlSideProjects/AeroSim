@@ -10,9 +10,31 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BENCHMARK_SOURCE = (ROOT / "tests" / "performance" / "physics_benchmark.gd").read_text(encoding="utf-8")
 
 
 class PerformanceRunnerTest(unittest.TestCase):
+    def test_benchmark_source_activates_the_complete_effect_workload(self):
+        for method in (
+            "set_a3_drag_model",
+            "set_a4_ground_effect_model",
+            "set_a5_downwash_model",
+            "set_a6_propwash_model",
+            "set_dual_aircraft_positions",
+            "step_dual_aircraft_simulation",
+        ):
+            self.assertIn(method, BENCHMARK_SOURCE)
+        self.assertIn('"effect_evidence"', BENCHMARK_SOURCE)
+        self.assertIn('"A5_downwash"', BENCHMARK_SOURCE)
+        self.assertIn('"A6_propwash"', BENCHMARK_SOURCE)
+
+    def test_effect_evidence_is_sticky_across_measurement_frames(self):
+        self.assertIn('"A3_drag": {"observed": false, "magnitude": 0.0}', BENCHMARK_SOURCE)
+        self.assertIn('var previous_evidence := effect_evidence.duplicate(true)', BENCHMARK_SOURCE)
+        self.assertIn('maxf(drag_body.length(), float(previous_evidence.get("A3_drag"', BENCHMARK_SOURCE)
+        self.assertIn('maxf(propwash.length(), float(previous_evidence.get("A6_propwash"', BENCHMARK_SOURCE)
+        self.assertIn('effect_workload.process_physics_priority = 100', BENCHMARK_SOURCE)
+
     def test_short_headed_run_records_jolt_samples_with_vsync_disabled(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "raw.json"
@@ -94,8 +116,12 @@ class PerformanceRunnerTest(unittest.TestCase):
             self.assertIn("p99_delta_ms", candidate_report["comparison_to_baseline"])
             self.assertEqual(
                 candidate_report["measurement"]["active_effects"],
-                ["A3_drag", "A4_ground_effect"],
+                ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
             )
+            self.assertTrue(all(
+                evidence["observed"]
+                for evidence in candidate_report["measurement"]["effect_evidence"].values()
+            ))
 
     def test_default_gate_mode_rejects_shortened_gate_protocol(self):
         with tempfile.TemporaryDirectory() as directory:

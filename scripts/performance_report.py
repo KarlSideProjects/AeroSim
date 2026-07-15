@@ -11,6 +11,9 @@ from pathlib import Path
 
 
 G0_1_P99_LIMIT_MS = 3.0
+G3_7_P99_LIMIT_MS = 3.0
+G3_7_MAX_INCREASE_PERCENT = 20.0
+G3_7_EFFECTS = ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"]
 G0_1_BASELINE_CPU = "AMD Ryzen 9 7945HX with Radeon Graphics"
 G0_1_BASELINE_GPU = "NVIDIA GeForce RTX 4060 Ti"
 G0_1_BASELINE_OS_RELEASE = "Ubuntu 26.04 LTS"
@@ -105,13 +108,25 @@ def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, 
     return report
 
 
-def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, float | None]:
+def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     if baseline.get("environment") != candidate.get("environment"):
         raise ValueError("baseline and candidate environments must match")
     if baseline.get("scenario") != "effects_off" or candidate.get("scenario") != "effects_on":
         raise ValueError("comparison requires an effects_off baseline and effects_on candidate")
-    if baseline.get("sample_count") != candidate.get("sample_count"):
+    for label, report in (("baseline", baseline), ("candidate", candidate)):
+        sample_count = report.get("sample_count")
+        if not isinstance(sample_count, int) or sample_count <= 0:
+            raise ValueError(f"incompatible benchmark reports: {label} sample_count is required")
+    if baseline["sample_count"] != candidate["sample_count"]:
         raise ValueError("incompatible benchmark reports: sample_count differs")
+    for label, report in (("baseline", baseline), ("candidate", candidate)):
+        p99 = report.get("p99_ms")
+        if not isinstance(p99, (int, float)) or not math.isfinite(p99) or p99 < 0.0:
+            raise ValueError(f"incompatible benchmark reports: {label} p99_ms is required")
+    baseline_p99 = float(baseline["p99_ms"])
+    candidate_p99 = float(candidate["p99_ms"])
+    if baseline_p99 <= 0.0:
+        raise ValueError("incompatible benchmark reports: baseline p99_ms must be greater than zero")
     baseline_measurement = baseline.get("measurement")
     candidate_measurement = candidate.get("measurement")
     if not isinstance(baseline_measurement, dict) or not isinstance(candidate_measurement, dict):
@@ -137,6 +152,20 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
             raise ValueError(f"incompatible benchmark reports: {key} is required")
         if baseline_measurement[key] != candidate_measurement[key]:
             raise ValueError(f"incompatible benchmark reports: {key} differs")
+    if baseline_measurement.get("active_effects") != []:
+        raise ValueError("incompatible benchmark reports: effects_off baseline must have no active effects")
+    if candidate_measurement.get("active_effects") != G3_7_EFFECTS:
+        raise ValueError("incompatible benchmark reports: effects_on candidate must activate A3-A6")
+    effect_evidence = candidate_measurement.get("effect_evidence")
+    if (
+        not isinstance(effect_evidence, dict)
+        or any(
+            not isinstance(effect_evidence.get(effect), dict)
+            or effect_evidence[effect].get("observed") is not True
+            for effect in G3_7_EFFECTS
+        )
+    ):
+        raise ValueError("incompatible benchmark reports: effect evidence must prove A3-A6 activation")
     comparison: dict[str, float | None] = {}
     for metric in ("p95_ms", "p99_ms", "render_cpu_p95_ms", "render_cpu_p99_ms", "render_gpu_p95_ms", "render_gpu_p99_ms"):
         if metric not in baseline or metric not in candidate:
@@ -146,6 +175,15 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         prefix = metric.removesuffix("_ms")
         comparison[f"{prefix}_delta_ms"] = delta
         comparison[f"{prefix}_delta_percent"] = None if baseline_value == 0.0 else delta * 100.0 / baseline_value
+    p99_delta = candidate_p99 - baseline_p99
+    p99_delta_percent = p99_delta * 100.0 / baseline_p99
+    comparison["g3_7_p99_within_limit"] = candidate_p99 <= G3_7_P99_LIMIT_MS
+    comparison["g3_7_increase_within_limit"] = p99_delta_percent <= G3_7_MAX_INCREASE_PERCENT
+    comparison["g3_7_verdict"] = (
+        "pass"
+        if comparison["g3_7_p99_within_limit"] and comparison["g3_7_increase_within_limit"]
+        else "fail"
+    )
     return comparison
 
 
@@ -245,7 +283,8 @@ def main() -> int:
     args.output.write_text(json.dumps(report, separators=(",", ":")) + "\n", encoding="utf-8")
     if args.chart_output:
         write_chart(report, args.chart_output)
-    return 1 if report.get("gate_verdict") == "fail" else 0
+    comparison_failed = report.get("comparison_to_baseline", {}).get("g3_7_verdict") == "fail"
+    return 1 if report.get("gate_verdict") == "fail" or comparison_failed else 0
 
 
 if __name__ == "__main__":

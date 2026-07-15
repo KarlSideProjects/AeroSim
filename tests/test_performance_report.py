@@ -223,7 +223,10 @@ class PerformanceReportTest(unittest.TestCase):
             | {
                 "samples_ms": [2.0, 4.0],
                 "scenario": "effects_on",
-                "active_effects": ["A3_drag", "A4_ground_effect"],
+                "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
+                "effect_evidence": {effect: {"observed": True} for effect in [
+                    "A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"
+                ]},
             },
             environment,
         )
@@ -233,6 +236,128 @@ class PerformanceReportTest(unittest.TestCase):
         self.assertEqual(comparison["p95_delta_ms"], 2.0)
         self.assertEqual(comparison["p99_delta_ms"], 2.0)
         self.assertEqual(comparison["p99_delta_percent"], 100.0)
+
+    def test_g37_passes_at_absolute_and_relative_boundaries(self):
+        environment = {"git_revision": "abc123", "cpu_model": "reference"}
+        common = {
+            "benchmark_mode": "reference",
+            "warmup_seconds": 10.0,
+            "measured_seconds": 60.0,
+            "physics_engine": "Jolt Physics",
+            "physics_ticks_per_second": 240,
+            "substep_hz": 1000,
+            "vsync_mode": 0,
+            "video_adapter": "NVIDIA GeForce RTX 4060 Ti",
+            "rendering_method": "gl_compatibility",
+            "godot_version": "4.7.stable",
+            "godot_sha256": "godot-sha",
+            "godot_cpp_revision": "godot-cpp-revision",
+            "gdextension_sha256": "extension-sha",
+            "native_source_sha256": "source-sha",
+        }
+        baseline = build_report(
+            common | {"samples_ms": [2.5], "scenario": "effects_off", "active_effects": []},
+            environment,
+        )
+        candidate = build_report(
+            common
+            | {
+                "samples_ms": [3.0],
+                "scenario": "effects_on",
+                "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
+                "effect_evidence": {effect: {"observed": True} for effect in [
+                    "A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"
+                ]},
+            },
+            environment,
+        )
+
+        comparison = compare_reports(baseline, candidate)
+
+        self.assertEqual(comparison["g3_7_verdict"], "pass")
+        self.assertTrue(comparison["g3_7_p99_within_limit"])
+        self.assertTrue(comparison["g3_7_increase_within_limit"])
+
+        absolute_fail = compare_reports(baseline, candidate | {"p99_ms": 3.01})
+        self.assertEqual(absolute_fail["g3_7_verdict"], "fail")
+        self.assertFalse(absolute_fail["g3_7_p99_within_limit"])
+        relative_fail = compare_reports(baseline | {"p99_ms": 1.0}, candidate)
+        self.assertEqual(relative_fail["g3_7_verdict"], "fail")
+        self.assertFalse(relative_fail["g3_7_increase_within_limit"])
+
+    def test_g37_fails_closed_for_missing_incompatible_or_zero_baseline(self):
+        environment = {"git_revision": "abc123", "cpu_model": "reference"}
+        common = {
+            "benchmark_mode": "reference",
+            "warmup_seconds": 10.0,
+            "measured_seconds": 60.0,
+            "physics_engine": "Jolt Physics",
+            "physics_ticks_per_second": 240,
+            "substep_hz": 1000,
+            "vsync_mode": 0,
+            "video_adapter": "NVIDIA GeForce RTX 4060 Ti",
+            "rendering_method": "gl_compatibility",
+            "godot_version": "4.7.stable",
+            "godot_sha256": "godot-sha",
+            "godot_cpp_revision": "godot-cpp-revision",
+            "gdextension_sha256": "extension-sha",
+            "native_source_sha256": "source-sha",
+        }
+        baseline = build_report(
+            common | {"samples_ms": [2.0], "scenario": "effects_off", "active_effects": []},
+            environment,
+        )
+        candidate_raw = common | {
+            "samples_ms": [2.1],
+            "scenario": "effects_on",
+            "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
+            "effect_evidence": {effect: {"observed": True} for effect in [
+                "A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"
+            ]},
+        }
+        candidate = build_report(candidate_raw, environment)
+
+        with self.assertRaisesRegex(ValueError, "p99_ms"):
+            compare_reports({"environment": environment, "scenario": "effects_off", "sample_count": 1, "measurement": {}}, candidate)
+        with self.assertRaisesRegex(ValueError, "sample_count"):
+            compare_reports(baseline, candidate | {"sample_count": 2})
+        with self.assertRaisesRegex(ValueError, "zero"):
+            compare_reports(baseline | {"p99_ms": 0.0}, candidate)
+
+    def test_g37_requires_observed_enabled_effects(self):
+        environment = {"git_revision": "abc123", "cpu_model": "reference"}
+        common = {
+            "benchmark_mode": "reference",
+            "warmup_seconds": 10.0,
+            "measured_seconds": 60.0,
+            "physics_engine": "Jolt Physics",
+            "physics_ticks_per_second": 240,
+            "substep_hz": 1000,
+            "vsync_mode": 0,
+            "video_adapter": "NVIDIA GeForce RTX 4060 Ti",
+            "rendering_method": "gl_compatibility",
+            "godot_version": "4.7.stable",
+            "godot_sha256": "godot-sha",
+            "godot_cpp_revision": "godot-cpp-revision",
+            "gdextension_sha256": "extension-sha",
+            "native_source_sha256": "source-sha",
+        }
+        baseline = build_report(
+            common | {"samples_ms": [2.0], "scenario": "effects_off", "active_effects": []},
+            environment,
+        )
+        candidate = build_report(
+            common
+            | {
+                "samples_ms": [2.1],
+                "scenario": "effects_on",
+                "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
+            },
+            environment,
+        )
+
+        with self.assertRaisesRegex(ValueError, "effect evidence"):
+            compare_reports(baseline, candidate)
 
     def test_comparison_rejects_mixed_protocols_and_scenarios(self):
         environment = {"git_revision": "abc123", "cpu_model": "same"}

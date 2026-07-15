@@ -15,6 +15,78 @@ class PhysicsFrameProfiler:
             samples_ms.append(physics_time * 1000.0)
 
 
+class EffectWorkload:
+    extends Node
+
+    var native: Object
+    var enabled := false
+    var effect_evidence: Dictionary = {}
+
+    func configure(native_runtime: Object, effects_enabled: bool) -> bool:
+        native = native_runtime
+        enabled = effects_enabled
+        effect_evidence = {
+            "A3_drag": {"observed": false, "magnitude": 0.0},
+            "A4_ground_effect": {"observed": false, "magnitude": 0.0},
+            "A5_downwash": {"observed": false, "force_y_newtons": 0.0},
+            "A6_propwash": {"observed": false, "magnitude": 0.0},
+        }
+        native.call("configure_imu", {
+            "noise_enabled": false,
+            "bias_enabled": false,
+            "random_walk_enabled": false,
+            "delay_enabled": false,
+        })
+        native.call("reset_flight")
+        if not native.call("set_a6_propwash_model", enabled, 12.0, 2.0, 0.5):
+            return false
+        if not native.call("set_a5_downwash_model", enabled, 0.0231348, 2267.18, 0.16, -0.11):
+            return false
+        if not native.call("set_dual_aircraft_positions", 0.0, 2.0, 0.0, 0.0, 0.0, 0.0):
+            return false
+        if not native.call("arm_flight_control", 0.0):
+            return false
+        return true
+
+    func _physics_process(_delta: float) -> void:
+        if native == null:
+            return
+        var previous_evidence := effect_evidence.duplicate(true)
+        native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.866025403784, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)
+        var _single_row: PackedFloat64Array = native.call("step_angle_mode", 240, 1000, 0.75, 0.0, 0.0, 0.0)
+        var dual_row: PackedFloat64Array = native.call("step_dual_aircraft_simulation", 240, 1000, 0.72 * 9.80665)
+        var telemetry: Dictionary = native.call("telemetry_snapshot")
+        var drag_body: Vector3 = telemetry.get("drag_body_n", Vector3.ZERO)
+        var propwash: Vector3 = telemetry.get("propwash_disturbance_rad_s2", Vector3.ZERO)
+        var downwash_force := float(dual_row[8]) if dual_row.size() > 8 else 0.0
+        var previous_downwash_force := float(previous_evidence.get("A5_downwash", {}).get("force_y_newtons", 0.0))
+        effect_evidence = {
+            "A3_drag": {
+                "observed": enabled and (drag_body.length() > 0.0 or bool(previous_evidence.get("A3_drag", {}).get("observed", false))),
+                "magnitude": maxf(drag_body.length(), float(previous_evidence.get("A3_drag", {}).get("magnitude", 0.0))),
+            },
+            "A4_ground_effect": {
+                "observed": enabled and (float(telemetry.get("ground_effect_gain", 0.0)) > 0.0 or bool(previous_evidence.get("A4_ground_effect", {}).get("observed", false))),
+                "magnitude": maxf(float(telemetry.get("ground_effect_gain", 0.0)), float(previous_evidence.get("A4_ground_effect", {}).get("magnitude", 0.0))),
+            },
+            "A5_downwash": {
+                "observed": enabled and (downwash_force < 0.0 or bool(previous_evidence.get("A5_downwash", {}).get("observed", false))),
+                "force_y_newtons": minf(downwash_force, previous_downwash_force),
+            },
+            "A6_propwash": {
+                "observed": enabled and (propwash.length() > 0.0 or bool(previous_evidence.get("A6_propwash", {}).get("observed", false))),
+                "magnitude": maxf(propwash.length(), float(previous_evidence.get("A6_propwash", {}).get("magnitude", 0.0))),
+            },
+        }
+
+    func active_effects() -> Array[String]:
+        var result: Array[String] = []
+        for effect in ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"]:
+            if bool(effect_evidence.get(effect, {}).get("observed", false)):
+                result.append(effect)
+        return result
+
+
 var _output_path := "build/performance_raw.json"
 var _warmup_seconds := 10.0
 var _seconds := 60.0
@@ -77,7 +149,6 @@ func _run() -> void:
         return
     if not _configure_effects(runtime.native):
         return
-
     var known_device_id := await _inject_known_gamepad()
     if known_device_id < 0:
         _fail("benchmark requires a known virtual SDL controller")
@@ -94,6 +165,12 @@ func _run() -> void:
         _fail("benchmark must enter low-throttle preflight with the Xbox default profile")
         return
     runtime.arm_and_takeoff()
+    var effect_workload := EffectWorkload.new()
+    if not effect_workload.configure(runtime.native, _effects == "on"):
+        _fail("cannot configure complete A3-A6 workload")
+        return
+    effect_workload.process_physics_priority = 100
+    root.add_child(effect_workload)
     var physics_profiler := PhysicsFrameProfiler.new()
     EngineDebugger.register_profiler("aerosim_physics_frame", physics_profiler)
     EngineDebugger.profiler_enable("aerosim_physics_frame", true)
@@ -127,6 +204,9 @@ func _run() -> void:
     if physics_samples.size() != frames:
         _fail("per-frame profiler captured %d of %d physics frames" % [physics_samples.size(), frames])
         return
+    if _effects == "on" and effect_workload.active_effects().size() != 4:
+        _fail("enabled benchmark workload did not observe all A3-A6 effects: %s" % effect_workload.effect_evidence)
+        return
 
     var output := FileAccess.open(_output_path, FileAccess.WRITE)
     if output == null:
@@ -144,7 +224,8 @@ func _run() -> void:
         "gdextension_sha256": _gdextension_sha256,
         "native_source_sha256": _native_source_sha256,
         "scenario": "effects_%s" % _effects,
-        "active_effects": ["A3_drag", "A4_ground_effect"] if _effects == "on" else [],
+        "active_effects": effect_workload.active_effects(),
+        "effect_evidence": effect_workload.effect_evidence,
         "physics_engine": ProjectSettings.get_setting("physics/3d/physics_engine"),
         "physics_ticks_per_second": Engine.physics_ticks_per_second,
         "substep_hz": 1000,
@@ -169,6 +250,9 @@ func _configure_effects(native: Object) -> bool:
         return false
     if not native.call("set_a4_ground_effect_model", enabled, 3.16e-10, 11.36859, 0.0231348, 0.0231348, 12000.0, 12000.0, 12000.0, 12000.0):
         _fail("cannot configure A4 ground effect")
+        return false
+    if not native.call("set_a6_propwash_model", enabled, 12.0, 2.0, 0.5):
+        _fail("cannot configure A6 propwash")
         return false
     return true
 
