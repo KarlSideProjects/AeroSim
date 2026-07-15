@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3 uid="uid://aerosim_smoke_scene"]
+[gd_scene load_steps=13 format=3 uid="uid://aerosim_smoke_scene"]
 
 [ext_resource type="Script" path="res://common/flight/flight_runtime.gd" id="1_2nq71"]
 [ext_resource type="Script" path="res://common/flight/collision_probe_body.gd" id="2_e6a3t"]
@@ -11,6 +11,9 @@ size = Vector3(0.2, 2, 2)
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_drone"]
 albedo_color = Color(0.95, 0.36, 0.08, 1)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_drone_secondary"]
+albedo_color = Color(0.08, 0.48, 0.95, 1)
 
 [sub_resource type="BoxMesh" id="BoxMesh_drone"]
 size = Vector3(0.42, 0.08, 0.42)
@@ -42,6 +45,10 @@ light_energy = 1.7
 current = true
 fov = 70.0
 
+[node name="ChaseCameraSecondary" type="Camera3D" parent="."]
+current = false
+fov = 70.0
+
 [node name="FallbackStatus" type="Label3D" parent="."]
 unique_name_in_owner = true
 text = "Input fallback unavailable"
@@ -59,6 +66,21 @@ shape = SubResource("SphereShape3D_drone")
 [node name="DroneMesh" type="MeshInstance3D" parent="DroneBody"]
 mesh = SubResource("BoxMesh_drone")
 surface_material_override/0 = SubResource("StandardMaterial3D_drone")
+
+[node name="DroneBodySecondary" type="RigidBody3D" parent="."]
+visible = false
+gravity_scale = 0.0
+contact_monitor = true
+max_contacts_reported = 4
+continuous_cd = true
+script = ExtResource("2_e6a3t")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="DroneBodySecondary"]
+shape = SubResource("SphereShape3D_drone")
+
+[node name="DroneMesh" type="MeshInstance3D" parent="DroneBodySecondary"]
+mesh = SubResource("BoxMesh_drone")
+surface_material_override/0 = SubResource("StandardMaterial3D_drone_secondary")
 
 [node name="GroundPlane" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.22, 0)

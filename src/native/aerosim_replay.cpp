@@ -14,8 +14,16 @@ double square(double value) {
 
 } // namespace
 
+ReplayRecorder::ReplayRecorder(std::string vehicle_name) {
+    sequence_.vehicle_name = std::move(vehicle_name);
+}
+
 void ReplayRecorder::record(const FlightCommand &command) {
     sequence_.frames.push_back(command);
+}
+
+const std::string &ReplayRecorder::vehicle_name() const {
+    return sequence_.vehicle_name;
 }
 
 const RecordedInputSequence &ReplayRecorder::sequence() const {

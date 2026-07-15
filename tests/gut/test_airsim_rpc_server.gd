@@ -3,6 +3,8 @@ extends GutTest
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
 const MsgpackCodec = preload("res://common/rpc/msgpack_codec.gd")
 
+var command_calls: Array = []
+
 
 func _install_test_backend(server: AirSimRpcServer) -> void:
     server.set_vehicle_backend(
@@ -24,6 +26,7 @@ func _test_arm(armed: bool, _name: String) -> Dictionary:
 
 
 func _test_command(_method: String, _params: Array, _name: String) -> Dictionary:
+    command_calls.append([_method, _name])
     return {"ok": true}
 
 
@@ -317,6 +320,38 @@ func test_single_vehicle_control_and_state_use_the_frozen_airsim_payload() -> vo
     var pwm_response: Array = server.dispatch([0, 25, "moveByMotorPWMs", [0.5, 0.5, 0.5, 0.5, 1.0, "Drone1"]])
     assert_eq(pwm_response[0], 1)
     assert_string_contains(pwm_response[2], "per-motor PWM")
+
+
+func test_two_named_vehicles_keep_api_control_and_commands_isolated() -> void:
+    command_calls.clear()
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41460,
+        "RpcEnabled": false,
+        "Vehicles": {
+            "DroneA": {"VehicleType": "SimpleFlight"},
+            "DroneB": {"VehicleType": "SimpleFlight"},
+        },
+    })
+    assert_true(startup.ok, startup.error)
+    _install_test_backend(server)
+
+    assert_eq(server.dispatch([0, 61, "listVehicles", []]), [1, 61, null, ["DroneA", "DroneB"]])
+    assert_eq(server.dispatch([0, 62, "enableApiControl", [true, "DroneA"]]), [1, 62, null, null])
+    assert_eq(server.dispatch([0, 63, "enableApiControl", [true, "DroneB"]]), [1, 63, null, null])
+    assert_eq(server.dispatch([0, 64, "armDisarm", [true, "DroneA"]]), [1, 64, null, true])
+    assert_eq(server.dispatch([0, 65, "armDisarm", [true, "DroneB"]]), [1, 65, null, true])
+
+    assert_eq(server.dispatch([0, 66, "hover", ["DroneA"]]), [1, 66, null, null])
+    assert_eq(server.dispatch([0, 67, "moveByVelocity", [1.0, 0.0, 0.0, 0.5, 0, {"is_rate": true, "yaw_or_rate": 0.0}, "DroneB"]]), [1, 67, null, null])
+    assert_eq(command_calls, [["hover", "DroneA"], ["moveByVelocity", "DroneB"]])
+    assert_true(server.dispatch([0, 68, "isApiControlEnabled", ["DroneA"]])[3])
+    assert_true(server.dispatch([0, 69, "isApiControlEnabled", ["DroneB"]])[3])
+    assert_string_contains(server.dispatch([0, 70, "hover", [""]])[2], "required")
+    assert_string_contains(server.dispatch([0, 71, "hover", ["DroneC"]])[2], "unknown")
 
 
 func test_vehicle_commands_require_control_and_preserve_ned_state_payloads() -> void:

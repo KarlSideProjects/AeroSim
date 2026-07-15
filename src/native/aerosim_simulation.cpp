@@ -246,7 +246,9 @@ void integrate_per_motor(
                 config.per_motor.max_thrust_per_motor_newtons,
                 config.max_motor_rpm);
     }
-    const Vec3 force_world = rotate(state.orientation, body_force) + external_force_world +
+    const Vec3 configured_external_force = config.external_force_world +
+            (config.external_force_provider ? config.external_force_provider(state.position) : Vec3{});
+    const Vec3 force_world = rotate(state.orientation, body_force) + external_force_world + configured_external_force +
             rotate(state.orientation, a3_drag_force_body(
                     config.a3_drag, state.orientation, relative_air_velocity, motor_speeds));
     const Vec3 acceleration{

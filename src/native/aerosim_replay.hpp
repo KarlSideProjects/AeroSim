@@ -2,11 +2,13 @@
 
 #include "aerosim_flight_control.hpp"
 
+#include <string>
 #include <vector>
 
 namespace aerosim {
 
 struct RecordedInputSequence {
+    std::string vehicle_name;
     std::vector<FlightCommand> frames;
 };
 
@@ -20,7 +22,9 @@ private:
     RecordedInputSequence sequence_;
 
 public:
+    explicit ReplayRecorder(std::string vehicle_name = {});
     void record(const FlightCommand &command);
+    const std::string &vehicle_name() const;
     const RecordedInputSequence &sequence() const;
 };
 

@@ -28,6 +28,9 @@ private:
     aerosim::FlightController flight_controller_;
     aerosim::A4GroundEffectConfig a4_ground_effect_config_;
     aerosim::A5DownwashConfig a5_downwash_config_;
+    aerosim::Vec3 external_force_world_;
+    aerosim::Vec3 downwash_source_position_world_;
+    bool downwash_source_enabled_ = false;
     aerosim::CollisionAuthoritySwitch collision_authority_;
     aerosim::ImuConfig imu_config_;
     aerosim::ImuSimulator imu_;
@@ -42,6 +45,7 @@ private:
     bool flight_control_used_estimated_attitude_ = false;
     godot::String flight_mode_ = "ANGLE";
     aerosim::ImuSample sample_imu();
+    void apply_downwash_provider(aerosim::SimulationConfig &config) const;
 
 public:
     std::int32_t probe_value() const;
@@ -58,6 +62,8 @@ public:
     bool set_hardware_telemetry_model(double max_motor_rpm, double battery_remaining_mah);
     bool set_hardware_per_motor_model(const godot::Dictionary &model);
     void reset_simulation();
+    void set_external_force_world(double x, double y, double z);
+    void set_a5_downwash_source_position(double x, double y, double z);
     bool set_dual_aircraft_positions(
             double upper_x,
             double upper_y,

@@ -136,6 +136,8 @@ void AeroSimNative::_bind_methods() {
             &AeroSimNative::set_hardware_telemetry_model);
     ClassDB::bind_method(D_METHOD("set_hardware_per_motor_model", "model"), &AeroSimNative::set_hardware_per_motor_model);
     ClassDB::bind_method(D_METHOD("reset_simulation"), &AeroSimNative::reset_simulation);
+    ClassDB::bind_method(D_METHOD("set_external_force_world", "x", "y", "z"), &AeroSimNative::set_external_force_world);
+    ClassDB::bind_method(D_METHOD("set_a5_downwash_source_position", "x", "y", "z"), &AeroSimNative::set_a5_downwash_source_position);
     ClassDB::bind_method(
             D_METHOD("set_dual_aircraft_positions", "upper_x", "upper_y", "upper_z", "lower_x", "lower_y", "lower_z"),
             &AeroSimNative::set_dual_aircraft_positions);
@@ -261,9 +263,39 @@ void AeroSimNative::reset_simulation() {
     simulation_clock_ = {};
     dual_aircraft_state_ = {};
     dual_aircraft_clock_ = {};
+    external_force_world_ = {};
+    downwash_source_position_world_ = {};
+    downwash_source_enabled_ = false;
     collision_authority_ = {};
     last_imu_sample_ = {};
     has_last_imu_sample_ = false;
+}
+
+void AeroSimNative::set_external_force_world(double x, double y, double z) {
+    if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z)) {
+        external_force_world_ = {x, y, z};
+    }
+}
+
+void AeroSimNative::set_a5_downwash_source_position(double x, double y, double z) {
+    if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z)) {
+        downwash_source_position_world_ = {x, y, z};
+        downwash_source_enabled_ = true;
+    } else {
+        downwash_source_enabled_ = false;
+    }
+}
+
+void AeroSimNative::apply_downwash_provider(aerosim::SimulationConfig &config) const {
+    if (!downwash_source_enabled_) {
+        config.external_force_provider = {};
+        return;
+    }
+    const aerosim::Vec3 source_position = downwash_source_position_world_;
+    const aerosim::A5DownwashConfig downwash_config = config.a5_downwash;
+    config.external_force_provider = [source_position, downwash_config](const aerosim::Vec3 &target_position) {
+        return aerosim::Vec3{0.0, aerosim::a5_downwash_force_y_newtons(downwash_config, source_position, target_position), 0.0};
+    };
 }
 
 bool AeroSimNative::set_dual_aircraft_positions(
@@ -299,6 +331,7 @@ PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
     config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
     config.a5_downwash = a5_downwash_config_;
     aerosim::DualAircraftConfig dual_config{config, config};
     apply_wind(dual_config.upper, dual_aircraft_state_.upper, dual_aircraft_clock_, wind_field_);
@@ -352,6 +385,8 @@ PackedFloat64Array AeroSimNative::step_simulation(
         simulation_state_.motor_thrust_newtons = {};
     }
     config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
+    apply_downwash_provider(config);
     apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     PackedFloat64Array row;
@@ -391,6 +426,8 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
+    apply_downwash_provider(config);
     apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
     const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
     const aerosim::TrajectorySample sample = aerosim::step_per_motor_physics_frame(
@@ -455,6 +492,8 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
+    apply_downwash_provider(config);
     apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
     aerosim::CollisionContact contact;
     contact.touching = touching;
@@ -943,6 +982,8 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
+    apply_downwash_provider(config);
     apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::FlightCommand command;
@@ -993,6 +1034,8 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
+    apply_downwash_provider(config);
     apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::AcroCommand command;
@@ -1055,6 +1098,8 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
+    apply_downwash_provider(config);
     apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::FlightCommand command;
@@ -1128,6 +1173,8 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
+    apply_downwash_provider(config);
     apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::FlightCommand command;
@@ -1237,6 +1284,8 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
+    apply_downwash_provider(config);
     apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::AcroCommand command;
@@ -1324,6 +1373,8 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
+    apply_downwash_provider(config);
     apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     aerosim::FlightCommand command;

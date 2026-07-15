@@ -96,6 +96,8 @@ struct SimulationConfig {
     A4GroundEffectConfig a4_ground_effect;
     A5DownwashConfig a5_downwash;
     A6PropwashConfig a6_propwash;
+    Vec3 external_force_world;
+    std::function<Vec3(const Vec3 &)> external_force_provider;
     Vec3 wind_world_mps;
     Vec3 wind_turbulence_mps;
     RigidBodyState initial_state;

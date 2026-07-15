@@ -52,6 +52,20 @@ func test_sampling_uses_simulation_time_and_configured_frequency() -> void:
     assert_eq(suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_IMU, "").time_stamp, 100000000)
 
 
+func test_two_vehicle_sensor_streams_sample_their_own_state() -> void:
+    var suite := AirSimSensorSuite.new()
+    autofree(suite)
+    var settings := _settings()
+    settings["Vehicles"]["Drone2"] = {"VehicleType": "SimpleFlight", "Sensors": {}}
+    assert_true(suite.configure(settings, ["Drone1", "Drone2"]).ok)
+
+    suite.advance(0.0, "Drone1", _state(Vector3(1.0, 0.0, 0.0)))
+    suite.advance(0.0, "Drone2", _state(Vector3(9.0, 0.0, 0.0)))
+
+    assert_eq(suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_GPS, "").gnss.geo_point.longitude, 121.0)
+    assert_gt(suite.get_sensor("Drone2", AirSimSensorSuite.SENSOR_GPS, "").gnss.geo_point.longitude, 121.0)
+
+
 func test_paused_reads_do_not_change_timestamp_or_sample_count() -> void:
     var suite := AirSimSensorSuite.new()
     autofree(suite)

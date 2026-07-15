@@ -57,3 +57,20 @@ func test_segmentation_catalog_ids_are_stable_and_unique() -> void:
             blue_found = true
             assert_eq(String(item["path"]), "CargoContainers/ContainerBlue")
     assert_true(blue_found)
+
+
+func test_camera_settings_and_source_identity_are_vehicle_scoped() -> void:
+    var surface := AirSimCameraSurface.new()
+    autofree(surface)
+    surface.configure(
+        Node3D.new(),
+        Callable(),
+        Callable(),
+        null,
+        {"Vehicles": {
+            "DroneA": {"Cameras": {"front_center": {"X": 1.0}}},
+            "DroneB": {"Cameras": {"front_center": {"X": 9.0}}},
+        }})
+
+    assert_eq(surface._camera_settings("DroneA", "front_center")["X"], 1.0)
+    assert_eq(surface._camera_settings("DroneB", "front_center")["X"], 9.0)

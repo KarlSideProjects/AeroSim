@@ -35,6 +35,24 @@ func test_rejects_unknown_root_setting_instead_of_silently_ignoring_it() -> void
     assert_string_contains(result.error, "FutureSetting")
 
 
+func test_vehicle_name_validation_rejects_duplicate_empty_missing_and_unknown_names() -> void:
+    var duplicate := AirSimSettings.validate_vehicle_names(["DroneA", "DroneA"])
+    assert_false(duplicate.ok)
+    assert_string_contains(duplicate.error, "duplicate")
+
+    var invalid := AirSimSettings.validate_vehicle_names(["DroneA", ""])
+    assert_false(invalid.ok)
+    assert_string_contains(invalid.error, "non-empty")
+
+    var missing := AirSimSettings.validate_vehicle_name("", ["DroneA", "DroneB"])
+    assert_false(missing.ok)
+    assert_string_contains(missing.error, "required")
+
+    var unknown := AirSimSettings.validate_vehicle_name("DroneC", ["DroneA", "DroneB"])
+    assert_false(unknown.ok)
+    assert_string_contains(unknown.error, "unknown")
+
+
 func test_rejects_unsupported_vehicle_type_and_more_than_two_vehicles() -> void:
     var result := AirSimSettings.validate({
         "SettingsVersion": 1.2,

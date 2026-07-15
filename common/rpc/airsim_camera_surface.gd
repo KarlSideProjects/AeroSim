@@ -123,7 +123,9 @@ func _prepare_camera(request: Dictionary, vehicle_name: String) -> Dictionary:
     if width < 2 or height < 2 or width > 4096 or height > 4096:
         return {"ok": false, "error": "camera CaptureSettings dimensions must be from 2 to 4096 pixels"}
     _render_viewport.size = Vector2i(width, height)
-    var source_camera: Camera3D = _source_camera_provider.call() if _source_camera_provider.is_valid() else null
+    var source_camera: Camera3D = null
+    if _source_camera_provider.is_valid():
+        source_camera = _source_camera_provider.call(vehicle_name) if _source_camera_provider.get_argument_count() > 0 else _source_camera_provider.call()
     if source_camera == null or not is_instance_valid(source_camera):
         return {"ok": false, "error": "camera source is unavailable"}
     _render_camera.global_transform = source_camera.global_transform

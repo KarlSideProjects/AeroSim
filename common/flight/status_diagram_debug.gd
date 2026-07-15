@@ -45,6 +45,7 @@ func update_from_snapshot(snapshot: Dictionary) -> void:
         "timestamp_us": int(snapshot.get("timestamp_us", 0)),
         "publish_count": int(snapshot.get("publish_count", 0)),
         "source": str(snapshot.get("source", "")),
+        "vehicle_name": str(snapshot.get("vehicle_name", "")),
         "armed": bool(snapshot.get("armed", false)),
         "mode": str(snapshot.get("mode", "")),
         "motors": motors,
@@ -53,7 +54,7 @@ func update_from_snapshot(snapshot: Dictionary) -> void:
         "pid": pid
     }
 
-    _labels.mode.text = "ARM %s  MODE %s" % ["ON" if debug_values.armed else "OFF", debug_values.mode]
+    _labels.mode.text = "%s  ARM %s  MODE %s" % [debug_values.vehicle_name, "ON" if debug_values.armed else "OFF", debug_values.mode]
     for index in range(min(motors.size(), MOTOR_KEYS.size())):
         var motor: Dictionary = motors[index]
         _labels[MOTOR_KEYS[index]].text = "%s  %.2f N  %.1f rad/s%s" % [

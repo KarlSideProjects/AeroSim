@@ -109,6 +109,13 @@ bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
 } // namespace
 
 int main() {
+    aerosim::ReplayRecorder named_recorder("DroneA");
+    aerosim::FlightCommand named_command;
+    named_recorder.record(named_command);
+    if (named_recorder.vehicle_name() != "DroneA" || named_recorder.sequence().vehicle_name != "DroneA") {
+        return fail("replay recordings must retain their named vehicle identity");
+    }
+
     aerosim::SimulationConfig config;
     config.physics_hz = 240;
     config.substep_hz = 1000;
