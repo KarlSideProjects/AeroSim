@@ -47,7 +47,7 @@ mkdir -p .godot build .deps
 touch build/.gdignore .deps/.gdignore
 printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .godot/extension_list.cfg
 
-"$godot_bin" --headless --path . --log-file "$log_path" \
+"$godot_bin" --headless --fixed-fps 240 --path . --log-file "$log_path" \
     --script res://common/smoke/headless_smoke.gd -- \
     --output "$output_path" --csv-output "$csv_output_path" "${args[@]}" &
 godot_pid="$!"
