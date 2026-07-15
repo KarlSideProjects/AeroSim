@@ -49,7 +49,15 @@ const FACTORY_DEFAULT := {
         ]
     },
     "esc": {"current_limit_a": 45, "protocol": "DShot600", "update_rate_hz": 600},
-    "aerodynamics": {"a3": {"enabled": false, "coefficient_kg": {"x": 0.0, "y": 0.0, "z": 0.0}}},
+    "aerodynamics": {
+        "a3": {"enabled": false, "coefficient_kg": {"x": 0.0, "y": 0.0, "z": 0.0}},
+        "a6": {
+            "enabled": false,
+            "full_collective_angular_accel_rad_s2": 0.0,
+            "minimum_wake_entry_speed_mps": 0.0,
+            "minimum_transverse_rate_rad_s": 0.0
+        }
+    },
     "aircraft": {
         "mass_kg": 0.72,
         "inertia_kg_m2": {"x": 0.0030, "y": 0.0030, "z": 0.0050},
