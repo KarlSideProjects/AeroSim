@@ -417,6 +417,7 @@ void FlightController::maybe_publish_telemetry(
             config.wind_turbulence_mps.x * config.wind_turbulence_mps.x +
             config.wind_turbulence_mps.y * config.wind_turbulence_mps.y +
             config.wind_turbulence_mps.z * config.wind_turbulence_mps.z);
+    snapshot.propwash_disturbance_rad_s2 = sample.propwash_disturbance_rad_s2;
     const Vec3 relative_air_velocity{
             sample.state.velocity.x - config.wind_world_mps.x,
             sample.state.velocity.y - config.wind_world_mps.y,

@@ -26,6 +26,7 @@ struct RigidBodyState {
     Vec3 velocity;
     Quat orientation;
     Vec3 angular_velocity;
+    Vec3 propwash_disturbance_rad_s2;
     std::array<double, 4> motor_thrust_newtons = {0.0, 0.0, 0.0, 0.0};
 };
 
@@ -49,6 +50,13 @@ struct A5DownwashConfig {
     double coeff_1 = 0.0;
     double coeff_2 = 0.0;
     double coeff_3 = 0.0;
+};
+
+struct A6PropwashConfig {
+    bool enabled = false;
+    double full_collective_angular_accel_rad_s2 = 0.0;
+    double minimum_wake_entry_speed_mps = 0.0;
+    double minimum_transverse_rate_rad_s = 0.0;
 };
 
 struct PerMotorPhysicsConfig {
@@ -87,6 +95,7 @@ struct SimulationConfig {
     A3DragConfig a3_drag;
     A4GroundEffectConfig a4_ground_effect;
     A5DownwashConfig a5_downwash;
+    A6PropwashConfig a6_propwash;
     Vec3 wind_world_mps;
     Vec3 wind_turbulence_mps;
     RigidBodyState initial_state;
@@ -119,6 +128,7 @@ struct HardwareConfig {
     double max_total_current_a = 0.0;
     double max_motor_rpm = 0.0;
     A3DragConfig a3_drag;
+    A6PropwashConfig a6_propwash;
     PerMotorPhysicsConfig per_motor;
 
     bool set_mass_kg(double value) {
@@ -185,6 +195,20 @@ struct HardwareConfig {
         return true;
     }
 
+    bool set_a6_propwash_model(bool enabled, const A6PropwashConfig &value) {
+        if (!std::isfinite(value.full_collective_angular_accel_rad_s2) ||
+                value.full_collective_angular_accel_rad_s2 < 0.0 ||
+                !std::isfinite(value.minimum_wake_entry_speed_mps) ||
+                value.minimum_wake_entry_speed_mps < 0.0 ||
+                !std::isfinite(value.minimum_transverse_rate_rad_s) ||
+                value.minimum_transverse_rate_rad_s < 0.0) {
+            return false;
+        }
+        a6_propwash = value;
+        a6_propwash.enabled = enabled;
+        return true;
+    }
+
     SimulationConfig simulation_config() const {
         SimulationConfig config;
         config.mass_kg = mass_kg;
@@ -198,6 +222,7 @@ struct HardwareConfig {
         config.max_total_current_a = max_total_current_a;
         config.max_motor_rpm = max_motor_rpm;
         config.a3_drag = a3_drag;
+        config.a6_propwash = a6_propwash;
         config.per_motor = per_motor;
         return config;
     }
@@ -212,6 +237,7 @@ struct TrajectorySample {
     double time_seconds = 0.0;
     RigidBodyState state;
     std::uint64_t substeps = 0;
+    Vec3 propwash_disturbance_rad_s2;
 };
 
 struct DualAircraftTrajectorySample {

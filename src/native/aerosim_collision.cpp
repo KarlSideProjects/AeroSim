@@ -71,6 +71,7 @@ TrajectorySample sample_jolt_frame(
             static_cast<double>(clock.total_substeps) * dt,
             state,
             clock.total_substeps,
+            {},
     };
 }
 

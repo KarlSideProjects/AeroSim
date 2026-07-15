@@ -27,5 +27,10 @@ double a5_downwash_force_y_newtons(
         const A5DownwashConfig &config,
         const Vec3 &upper_position,
         const Vec3 &lower_position);
+Vec3 a6_propwash_angular_acceleration_rad_s2(
+        const A6PropwashConfig &config,
+        const RigidBodyState &state,
+        const Vec3 &relative_air_velocity_world,
+        double collective);
 
 } // namespace aerosim

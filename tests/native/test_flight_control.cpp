@@ -1,4 +1,5 @@
 #include "aerosim_flight_control.hpp"
+#include "aerosim_aerodynamics.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -15,6 +16,32 @@ int fail(const char *message) {
 
 bool near(double actual, double expected, double tolerance) {
     return std::abs(actual - expected) <= tolerance;
+}
+
+double vector_length(const aerosim::Vec3 &value) {
+    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+}
+
+double pearson(const std::array<double, 5> &x, const std::array<double, 5> &y) {
+    double mean_x = 0.0;
+    double mean_y = 0.0;
+    for (std::size_t index = 0; index < x.size(); ++index) {
+        mean_x += x[index];
+        mean_y += y[index];
+    }
+    mean_x /= static_cast<double>(x.size());
+    mean_y /= static_cast<double>(x.size());
+    double covariance = 0.0;
+    double variance_x = 0.0;
+    double variance_y = 0.0;
+    for (std::size_t index = 0; index < x.size(); ++index) {
+        const double dx = x[index] - mean_x;
+        const double dy = y[index] - mean_y;
+        covariance += dx * dy;
+        variance_x += dx * dx;
+        variance_y += dy * dy;
+    }
+    return covariance / std::sqrt(variance_x * variance_y);
 }
 
 double roll_degrees(const aerosim::Quat &q) {
@@ -383,6 +410,79 @@ int main() {
             !near(tilted_state.angular_velocity.z, 0.0, 0.0) ||
             tilted_clock.total_substeps != 0) {
         return fail("reset must clear flight state and substep clock");
+    }
+
+    aerosim::A6PropwashConfig propwash;
+    propwash.enabled = true;
+    propwash.full_collective_angular_accel_rad_s2 = 12.0;
+    propwash.minimum_wake_entry_speed_mps = 2.0;
+    propwash.minimum_transverse_rate_rad_s = 0.5;
+    aerosim::SimulationConfig propwash_config = config;
+    propwash_config.a6_propwash = propwash;
+    aerosim::RigidBodyState split_s_state;
+    const double split_s_angle = 60.0 * kPi / 180.0;
+    split_s_state.orientation.x = std::sin(split_s_angle * 0.5);
+    split_s_state.orientation.w = std::cos(split_s_angle * 0.5);
+    split_s_state.velocity.y = -6.0;
+    split_s_state.angular_velocity = aerosim::frd_to_y_up({3.0, 4.0, 0.0});
+    aerosim::SimulationClock split_s_clock;
+    aerosim::FlightController split_s_controller;
+    if (!split_s_controller.arm(0.0)) {
+        return fail("A6 split-S setup must arm from low throttle");
+    }
+    aerosim::FlightCommand split_s_command;
+    split_s_command.throttle = 0.75;
+    const aerosim::TrajectorySample split_s_sample = split_s_controller.step_angle_mode(
+            split_s_state, split_s_clock, propwash_config, split_s_command);
+    if (vector_length(split_s_sample.state.propwash_disturbance_rad_s2) <= 0.0 ||
+            vector_length(split_s_controller.telemetry_snapshot().propwash_disturbance_rad_s2) <= 0.0) {
+        return fail("G3.6 A6 split-S exit must inject and publish a non-zero propwash disturbance");
+    }
+
+    std::array<double, 5> throttle_values = {0.2, 0.4, 0.6, 0.8, 1.0};
+    std::array<double, 5> disturbance_values{};
+    for (std::size_t index = 0; index < throttle_values.size(); ++index) {
+        disturbance_values[index] = vector_length(aerosim::a6_propwash_angular_acceleration_rad_s2(
+                propwash,
+                split_s_state,
+                split_s_state.velocity,
+                throttle_values[index]));
+    }
+    if (pearson(throttle_values, disturbance_values) < 0.8) {
+        return fail("G3.6 A6 disturbance magnitude must correlate with throttle at >= 0.8");
+    }
+    aerosim::RigidBodyState no_descent_state = split_s_state;
+    no_descent_state.velocity = {};
+    if (vector_length(aerosim::a6_propwash_angular_acceleration_rad_s2(
+                propwash,
+                no_descent_state,
+                no_descent_state.velocity,
+                1.0)) != 0.0) {
+        return fail("A6 must stay zero without relative wake-entry speed");
+    }
+    aerosim::RigidBodyState no_transverse_rate_state = split_s_state;
+    no_transverse_rate_state.angular_velocity = {};
+    if (vector_length(aerosim::a6_propwash_angular_acceleration_rad_s2(
+                propwash,
+                no_transverse_rate_state,
+                no_transverse_rate_state.velocity,
+                1.0)) != 0.0) {
+        return fail("A6 must stay zero without transverse attitude-change rate");
+    }
+
+    aerosim::SimulationConfig propwash_disabled_config = propwash_config;
+    propwash_disabled_config.a6_propwash.enabled = false;
+    aerosim::RigidBodyState disabled_propwash_state = split_s_state;
+    aerosim::SimulationClock disabled_propwash_clock;
+    aerosim::FlightController disabled_propwash_controller;
+    if (!disabled_propwash_controller.arm(0.0)) {
+        return fail("A6 disabled setup must arm from low throttle");
+    }
+    const aerosim::TrajectorySample disabled_propwash_sample = disabled_propwash_controller.step_angle_mode(
+            disabled_propwash_state, disabled_propwash_clock, propwash_disabled_config, split_s_command);
+    if (vector_length(disabled_propwash_sample.state.propwash_disturbance_rad_s2) != 0.0 ||
+            vector_length(disabled_propwash_controller.telemetry_snapshot().propwash_disturbance_rad_s2) != 0.0) {
+        return fail("G3.6 A6 disabled mode must produce exact-zero disturbance and telemetry");
     }
 
     return EXIT_SUCCESS;

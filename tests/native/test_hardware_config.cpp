@@ -46,11 +46,28 @@ int main() {
             !hardware.set_a3_drag_model(true, {1.0e-4, 1.0e-4, 1.2e-4})) {
         return fail("hardware config must reject invalid A3 coefficients and preserve valid static settings");
     }
+    aerosim::A6PropwashConfig a6;
+    a6.enabled = true;
+    a6.full_collective_angular_accel_rad_s2 = 12.0;
+    a6.minimum_wake_entry_speed_mps = 2.0;
+    a6.minimum_transverse_rate_rad_s = 0.5;
+    if (!hardware.set_a6_propwash_model(true, a6)) {
+        return fail("hardware config must accept a calibrated A6 propwash model");
+    }
+    aerosim::A6PropwashConfig invalid_a6 = a6;
+    invalid_a6.minimum_transverse_rate_rad_s = -1.0;
+    if (hardware.set_a6_propwash_model(true, invalid_a6)) {
+        return fail("hardware config must reject negative A6 angular acceleration gain");
+    }
 
     aerosim::SimulationConfig config = hardware.simulation_config();
     if (!config.a3_drag.enabled || !near(config.a3_drag.coefficient.x, 1.0e-4, 1e-12) ||
             !near(config.a3_drag.coefficient.z, 1.2e-4, 1e-12)) {
         return fail("hardware config must carry static A3 settings into every simulation config");
+    }
+    if (!config.a6_propwash.enabled || !near(config.a6_propwash.full_collective_angular_accel_rad_s2, 12.0, 1e-12) ||
+            !near(config.a6_propwash.minimum_transverse_rate_rad_s, 0.5, 1e-12)) {
+        return fail("hardware config must carry static A6 settings into every simulation config");
     }
     config.seconds = 1.0;
     config.physics_hz = 240;
