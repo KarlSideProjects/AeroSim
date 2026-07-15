@@ -46,7 +46,7 @@ class MutableGamepadDeviceState:
         return bool(known_device_ids.get(device_id, false))
 
     func joy_name(device_id: int) -> String:
-        return "Test controller %d" % device_id
+        return "Xbox Test Controller %d" % device_id
 
 var verified_jolt_collision_trials := 0
 var production_gamepad_device_state := GamepadDeviceState.DeviceState.new()
@@ -1711,19 +1711,8 @@ func _verify_runtime_actions() -> bool:
     await process_frame
     scene.quick_fly()
     await process_frame
-    if scene.screen != "controller_confirmation" or scene.takeoff_requested:
-        push_error("Quick Fly must re-confirm when the connected controller differs from the session profile device")
-        scene.queue_free()
-        return false
-    var reconfirm_button := scene.get_node_or_null("FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile") as Button
-    if reconfirm_button == null:
-        push_error("Replacement controller confirmation must expose its confirmation action")
-        scene.queue_free()
-        return false
-    reconfirm_button.pressed.emit()
-    await process_frame
     if scene.screen != "preflight" or scene.takeoff_requested:
-        push_error("Replacement known controller must confirm before returning to preflight")
+        push_error("Quick Fly must restore the persisted canonical profile into low-throttle preflight")
         scene.queue_free()
         return false
     var unknown_device_id := known_device_id + 1

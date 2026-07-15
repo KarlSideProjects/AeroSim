@@ -22,7 +22,7 @@ class MutableGamepadDeviceState:
 		return bool(known_device_ids.get(device_id, false))
 
 	func joy_name(device_id: int) -> String:
-		return "Test controller %d" % device_id
+		return "Xbox Test Controller %d" % device_id
 
 var _failures: Array[String] = []
 var _out_dir := "build/headed"
