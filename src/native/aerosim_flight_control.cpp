@@ -288,6 +288,13 @@ const TelemetrySnapshot &FlightController::telemetry_snapshot() const {
     return telemetry_buffers_[telemetry_read_index_];
 }
 
+void FlightController::clear_propwash_telemetry() {
+    const int write_index = 1 - telemetry_read_index_;
+    telemetry_buffers_[write_index] = telemetry_buffers_[telemetry_read_index_];
+    telemetry_buffers_[write_index].propwash_disturbance_rad_s2 = {};
+    telemetry_read_index_ = write_index;
+}
+
 MotorCommands FlightController::control_substep(
         RigidBodyState &state,
         const SimulationConfig &config,

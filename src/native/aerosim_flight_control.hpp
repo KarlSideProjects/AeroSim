@@ -137,6 +137,7 @@ public:
     void capture_altitude_hold(double target_altitude_m);
     const PidTimingStats &pid_timing_stats() const;
     const TelemetrySnapshot &telemetry_snapshot() const;
+    void clear_propwash_telemetry();
     TrajectorySample step_angle_mode(
             RigidBodyState &state,
             SimulationClock &clock,

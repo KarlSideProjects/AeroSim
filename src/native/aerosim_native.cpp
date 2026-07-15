@@ -786,7 +786,13 @@ bool AeroSimNative::set_a6_propwash_model(
             minimum_wake_entry_speed_mps,
             minimum_transverse_rate_rad_s,
     };
-    return hardware_config_.set_a6_propwash_model(enabled, config);
+    if (!hardware_config_.set_a6_propwash_model(enabled, config)) {
+        return false;
+    }
+    if (!enabled) {
+        flight_controller_.clear_propwash_telemetry();
+    }
+    return true;
 }
 
 Dictionary AeroSimNative::a6_propwash_configuration() const {

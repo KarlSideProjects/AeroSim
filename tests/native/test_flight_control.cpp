@@ -438,6 +438,10 @@ int main() {
             vector_length(split_s_controller.telemetry_snapshot().propwash_disturbance_rad_s2) <= 0.0) {
         return fail("G3.6 A6 split-S exit must inject and publish a non-zero propwash disturbance");
     }
+    split_s_controller.clear_propwash_telemetry();
+    if (vector_length(split_s_controller.telemetry_snapshot().propwash_disturbance_rad_s2) != 0.0) {
+        return fail("A6 disable transition must clear the published propwash disturbance immediately");
+    }
 
     std::array<double, 5> throttle_values = {0.2, 0.4, 0.6, 0.8, 1.0};
     std::array<double, 5> disturbance_values{};

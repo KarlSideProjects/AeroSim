@@ -849,6 +849,12 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     if a6_snapshot.get("propwash_disturbance_rad_s2", Vector3.ZERO) == Vector3.ZERO:
         push_error("A6 enabled public path must apply and publish the configured disturbance")
         return false
+    if not native.call("set_a6_propwash_model", false, 0.0, 0.0, 0.0):
+        push_error("A6 public path must accept disabling the model")
+        return false
+    if native.call("telemetry_snapshot").get("propwash_disturbance_rad_s2", Vector3.ONE) != Vector3.ZERO:
+        push_error("A6 disable transition must clear published disturbance immediately")
+        return false
     if not native.call("set_dual_aircraft_positions", 0.0, 2.0, 0.0, 0.0, 0.0, 0.0):
         push_error("A5 dual path must accept finite upper/lower positions")
         return false
