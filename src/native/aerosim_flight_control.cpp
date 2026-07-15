@@ -214,6 +214,21 @@ bool FlightController::arm(double throttle) {
 
 void FlightController::disarm() {
     armed_ = false;
+    motor_thrust_newtons_ = 0.0;
+    altitude_hold_captured_ = false;
+    altitude_hold_target_m_ = 0.0;
+    altitude_hold_filtered_altitude_m_ = 0.0;
+    altitude_hold_vertical_speed_mps_ = 0.0;
+    altitude_hold_trim_throttle_ = 0.0;
+    altitude_hold_just_captured_ = false;
+    rate_integral_ = {};
+    previous_target_rates_y_up_ = {};
+    motor_saturation_latched_ = {};
+    pid_saturation_latched_ = {};
+    pid_timing_stats_ = {};
+    telemetry_buffers_ = {};
+    telemetry_read_index_ = 0;
+    next_telemetry_publish_s_ = 0.0;
 }
 
 bool FlightController::armed() const {

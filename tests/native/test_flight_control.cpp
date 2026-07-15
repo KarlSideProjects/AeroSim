@@ -114,6 +114,14 @@ int main() {
         disarm_controller.step_angle_mode(disarm_state, disarm_clock, disarm_config, hover);
     }
     disarm_controller.disarm();
+    if (disarm_controller.motor_thrust_newtons() != 0.0 || disarm_controller.telemetry_snapshot().armed) {
+        return fail("disarm must immediately clear controller diagnostics and telemetry armed state");
+    }
+    for (const aerosim::MotorTelemetry &motor : disarm_controller.telemetry_snapshot().motors) {
+        if (motor.thrust_newtons != 0.0 || motor.speed_rad_s != 0.0 || motor.current_a != 0.0) {
+            return fail("disarm must immediately clear telemetry motor state");
+        }
+    }
     for (int frame = 0; frame < 10; ++frame) {
         disarm_controller.step_angle_mode(disarm_state, disarm_clock, disarm_config, hover);
     }

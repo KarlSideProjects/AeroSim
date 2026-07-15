@@ -468,7 +468,33 @@ func _verify_flight_control_public_path(native: Object) -> bool:
         push_error("Armed Angle Mode throttle should produce lift")
         return false
 
+    native.call("disarm_flight_control")
+    if native.call("flight_control_armed"):
+        push_error("Disarm must clear native flight-control armed state immediately")
+        return false
+    var disarmed_diagnostics: Dictionary = native.call("flight_control_diagnostics")
+    var disarmed_snapshot: Dictionary = native.call("telemetry_snapshot")
+    var disarmed_motors: Array = disarmed_snapshot.get("motors", [])
+    if (
+            float(disarmed_diagnostics.get("motor_thrust_newtons", 1.0)) != 0.0 or
+            bool(disarmed_snapshot.get("armed", true)) or
+            disarmed_motors.size() != 4
+        ):
+        push_error("Disarm must clear native diagnostics and telemetry immediately")
+        return false
+    for motor_value in disarmed_motors:
+        if (
+                float(motor_value.get("thrust_newtons", 1.0)) != 0.0 or
+                float(motor_value.get("speed_rad_s", 1.0)) != 0.0 or
+                float(motor_value.get("current_a", 1.0)) != 0.0
+            ):
+            push_error("Disarm must clear telemetry motor state immediately")
+            return false
+
     native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("Native flight control must re-arm after immediate disarm cleanup")
+        return false
     if not native.call("flight_control_armed"):
         push_error("reset_flight should keep armed state for immediate throttle follow")
         return false
@@ -679,6 +705,17 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
     var on_row: PackedFloat64Array = native.call("step_px4_actuator_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5)
     if float(on_row[8]) >= float(off_row[8]):
         push_error("A3 enabled must decelerate the public path using live motor state")
+        return false
+
+    native.call("disarm_flight_control")
+    native.call("reset_simulation")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var px4_external_row: PackedFloat64Array = native.call("step_px4_actuator_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5)
+    if float(px4_external_row[8]) >= 10.0:
+        push_error("PX4 actuator mode must use PX4 external arming authority after local disarm")
+        return false
+    if not native.call("arm_flight_control", 0.0):
+        push_error("Native flight control must re-arm before aggregate A3 path verification")
         return false
 
     native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012)
