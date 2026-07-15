@@ -1354,6 +1354,16 @@ func _verify_runtime_actions() -> bool:
         push_error("Omitted wind fields must preserve the existing native configuration")
         scene.queue_free()
         return false
+    scene.native.call("configure_wind", {
+        "preset": "light",
+        "steady_wind": "not a Vector3",
+    })
+    var invalid_type_config: Dictionary = scene.native.call("wind_configuration")
+    if invalid_type_config.get("preset", "") != "severe" or \
+            not _same_imu_value(invalid_type_config.get("steady_wind", Vector3.ZERO), Vector3(1.0, 2.0, 3.0)):
+        push_error("Wrong-type wind vectors must reject the entire native configuration update")
+        scene.queue_free()
+        return false
     if not scene.load_map("industrial_yard"):
         push_error("Reloading Industrial Yard must preserve the selected wind preset")
         scene.queue_free()

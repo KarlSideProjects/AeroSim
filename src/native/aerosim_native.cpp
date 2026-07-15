@@ -528,6 +528,9 @@ void AeroSimNative::configure_wind(const Dictionary &config) {
     if (config.has("preset") && !valid_wind_preset(requested_preset)) {
         return;
     }
+    if (config.has("steady_wind") && config["steady_wind"].get_type() != Variant::VECTOR3) {
+        return;
+    }
     const aerosim::Vec3 steady_wind = vec3_value(config, "steady_wind", wind_field_.steady_wind());
     if (!std::isfinite(steady_wind.x) || !std::isfinite(steady_wind.y) || !std::isfinite(steady_wind.z)) {
         return;
