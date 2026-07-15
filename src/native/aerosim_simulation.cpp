@@ -404,7 +404,7 @@ TrajectorySample step_per_motor_physics_frame(
 DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
         DualAircraftState &state,
         SimulationClock &clock,
-        const SimulationConfig &config,
+        const DualAircraftConfig &config,
         const DualMotorCommands &commands) {
     return step_dual_aircraft_per_motor_physics_frame(
             state,
@@ -416,18 +416,22 @@ DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
 DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
         DualAircraftState &state,
         SimulationClock &clock,
-        const SimulationConfig &config,
+        const DualAircraftConfig &config,
         const std::function<DualMotorCommands(double)> &commands_for_substep) {
-    if (config.physics_hz <= 0 || config.substep_hz <= 0 || config.mass_kg <= 0.0 ||
-            !validate_per_motor_config(config.per_motor) || !commands_for_substep) {
+    if (config.upper.physics_hz <= 0 || config.upper.substep_hz <= 0 ||
+            config.lower.physics_hz != config.upper.physics_hz ||
+            config.lower.substep_hz != config.upper.substep_hz ||
+            config.upper.mass_kg <= 0.0 || config.lower.mass_kg <= 0.0 ||
+            !validate_per_motor_config(config.upper.per_motor) ||
+            !validate_per_motor_config(config.lower.per_motor) || !commands_for_substep) {
         return {};
     }
 
     const DualAircraftState initial_state = state;
     const SimulationClock initial_clock = clock;
-    const double substeps_per_frame = static_cast<double>(config.substep_hz) /
-            static_cast<double>(config.physics_hz);
-    const double dt = 1.0 / static_cast<double>(config.substep_hz);
+    const double substeps_per_frame = static_cast<double>(config.upper.substep_hz) /
+            static_cast<double>(config.upper.physics_hz);
+    const double dt = 1.0 / static_cast<double>(config.upper.substep_hz);
     clock.substep_accumulator += substeps_per_frame;
     const auto frame_substeps = static_cast<std::int32_t>(std::floor(clock.substep_accumulator + 1e-12));
     clock.substep_accumulator -= frame_substeps;
@@ -440,13 +444,13 @@ DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
             return {};
         }
         downwash_force_y_newtons = a5_downwash_force_y_newtons(
-                config.a5_downwash,
+                config.upper.a5_downwash,
                 state.upper.position,
                 state.lower.position);
-        integrate_per_motor(state.upper, config, commands.upper, {}, dt);
+        integrate_per_motor(state.upper, config.upper, commands.upper, {}, dt);
         integrate_per_motor(
                 state.lower,
-                config,
+                config.lower,
                 commands.lower,
                 {0.0, downwash_force_y_newtons, 0.0},
                 dt);

@@ -295,12 +295,14 @@ PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
     config.a4_ground_effect = a4_ground_effect_config_;
     config.a5_downwash = a5_downwash_config_;
-    apply_wind(config, dual_aircraft_state_.upper, dual_aircraft_clock_, wind_field_);
-    if (config.per_motor.max_thrust_per_motor_newtons <= 0.0) {
+    aerosim::DualAircraftConfig dual_config{config, config};
+    apply_wind(dual_config.upper, dual_aircraft_state_.upper, dual_aircraft_clock_, wind_field_);
+    apply_wind(dual_config.lower, dual_aircraft_state_.lower, dual_aircraft_clock_, wind_field_);
+    if (dual_config.upper.per_motor.max_thrust_per_motor_newtons <= 0.0) {
         return {};
     }
     const double command_value = config.total_thrust_newtons /
-            (4.0 * config.per_motor.max_thrust_per_motor_newtons);
+            (4.0 * dual_config.upper.per_motor.max_thrust_per_motor_newtons);
     if (!std::isfinite(command_value) || command_value < 0.0 || command_value > 1.0) {
         return {};
     }
@@ -309,7 +311,7 @@ PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
             {{command_value, command_value, command_value, command_value}},
     };
     const aerosim::DualAircraftTrajectorySample sample = aerosim::step_dual_aircraft_per_motor_physics_frame(
-            dual_aircraft_state_, dual_aircraft_clock_, config, commands);
+            dual_aircraft_state_, dual_aircraft_clock_, dual_config, commands);
     if (sample.substeps == 0 && physics_hz > 0 && substep_hz > 0) {
         return {};
     }

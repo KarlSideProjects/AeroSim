@@ -92,6 +92,11 @@ struct SimulationConfig {
     RigidBodyState initial_state;
 };
 
+struct DualAircraftConfig {
+    SimulationConfig upper;
+    SimulationConfig lower;
+};
+
 struct DualAircraftState {
     RigidBodyState upper;
     RigidBodyState lower;
@@ -247,12 +252,12 @@ TrajectorySample step_per_motor_physics_frame(
 DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
         DualAircraftState &state,
         SimulationClock &clock,
-        const SimulationConfig &config,
+        const DualAircraftConfig &config,
         const DualMotorCommands &commands);
 DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
         DualAircraftState &state,
         SimulationClock &clock,
-        const SimulationConfig &config,
+        const DualAircraftConfig &config,
         const std::function<DualMotorCommands(double)> &commands_for_substep);
 std::vector<TrajectorySample> simulate_trajectory(const SimulationConfig &config);
 

@@ -255,12 +255,13 @@ int main() {
                 {{hover_command, hover_command, hover_command, hover_command}},
                 {{hover_command, hover_command, hover_command, hover_command}},
         };
+        const aerosim::DualAircraftConfig dual_config{config, config};
         double strongest_downwash = 0.0;
         for (int frame = 0; frame < 400; ++frame) {
             const aerosim::DualAircraftTrajectorySample sample = aerosim::step_dual_aircraft_per_motor_physics_frame(
                     state,
                     clock,
-                    config,
+                    dual_config,
                     [&commands](double) {
                         return commands;
                     });
