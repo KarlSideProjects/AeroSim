@@ -22,15 +22,18 @@ class EffectWorkload:
     var enabled := false
     var effect_evidence: Dictionary = {}
 
-    func configure(native_runtime: Object, effects_enabled: bool) -> bool:
-        native = native_runtime
-        enabled = effects_enabled
+    func reset_effect_evidence() -> void:
         effect_evidence = {
             "A3_drag": {"observed": false, "magnitude": 0.0},
             "A4_ground_effect": {"observed": false, "magnitude": 0.0},
             "A5_downwash": {"observed": false, "force_y_newtons": 0.0},
             "A6_propwash": {"observed": false, "magnitude": 0.0},
         }
+
+    func configure(native_runtime: Object, effects_enabled: bool) -> bool:
+        native = native_runtime
+        enabled = effects_enabled
+        reset_effect_evidence()
         native.call("configure_imu", {
             "noise_enabled": false,
             "bias_enabled": false,
@@ -192,6 +195,7 @@ func _run() -> void:
     var warmup_frames := maxi(0, ceili(_warmup_seconds * Engine.physics_ticks_per_second))
     for _frame in warmup_frames:
         await physics_frame
+    effect_workload.reset_effect_evidence()
 
     var render_cpu_samples: Array[float] = []
     var render_gpu_samples: Array[float] = []

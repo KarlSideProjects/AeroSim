@@ -42,6 +42,12 @@ class PerformanceRunnerTest(unittest.TestCase):
         self.assertIn('native.call("step_angle_mode", 240, 1000, 0.75, 0.0, 0.0, 0.0)', BENCHMARK_SOURCE)
         self.assertGreaterEqual(BENCHMARK_SOURCE.count('_activate_a6()'), 2)
 
+    def test_effect_evidence_resets_after_warmup_before_measurement(self):
+        self.assertIn('func reset_effect_evidence() -> void:', BENCHMARK_SOURCE)
+        reset_index = BENCHMARK_SOURCE.index('effect_workload.reset_effect_evidence()')
+        measurement_index = BENCHMARK_SOURCE.index('var first_measured_frame :=')
+        self.assertLess(reset_index, measurement_index)
+
     def test_short_headed_run_records_jolt_samples_with_vsync_disabled(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "raw.json"

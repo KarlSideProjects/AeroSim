@@ -318,9 +318,28 @@ class PerformanceReportTest(unittest.TestCase):
                 compare_reports(report | {"gate_eligible": False}, other)
             with self.assertRaises(ValueError):
                 compare_reports(report | {"raw_samples_ms": [99.0]}, other)
+            with self.assertRaises(ValueError):
+                compare_reports(report | {"sample_count": True}, other)
+
+        with self.assertRaises(ValueError):
+            compare_reports(candidate | {"raw_samples_ms": [3.000000000002]}, baseline)
 
         with self.assertRaises(ValueError):
             compare_reports(baseline | {"gate_verdict": "fail"}, candidate)
+
+        forged_environment = BASELINE_ENVIRONMENT | {"cpu_model": "forged production CPU"}
+        with self.assertRaises(ValueError):
+            compare_reports(
+                baseline | {"environment": forged_environment},
+                candidate | {"environment": forged_environment},
+            )
+
+        forged_measurement = baseline["measurement"] | {"video_adapter": "NVIDIA GeForce RTX 5090"}
+        with self.assertRaises(ValueError):
+            compare_reports(
+                baseline | {"measurement": forged_measurement},
+                candidate | {"measurement": candidate["measurement"] | {"video_adapter": "NVIDIA GeForce RTX 5090"}},
+            )
 
         invalid_evidence = [
             {effect: {"observed": True} for effect in VALID_EFFECT_EVIDENCE},

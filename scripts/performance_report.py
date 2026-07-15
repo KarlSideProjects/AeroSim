@@ -119,7 +119,7 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         raise ValueError("comparison requires an effects_off baseline and effects_on candidate")
     for label, report in (("baseline", baseline), ("candidate", candidate)):
         sample_count = report.get("sample_count")
-        if not isinstance(sample_count, int) or sample_count <= 0:
+        if not isinstance(sample_count, int) or isinstance(sample_count, bool) or sample_count <= 0:
             raise ValueError(f"incompatible benchmark reports: {label} sample_count is required")
         try:
             raw_samples = _validated_samples(report, "raw_samples_ms")
@@ -131,7 +131,7 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         if not _finite_number(reported_p99) or reported_p99 < 0.0:
             raise ValueError(f"incompatible benchmark reports: {label} p99_ms is required")
         expected_p99 = _percentile(raw_samples, 0.99)
-        if not math.isclose(float(reported_p99), expected_p99, rel_tol=1e-12, abs_tol=1e-12):
+        if float(reported_p99) != expected_p99:
             raise ValueError(f"incompatible benchmark reports: {label} p99_ms does not match raw_samples_ms")
     if baseline["sample_count"] != candidate["sample_count"]:
         raise ValueError("incompatible benchmark reports: sample_count differs")
@@ -158,6 +158,13 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
             or report.get("gate_eligible") is not True
         ):
             raise ValueError("G3.7 requires passing G0.1 production reports")
+        environment = report.get("environment")
+        if not isinstance(environment, dict):
+            raise ValueError(f"incompatible benchmark reports: {label} environment is required")
+        try:
+            _validate_gate_eligibility(measurement, environment)
+        except ValueError as error:
+            raise ValueError(f"incompatible benchmark reports: {label} is not G0.1 gate eligible") from error
         if report.get("gate_verdict") != "pass":
             raise ValueError(f"incompatible benchmark reports: {label} G0.1 verdict is invalid")
         recomputed_within_limit = p99 <= G0_1_P99_LIMIT_MS
