@@ -204,6 +204,7 @@ void integrate_per_motor(
         RigidBodyState &state,
         const SimulationConfig &config,
         const MotorCommands &commands,
+        const Vec3 &external_force_world,
         double dt) {
     const double average_command = std::accumulate(
             commands.normalized.begin(), commands.normalized.end(), 0.0) /
@@ -245,7 +246,7 @@ void integrate_per_motor(
                 config.per_motor.max_thrust_per_motor_newtons,
                 config.max_motor_rpm);
     }
-    const Vec3 force_world = rotate(state.orientation, body_force) +
+    const Vec3 force_world = rotate(state.orientation, body_force) + external_force_world +
             rotate(state.orientation, a3_drag_force_body(
                     config.a3_drag, state.orientation, relative_air_velocity, motor_speeds));
     const Vec3 acceleration{
@@ -390,12 +391,71 @@ TrajectorySample step_per_motor_physics_frame(
             clock = initial_clock;
             return {};
         }
-        integrate_per_motor(state, config, commands, dt);
+        integrate_per_motor(state, config, commands, {}, dt);
     }
     clock.total_substeps += static_cast<std::uint64_t>(frame_substeps);
     return {
             static_cast<double>(clock.total_substeps) * dt,
             state,
+            clock.total_substeps,
+    };
+}
+
+DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
+        DualAircraftState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const DualMotorCommands &commands) {
+    return step_dual_aircraft_per_motor_physics_frame(
+            state,
+            clock,
+            config,
+            [&commands](double) { return commands; });
+}
+
+DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
+        DualAircraftState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const std::function<DualMotorCommands(double)> &commands_for_substep) {
+    if (config.physics_hz <= 0 || config.substep_hz <= 0 || config.mass_kg <= 0.0 ||
+            !validate_per_motor_config(config.per_motor) || !commands_for_substep) {
+        return {};
+    }
+
+    const DualAircraftState initial_state = state;
+    const SimulationClock initial_clock = clock;
+    const double substeps_per_frame = static_cast<double>(config.substep_hz) /
+            static_cast<double>(config.physics_hz);
+    const double dt = 1.0 / static_cast<double>(config.substep_hz);
+    clock.substep_accumulator += substeps_per_frame;
+    const auto frame_substeps = static_cast<std::int32_t>(std::floor(clock.substep_accumulator + 1e-12));
+    clock.substep_accumulator -= frame_substeps;
+    double downwash_force_y_newtons = 0.0;
+    for (std::int32_t step = 0; step < frame_substeps; ++step) {
+        const DualMotorCommands commands = commands_for_substep(dt);
+        if (!valid_motor_commands(commands.upper) || !valid_motor_commands(commands.lower)) {
+            state = initial_state;
+            clock = initial_clock;
+            return {};
+        }
+        downwash_force_y_newtons = a5_downwash_force_y_newtons(
+                config.a5_downwash,
+                state.upper.position,
+                state.lower.position);
+        integrate_per_motor(state.upper, config, commands.upper, {}, dt);
+        integrate_per_motor(
+                state.lower,
+                config,
+                commands.lower,
+                {0.0, downwash_force_y_newtons, 0.0},
+                dt);
+    }
+    clock.total_substeps += static_cast<std::uint64_t>(frame_substeps);
+    return {
+            static_cast<double>(clock.total_substeps) * dt,
+            state,
+            downwash_force_y_newtons,
             clock.total_substeps,
     };
 }

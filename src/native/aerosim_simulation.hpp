@@ -86,9 +86,20 @@ struct SimulationConfig {
     PerMotorPhysicsConfig per_motor;
     A3DragConfig a3_drag;
     A4GroundEffectConfig a4_ground_effect;
+    A5DownwashConfig a5_downwash;
     Vec3 wind_world_mps;
     Vec3 wind_turbulence_mps;
     RigidBodyState initial_state;
+};
+
+struct DualAircraftState {
+    RigidBodyState upper;
+    RigidBodyState lower;
+};
+
+struct DualMotorCommands {
+    MotorCommands upper;
+    MotorCommands lower;
 };
 
 struct HardwareConfig {
@@ -198,6 +209,13 @@ struct TrajectorySample {
     std::uint64_t substeps = 0;
 };
 
+struct DualAircraftTrajectorySample {
+    double time_seconds = 0.0;
+    DualAircraftState state;
+    double downwash_force_y_newtons = 0.0;
+    std::uint64_t substeps = 0;
+};
+
 double quat_norm(const Quat &q);
 Vec3 frd_to_y_up(const Vec3 &frd);
 Vec3 y_up_to_frd(const Vec3 &y_up);
@@ -226,6 +244,16 @@ TrajectorySample step_per_motor_physics_frame(
         SimulationClock &clock,
         const SimulationConfig &config,
         const std::function<MotorCommands(double)> &command_for_substep);
+DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
+        DualAircraftState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const DualMotorCommands &commands);
+DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
+        DualAircraftState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const std::function<DualMotorCommands(double)> &commands_for_substep);
 std::vector<TrajectorySample> simulate_trajectory(const SimulationConfig &config);
 
 } // namespace aerosim

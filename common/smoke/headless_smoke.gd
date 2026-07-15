@@ -749,7 +749,7 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
     return true
 
 func _verify_a4_a5_public_path(native: Object) -> bool:
-    for method in ["set_a4_ground_effect_model", "a4_ground_effect_configuration", "set_a5_downwash_model", "a5_downwash_configuration", "a5_downwash_force_y", "sync_flight_state"]:
+    for method in ["set_a4_ground_effect_model", "a4_ground_effect_configuration", "set_a5_downwash_model", "a5_downwash_configuration", "a5_downwash_force_y", "set_dual_aircraft_positions", "step_dual_aircraft_simulation", "sync_flight_state"]:
         if not native.has_method(method):
             push_error("AeroSimNative.%s must exist for A4/A5 public configuration" % method)
             return false
@@ -816,6 +816,13 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
         return false
     if float(native.call("a5_downwash_force_y", 0.1, 2.0, 0.0, 0.0, 0.0, 0.0)) >= 0.0:
         push_error("A5 enabled public path must reduce the lower aircraft lift")
+        return false
+    if not native.call("set_dual_aircraft_positions", 0.0, 2.0, 0.0, 0.0, 0.0, 0.0):
+        push_error("A5 dual path must accept finite upper/lower positions")
+        return false
+    var dual_row: PackedFloat64Array = native.call("step_dual_aircraft_simulation", Engine.physics_ticks_per_second, 1000, 0.72 * 9.80665)
+    if dual_row.size() < 10 or float(dual_row[8]) >= 0.0:
+        push_error("A5 dual frame path must consume the enabled configuration")
         return false
     return true
 

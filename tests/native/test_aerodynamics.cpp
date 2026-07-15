@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <utility>
 
 namespace {
 
@@ -221,6 +222,62 @@ int main() {
     const double actual_downwash = aerosim::a5_downwash_force_y_newtons(downwash, {dxy, dz, 0.0}, {0.0, 0.0, 0.0});
     if (!near(actual_downwash, expected_downwash, 1e-12) || !(actual_downwash < 0.0)) {
         return fail("G3.3 A5 dual-aircraft lift reduction must follow the DSL/gym-pybullet-drones downwash model and switch");
+    }
+
+    auto run_dual_crossing = [&downwash](bool enabled) {
+        aerosim::SimulationConfig config;
+        config.physics_hz = 100;
+        config.substep_hz = 1000;
+        config.mass_kg = 0.72;
+        config.gravity_mps2 = 9.80665;
+        config.a5_downwash = downwash;
+        config.a5_downwash.enabled = enabled;
+        config.per_motor.inertia_kg_m2 = {0.01, 0.01, 0.02};
+        config.per_motor.max_thrust_per_motor_newtons = 10.0;
+        config.per_motor.max_current_per_motor_a = 1.0;
+        config.per_motor.yaw_torque_per_newton = 0.01;
+        config.per_motor.position_frd = {{
+                {-0.10, 0.10, 0.0},
+                {0.10, 0.10, 0.0},
+                {-0.10, -0.10, 0.0},
+                {0.10, -0.10, 0.0},
+        }};
+        config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+
+        aerosim::DualAircraftState state;
+        state.upper.position = {-1.0, 2.0, 0.0};
+        state.upper.velocity.x = 0.5;
+        state.lower.position = {0.0, 0.0, 0.0};
+        aerosim::SimulationClock clock;
+        const double hover_command = config.mass_kg * config.gravity_mps2 /
+                (4.0 * config.per_motor.max_thrust_per_motor_newtons);
+        const aerosim::DualMotorCommands commands{
+                {{hover_command, hover_command, hover_command, hover_command}},
+                {{hover_command, hover_command, hover_command, hover_command}},
+        };
+        double strongest_downwash = 0.0;
+        for (int frame = 0; frame < 400; ++frame) {
+            const aerosim::DualAircraftTrajectorySample sample = aerosim::step_dual_aircraft_per_motor_physics_frame(
+                    state,
+                    clock,
+                    config,
+                    [&commands](double) {
+                        return commands;
+                    });
+            strongest_downwash = std::min(strongest_downwash, sample.downwash_force_y_newtons);
+        }
+        return std::pair<double, double>{state.lower.position.y, strongest_downwash};
+    };
+
+    const auto dual_off = run_dual_crossing(false);
+    const auto dual_on = run_dual_crossing(true);
+    const auto dual_on_repeat = run_dual_crossing(true);
+    if (!near(dual_off.first, 0.0, 1e-9) || dual_off.second != 0.0 ||
+            !(dual_on.second < -1e-3) || !(dual_on.first < dual_off.first - 0.01)) {
+        return fail("G3.3 dual crossing must apply configured A5 downwash per substep and remain off when disabled");
+    }
+    if (dual_on != dual_on_repeat) {
+        return fail("G3.3 dual crossing must remain deterministic for identical substep inputs");
     }
 
     aerosim::A3DragConfig drag;
