@@ -270,12 +270,48 @@ class PerformanceReportTest(unittest.TestCase):
         self.assertTrue(comparison["g3_7_p99_within_limit"])
         self.assertTrue(comparison["g3_7_increase_within_limit"])
 
-        absolute_fail = compare_reports(baseline, candidate | {"p99_ms": 3.01})
-        self.assertEqual(absolute_fail["g3_7_verdict"], "fail")
-        self.assertFalse(absolute_fail["g3_7_p99_within_limit"])
+        with self.assertRaisesRegex(ValueError, "p99 exceeds"):
+            compare_reports(baseline, candidate | {"p99_ms": 3.01})
         relative_fail = compare_reports(baseline | {"p99_ms": 1.0}, candidate)
         self.assertEqual(relative_fail["g3_7_verdict"], "fail")
         self.assertFalse(relative_fail["g3_7_increase_within_limit"])
+
+    def test_g37_rejects_forged_or_over_limit_production_reports(self):
+        environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
+        common = {
+            "benchmark_mode": "gate",
+            "warmup_seconds": 10.0,
+            "measured_seconds": 60.0,
+            "physics_engine": "Jolt Physics",
+            "physics_ticks_per_second": 240,
+            "substep_hz": 1000,
+            "vsync_mode": 0,
+            "video_adapter": BASELINE_GPU,
+            "rendering_method": "gl_compatibility",
+            **PINNED_PROVENANCE,
+        }
+        baseline = build_report(
+            common | {"samples_ms": [2.5], "scenario": "effects_off", "active_effects": []},
+            environment,
+        )
+        candidate = build_report(
+            common
+            | {
+                "samples_ms": [3.0],
+                "scenario": "effects_on",
+                "active_effects": ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"],
+                "effect_evidence": {effect: {"observed": True} for effect in [
+                    "A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"
+                ]},
+            },
+            environment,
+        )
+
+        for report, other in ((baseline, candidate), (candidate, baseline)):
+            with self.assertRaises(ValueError):
+                compare_reports(report | {"p99_ms": 3.01}, other)
+            with self.assertRaises(ValueError):
+                compare_reports(report | {"gate_eligible": False}, other)
 
     def test_g37_rejects_nonproduction_reports(self):
         environment = {"git_revision": "abc123", "cpu_model": "reference"}

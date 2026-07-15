@@ -127,13 +127,28 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
     candidate_p99 = float(candidate["p99_ms"])
     if baseline_p99 <= 0.0:
         raise ValueError("incompatible benchmark reports: baseline p99_ms must be greater than zero")
-    for report in (baseline, candidate):
-        if report.get("gate") != "G0.1" or report.get("gate_eligible") is not True or report.get("gate_verdict") != "pass":
-            raise ValueError("G3.7 requires passing G0.1 production reports")
     baseline_measurement = baseline.get("measurement")
     candidate_measurement = candidate.get("measurement")
     if not isinstance(baseline_measurement, dict) or not isinstance(candidate_measurement, dict):
         raise ValueError("incompatible benchmark reports: measurement metadata is required")
+    for label, report, p99, measurement in (
+        ("baseline", baseline, baseline_p99, baseline_measurement),
+        ("candidate", candidate, candidate_p99, candidate_measurement),
+    ):
+        if (
+            measurement.get("benchmark_mode") != "gate"
+            or report.get("gate") != "G0.1"
+            or report.get("reference_only") is not False
+            or report.get("gate_eligible") is not True
+        ):
+            raise ValueError("G3.7 requires passing G0.1 production reports")
+        if report.get("p99_within_limit") is not True:
+            raise ValueError(f"incompatible benchmark reports: {label} p99 limit evidence is invalid")
+        recomputed_verdict = "pass" if p99 <= G0_1_P99_LIMIT_MS else "fail"
+        if report.get("gate_verdict") != "pass" and recomputed_verdict != "pass":
+            raise ValueError(f"incompatible benchmark reports: {label} G0.1 verdict is invalid")
+        if recomputed_verdict != "pass":
+            raise ValueError(f"incompatible benchmark reports: {label} p99 exceeds the G0.1 limit")
     invariant_keys = (
         "benchmark_mode",
         "warmup_seconds",
