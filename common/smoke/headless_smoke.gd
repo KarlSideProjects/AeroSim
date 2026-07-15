@@ -843,7 +843,7 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     if not native.call("arm_flight_control", 0.0):
         push_error("A6 public path must arm from low throttle")
         return false
-    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.866025403784, 0.0, -6.0, 0.0, 0.0, 0.0, 0.0)
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.866025403784, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)
     native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.75, 0.0, 0.0, 0.0)
     var a6_snapshot: Dictionary = native.call("telemetry_snapshot")
     if a6_snapshot.get("propwash_disturbance_rad_s2", Vector3.ZERO) == Vector3.ZERO:
