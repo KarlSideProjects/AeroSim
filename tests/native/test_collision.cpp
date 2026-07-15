@@ -253,6 +253,57 @@ int main() {
     aerosim::FlightCommand hover;
     hover.throttle = 0.5;
 
+    aerosim::SimulationConfig invalid_rate_config = config;
+    invalid_rate_config.physics_hz = 0;
+    aerosim::CollisionContact invalid_contact;
+    invalid_contact.touching = true;
+    const aerosim::RigidBodyState state_before_invalid_rate = state;
+    const aerosim::CollisionStepResult invalid_rate_result = authority.step(
+            state,
+            clock,
+            controller,
+            invalid_rate_config,
+            hover,
+            invalid_contact);
+    if (invalid_rate_result.sample.substeps != 0 || clock.total_substeps != 0 ||
+            !same_state_bits(state, state_before_invalid_rate) ||
+            invalid_rate_result.authority != aerosim::PhysicsAuthority::FlightCore) {
+        return fail("collision paths must fail closed before touching contact state for invalid rates");
+    }
+    aerosim::AcroCommand invalid_acro_command;
+    invalid_acro_command.throttle = 0.5;
+    aerosim::MotorCommands invalid_motor_commands;
+    const aerosim::CollisionStepResult invalid_altitude_result = authority.step_altitude_hold(
+            state,
+            clock,
+            controller,
+            invalid_rate_config,
+            hover,
+            0.0,
+            invalid_contact,
+            aerosim::Quat{});
+    const aerosim::CollisionStepResult invalid_acro_result = authority.step_acro(
+            state,
+            clock,
+            controller,
+            invalid_rate_config,
+            invalid_acro_command,
+            invalid_contact);
+    const aerosim::CollisionStepResult invalid_per_motor_result = authority.step_per_motor(
+            state,
+            clock,
+            invalid_rate_config,
+            invalid_motor_commands,
+            invalid_contact);
+    if (invalid_altitude_result.sample.substeps != 0 || invalid_acro_result.sample.substeps != 0 ||
+            invalid_per_motor_result.sample.substeps != 0 || clock.total_substeps != 0 ||
+            !same_state_bits(state, state_before_invalid_rate) ||
+            invalid_altitude_result.authority != aerosim::PhysicsAuthority::FlightCore ||
+            invalid_acro_result.authority != aerosim::PhysicsAuthority::FlightCore ||
+            invalid_per_motor_result.authority != aerosim::PhysicsAuthority::FlightCore) {
+        return fail("all collision variants must fail closed before touching state or authority for invalid rates");
+    }
+
     aerosim::CollisionContact wall;
     wall.touching = true;
     wall.normal = {-1.0, 0.0, 0.0};

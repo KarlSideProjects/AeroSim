@@ -86,7 +86,7 @@ double a5_downwash_force_y_newtons(
         const Vec3 &lower_position) {
     if (!config.enabled ||
             !std::isfinite(config.prop_radius_m) || config.prop_radius_m <= 0.0 ||
-            !std::isfinite(config.coeff_1) ||
+            !std::isfinite(config.coeff_1) || config.coeff_1 < 0.0 ||
             !std::isfinite(config.coeff_2) ||
             !std::isfinite(config.coeff_3)) {
         return 0.0;
@@ -103,7 +103,9 @@ double a5_downwash_force_y_newtons(
     }
 
     const double alpha = config.coeff_1 * std::pow(config.prop_radius_m / (4.0 * delta_y), 2.0);
-    return -alpha * std::exp(-0.5 * std::pow(delta_xz / beta, 2.0));
+    const double attenuation = std::exp(-0.5 * std::pow(delta_xz / beta, 2.0));
+    const double force_y = -alpha * attenuation;
+    return std::isfinite(force_y) ? force_y : 0.0;
 }
 
 A3ForwardFlightEquilibrium a3_forward_flight_equilibrium(

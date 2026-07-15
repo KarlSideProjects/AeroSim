@@ -458,6 +458,15 @@ func _verify_flight_control_public_path(native: Object) -> bool:
     if bypass_row[2] > 0.0:
         push_error("Public step_simulation must not bypass arm safety with direct thrust")
         return false
+    if native.call("step_simulation", 0, 1000, 0.0).size() != 0 or native.call("step_simulation", 240, 0, 0.0).size() != 0:
+        push_error("Public step_simulation must reject non-positive simulation rates")
+        return false
+    if native.call("step_angle_mode", 0, 1000, 0.0, 0.0, 0.0, 0.0).size() != 0 or native.call("step_acro_mode", 240, 0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.7, 0.0).size() != 0:
+        push_error("Public flight-control paths must reject non-positive simulation rates")
+        return false
+    if native.call("step_altitude_hold_mode", 0, 1000, 0.0, 0.0, 0.0, 0.0).size() != 0 or native.call("step_px4_actuator_mode", 240, 0, 0.0, 0.0, 0.0, 0.0).size() != 0:
+        push_error("Public altitude-hold and PX4 paths must reject non-positive simulation rates")
+        return false
 
     native.call("reset_flight")
     if not native.call("arm_flight_control", 0.0):
@@ -800,6 +809,9 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     if not native.call("set_a5_downwash_model", false, prop_radius, 2267.18, 0.16, -0.11):
         push_error("A5 public path must accept a disabled valid configuration")
         return false
+    if native.call("set_a5_downwash_model", false, INF, 2267.18, 0.16, -0.11) or native.call("set_a5_downwash_model", false, prop_radius, INF, 0.16, -0.11):
+        push_error("A5 public setter must reject non-finite configuration values")
+        return false
     var a5_disabled: Dictionary = native.call("a5_downwash_configuration")
     if bool(a5_disabled.get("enabled", true)) != false:
         push_error("A5 configuration must echo the disabled switch")
@@ -824,6 +836,15 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     if dual_row.size() < 11 or float(dual_row[8]) >= 0.0 or float(dual_row[9]) > float(dual_row[8]):
         push_error("A5 dual frame path must consume the enabled configuration")
         return false
+    if native.call("step_dual_aircraft_simulation", Engine.physics_ticks_per_second, 0, 0.72 * 9.80665).size() != 0:
+        push_error("A5 dual frame path must reject non-positive substep rates")
+        return false
+    if native.call("step_dual_aircraft_simulation", 0, 1000, 0.72 * 9.80665).size() != 0:
+        push_error("A5 dual frame path must reject non-positive physics rates")
+        return false
+    if native.call("set_a5_downwash_model", true, prop_radius, -1.0, 0.16, -0.11):
+        push_error("A5 public path must reject a negative force magnitude coefficient")
+        return false
     return true
 
 func _verify_collision_public_path(native: Object) -> bool:
@@ -832,6 +853,18 @@ func _verify_collision_public_path(native: Object) -> bool:
         return false
     native.call("reset_flight")
     native.call("set_collision_release_frames", 5)
+    var invalid_angle_args: Array = [0, 1000, 0.0, 0.0, 0.0, 0.0, true, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
+    if native.callv("step_collision_angle_mode", invalid_angle_args).size() != 0:
+        push_error("Public collision Angle path must reject non-positive simulation rates")
+        return false
+    var invalid_acro_args: Array = [0, 1000, 0.0, 0.0, 0.0, 0.0, 1.0, 0.7, 0.0, true, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
+    if native.callv("step_collision_acro_mode", invalid_acro_args).size() != 0:
+        push_error("Public collision Acro path must reject non-positive simulation rates")
+        return false
+    var invalid_altitude_args: Array = [0, 1000, 0.0, 0.0, 0.0, 0.0, true, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
+    if native.callv("step_collision_altitude_hold_mode", invalid_altitude_args).size() != 0:
+        push_error("Public collision altitude-hold path must reject non-positive simulation rates")
+        return false
     if not native.call("arm_flight_control", 0.0):
         push_error("Collision public path should arm from low throttle")
         return false
@@ -886,6 +919,36 @@ func _verify_px4_actuator_public_path(native: Object) -> bool:
         push_error("AeroSimNative.step_collision_px4_actuator_mode must expose the PX4 actuator path")
         return false
     native.call("reset_flight")
+    if native.call("step_px4_actuator_mode", 0, 1000, 0.5, 0.5, 0.5, 0.5).size() != 0:
+        push_error("Public PX4 actuator path must reject non-positive simulation rates")
+        return false
+    var invalid_collision_row: PackedFloat64Array = native.call(
+        "step_collision_px4_actuator_mode",
+        0,
+        1000,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        true,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -1.0
+    )
+    if invalid_collision_row.size() != 0:
+        push_error("Public collision path must reject non-positive simulation rates before touching contact state")
+        return false
     var row: PackedFloat64Array = native.call(
         "step_collision_px4_actuator_mode",
         Engine.physics_ticks_per_second,

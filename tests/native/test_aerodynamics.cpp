@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <tuple>
 #include <utility>
 
@@ -223,6 +224,28 @@ int main() {
     const double actual_downwash = aerosim::a5_downwash_force_y_newtons(downwash, {dxy, dz, 0.0}, {0.0, 0.0, 0.0});
     if (!near(actual_downwash, expected_downwash, 1e-12) || !(actual_downwash < 0.0)) {
         return fail("G3.3 A5 dual-aircraft lift reduction must follow the DSL/gym-pybullet-drones downwash model and switch");
+    }
+    aerosim::A5DownwashConfig invalid_downwash = downwash;
+    invalid_downwash.coeff_1 = -1.0;
+    if (aerosim::a5_downwash_force_y_newtons(invalid_downwash, {0.1, 2.0, 0.0}, {0.0, 0.0, 0.0}) != 0.0) {
+        return fail("A5 negative force magnitude coefficient must fail closed");
+    }
+    const double extreme_force = aerosim::a5_downwash_force_y_newtons(
+            downwash,
+            {0.0, std::numeric_limits<double>::denorm_min(), 0.0},
+            {0.0, 0.0, 0.0});
+    if (!std::isfinite(extreme_force) || extreme_force != 0.0) {
+        return fail("A5 overflow and zero-times-infinity paths must fail closed");
+    }
+    aerosim::A5DownwashConfig nonfinite_downwash = downwash;
+    nonfinite_downwash.coeff_2 = NAN;
+    if (aerosim::a5_downwash_force_y_newtons(nonfinite_downwash, {0.1, 2.0, 0.0}, {0.0, 0.0, 0.0}) != 0.0) {
+        return fail("A5 NaN configuration must fail closed");
+    }
+    nonfinite_downwash = downwash;
+    nonfinite_downwash.coeff_3 = INFINITY;
+    if (aerosim::a5_downwash_force_y_newtons(nonfinite_downwash, {0.1, 2.0, 0.0}, {0.0, 0.0, 0.0}) != 0.0) {
+        return fail("A5 Inf configuration must fail closed");
     }
 
     auto run_dual_crossing = [&downwash](bool enabled) {
