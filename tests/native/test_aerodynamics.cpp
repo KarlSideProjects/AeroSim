@@ -237,6 +237,16 @@ int main() {
     if (!std::isfinite(extreme_force) || extreme_force != 0.0) {
         return fail("A5 overflow and zero-times-infinity paths must fail closed");
     }
+    aerosim::A5DownwashConfig nonfinite_downwash = downwash;
+    nonfinite_downwash.coeff_2 = NAN;
+    if (aerosim::a5_downwash_force_y_newtons(nonfinite_downwash, {0.1, 2.0, 0.0}, {0.0, 0.0, 0.0}) != 0.0) {
+        return fail("A5 NaN configuration must fail closed");
+    }
+    nonfinite_downwash = downwash;
+    nonfinite_downwash.coeff_3 = INFINITY;
+    if (aerosim::a5_downwash_force_y_newtons(nonfinite_downwash, {0.1, 2.0, 0.0}, {0.0, 0.0, 0.0}) != 0.0) {
+        return fail("A5 Inf configuration must fail closed");
+    }
 
     auto run_dual_crossing = [&downwash](bool enabled) {
         aerosim::SimulationConfig config;
