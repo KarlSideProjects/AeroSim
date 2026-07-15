@@ -132,6 +132,9 @@ func _run() -> void:
     if not collision_public_verified:
         quit(1)
         return
+    if not _verify_px4_actuator_public_path(native):
+        quit(1)
+        return
     var jolt_collision_verified := await _verify_jolt_collision_scene(native)
     if not jolt_collision_verified:
         quit(1)
@@ -803,6 +806,40 @@ func _verify_collision_public_path(native: Object) -> bool:
         push_error("Collision public path must return to flight authority after configured clear frames")
         return false
     native.call("reset_flight")
+    return true
+
+func _verify_px4_actuator_public_path(native: Object) -> bool:
+    if not native.has_method("step_collision_px4_actuator_mode"):
+        push_error("AeroSimNative.step_collision_px4_actuator_mode must expose the PX4 actuator path")
+        return false
+    native.call("reset_flight")
+    var row: PackedFloat64Array = native.call(
+        "step_collision_px4_actuator_mode",
+        Engine.physics_ticks_per_second,
+        1000,
+        0.5,
+        0.5,
+        0.5,
+        0.5,
+        false,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -1.0
+    )
+    if row.size() < 17 or not is_finite(float(row[1])) or not is_finite(float(row[2])):
+        push_error("PX4 actuator public path must return a deterministic body-state row")
+        return false
     return true
 
 func _verify_jolt_collision_scene(native: Object) -> bool:

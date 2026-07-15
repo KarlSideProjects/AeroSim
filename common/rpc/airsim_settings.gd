@@ -306,6 +306,8 @@ static func _validate_vehicles(raw: Dictionary, errors: Array[String], manifest:
         _validate_manifest_entry_types(vehicle_dict, manifest["schema"], "vehicle", "Vehicles.%s" % vehicle_name, errors)
         if not vehicle_dict.has("VehicleType") or typeof(vehicle_dict["VehicleType"]) != TYPE_STRING or not supported_vehicle_types.has(vehicle_dict["VehicleType"]):
             errors.append("Vehicles.%s.VehicleType must be one of %s" % [vehicle_name, ", ".join(supported_vehicle_types)])
+        elif vehicle_dict["VehicleType"] == "PX4Multirotor":
+            _validate_px4_transport(vehicle_dict, "Vehicles.%s" % vehicle_name, errors)
         for collection_name in ["Cameras", "Sensors"]:
             if not vehicle_dict.has(collection_name):
                 continue
@@ -316,6 +318,17 @@ static func _validate_vehicles(raw: Dictionary, errors: Array[String], manifest:
             var section := "camera" if collection_name == "Cameras" else "sensor"
             var allowed := _manifest_keys(manifest, section)
             _validate_named_entries(vehicle_dict[collection_name], allowed, scope, errors, collection_name == "Cameras", manifest)
+
+
+static func _validate_px4_transport(vehicle: Dictionary, scope: String, errors: Array[String]) -> void:
+    if vehicle.get("UseSerial", false):
+        errors.append("%s.UseSerial is unsupported; PX4 SITL requires UDP/TCP transport" % scope)
+    for key in ["TcpPort", "ControlPortLocal", "ControlPortRemote", "UdpPort"]:
+        if vehicle.has(key) and (not _is_integer_number(vehicle[key]) or int(vehicle[key]) < 1 or int(vehicle[key]) > 65535):
+            errors.append("%s.%s must be an integer from 1 to 65535" % [scope, key])
+    for key in ["ControlIp", "LocalHostIp", "UdpIp"]:
+        if vehicle.has(key) and (typeof(vehicle[key]) != TYPE_STRING or String(vehicle[key]).is_empty()):
+            errors.append("%s.%s must be a non-empty string" % [scope, key])
 
 
 static func _validate_named_entries(value: Dictionary, allowed: Dictionary, scope: String, errors: Array[String], is_camera: bool, manifest: Dictionary) -> void:

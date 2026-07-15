@@ -107,6 +107,12 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
             &AeroSimNative::step_simulation);
+    ClassDB::bind_method(
+            D_METHOD("step_px4_actuator_mode", "physics_hz", "substep_hz", "motor_0", "motor_1", "motor_2", "motor_3"),
+            &AeroSimNative::step_px4_actuator_mode);
+    ClassDB::bind_method(
+            D_METHOD("step_collision_px4_actuator_mode", "physics_hz", "substep_hz", "motor_0", "motor_1", "motor_2", "motor_3", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules"),
+            &AeroSimNative::step_collision_px4_actuator_mode);
     ClassDB::bind_method(D_METHOD("arm_flight_control", "throttle"), &AeroSimNative::arm_flight_control);
     ClassDB::bind_method(D_METHOD("disarm_flight_control"), &AeroSimNative::disarm_flight_control);
     ClassDB::bind_method(D_METHOD("flight_control_armed"), &AeroSimNative::flight_control_armed);
@@ -238,6 +244,123 @@ PackedFloat64Array AeroSimNative::step_simulation(
     row.append(sample.state.velocity.y);
     row.append(sample.state.velocity.z);
     row.append(static_cast<double>(sample.substeps));
+    return row;
+}
+
+PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
+        std::int32_t physics_hz,
+        std::int32_t substep_hz,
+        double motor_0,
+        double motor_1,
+        double motor_2,
+        double motor_3) {
+    const double values[] = {motor_0, motor_1, motor_2, motor_3};
+    for (double value : values) {
+        if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
+            return {};
+        }
+    }
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    config.physics_hz = physics_hz;
+    config.substep_hz = substep_hz;
+    config.a3_drag = a3_drag_config_;
+    config.a4_ground_effect = a4_ground_effect_config_;
+    const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
+    const aerosim::TrajectorySample sample = aerosim::step_per_motor_physics_frame(
+            simulation_state_, simulation_clock_, config, commands);
+    if (sample.substeps == 0 && physics_hz > 0 && substep_hz > 0) {
+        return {};
+    }
+    flight_mode_ = "PX4_ACTUATOR";
+    PackedFloat64Array row;
+    row.append(sample.time_seconds);
+    row.append(sample.state.position.x);
+    row.append(sample.state.position.y);
+    row.append(sample.state.position.z);
+    row.append(sample.state.orientation.x);
+    row.append(sample.state.orientation.y);
+    row.append(sample.state.orientation.z);
+    row.append(sample.state.orientation.w);
+    row.append(sample.state.velocity.x);
+    row.append(sample.state.velocity.y);
+    row.append(sample.state.velocity.z);
+    row.append(static_cast<double>(sample.substeps));
+    row.append(0.0);
+    row.append(0.0);
+    row.append(sample.state.angular_velocity.x);
+    row.append(sample.state.angular_velocity.y);
+    row.append(sample.state.angular_velocity.z);
+    return row;
+}
+
+PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
+        std::int32_t physics_hz,
+        std::int32_t substep_hz,
+        double motor_0,
+        double motor_1,
+        double motor_2,
+        double motor_3,
+        bool touching,
+        double normal_x,
+        double normal_y,
+        double normal_z,
+        double impulse_x,
+        double impulse_y,
+        double impulse_z,
+        double restitution,
+        double resolved_velocity_x,
+        double resolved_velocity_y,
+        double resolved_velocity_z,
+        double resolved_angular_velocity_x,
+        double resolved_angular_velocity_y,
+        double resolved_angular_velocity_z,
+        double max_kinetic_energy_joules) {
+    const double values[] = {motor_0, motor_1, motor_2, motor_3};
+    for (double value : values) {
+        if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
+            return {};
+        }
+    }
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    config.physics_hz = physics_hz;
+    config.substep_hz = substep_hz;
+    config.a3_drag = a3_drag_config_;
+    config.a4_ground_effect = a4_ground_effect_config_;
+    aerosim::CollisionContact contact;
+    contact.touching = touching;
+    contact.normal = {normal_x, normal_y, normal_z};
+    contact.impulse = {impulse_x, impulse_y, impulse_z};
+    contact.restitution = restitution;
+    contact.has_resolved_state = touching;
+    contact.resolved_velocity = {resolved_velocity_x, resolved_velocity_y, resolved_velocity_z};
+    contact.resolved_angular_velocity = {resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z};
+    contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
+    const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
+    const aerosim::CollisionStepResult result = collision_authority_.step_per_motor(
+            simulation_state_, simulation_clock_, config, commands, contact);
+    if (result.sample.substeps == 0 && !touching && physics_hz > 0 && substep_hz > 0) {
+        return {};
+    }
+    flight_mode_ = "PX4_ACTUATOR";
+    PackedFloat64Array row;
+    const aerosim::TrajectorySample &sample = result.sample;
+    row.append(sample.time_seconds);
+    row.append(sample.state.position.x);
+    row.append(sample.state.position.y);
+    row.append(sample.state.position.z);
+    row.append(sample.state.orientation.x);
+    row.append(sample.state.orientation.y);
+    row.append(sample.state.orientation.z);
+    row.append(sample.state.orientation.w);
+    row.append(sample.state.velocity.x);
+    row.append(sample.state.velocity.y);
+    row.append(sample.state.velocity.z);
+    row.append(static_cast<double>(sample.substeps));
+    row.append(result.authority == aerosim::PhysicsAuthority::Jolt ? 1.0 : 0.0);
+    row.append(0.0);
+    row.append(sample.state.angular_velocity.x);
+    row.append(sample.state.angular_velocity.y);
+    row.append(sample.state.angular_velocity.z);
     return row;
 }
 

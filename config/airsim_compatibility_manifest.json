@@ -25,7 +25,7 @@
       "camera": {"X": "number", "Y": "number", "Z": "number", "Roll": "number", "Pitch": "number", "Yaw": "number", "Gimbal": "object", "CaptureSettings": "array", "NoiseSettings": "array"},
       "sensor": {"SensorType": "integer", "Enabled": "boolean", "X": "number", "Y": "number", "Z": "number", "Roll": "number", "Pitch": "number", "Yaw": "number", "DrawDebugPoints": "boolean", "DataFrame": "string", "UpdateFrequency": "number", "UpdateLatency": "number", "StartupDelay": "number"},
       "origin_geopoint": {"Latitude": "number", "Longitude": "number", "Altitude": "number"},
-      "vehicle": {"VehicleType": "string", "Cameras": "object", "Sensors": "object"},
+      "vehicle": {"VehicleType": "string", "Cameras": "object", "Sensors": "object", "UseSerial": "boolean", "UseTcp": "boolean", "TcpPort": "integer", "ControlIp": "string", "ControlPortLocal": "integer", "ControlPortRemote": "integer", "LockStep": "boolean", "LocalHostIp": "string", "UdpIp": "string", "UdpPort": "integer"},
       "subwindow": {"WindowID": "integer", "ImageType": "integer", "Visible": "boolean", "CameraName": "string", "CameraID": "integer", "VehicleName": "string", "External": "boolean"},
       "recording": {"RecordOnMove": "boolean", "RecordInterval": "number", "Folder": "string", "Enabled": "boolean"}
     },
@@ -93,7 +93,7 @@
       "Recording"
     ],
     "origin_geopoint": ["Latitude", "Longitude", "Altitude"],
-    "vehicle": ["VehicleType", "Cameras", "Sensors"],
+    "vehicle": ["VehicleType", "Cameras", "Sensors", "UseSerial", "UseTcp", "TcpPort", "ControlIp", "ControlPortLocal", "ControlPortRemote", "LockStep", "LocalHostIp", "UdpIp", "UdpPort"],
     "camera": ["X", "Y", "Z", "Roll", "Pitch", "Yaw", "Gimbal", "CaptureSettings", "NoiseSettings"],
     "gimbal": ["Stabilization", "Pitch", "Roll", "Yaw"],
     "capture_settings": ["ImageType", "Width", "Height", "FOV_Degrees", "AutoExposureSpeed", "AutoExposureBias", "AutoExposureMaxBrightness", "AutoExposureMinBrightness", "MotionBlurAmount", "TargetGamma", "ProjectionMode", "OrthoWidth"],

@@ -57,6 +57,35 @@ public:
             std::int32_t physics_hz,
             std::int32_t substep_hz,
             double total_thrust_newtons);
+    godot::PackedFloat64Array step_px4_actuator_mode(
+            std::int32_t physics_hz,
+            std::int32_t substep_hz,
+            double motor_0,
+            double motor_1,
+            double motor_2,
+            double motor_3);
+    godot::PackedFloat64Array step_collision_px4_actuator_mode(
+            std::int32_t physics_hz,
+            std::int32_t substep_hz,
+            double motor_0,
+            double motor_1,
+            double motor_2,
+            double motor_3,
+            bool touching,
+            double normal_x,
+            double normal_y,
+            double normal_z,
+            double impulse_x,
+            double impulse_y,
+            double impulse_z,
+            double restitution,
+            double resolved_velocity_x,
+            double resolved_velocity_y,
+            double resolved_velocity_z,
+            double resolved_angular_velocity_x,
+            double resolved_angular_velocity_y,
+            double resolved_angular_velocity_z,
+            double max_kinetic_energy_joules);
     bool arm_flight_control(double throttle);
     void disarm_flight_control();
     bool flight_control_armed() const;
