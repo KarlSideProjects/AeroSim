@@ -436,6 +436,7 @@ DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
     const auto frame_substeps = static_cast<std::int32_t>(std::floor(clock.substep_accumulator + 1e-12));
     clock.substep_accumulator -= frame_substeps;
     double downwash_force_y_newtons = 0.0;
+    double minimum_downwash_force_y_newtons = 0.0;
     for (std::int32_t step = 0; step < frame_substeps; ++step) {
         const DualMotorCommands commands = commands_for_substep(dt);
         if (!valid_motor_commands(commands.upper) || !valid_motor_commands(commands.lower)) {
@@ -447,6 +448,9 @@ DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
                 config.upper.a5_downwash,
                 state.upper.position,
                 state.lower.position);
+        minimum_downwash_force_y_newtons = std::min(
+                minimum_downwash_force_y_newtons,
+                downwash_force_y_newtons);
         integrate_per_motor(state.upper, config.upper, commands.upper, {}, dt);
         integrate_per_motor(
                 state.lower,
@@ -460,6 +464,7 @@ DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
             static_cast<double>(clock.total_substeps) * dt,
             state,
             downwash_force_y_newtons,
+            minimum_downwash_force_y_newtons,
             clock.total_substeps,
     };
 }

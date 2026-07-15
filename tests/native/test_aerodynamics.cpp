@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -226,7 +227,7 @@ int main() {
 
     auto run_dual_crossing = [&downwash](bool enabled) {
         aerosim::SimulationConfig config;
-        config.physics_hz = 100;
+        config.physics_hz = 10;
         config.substep_hz = 1000;
         config.mass_kg = 0.72;
         config.gravity_mps2 = 9.80665;
@@ -245,8 +246,8 @@ int main() {
         config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
 
         aerosim::DualAircraftState state;
-        state.upper.position = {-1.0, 2.0, 0.0};
-        state.upper.velocity.x = 0.5;
+        state.upper.position = {-4.0, 2.0, 0.0};
+        state.upper.velocity.x = 2.0;
         state.lower.position = {0.0, 0.0, 0.0};
         aerosim::SimulationClock clock;
         const double hover_command = config.mass_kg * config.gravity_mps2 /
@@ -257,6 +258,7 @@ int main() {
         };
         const aerosim::DualAircraftConfig dual_config{config, config};
         double strongest_downwash = 0.0;
+        bool saw_substep_varying_downwash = false;
         for (int frame = 0; frame < 400; ++frame) {
             const aerosim::DualAircraftTrajectorySample sample = aerosim::step_dual_aircraft_per_motor_physics_frame(
                     state,
@@ -266,15 +268,23 @@ int main() {
                         return commands;
                     });
             strongest_downwash = std::min(strongest_downwash, sample.downwash_force_y_newtons);
+            if (sample.minimum_downwash_force_y_newtons < sample.downwash_force_y_newtons - 1e-9) {
+                saw_substep_varying_downwash = true;
+            }
         }
-        return std::pair<double, double>{state.lower.position.y, strongest_downwash};
+        return std::tuple<double, double, bool>{
+                state.lower.position.y,
+                strongest_downwash,
+                saw_substep_varying_downwash,
+        };
     };
 
     const auto dual_off = run_dual_crossing(false);
     const auto dual_on = run_dual_crossing(true);
     const auto dual_on_repeat = run_dual_crossing(true);
-    if (!near(dual_off.first, 0.0, 1e-9) || dual_off.second != 0.0 ||
-            !(dual_on.second < -1e-3) || !(dual_on.first < dual_off.first - 0.01)) {
+    if (!near(std::get<0>(dual_off), 0.0, 1e-9) || std::get<1>(dual_off) != 0.0 ||
+            !(std::get<1>(dual_on) < -1e-3) || !(std::get<0>(dual_on) < std::get<0>(dual_off) - 0.01) ||
+            !std::get<2>(dual_on)) {
         return fail("G3.3 dual crossing must apply configured A5 downwash per substep and remain off when disabled");
     }
     if (dual_on != dual_on_repeat) {

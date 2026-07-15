@@ -325,6 +325,7 @@ PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
     row.append(sample.state.lower.position.z);
     row.append(sample.state.lower.velocity.y);
     row.append(sample.downwash_force_y_newtons);
+    row.append(sample.minimum_downwash_force_y_newtons);
     row.append(static_cast<double>(sample.substeps));
     return row;
 }

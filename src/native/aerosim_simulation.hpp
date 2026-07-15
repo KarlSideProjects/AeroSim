@@ -218,6 +218,7 @@ struct DualAircraftTrajectorySample {
     double time_seconds = 0.0;
     DualAircraftState state;
     double downwash_force_y_newtons = 0.0;
+    double minimum_downwash_force_y_newtons = 0.0;
     std::uint64_t substeps = 0;
 };
 

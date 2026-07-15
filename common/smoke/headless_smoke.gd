@@ -821,7 +821,7 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
         push_error("A5 dual path must accept finite upper/lower positions")
         return false
     var dual_row: PackedFloat64Array = native.call("step_dual_aircraft_simulation", Engine.physics_ticks_per_second, 1000, 0.72 * 9.80665)
-    if dual_row.size() < 10 or float(dual_row[8]) >= 0.0:
+    if dual_row.size() < 11 or float(dual_row[8]) >= 0.0 or float(dual_row[9]) > float(dual_row[8]):
         push_error("A5 dual frame path must consume the enabled configuration")
         return false
     return true
