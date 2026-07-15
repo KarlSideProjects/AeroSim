@@ -214,6 +214,7 @@ class PerformanceReportTest(unittest.TestCase):
             "vsync_mode": 0,
             "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
+            "sampling_source": "EngineProfiler._tick",
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
@@ -249,6 +250,7 @@ class PerformanceReportTest(unittest.TestCase):
             "vsync_mode": 0,
             "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
+            "sampling_source": "EngineProfiler._tick",
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
@@ -294,6 +296,7 @@ class PerformanceReportTest(unittest.TestCase):
             "vsync_mode": 0,
             "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
+            "sampling_source": "EngineProfiler._tick",
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
@@ -323,6 +326,21 @@ class PerformanceReportTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             compare_reports(candidate | {"raw_samples_ms": [3.000000000002]}, baseline)
+
+        forged_protocol = (
+            ("warmup_seconds", 9.0),
+            ("measured_seconds", 59.0),
+            ("physics_ticks_per_second", 120),
+            ("substep_hz", 999),
+            ("vsync_mode", 1),
+            ("sampling_source", "manual"),
+        )
+        for key, value in forged_protocol:
+            with self.assertRaises(ValueError):
+                compare_reports(
+                    baseline | {"measurement": baseline["measurement"] | {key: value}},
+                    candidate | {"measurement": candidate["measurement"] | {key: value}},
+                )
 
         with self.assertRaises(ValueError):
             compare_reports(baseline | {"gate_verdict": "fail"}, candidate)
@@ -354,6 +372,15 @@ class PerformanceReportTest(unittest.TestCase):
             tampered_measurement = candidate["measurement"] | {"effect_evidence": evidence}
             with self.assertRaises(ValueError):
                 compare_reports(baseline, candidate | {"measurement": tampered_measurement})
+
+        with self.assertRaises(ValueError):
+            compare_reports(baseline | {"p95_ms": 2.500000000001}, candidate)
+        for metric in ("p95_ms", "render_cpu_p95_ms", "render_cpu_p99_ms", "render_gpu_p95_ms", "render_gpu_p99_ms"):
+            with self.assertRaises(ValueError):
+                compare_reports(
+                    baseline | {metric: 1.0},
+                    candidate | {metric: math.nan},
+                )
 
     def test_g37_rejects_nonproduction_reports(self):
         environment = {"git_revision": "abc123", "cpu_model": "reference"}
@@ -405,6 +432,7 @@ class PerformanceReportTest(unittest.TestCase):
             "vsync_mode": 0,
             "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
+            "sampling_source": "EngineProfiler._tick",
             **PINNED_PROVENANCE,
         }
         baseline = build_report(
@@ -438,6 +466,7 @@ class PerformanceReportTest(unittest.TestCase):
             "vsync_mode": 0,
             "video_adapter": BASELINE_GPU,
             "rendering_method": "gl_compatibility",
+            "sampling_source": "EngineProfiler._tick",
             **PINNED_PROVENANCE,
         }
         baseline = build_report(

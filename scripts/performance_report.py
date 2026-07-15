@@ -14,6 +14,23 @@ G0_1_P99_LIMIT_MS = 3.0
 G3_7_P99_LIMIT_MS = 3.0
 G3_7_MAX_INCREASE_PERCENT = 20.0
 G3_7_EFFECTS = ["A3_drag", "A4_ground_effect", "A5_downwash", "A6_propwash"]
+G3_7_FROZEN_PROTOCOL = {
+    "benchmark_mode": "gate",
+    "warmup_seconds": 10.0,
+    "measured_seconds": 60.0,
+    "physics_engine": "Jolt Physics",
+    "physics_ticks_per_second": 240,
+    "substep_hz": 1000,
+    "vsync_mode": 0,
+    "sampling_source": "EngineProfiler._tick",
+    "rendering_method": "gl_compatibility",
+}
+G3_7_RENDER_METRICS = (
+    "render_cpu_p95_ms",
+    "render_cpu_p99_ms",
+    "render_gpu_p95_ms",
+    "render_gpu_p99_ms",
+)
 G0_1_BASELINE_CPU = "AMD Ryzen 9 7945HX with Radeon Graphics"
 G0_1_BASELINE_GPU = "NVIDIA GeForce RTX 4060 Ti"
 G0_1_BASELINE_OS_RELEASE = "Ubuntu 26.04 LTS"
@@ -62,6 +79,12 @@ def _validate_gate_eligibility(raw: dict[str, Any], environment: dict[str, Any])
         raise ValueError(
             "G0.1 gate requires the frozen Ryzen 9 7945HX and RTX 4060 Ti on Ubuntu 26.04 LTS and NVIDIA driver 580.159.03 with pinned Godot/godot-cpp provenance"
         )
+
+
+def _validate_g37_protocol(measurement: dict[str, Any]) -> None:
+    for key, expected in G3_7_FROZEN_PROTOCOL.items():
+        if measurement.get(key) != expected:
+            raise ValueError(f"incompatible benchmark reports: {key} does not match frozen G3.7 protocol")
 
 
 def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, Any]:
@@ -133,6 +156,15 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
         expected_p99 = _percentile(raw_samples, 0.99)
         if float(reported_p99) != expected_p99:
             raise ValueError(f"incompatible benchmark reports: {label} p99_ms does not match raw_samples_ms")
+        reported_p95 = report.get("p95_ms")
+        if not _finite_number(reported_p95) or reported_p95 < 0.0:
+            raise ValueError(f"incompatible benchmark reports: {label} p95_ms is required")
+        expected_p95 = _percentile(raw_samples, 0.95)
+        if float(reported_p95) != expected_p95:
+            raise ValueError(f"incompatible benchmark reports: {label} p95_ms does not match raw_samples_ms")
+        for metric in G3_7_RENDER_METRICS:
+            if metric in report and (not _finite_number(report[metric]) or report[metric] < 0.0):
+                raise ValueError(f"incompatible benchmark reports: {label} {metric} is invalid")
     if baseline["sample_count"] != candidate["sample_count"]:
         raise ValueError("incompatible benchmark reports: sample_count differs")
     for label, report in (("baseline", baseline), ("candidate", candidate)):
@@ -165,6 +197,10 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
             _validate_gate_eligibility(measurement, environment)
         except ValueError as error:
             raise ValueError(f"incompatible benchmark reports: {label} is not G0.1 gate eligible") from error
+        try:
+            _validate_g37_protocol(measurement)
+        except ValueError as error:
+            raise ValueError(f"incompatible benchmark reports: {label} protocol is invalid") from error
         if report.get("gate_verdict") != "pass":
             raise ValueError(f"incompatible benchmark reports: {label} G0.1 verdict is invalid")
         recomputed_within_limit = p99 <= G0_1_P99_LIMIT_MS
@@ -172,27 +208,6 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
             raise ValueError(f"incompatible benchmark reports: {label} p99 limit evidence is invalid")
         if not recomputed_within_limit:
             raise ValueError(f"incompatible benchmark reports: {label} p99 exceeds the G0.1 limit")
-    invariant_keys = (
-        "benchmark_mode",
-        "warmup_seconds",
-        "measured_seconds",
-        "physics_engine",
-        "physics_ticks_per_second",
-        "substep_hz",
-        "vsync_mode",
-        "video_adapter",
-        "rendering_method",
-        "godot_version",
-        "godot_sha256",
-        "godot_cpp_revision",
-        "gdextension_sha256",
-        "native_source_sha256",
-    )
-    for key in invariant_keys:
-        if key not in baseline_measurement or key not in candidate_measurement:
-            raise ValueError(f"incompatible benchmark reports: {key} is required")
-        if baseline_measurement[key] != candidate_measurement[key]:
-            raise ValueError(f"incompatible benchmark reports: {key} differs")
     if baseline_measurement.get("active_effects") != []:
         raise ValueError("incompatible benchmark reports: effects_off baseline must have no active effects")
     if candidate_measurement.get("active_effects") != G3_7_EFFECTS:
@@ -215,7 +230,7 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
     if not _finite_number(downwash_force) or downwash_force >= 0.0:
         raise ValueError("incompatible benchmark reports: A5_downwash force evidence is invalid")
     comparison: dict[str, float | None] = {}
-    for metric in ("p95_ms", "p99_ms", "render_cpu_p95_ms", "render_cpu_p99_ms", "render_gpu_p95_ms", "render_gpu_p99_ms"):
+    for metric in ("p95_ms", "p99_ms", *G3_7_RENDER_METRICS):
         if metric not in baseline or metric not in candidate:
             continue
         baseline_value = float(baseline[metric])
