@@ -5,6 +5,11 @@
   "ClockSpeed": 1.0,
   "ApiServerPort": 41451,
   "RpcEnabled": true,
+  "OriginGeopoint": {
+    "Latitude": 47.641468,
+    "Longitude": -122.140165,
+    "Altitude": 0.0
+  },
   "Vehicles": {
     "Drone1": {
       "VehicleType": "PX4Multirotor",

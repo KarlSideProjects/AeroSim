@@ -25,6 +25,7 @@ func _init() -> void:
     ok = ok and bridge.state == "connected"
     ok = ok and bridge.arm_disarm(true).ok
     bridge.inject_heartbeat(true)
+    bridge.inject_actuators([0.5, 0.5, 0.5, 0.5])
     bridge.poll(0.01)
     ok = ok and bridge.state == "armed"
     ok = ok and bridge.takeoff(Vector3(0.0, 0.0, -5.0)).ok

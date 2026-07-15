@@ -95,6 +95,7 @@ var _airsim_last_velocity := Vector3.ZERO
 var _airsim_linear_acceleration := Vector3.ZERO
 var _airsim_last_body_angular_velocity := Vector3.ZERO
 var _airsim_angular_acceleration := Vector3.ZERO
+var _px4_lockstep_sensor_pending := false
 var _airsim_collision_seen := false
 var _airsim_contact_this_frame := false
 var _airsim_collision_normal := Vector3.ZERO
@@ -280,20 +281,37 @@ func _physics_process(delta: float) -> void:
             set_paused(false, false)
         if paused:
             return
-    var session_advanced := true
-    if airsim_session != null:
-        session_advanced = airsim_session.advance_frame()
-        if not session_advanced and airsim_session.is_paused():
-            set_paused(true, false)
-            return
     if px4_sitl_bridge != null:
-        px4_sitl_bridge.poll(airsim_session.simulation_time_seconds if airsim_session != null else 0.0)
-        if px4_sitl_bridge.state in ["stale", "failed"]:
+        px4_sitl_bridge.poll(Time.get_ticks_usec() / 1000000.0)
+        if px4_sitl_bridge.state == "failed":
             last_error_message = px4_sitl_bridge.diagnostics().message
             set_paused(true, false)
             _advance_airsim_sensors()
             return
+        if px4_sitl_bridge.state == "stale":
+            last_error_message = px4_sitl_bridge.diagnostics().message
+    var px4_lockstep_active := px4_sitl_bridge != null and px4_sitl_bridge.lockstep_active()
+    if not px4_lockstep_active:
+        _px4_lockstep_sensor_pending = false
+    if px4_lockstep_active and not _px4_lockstep_sensor_pending:
+        _publish_px4_lockstep_sensor_if_needed()
+        _px4_lockstep_sensor_pending = true
+    var session_advanced := true
+    if airsim_session != null and not px4_lockstep_active:
+        session_advanced = airsim_session.advance_frame()
+        if not session_advanced and airsim_session.is_paused():
+            set_paused(true, false)
+            return
+    if px4_sitl_bridge != null and not px4_lockstep_active:
+        px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), airsim_session.simulation_time_seconds if airsim_session != null else 0.0)
     if native == null or paused or not takeoff_requested:
+        if px4_lockstep_active and _px4_lockstep_sensor_pending:
+            if airsim_session != null:
+                session_advanced = airsim_session.advance_frame()
+                if not session_advanced and airsim_session.is_paused():
+                    set_paused(true, false)
+                    return
+            _publish_px4_lockstep_sensor_if_needed()
         _advance_airsim_sensors()
         return
     _airsim_contact_this_frame = false
@@ -319,14 +337,46 @@ func _physics_process(delta: float) -> void:
             flight_mode = String(airsim_controls["mode"])
     var row: PackedFloat64Array
     if px4_sitl_bridge != null:
-        px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), airsim_session.simulation_time_seconds if airsim_session != null else 0.0)
         var actuator_outputs := px4_sitl_bridge.actuator_outputs()
         if actuator_outputs.size() < 4:
-            last_error_message = "PX4 actuator output is unavailable"
-            set_paused(true, false)
+            # PX4 needs a sensor frame before it can emit its first actuator
+            # frame. Keep the transport ticking through that bootstrap window
+            # instead of freezing the producer after the first HIL packet.
+            last_error_message = "PX4 actuator output is pending"
+            if px4_lockstep_active:
+                if airsim_session != null:
+                    session_advanced = airsim_session.advance_frame()
+                    if not session_advanced and airsim_session.is_paused():
+                        set_paused(true, false)
+                        return
+                _publish_px4_lockstep_sensor_if_needed()
+            _advance_airsim_sensors()
+            return
+        var actuator_has_thrust := false
+        for actuator in actuator_outputs:
+            if absf(float(actuator)) > 0.05:
+                actuator_has_thrust = true
+                break
+        if not actuator_has_thrust:
+            # Keep the HIL vehicle stationary while PX4 is disarmed or in a
+            # failsafe bootstrap. Advancing the native body with zero output
+            # would make EKF2 lose its ground reference before takeoff.
+            if drone_body != null:
+                drone_body.freeze = true
+                drone_body.sleeping = true
+            last_error_message = "PX4 thrust output is pending"
+            if px4_lockstep_active:
+                if airsim_session != null:
+                    session_advanced = airsim_session.advance_frame()
+                    if not session_advanced and airsim_session.is_paused():
+                        set_paused(true, false)
+                        return
+                _publish_px4_lockstep_sensor_if_needed()
             _advance_airsim_sensors()
             return
         if drone_body != null:
+            drone_body.freeze = false
+            drone_body.sleeping = false
             _sync_native_from_drone()
         row = native.call(
             "step_collision_px4_actuator_mode",
@@ -352,6 +402,13 @@ func _physics_process(delta: float) -> void:
             drone_body.angular_velocity.z if drone_body != null else 0.0,
             _kinetic(drone_body.linear_velocity, drone_body.angular_velocity) if drone_body != null else -1.0
         )
+        if drone_body != null and drone_body.contact_seen:
+            collision_handoff_count += 1
+            _airsim_contact_this_frame = true
+            _airsim_collision_seen = true
+            _airsim_collision_normal = drone_body.contact_normal
+            _airsim_collision_point = drone_body.global_position
+            drone_body.reset_contact()
     elif drone_body != null:
         _sync_native_from_drone()
         var energy_limit := _kinetic(drone_body.linear_velocity, drone_body.angular_velocity)
@@ -431,6 +488,14 @@ func _physics_process(delta: float) -> void:
             Vector3(row[8], row[9], row[10]),
             Vector3(row[14], row[15], row[16])
         )
+    _advance_px4_path()
+    if px4_lockstep_active:
+        if airsim_session != null:
+            session_advanced = airsim_session.advance_frame()
+            if not session_advanced and airsim_session.is_paused():
+                set_paused(true, false)
+                return
+        _publish_px4_lockstep_sensor_if_needed()
     if airsim_session != null and airsim_session.is_paused():
         set_paused(true, false)
     if not _airsim_command_state.is_empty() and _airsim_command_remaining_frames > 0:
@@ -461,6 +526,17 @@ func _advance_airsim_sensors() -> void:
     var sensor_state := _airsim_state(_airsim_vehicle_name)
     if bool(sensor_state.get("ok", false)):
         airsim_sensor_suite.advance(airsim_session.simulation_time_seconds, sensor_state.state)
+
+
+func _publish_px4_lockstep_sensor_if_needed() -> void:
+    if px4_sitl_bridge == null:
+        return
+    var simulation_time := airsim_session.simulation_time_seconds if airsim_session != null else 0.0
+    var diagnostics := px4_sitl_bridge.diagnostics()
+    var last_sensor_time := float(diagnostics.get("last_sensor_time", -1.0))
+    if last_sensor_time + 0.000001 >= simulation_time:
+        return
+    px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), simulation_time)
 
 func request_takeoff() -> void:
     screen = "flight"
@@ -609,6 +685,10 @@ func respawn() -> void:
         native.call("reset_flight")
         if native.has_method("disarm_flight_control"):
             native.call("disarm_flight_control")
+    if px4_sitl_bridge != null:
+        px4_sitl_bridge.stop()
+        px4_sitl_bridge.start()
+        _px4_lockstep_sensor_pending = false
     update_fallback_status()
     if not reset_to_spawn():
         return
@@ -732,6 +812,10 @@ func _reset_airsim_flight_state() -> void:
     _airsim_angular_acceleration = Vector3.ZERO
     if airsim_rpc_server != null:
         airsim_rpc_server.reset_vehicle_control_state()
+    if px4_sitl_bridge != null:
+        px4_sitl_bridge.arm_disarm(false)
+        px4_sitl_bridge.stop()
+        _px4_lockstep_sensor_pending = false
     if native != null and native.has_method("disarm_flight_control"):
         native.call("disarm_flight_control")
     if airsim_sensor_suite != null and airsim_rpc_server != null:
@@ -1304,6 +1388,8 @@ func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
         _airsim_command_remaining_frames = 0
         if native != null and native.has_method("disarm_flight_control"):
             native.call("disarm_flight_control")
+        if px4_sitl_bridge != null:
+            px4_sitl_bridge.arm_disarm(false)
     return {"ok": true}
 
 
@@ -1319,7 +1405,7 @@ func _airsim_arm_disarm(armed: bool, name: String) -> Dictionary:
         if not px4_result.ok:
             return px4_result
         _airsim_disarm_requested = not armed
-        return {"ok": true, "armed": armed}
+        return {"ok": true, "armed": px4_sitl_bridge.state == "armed" if armed else px4_sitl_bridge.state == "connected"}
     if armed:
         _airsim_disarm_requested = false
         return {"ok": true, "armed": bool(native.call("arm_flight_control", 0.0))}
@@ -1444,7 +1530,7 @@ func _configure_px4_sitl_bridge() -> void:
 
 
 func _on_px4_authority_changed(active: bool) -> void:
-    if not active and px4_sitl_bridge != null and px4_sitl_bridge.state in ["stale", "failed"]:
+    if not active and px4_sitl_bridge != null and px4_sitl_bridge.state == "failed":
         paused = true
         if airsim_session != null:
             airsim_session.set_paused(true)
@@ -1475,6 +1561,28 @@ func _airsim_px4_command(method: String, args: Array) -> Dictionary:
     takeoff_requested = true
     screen = "flight" if method == "takeoff" else screen
     return {"ok": true, "duration_frames": _airsim_command_remaining_frames}
+
+
+func _advance_px4_path() -> void:
+    if px4_sitl_bridge == null or drone_body == null or _airsim_command_state.get("method", "") != "moveOnPath":
+        return
+    var command_args: Array = _airsim_command_state.get("args", [])
+    if command_args.is_empty() or typeof(command_args[0]) != TYPE_ARRAY:
+        return
+    var path: Array = command_args[0]
+    var index := int(_airsim_command_state.get("waypoint_index", 0))
+    if index >= path.size():
+        return
+    var point: Dictionary = path[index]
+    var target_ned := Vector3(float(point["x_val"]), float(point["y_val"]), float(point["z_val"]))
+    var current_ned := AirSimCoordinateContract.godot_world_to_ned(drone_body.global_position, _spawn_position())
+    if current_ned.distance_to(target_ned) >= 0.25:
+        return
+    index += 1
+    _airsim_command_state["waypoint_index"] = index
+    if index < path.size():
+        point = path[index]
+        px4_sitl_bridge.move_to_position(Vector3(float(point["x_val"]), float(point["y_val"]), float(point["z_val"])))
 
 
 func _airsim_controls_for_frame() -> Dictionary:
@@ -1604,10 +1712,16 @@ func _airsim_state(name: String) -> Dictionary:
     var angular_velocity: Vector3 = drone_body.angular_velocity if drone_body != null else Vector3.ZERO
     var body_basis_inverse: Basis = drone_body.global_transform.basis.inverse() if drone_body != null else Basis.IDENTITY
     var origin: Dictionary = airsim_rpc_server.settings.get("OriginGeopoint", {}) if airsim_rpc_server != null else {}
+    var position_ned := AirSimCoordinateContract.godot_world_to_ned(position, _spawn_position())
+    const EARTH_RADIUS_M := 6378137.0
+    var origin_latitude := float(origin.get("Latitude", 0.0))
+    var origin_longitude := float(origin.get("Longitude", 0.0))
+    var origin_altitude := float(origin.get("Altitude", 0.0))
+    var latitude_scale := maxf(cos(deg_to_rad(origin_latitude)), 0.01)
     var gps_location := {
-        "latitude": float(origin.get("Latitude", 0.0)),
-        "longitude": float(origin.get("Longitude", 0.0)),
-        "altitude": float(origin.get("Altitude", 0.0)),
+        "latitude": origin_latitude + rad_to_deg(position_ned.x / EARTH_RADIUS_M),
+        "longitude": origin_longitude + rad_to_deg(position_ned.y / (EARTH_RADIUS_M * latitude_scale)),
+        "altitude": origin_altitude - position_ned.z,
     }
     var native_imu_sample := {}
     if native != null and native.has_method("imu_sample"):
@@ -1619,12 +1733,11 @@ func _airsim_state(name: String) -> Dictionary:
                 float(raw_imu.get("measurement_orientation_z", 0.0)),
                 float(raw_imu.get("measurement_orientation_w", 1.0))
             ).normalized()
-            var gravity_internal := measurement_orientation.inverse() * Vector3(0.0, 9.80665, 0.0)
             var raw_acceleration := Vector3(
                 float(raw_imu.get("accel_x", 0.0)),
                 float(raw_imu.get("accel_y", 0.0)),
                 float(raw_imu.get("accel_z", 0.0))
-            ) - gravity_internal
+            )
             native_imu_sample = {
                 "gyro": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(Vector3(raw_imu.get("gyro_x", 0.0), raw_imu.get("gyro_y", 0.0), raw_imu.get("gyro_z", 0.0)))),
                 "accel": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(raw_acceleration)),
@@ -1641,6 +1754,7 @@ func _airsim_state(name: String) -> Dictionary:
         "object_name": "",
         "object_id": -1,
     }
+    var landed := position.y <= _spawn_position().y + 0.05 and linear_velocity.length() < 0.25
     var state := {
         "collision": collision,
         "kinematics_estimated": {
@@ -1654,7 +1768,7 @@ func _airsim_state(name: String) -> Dictionary:
         "gps_location": gps_location,
         "imu_sample": native_imu_sample,
         "timestamp": int(round(airsim_session.simulation_time_seconds * 1_000_000_000.0)),
-        "landed_state": 0 if position.y <= _spawn_position().y + 0.05 and linear_velocity.length() < 0.25 else 1,
+        "landed_state": 0 if landed else 1,
         "rc_data": {"timestamp": 0, "pitch": 0.0, "roll": 0.0, "throttle": _flight_throttle(), "yaw": 0.0, "is_initialized": false, "is_valid": false},
         "ready": native != null,
         "ready_message": "" if native != null else "native runtime unavailable",
