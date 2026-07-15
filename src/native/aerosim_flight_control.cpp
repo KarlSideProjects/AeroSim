@@ -422,6 +422,9 @@ TrajectorySample FlightController::step_angle_mode(
         const SimulationConfig &config,
         const FlightCommand &command,
         const Quat &estimated_attitude) {
+    if (!armed_) {
+        state.motor_thrust_newtons = {};
+    }
     SimulationConfig frame_config = config;
     const double throttle = std::clamp(command.throttle, 0.0, 1.0);
     pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
@@ -463,6 +466,9 @@ TrajectorySample FlightController::step_acro_mode(
         SimulationClock &clock,
         const SimulationConfig &config,
         const AcroCommand &command) {
+    if (!armed_) {
+        state.motor_thrust_newtons = {};
+    }
     SimulationConfig frame_config = config;
     const double throttle = std::clamp(command.throttle, 0.0, 1.0);
     pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
@@ -506,6 +512,9 @@ TrajectorySample FlightController::step_altitude_hold_mode(
         const FlightCommand &command,
         double measured_altitude_m,
         const Quat &estimated_attitude) {
+    if (!armed_) {
+        state.motor_thrust_newtons = {};
+    }
     if (!altitude_hold_captured_) {
         capture_altitude_hold(measured_altitude_m);
     }

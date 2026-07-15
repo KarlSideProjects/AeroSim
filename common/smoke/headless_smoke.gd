@@ -680,6 +680,18 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
     if float(on_row[8]) >= float(off_row[8]):
         push_error("A3 enabled must decelerate the public path using live motor state")
         return false
+
+    native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012)
+    native.call("reset_simulation")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var aggregate_off_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 10.0)
+    native.call("set_a3_drag_model", true, 0.0001, 0.0001, 0.00012)
+    native.call("reset_simulation")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var aggregate_on_row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 10.0)
+    if float(aggregate_on_row[8]) >= float(aggregate_off_row[8]):
+        push_error("A3 enabled aggregate thrust path must decelerate using live motor state")
+        return false
     return true
 
 func _verify_a4_a5_public_path(native: Object) -> bool:

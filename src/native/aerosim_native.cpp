@@ -227,7 +227,9 @@ PackedFloat64Array AeroSimNative::step_simulation(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
-    if (!flight_controller_.armed()) {
+    if (flight_controller_.armed()) {
+        simulation_state_.motor_thrust_newtons.fill(total_thrust_newtons / 4.0);
+    } else {
         simulation_state_.motor_thrust_newtons = {};
     }
     config.a4_ground_effect = a4_ground_effect_config_;
@@ -370,6 +372,7 @@ bool AeroSimNative::arm_flight_control(double throttle) {
 
 void AeroSimNative::disarm_flight_control() {
     flight_controller_.disarm();
+    simulation_state_.motor_thrust_newtons = {};
 }
 
 bool AeroSimNative::flight_control_armed() const {
@@ -953,6 +956,11 @@ PackedFloat64Array AeroSimNative::simulate_trajectory(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
+    if (flight_controller_.armed()) {
+        config.initial_state.motor_thrust_newtons.fill(total_thrust_newtons / 4.0);
+    } else {
+        config.initial_state.motor_thrust_newtons = {};
+    }
     config.a4_ground_effect = a4_ground_effect_config_;
 
     PackedFloat64Array rows;
