@@ -411,6 +411,15 @@ class PerformanceReportTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             compare_reports(baseline | {"p95_ms": 2.500000000001}, candidate)
 
+        with self.assertRaisesRegex(ValueError, "native_source_sha256 differs"):
+            compare_reports(
+                baseline,
+                candidate
+                | {
+                    "measurement": candidate["measurement"] | {"native_source_sha256": "d" * 64},
+                },
+            )
+
     def test_g37_rejects_nonproduction_reports(self):
         environment = {"git_revision": "abc123", "cpu_model": "reference"}
         common = {
@@ -476,6 +485,9 @@ class PerformanceReportTest(unittest.TestCase):
             "effect_evidence": VALID_EFFECT_EVIDENCE,
         }
         candidate = build_report(candidate_raw, environment)
+
+        with self.assertRaisesRegex(ValueError, "G3.7 gate reports require exactly 14400 samples"):
+            build_report(candidate_raw | {"samples_ms": [2.1]}, environment)
 
         with self.assertRaisesRegex(ValueError, "raw_samples_ms"):
             compare_reports({"environment": environment, "scenario": "effects_off", "sample_count": 1, "measurement": {}}, candidate)

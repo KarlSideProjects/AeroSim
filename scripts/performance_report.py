@@ -100,6 +100,8 @@ def build_report(raw: dict[str, Any], environment: dict[str, Any]) -> dict[str, 
     measurements = _validated_samples(raw, "samples_ms")
     if benchmark_mode == "gate":
         _validate_gate_eligibility(raw, environment)
+        if raw.get("workload_attestation") == G3_7_WORKLOAD_ATTESTATION and len(measurements) != G3_7_SAMPLE_COUNT:
+            raise ValueError(f"G3.7 gate reports require exactly {G3_7_SAMPLE_COUNT} samples")
     render_summaries: dict[str, float] = {}
     for key, prefix in (
         ("render_cpu_samples_ms", "render_cpu"),
@@ -213,6 +215,9 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
             raise ValueError(f"incompatible benchmark reports: {label} p99 limit evidence is invalid")
         if not recomputed_within_limit:
             raise ValueError(f"incompatible benchmark reports: {label} p99 exceeds the G0.1 limit")
+    for key in ("gdextension_sha256", "native_source_sha256"):
+        if baseline_measurement.get(key) != candidate_measurement.get(key):
+            raise ValueError(f"incompatible benchmark reports: {key} differs between baseline and candidate")
     if baseline_measurement.get("active_effects") != []:
         raise ValueError("incompatible benchmark reports: effects_off baseline must have no active effects")
     if candidate_measurement.get("active_effects") != G3_7_EFFECTS:
