@@ -28,7 +28,7 @@ const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Exit"
-const WIND_PRESETS := ["light", "moderate", "severe"]
+const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
 
@@ -752,7 +752,7 @@ func change_map() -> void:
 
 func load_map(map_id: String) -> bool:
     var maps := FreeFlightMap.new()
-    maps.load_descriptor(map_id)
+    var descriptor: Dictionary = maps.load_descriptor(map_id)
     if not maps.last_ok:
         return _set_map_error("Cannot load Free Flight map %s: %s" % [map_id, maps.last_error])
     var scene_path := str(MAP_SCENE_PATHS.get(map_id, ""))
@@ -769,6 +769,11 @@ func load_map(map_id: String) -> bool:
     add_child(map_root)
     loaded_map = map_root
     loaded_map_id = map_id
+    if native != null:
+        native.call("configure_wind", {
+            "preset": str(descriptor.wind_preset),
+            "steady_wind": scene_steady_wind_mps,
+        })
     _configure_time_trial(map_root)
     return reset_to_spawn()
 

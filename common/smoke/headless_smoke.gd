@@ -711,6 +711,19 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
         push_error("A3 enabled must decelerate the public path using live motor state")
         return false
 
+    native.call("configure_wind", {"preset": "calm", "steady_wind": Vector3.ZERO})
+    native.call("reset_simulation")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var still_air_row: PackedFloat64Array = native.call("step_px4_actuator_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5)
+    native.call("configure_wind", {"preset": "calm", "steady_wind": Vector3(10.0, 0.0, 0.0)})
+    native.call("reset_simulation")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var matching_wind_row: PackedFloat64Array = native.call("step_px4_actuator_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5)
+    if float(matching_wind_row[8]) <= float(still_air_row[8]):
+        push_error("PX4 actuator mode must apply wind to relative airspeed")
+        return false
+    native.call("configure_wind", {"preset": "calm", "steady_wind": Vector3.ZERO})
+
     native.call("disarm_flight_control")
     native.call("reset_simulation")
     native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -1302,6 +1315,36 @@ func _verify_runtime_actions() -> bool:
         push_error("Map selection must apply the scene steady wind vector to native wind configuration")
         scene.queue_free()
         return false
+    scene.native.call("configure_wind", {
+        "preset": "not-a-preset",
+        "steady_wind": Vector3(9.0, 8.0, 7.0),
+    })
+    var invalid_preset_config: Dictionary = scene.native.call("wind_configuration")
+    if invalid_preset_config.get("preset", "") != "severe" or \
+            not _same_imu_value(invalid_preset_config.get("steady_wind", Vector3.ZERO), scene.scene_steady_wind_mps):
+        push_error("Invalid wind presets must not replace the last valid native configuration")
+        scene.queue_free()
+        return false
+    scene.native.call("configure_wind", {
+        "preset": "severe",
+        "steady_wind": Vector3(INF, 0.0, 0.0),
+    })
+    var invalid_vector_config: Dictionary = scene.native.call("wind_configuration")
+    if invalid_vector_config.get("preset", "") != "severe" or \
+            not _same_imu_value(invalid_vector_config.get("steady_wind", Vector3.ZERO), scene.scene_steady_wind_mps):
+        push_error("Non-finite wind vectors must not enter the native wind configuration")
+        scene.queue_free()
+        return false
+    if not scene.load_map("industrial_yard"):
+        push_error("Loading Industrial Yard must succeed before descriptor wind ownership is checked")
+        scene.queue_free()
+        return false
+    var descriptor_wind_config: Dictionary = scene.native.call("wind_configuration")
+    if descriptor_wind_config.get("preset", "") != "calm":
+        push_error("Normal map loading must apply the descriptor wind_preset")
+        scene.queue_free()
+        return false
+    scene.select_map("industrial_yard", "severe")
     var quick_fly_button := scene.get_node_or_null("MainMenu/Entries/QuickFly") as Button
     if quick_fly_button == null or quick_fly_button.text != "Quick Fly":
         push_error("Cold-start main menu must expose an interactive Quick Fly button")

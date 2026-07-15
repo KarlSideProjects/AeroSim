@@ -66,11 +66,37 @@ double axis_value(const aerosim::Vec3 &value, aerosim::WindAxis axis) {
         case aerosim::WindAxis::Longitudinal:
             return value.x;
         case aerosim::WindAxis::Lateral:
-            return value.y;
-        case aerosim::WindAxis::Vertical:
             return value.z;
+        case aerosim::WindAxis::Vertical:
+            return value.y;
     }
     return 0.0;
+}
+
+double theoretical_dryden_psd(const aerosim::WindConfig &config, aerosim::WindAxis axis, double omega_rad_s) {
+    double sigma = 0.0;
+    switch (axis) {
+        case aerosim::WindAxis::Longitudinal:
+            sigma = config.turbulence_sigma_mps.x;
+            break;
+        case aerosim::WindAxis::Lateral:
+            sigma = config.turbulence_sigma_mps.z;
+            break;
+        case aerosim::WindAxis::Vertical:
+            sigma = config.turbulence_sigma_mps.y;
+            break;
+    }
+    constexpr double kPi = 3.14159265358979323846;
+    const double airspeed = std::max(1e-9, config.reference_airspeed_mps);
+    const double scale = std::max(1e-9, config.scale_length_m);
+    const double ratio = scale * std::max(0.0, omega_rad_s) / airspeed;
+    const double base = sigma * sigma * (2.0 * scale / (kPi * airspeed));
+    if (axis == aerosim::WindAxis::Longitudinal) {
+        return base / (1.0 + ratio * ratio);
+    }
+    const double two_ratio = 2.0 * ratio;
+    return base * (1.0 + 3.0 * two_ratio * two_ratio) /
+            ((1.0 + two_ratio * two_ratio) * (1.0 + two_ratio * two_ratio));
 }
 
 double chi_square_quantile_wilson_hilferty(double dof, double z) {
@@ -173,6 +199,38 @@ int main() {
         return fail("G3.4 Dryden axes must be independently shaped, not scalar multiples of one unit signal");
     }
 
+    aerosim::WindConfig lateral_only = moderate;
+    lateral_only.turbulence_sigma_mps = {0.0, 0.0, 1.0};
+    aerosim::WindField lateral_field;
+    lateral_field.configure(lateral_only);
+    bool saw_lateral = false;
+    for (int i = 1; i <= 100; ++i) {
+        const aerosim::Vec3 value = lateral_field.sample(static_cast<double>(i) / 100.0, {});
+        if (value.x != 0.0 || value.y != 0.0) {
+            return fail("G3.4 lateral Dryden turbulence must map to world Z in the Y-up frame");
+        }
+        saw_lateral = saw_lateral || value.z != 0.0;
+    }
+    if (!saw_lateral) {
+        return fail("G3.4 lateral Dryden turbulence must produce a world-Z sample");
+    }
+
+    aerosim::WindConfig vertical_only = moderate;
+    vertical_only.turbulence_sigma_mps = {0.0, 1.0, 0.0};
+    aerosim::WindField vertical_field;
+    vertical_field.configure(vertical_only);
+    bool saw_vertical = false;
+    for (int i = 1; i <= 100; ++i) {
+        const aerosim::Vec3 value = vertical_field.sample(static_cast<double>(i) / 100.0, {});
+        if (value.x != 0.0 || value.z != 0.0) {
+            return fail("G3.4 vertical Dryden turbulence must map to world Y in the Y-up frame");
+        }
+        saw_vertical = saw_vertical || value.y != 0.0;
+    }
+    if (!saw_vertical) {
+        return fail("G3.4 vertical Dryden turbulence must produce a world-Y sample");
+    }
+
     constexpr int kSegmentLength = 1 << 14;
     constexpr double kSampleHz = 100.0;
     constexpr double kPi = 3.14159265358979323846;
@@ -193,7 +251,7 @@ int main() {
             const int last_bin = static_cast<int>(std::floor(10.0 / domega));
             for (int bin = first_bin; bin <= last_bin; ++bin) {
                 const double omega = static_cast<double>(bin) * domega;
-                const double expected = aerosim::dryden_psd_rad_s(config, axis, omega);
+                const double expected = theoretical_dryden_psd(config, axis, omega);
                 const double actual = aerosim::dryden_filter_psd_rad_s(config, axis, omega, kSampleHz);
                 if (!near(actual, expected, expected * 0.10)) {
                     std::cerr << "analytic bin=" << bin << " omega=" << omega << " actual=" << actual << " expected=" << expected << "\n";
@@ -212,7 +270,7 @@ int main() {
             int checked_bins = 0;
             for (int bin = first_bin; bin <= last_bin; bin += 8) {
                 const double omega = static_cast<double>(bin) * domega;
-                const double expected = aerosim::dryden_psd_rad_s(config, axis, omega);
+                const double expected = theoretical_dryden_psd(config, axis, omega);
                 const double actual = welch_psd_rad_s(samples, kSampleHz, bin);
                 ratio_total += actual / expected;
                 ++checked_bins;

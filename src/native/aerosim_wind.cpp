@@ -29,9 +29,9 @@ double axis_sigma(const WindConfig &config, WindAxis axis) {
         case WindAxis::Longitudinal:
             return std::max(0.0, config.turbulence_sigma_mps.x);
         case WindAxis::Lateral:
-            return std::max(0.0, config.turbulence_sigma_mps.y);
-        case WindAxis::Vertical:
             return std::max(0.0, config.turbulence_sigma_mps.z);
+        case WindAxis::Vertical:
+            return std::max(0.0, config.turbulence_sigma_mps.y);
     }
     return 0.0;
 }
@@ -242,8 +242,8 @@ Vec3 WindField::sample(double time_seconds, const Vec3 &position) const {
     if (dryden_) {
         const Vec3 turbulence = dryden_->sample_at(time_seconds);
         wind.x += turbulence.x;
-        wind.y += turbulence.y;
-        wind.z += turbulence.z;
+        wind.y += turbulence.z;
+        wind.z += turbulence.y;
     }
     return wind;
 }

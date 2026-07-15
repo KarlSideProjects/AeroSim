@@ -91,6 +91,10 @@ aerosim::WindConfig preset_config(const String &preset) {
     return {};
 }
 
+bool valid_wind_preset(const String &preset) {
+    return preset == "calm" || preset == "light" || preset == "moderate" || preset == "severe";
+}
+
 void apply_wind(
         aerosim::SimulationConfig &config,
         const aerosim::RigidBodyState &state,
@@ -298,6 +302,7 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
     const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
     const aerosim::TrajectorySample sample = aerosim::step_per_motor_physics_frame(
             simulation_state_, simulation_clock_, config, commands);
@@ -358,6 +363,7 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.a4_ground_effect = a4_ground_effect_config_;
+    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
     aerosim::CollisionContact contact;
     contact.touching = touching;
     contact.normal = {normal_x, normal_y, normal_z};
@@ -516,9 +522,17 @@ void AeroSimNative::refresh_imu_sample() {
 }
 
 void AeroSimNative::configure_wind(const Dictionary &config) {
-    wind_preset_name_ = string_value(config, "preset", wind_preset_name_);
+    const String requested_preset = string_value(config, "preset", wind_preset_name_);
+    if (config.has("preset") && !valid_wind_preset(requested_preset)) {
+        return;
+    }
+    const aerosim::Vec3 steady_wind = vec3_value(config, "steady_wind", {});
+    if (!std::isfinite(steady_wind.x) || !std::isfinite(steady_wind.y) || !std::isfinite(steady_wind.z)) {
+        return;
+    }
+    wind_preset_name_ = requested_preset;
     aerosim::WindConfig wind_config = preset_config(wind_preset_name_);
-    wind_config.steady_wind_mps = vec3_value(config, "steady_wind", wind_config.steady_wind_mps);
+    wind_config.steady_wind_mps = steady_wind;
     wind_config.shear_enabled = bool_value(config, "shear_enabled", wind_config.shear_enabled);
     wind_config.seed = static_cast<std::uint32_t>(int_value(config, "seed", static_cast<std::int32_t>(wind_config.seed)));
     wind_field_.configure(wind_config);
