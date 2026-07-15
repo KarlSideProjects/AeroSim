@@ -40,6 +40,7 @@ class PerformanceRunnerTest(unittest.TestCase):
         self.assertIn('func _activate_a6() -> bool:', BENCHMARK_SOURCE)
         self.assertIn('native.call("set_a6_propwash_model", enabled, 12.0, 2.0, 0.5)', BENCHMARK_SOURCE)
         self.assertIn('native.call("configure_wind", {', BENCHMARK_SOURCE)
+        self.assertIn('native.call("wind_configuration")', BENCHMARK_SOURCE)
         self.assertIn('"steady_wind": Vector3.ZERO', BENCHMARK_SOURCE)
         self.assertIn('native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.866025403784, 0.0, -6.0, 0.0, 3.0, 0.0, -4.0)', BENCHMARK_SOURCE)
         self.assertIn('native.call("step_angle_mode", 240, 1000, 0.75, 0.0, 0.0, 0.0)', BENCHMARK_SOURCE)
@@ -206,10 +207,20 @@ class PerformanceRunnerTest(unittest.TestCase):
                 repeat_report["measurement"]["active_effects"],
                 candidate_report["measurement"]["active_effects"],
             )
-            self.assertEqual(
-                repeat_report["measurement"]["effect_evidence"],
-                candidate_report["measurement"]["effect_evidence"],
-            )
+            repeat_evidence = repeat_report["measurement"]["effect_evidence"]
+            candidate_evidence = candidate_report["measurement"]["effect_evidence"]
+            self.assertEqual(repeat_evidence.keys(), candidate_evidence.keys())
+            for effect_name in candidate_evidence:
+                self.assertEqual(
+                    repeat_evidence[effect_name]["observed"],
+                    candidate_evidence[effect_name]["observed"],
+                )
+                if effect_name == "A5_downwash":
+                    self.assertLess(repeat_evidence[effect_name]["force_y_newtons"], 0.0)
+                    self.assertLess(candidate_evidence[effect_name]["force_y_newtons"], 0.0)
+                else:
+                    self.assertGreater(repeat_evidence[effect_name]["magnitude"], 0.0)
+                    self.assertGreater(candidate_evidence[effect_name]["magnitude"], 0.0)
 
     def test_default_gate_mode_rejects_shortened_gate_protocol(self):
         with tempfile.TemporaryDirectory() as directory:

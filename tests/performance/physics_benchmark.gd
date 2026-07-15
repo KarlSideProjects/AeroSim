@@ -58,6 +58,11 @@ class EffectWorkload:
             "steady_wind": Vector3.ZERO,
             "shear_enabled": false,
         })
+        var wind_configuration: Dictionary = native.call("wind_configuration")
+        var steady_wind: Vector3 = wind_configuration.get("steady_wind", Vector3.ONE)
+        var turbulence_sigma: Vector3 = wind_configuration.get("turbulence_sigma", Vector3.ONE)
+        if steady_wind.length() > 0.0 or turbulence_sigma.length() > 0.0:
+            return false
         native.call("reset_flight")
         if not native.call("set_a5_downwash_model", enabled, 0.0231348, 2267.18, 0.16, -0.11):
             return false
