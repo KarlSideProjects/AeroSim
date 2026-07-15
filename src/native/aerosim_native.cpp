@@ -373,6 +373,8 @@ bool AeroSimNative::arm_flight_control(double throttle) {
 void AeroSimNative::disarm_flight_control() {
     flight_controller_.disarm();
     simulation_state_.motor_thrust_newtons = {};
+    flight_mode_ = "ANGLE";
+    flight_control_used_estimated_attitude_ = false;
 }
 
 bool AeroSimNative::flight_control_armed() const {

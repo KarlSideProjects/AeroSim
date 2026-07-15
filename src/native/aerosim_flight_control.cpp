@@ -529,47 +529,56 @@ TrajectorySample FlightController::step_altitude_hold_mode(
         const Quat &estimated_attitude) {
     if (!armed_) {
         state.motor_thrust_newtons = {};
-    }
-    if (!altitude_hold_captured_) {
-        capture_altitude_hold(measured_altitude_m);
-    }
-    if (config.hover_throttle > 0.0) {
-        if (altitude_hold_trim_throttle_ <= 0.0) {
-            altitude_hold_trim_throttle_ = std::clamp(command.throttle, 0.0, 1.0);
-        }
-    }
-
-    SimulationConfig frame_config = config;
-    const double control_dt = frame_config.physics_hz > 0
-            ? 1.0 / static_cast<double>(frame_config.physics_hz)
-            : (frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0);
-    const double estimate_alpha = alpha_from_tau(control_dt, kAltitudeHoldEstimateTauS);
-    const double vertical_speed_mps = std::isfinite(state.velocity.y) ? state.velocity.y : 0.0;
-    altitude_hold_filtered_altitude_m_ += vertical_speed_mps * control_dt;
-    altitude_hold_filtered_altitude_m_ +=
-            (measured_altitude_m - altitude_hold_filtered_altitude_m_) * estimate_alpha;
-    altitude_hold_vertical_speed_mps_ = vertical_speed_mps;
-    const double hover_thrust = frame_config.mass_kg * frame_config.gravity_mps2;
-    const double current_throttle = hover_thrust > 0.0 && frame_config.hover_throttle > 0.0
-            ? std::clamp(motor_thrust_newtons_ * frame_config.hover_throttle / hover_thrust, 0.0, 1.0)
-            : std::clamp(command.throttle, 0.0, 1.0);
-    double altitude_error_m = altitude_hold_target_m_ - altitude_hold_filtered_altitude_m_;
-    const bool inside_noise_band = std::abs(altitude_error_m) <= kAltitudeHoldNoiseDeadbandM;
-    if (inside_noise_band) {
-        altitude_error_m = 0.0;
-    }
-    double target_throttle = current_throttle;
-    if (altitude_hold_just_captured_) {
-        altitude_hold_trim_throttle_ = std::clamp(command.throttle, 0.0, 1.0);
-        target_throttle = altitude_hold_trim_throttle_;
+        altitude_hold_captured_ = false;
+        altitude_hold_target_m_ = 0.0;
+        altitude_hold_filtered_altitude_m_ = 0.0;
+        altitude_hold_vertical_speed_mps_ = 0.0;
+        altitude_hold_trim_throttle_ = 0.0;
         altitude_hold_just_captured_ = false;
-    } else {
-        target_throttle = std::clamp(
-                altitude_hold_trim_throttle_ +
-                        altitude_error_m * kAltitudeHoldKp -
-                        altitude_hold_vertical_speed_mps_ * kAltitudeHoldKd,
-                0.0,
-                1.0);
+    }
+    double target_throttle = 0.0;
+    SimulationConfig frame_config = config;
+    if (armed_) {
+        if (!altitude_hold_captured_) {
+            capture_altitude_hold(measured_altitude_m);
+        }
+        if (config.hover_throttle > 0.0) {
+            if (altitude_hold_trim_throttle_ <= 0.0) {
+                altitude_hold_trim_throttle_ = std::clamp(command.throttle, 0.0, 1.0);
+            }
+        }
+
+        const double control_dt = frame_config.physics_hz > 0
+                ? 1.0 / static_cast<double>(frame_config.physics_hz)
+                : (frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0);
+        const double estimate_alpha = alpha_from_tau(control_dt, kAltitudeHoldEstimateTauS);
+        const double vertical_speed_mps = std::isfinite(state.velocity.y) ? state.velocity.y : 0.0;
+        altitude_hold_filtered_altitude_m_ += vertical_speed_mps * control_dt;
+        altitude_hold_filtered_altitude_m_ +=
+                (measured_altitude_m - altitude_hold_filtered_altitude_m_) * estimate_alpha;
+        altitude_hold_vertical_speed_mps_ = vertical_speed_mps;
+        const double hover_thrust = frame_config.mass_kg * frame_config.gravity_mps2;
+        const double current_throttle = hover_thrust > 0.0 && frame_config.hover_throttle > 0.0
+                ? std::clamp(motor_thrust_newtons_ * frame_config.hover_throttle / hover_thrust, 0.0, 1.0)
+                : std::clamp(command.throttle, 0.0, 1.0);
+        double altitude_error_m = altitude_hold_target_m_ - altitude_hold_filtered_altitude_m_;
+        const bool inside_noise_band = std::abs(altitude_error_m) <= kAltitudeHoldNoiseDeadbandM;
+        if (inside_noise_band) {
+            altitude_error_m = 0.0;
+        }
+        target_throttle = current_throttle;
+        if (altitude_hold_just_captured_) {
+            altitude_hold_trim_throttle_ = std::clamp(command.throttle, 0.0, 1.0);
+            target_throttle = altitude_hold_trim_throttle_;
+            altitude_hold_just_captured_ = false;
+        } else {
+            target_throttle = std::clamp(
+                    altitude_hold_trim_throttle_ +
+                            altitude_error_m * kAltitudeHoldKp -
+                            altitude_hold_vertical_speed_mps_ * kAltitudeHoldKd,
+                    0.0,
+                    1.0);
+        }
     }
     pid_timing_stats_ = {static_cast<double>(frame_config.substep_hz), 0.0, 0};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};

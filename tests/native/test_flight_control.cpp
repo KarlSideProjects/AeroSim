@@ -136,6 +136,34 @@ int main() {
         }
     }
 
+    aerosim::RigidBodyState altitude_disarm_state;
+    aerosim::SimulationClock altitude_disarm_clock;
+    aerosim::FlightController altitude_disarm_controller;
+    aerosim::FlightCommand disarmed_hold_command;
+    disarmed_hold_command.throttle = 0.9;
+    altitude_disarm_controller.step_altitude_hold_mode(
+            altitude_disarm_state,
+            altitude_disarm_clock,
+            config,
+            disarmed_hold_command,
+            100.0,
+            aerosim::Quat{});
+    if (!altitude_disarm_controller.arm(0.0)) {
+        return fail("altitude hold must re-arm after disarmed cache setup");
+    }
+    aerosim::FlightCommand rearm_hold_command;
+    rearm_hold_command.throttle = 0.1;
+    altitude_disarm_controller.step_altitude_hold_mode(
+            altitude_disarm_state,
+            altitude_disarm_clock,
+            config,
+            rearm_hold_command,
+            0.0,
+            aerosim::Quat{});
+    if (altitude_disarm_controller.motor_thrust_newtons() > config.max_total_thrust_newtons * 0.2) {
+        return fail("disarmed altitude hold must not repopulate stale trim before re-arm");
+    }
+
     aerosim::RigidBodyState tilted_state;
     const double ten_degrees = 10.0 * kPi / 180.0;
     tilted_state.orientation.x = std::sin(ten_degrees * 0.5);

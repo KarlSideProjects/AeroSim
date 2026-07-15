@@ -468,6 +468,7 @@ func _verify_flight_control_public_path(native: Object) -> bool:
         push_error("Armed Angle Mode throttle should produce lift")
         return false
 
+    native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.0, 0.0, 0.0, 1.0, 0.722222222222, 0.0)
     native.call("disarm_flight_control")
     if native.call("flight_control_armed"):
         push_error("Disarm must clear native flight-control armed state immediately")
@@ -478,9 +479,12 @@ func _verify_flight_control_public_path(native: Object) -> bool:
     if (
             float(disarmed_diagnostics.get("motor_thrust_newtons", 1.0)) != 0.0 or
             bool(disarmed_snapshot.get("armed", true)) or
+            String(disarmed_diagnostics.get("flight_mode", "")) != "ANGLE" or
+            bool(disarmed_diagnostics.get("uses_estimated_attitude", true)) or
+            String(disarmed_snapshot.get("mode", "")) != "ANGLE" or
             disarmed_motors.size() != 4
         ):
-        push_error("Disarm must clear native diagnostics and telemetry immediately")
+        push_error("Disarm must clear native diagnostics, mode metadata, and telemetry immediately")
         return false
     for motor_value in disarmed_motors:
         if (
