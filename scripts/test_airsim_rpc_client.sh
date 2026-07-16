@@ -42,7 +42,8 @@ cat >"$SETTINGS_FILE" <<EOF
   "RpcEnabled": true,
   "ClockType": "SteppableClock",
   "Vehicles": {
-    "Drone1": {"VehicleType": "SimpleFlight", "Cameras": {}, "Sensors": {}}
+    "Drone1": {"VehicleType": "SimpleFlight", "Cameras": {}, "Sensors": {}},
+    "Drone2": {"VehicleType": "SimpleFlight", "Cameras": {}, "Sensors": {}}
   }
 }
 EOF
@@ -69,4 +70,4 @@ if [[ ! -f "$READY_FILE" ]]; then
     exit 1
 fi
 
-"$VENV_DIR/bin/python" "$ROOT_DIR/scripts/airsim_rpc_client_smoke.py" --port "$PORT"
+"$VENV_DIR/bin/python" "$ROOT_DIR/scripts/airsim_rpc_client_smoke.py" --port "$PORT" --dual

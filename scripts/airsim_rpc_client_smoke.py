@@ -22,8 +22,9 @@ def join_true(future) -> None:
     assert future.get() is True
 
 
-def exercise(port: int) -> None:
+def exercise(port: int, dual: bool = False) -> None:
     client = airsim.MultirotorClient(ip="127.0.0.1", port=port, timeout_value=30)
+    vehicle_names = ["Drone1", "Drone2"] if dual else ["Drone1"]
     assert client.ping() is True
     assert client.getServerVersion() == 1
     assert client.getMinRequiredClientVersion() == 1
@@ -32,6 +33,8 @@ def exercise(port: int) -> None:
     assert settings["ApiServerPort"] == port
     assert settings["ClockType"] == "SteppableClock"
     assert settings["Vehicles"]["Drone1"]["VehicleType"] == "SimpleFlight"
+    if dual:
+        assert settings["Vehicles"]["Drone2"]["VehicleType"] == "SimpleFlight"
 
     client.simPause(True)
     assert client.simIsPause() is True
@@ -39,13 +42,23 @@ def exercise(port: int) -> None:
     assert client.simIsPause() is True
     client.simContinueForTime(2.0 / 240.0)
     assert client.simIsPause() is True
-    imu = client.getImuData(vehicle_name="Drone1")
-    gps = client.getGpsData(vehicle_name="Drone1")
-    magnetometer = client.getMagnetometerData(vehicle_name="Drone1")
-    barometer = client.getBarometerData(vehicle_name="Drone1")
-    lidar = client.getLidarData(vehicle_name="Drone1")
+    samples = {}
+    for vehicle_name in vehicle_names:
+        samples[vehicle_name] = {
+            "imu": client.getImuData(vehicle_name=vehicle_name),
+            "gps": client.getGpsData(vehicle_name=vehicle_name),
+            "magnetometer": client.getMagnetometerData(vehicle_name=vehicle_name),
+            "barometer": client.getBarometerData(vehicle_name=vehicle_name),
+            "lidar": client.getLidarData(vehicle_name=vehicle_name),
+            "state": client.getMultirotorState(vehicle_name=vehicle_name),
+        }
+    imu = samples["Drone1"]["imu"]
+    gps = samples["Drone1"]["gps"]
+    magnetometer = samples["Drone1"]["magnetometer"]
+    barometer = samples["Drone1"]["barometer"]
+    lidar = samples["Drone1"]["lidar"]
     raw_imu = client.client.call("getImuData", "", "Drone1")
-    state = client.getMultirotorState(vehicle_name="Drone1")
+    state = samples["Drone1"]["state"]
     for sensor in [imu, gps, magnetometer, barometer, lidar]:
         assert sensor.time_stamp >= 0
     assert imu.orientation is not None
@@ -74,11 +87,36 @@ def exercise(port: int) -> None:
     client.enableApiControl(True, vehicle_name="Drone1")
     assert client.isApiControlEnabled("Drone1") is True
     assert client.armDisarm(True, vehicle_name="Drone1") is True
-    assert client.listVehicles() == ["Drone1"]
+    assert client.listVehicles() == vehicle_names
     assert client.getHomeGeoPoint("Drone1").latitude == 0.0
 
+    if dual:
+        client.enableApiControl(True, vehicle_name="Drone2")
+        assert client.isApiControlEnabled("Drone2") is True
+        assert client.armDisarm(True, vehicle_name="Drone2") is True
+        secondary_state = samples["Drone2"]["state"]
+        assert secondary_state.kinematics_estimated is not None
+        assert secondary_state.ready is True
+
     client.simPause(False)
-    join_true(client.takeoffAsync(vehicle_name="Drone1"))
+    if dual:
+        first_takeoff = client.takeoffAsync(vehicle_name="Drone1")
+        second_takeoff = client.takeoffAsync(vehicle_name="Drone2")
+        first_takeoff.join()
+        second_takeoff.join()
+        assert first_takeoff.get() is True
+        assert second_takeoff.get() is True
+        client.enableApiControl(False, vehicle_name="Drone1")
+        assert client.isApiControlEnabled("Drone1") is False
+        assert client.isApiControlEnabled("Drone2") is True
+        client.enableApiControl(True, vehicle_name="Drone1")
+        assert client.armDisarm(True, vehicle_name="Drone1") is True
+        client.reset()
+        assert client.simIsPause() is False
+        client.client.close()
+        return
+    else:
+        join_true(client.takeoffAsync(vehicle_name="Drone1"))
     join_true(client.moveToPositionAsync(1.0, -2.0, -3.0, 2.0, vehicle_name="Drone1"))
     join_true(client.moveOnPathAsync([airsim.Vector3r(1.0, -2.0, -3.0), airsim.Vector3r(2.0, -1.0, -4.0)], 2.0, vehicle_name="Drone1"))
     join_true(client.moveByVelocityAsync(1.0, 2.0, -1.0, 1.0, vehicle_name="Drone1"))
@@ -115,4 +153,6 @@ def exercise(port: int) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, required=True)
-    exercise(parser.parse_args().port)
+    parser.add_argument("--dual", action="store_true")
+    args = parser.parse_args()
+    exercise(args.port, dual=args.dual)

@@ -175,6 +175,9 @@ func _ready() -> void:
     var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
     if not rpc_result.ok:
         push_error("AirSim RPC startup failed: %s" % rpc_result.error)
+        airsim_rpc_server.stop()
+        get_tree().quit(1)
+        return
     else:
         _configure_px4_sitl_bridge()
         var sensor_result := airsim_sensor_suite.configure(airsim_rpc_server.settings, _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name])
@@ -202,7 +205,16 @@ func _ready() -> void:
             airsim_rpc_server.stop()
         get_tree().quit(1)
         return
-    _write_airsim_ready_marker(_cold_start_arg("--airsim-ready-file"))
+    var ready_file := _cold_start_arg("--airsim-ready-file")
+    if not ready_file.is_empty() and _airsim_vehicle_names.size() >= 2 and loaded_map == null:
+        if not load_map(DEFAULT_FREE_FLIGHT_MAP_ID):
+            push_error("AirSim default map setup failed: %s" % last_error_message)
+            if airsim_rpc_server != null and airsim_rpc_server.is_running():
+                airsim_rpc_server.stop()
+            get_tree().quit(1)
+            return
+        screen = "preflight"
+    _write_airsim_ready_marker(ready_file)
     update_fallback_status()
     _update_chase_camera()
     _refresh_flight_hud()
@@ -2213,6 +2225,7 @@ func _airsim_command(method: String, params: Array, name: String) -> Dictionary:
         if method == "takeoff":
             var secondary_body = _secondary_body(name)
             if secondary_body != null:
+                secondary_body.reset_contact()
                 secondary_body.freeze = false
                 secondary_body.sleeping = false
                 secondary_body.apply_native_state(secondary_body.global_position, secondary_body.global_transform.basis.get_rotation_quaternion(), Vector3(0.0, 0.5, 0.0), Vector3.ZERO)
