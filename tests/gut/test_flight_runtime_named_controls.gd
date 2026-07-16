@@ -29,6 +29,8 @@ class FakeBody extends RefCounted:
 class FakeSecondaryNative extends RefCounted:
     var last_step_method := ""
     var last_acro_controls := {}
+    var rate_stick_value := 0.5
+    var rate_stick_calls := 0
     var a5_config := {"enabled": false, "prop_radius_m": 0.0, "coeff_1": 0.0, "coeff_2": 0.0, "coeff_3": 0.0}
     var last_a5_source_position := Vector3.ZERO
 
@@ -37,6 +39,10 @@ class FakeSecondaryNative extends RefCounted:
 
     func refresh_imu_sample() -> void:
         pass
+
+    func betaflight_stick_for_rate(_rate: float, _rc_rate: float, _super_rate: float, _expo: float) -> float:
+        rate_stick_calls += 1
+        return rate_stick_value
 
     func set_a5_downwash_model(enabled: bool, radius: float, coeff_1: float, coeff_2: float, coeff_3: float) -> bool:
         a5_config = {"enabled": enabled, "prop_radius_m": radius, "coeff_1": coeff_1, "coeff_2": coeff_2, "coeff_3": coeff_3}
@@ -169,6 +175,27 @@ func test_secondary_angle_rates_use_acro_collision_step_and_clear_command() -> v
     assert_eq(completed_context.command_remaining_frames, 0)
 
 
+func test_secondary_angle_rates_use_secondary_native_stick_mapping() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var primary_native := FakeSecondaryNative.new()
+    primary_native.rate_stick_value = 0.1
+    var secondary_native := FakeSecondaryNative.new()
+    secondary_native.rate_stick_value = 0.7
+    runtime.native = primary_native
+    runtime._airsim_secondary_native = secondary_native
+
+    var controls: Dictionary = runtime._airsim_secondary_controls(
+        {"command_state": {"method": "moveByAngleRatesThrottle", "args": [0.1, -0.2, 0.3, 0.6, 1.0]}},
+        _body(Vector3.ZERO, 0.0))
+
+    assert_eq(float(controls.acro_roll), 0.7)
+    assert_eq(float(controls.acro_pitch), 0.7)
+    assert_eq(float(controls.acro_yaw), 0.7)
+    assert_eq(primary_native.rate_stick_calls, 0)
+    assert_eq(secondary_native.rate_stick_calls, 3)
+
+
 func test_secondary_runtime_applies_configured_a5_and_primary_source_each_substep() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)
@@ -197,3 +224,42 @@ func test_secondary_runtime_applies_configured_a5_and_primary_source_each_subste
     assert_true(bool(secondary_native.a5_config.enabled))
     assert_almost_eq(float(secondary_native.a5_config.prop_radius_m), 0.0231348, 0.0000001)
     assert_eq(secondary_native.last_a5_source_position, primary_body.global_position)
+
+
+func test_secondary_angular_state_tracks_body_acceleration_and_publishes_it() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var primary_body := _body(Vector3.ZERO, 0.0)
+    var secondary_body := _body(Vector3.ZERO, 0.0)
+    var primary_native := FakeSecondaryNative.new()
+    var secondary_native := FakeSecondaryNative.new()
+    runtime.drone_body = primary_body
+    runtime.secondary_drone_body = secondary_body
+    runtime.native = primary_native
+    runtime._airsim_secondary_native = secondary_native
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime.airsim_session = AirSimSession.new(Engine.physics_ticks_per_second)
+    runtime._airsim_vehicle_contexts["DroneB"] = {
+        "api_control": true,
+        "armed": true,
+        "command_state": {"method": "hover", "args": []},
+        "hold_controls": {},
+        "command_remaining_frames": 1,
+        "last_velocity": Vector3.ZERO,
+        "last_body_angular_velocity": Vector3.ZERO,
+        "angular_acceleration": Vector3.ZERO,
+    }
+
+    runtime._step_secondary_airsim_vehicle("DroneB")
+
+    var context: Dictionary = runtime._airsim_vehicle_contexts["DroneB"]
+    assert_eq(context.last_body_angular_velocity, Vector3(1.1, 2.2, 3.3))
+    assert_eq(
+        context.angular_acceleration,
+        Vector3(1.1, 2.2, 3.3) * float(Engine.physics_ticks_per_second))
+    var state_result: Dictionary = runtime._airsim_state("DroneB")
+    assert_true(state_result.ok)
+    var angular_acceleration: Dictionary = state_result.state.kinematics_estimated.angular_acceleration
+    assert_almost_eq(float(angular_acceleration.x_val), 1.1 * Engine.physics_ticks_per_second, 0.000001)
+    assert_almost_eq(float(angular_acceleration.y_val), 3.3 * Engine.physics_ticks_per_second, 0.000001)
+    assert_almost_eq(float(angular_acceleration.z_val), -2.2 * Engine.physics_ticks_per_second, 0.000001)

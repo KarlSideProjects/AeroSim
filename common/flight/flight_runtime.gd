@@ -264,6 +264,8 @@ func _configure_airsim_vehicle_contexts() -> void:
             "command_remaining_frames": 0,
             "last_velocity": Vector3.ZERO,
             "linear_acceleration": Vector3.ZERO,
+            "last_body_angular_velocity": Vector3.ZERO,
+            "angular_acceleration": Vector3.ZERO,
             "collision_seen": false,
             "contact_this_frame": false,
             "collision_normal": Vector3.ZERO,
@@ -820,6 +822,9 @@ func _step_secondary_airsim_vehicle(vehicle_name: String) -> void:
             context["command_state"] = {}
     context["linear_acceleration"] = (body.linear_velocity - context.get("last_velocity", Vector3.ZERO)) * float(Engine.physics_ticks_per_second)
     context["last_velocity"] = body.linear_velocity
+    var body_angular_velocity: Vector3 = body.global_transform.basis.inverse() * body.angular_velocity
+    context["angular_acceleration"] = (body_angular_velocity - context.get("last_body_angular_velocity", Vector3.ZERO)) * float(Engine.physics_ticks_per_second)
+    context["last_body_angular_velocity"] = body_angular_velocity
     _airsim_vehicle_contexts[vehicle_name] = context
     if _airsim_secondary_native.has_method("refresh_imu_sample"):
         _airsim_secondary_native.call("refresh_imu_sample")
@@ -883,7 +888,7 @@ func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
             rotate_rate_controls["yaw_rate"] = clampf(-float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
             return rotate_rate_controls
         "moveByAngleRatesThrottle":
-            return {"mode": "ACRO", "throttle": float(args[3]), "acro_roll": _airsim_rate_stick(rad_to_deg(float(args[0]))), "acro_pitch": _airsim_rate_stick(rad_to_deg(float(args[1]))), "acro_yaw": _airsim_rate_stick(rad_to_deg(float(args[2])))}
+            return {"mode": "ACRO", "throttle": float(args[3]), "acro_roll": _airsim_rate_stick(rad_to_deg(float(args[0])), _airsim_secondary_native), "acro_pitch": _airsim_rate_stick(rad_to_deg(float(args[1])), _airsim_secondary_native), "acro_yaw": _airsim_rate_stick(rad_to_deg(float(args[2])), _airsim_secondary_native)}
     return _airsim_neutral_controls()
 
 
@@ -1278,6 +1283,8 @@ func _reset_airsim_flight_state() -> void:
         context["contact_this_frame"] = false
         context["collision_normal"] = Vector3.ZERO
         context["collision_point"] = Vector3.ZERO
+        context["last_body_angular_velocity"] = Vector3.ZERO
+        context["angular_acceleration"] = Vector3.ZERO
         _airsim_vehicle_contexts[name] = context
     if airsim_sensor_suite != null and airsim_rpc_server != null:
         airsim_sensor_suite.configure(airsim_rpc_server.settings, _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name])
@@ -2413,9 +2420,10 @@ func _airsim_yaw_rate_from_mode(yaw_mode: Variant, body = null) -> float:
     return clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
 
 
-func _airsim_rate_stick(rate_degrees_per_second: float) -> float:
-    if native != null and native.has_method("betaflight_stick_for_rate"):
-        return float(native.call("betaflight_stick_for_rate", rate_degrees_per_second, ACRO_RC_RATE, ACRO_SUPER_RATE, ACRO_EXPO))
+func _airsim_rate_stick(rate_degrees_per_second: float, target_native: Object = null) -> float:
+    var rate_native: Object = target_native if target_native != null else native
+    if rate_native != null and rate_native.has_method("betaflight_stick_for_rate"):
+        return float(rate_native.call("betaflight_stick_for_rate", rate_degrees_per_second, ACRO_RC_RATE, ACRO_SUPER_RATE, ACRO_EXPO))
     return clampf(rate_degrees_per_second / 720.0, -1.0, 1.0)
 
 
@@ -2553,7 +2561,7 @@ func _airsim_secondary_state(name: String) -> Dictionary:
             "linear_velocity": _airsim_vector3(AirSimCoordinateContract.godot_direction_to_ned(linear_velocity)),
             "angular_velocity": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(body.global_transform.basis.inverse() * angular_velocity)),
             "linear_acceleration": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(body.global_transform.basis.inverse() * context.get("linear_acceleration", Vector3.ZERO))),
-            "angular_acceleration": _airsim_vector3(Vector3.ZERO),
+            "angular_acceleration": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(context.get("angular_acceleration", Vector3.ZERO))),
         },
         "gps_location": gps_location,
         "imu_sample": native_imu_sample,
