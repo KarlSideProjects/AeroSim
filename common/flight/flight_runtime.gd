@@ -665,7 +665,7 @@ func _validate_replay_world_events(events: Array) -> Dictionary:
                 if typeof(event.get("state", {})) != TYPE_DICTIONARY:
                     return {"ok": false, "error": "replay environment state is malformed"}
             "simulation_time":
-                if String(event.get("operation", "")) not in ["pause", "resume", "step", "reset", "respawn"]:
+                if String(event.get("operation", "")) not in ["pause", "resume", "step_frames", "step_seconds", "reset", "respawn"]:
                     return {"ok": false, "error": "unsupported replay simulation operation"}
     return {"ok": true}
 
