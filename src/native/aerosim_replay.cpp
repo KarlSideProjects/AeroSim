@@ -1476,6 +1476,44 @@ ReplayRunResult replay_session(
         if (mass == nullptr || !number_value(*mass, recorded_mass) || recorded_mass != runtime_configs[index].mass_kg) {
             return failed_run(invalid(ReplayDiagnosticCode::IncompatibleManifest, "vehicle mass does not match replay runtime configuration"));
         }
+        const JsonValue *gravity = field(parsed, "gravity_mps2");
+        double recorded_gravity = 0.0;
+        if (gravity != nullptr && (!number_value(*gravity, recorded_gravity) || recorded_gravity != runtime_configs[index].gravity_mps2)) {
+            return failed_run(invalid(ReplayDiagnosticCode::IncompatibleManifest, "vehicle gravity does not match replay runtime configuration"));
+        }
+        const JsonValue *physics_hz = field(parsed, "physics_hz");
+        std::int64_t recorded_physics_hz = 0;
+        if (physics_hz != nullptr && (!signed_integer_value(*physics_hz, recorded_physics_hz) || recorded_physics_hz != runtime_configs[index].physics_hz)) {
+            return failed_run(invalid(ReplayDiagnosticCode::IncompatibleManifest, "vehicle physics rate does not match replay runtime configuration"));
+        }
+        const JsonValue *substep_hz = field(parsed, "substep_hz");
+        std::int64_t recorded_substep_hz = 0;
+        if (substep_hz != nullptr && (!signed_integer_value(*substep_hz, recorded_substep_hz) || recorded_substep_hz != runtime_configs[index].substep_hz)) {
+            return failed_run(invalid(ReplayDiagnosticCode::IncompatibleManifest, "vehicle substep rate does not match replay runtime configuration"));
+        }
+        struct OptionalManifestField {
+            const char *name;
+            double expected;
+            const char *diagnostic;
+        };
+        const OptionalManifestField optional_fields[] = {
+                {"max_total_thrust_newtons", runtime_configs[index].max_total_thrust_newtons, "vehicle max thrust"},
+                {"hover_throttle", runtime_configs[index].hover_throttle, "vehicle hover throttle"},
+                {"motor_tau_s", runtime_configs[index].motor_tau_s, "vehicle motor time constant"},
+                {"battery_nominal_voltage_v", runtime_configs[index].battery_nominal_voltage_v, "vehicle battery voltage"},
+                {"battery_cells", runtime_configs[index].battery_cells, "vehicle battery cell count"},
+                {"battery_cell_resistance_ohm", runtime_configs[index].battery_cell_resistance_ohm, "vehicle battery resistance"},
+                {"battery_remaining_mah", runtime_configs[index].battery_remaining_mah, "vehicle battery capacity"},
+                {"max_total_current_a", runtime_configs[index].max_total_current_a, "vehicle max current"},
+                {"max_motor_rpm", runtime_configs[index].max_motor_rpm, "vehicle max motor speed"},
+        };
+        for (const OptionalManifestField &optional : optional_fields) {
+            const JsonValue *value = field(parsed, optional.name);
+            double recorded_value = 0.0;
+            if (value != nullptr && (!number_value(*value, recorded_value) || recorded_value != optional.expected)) {
+                return failed_run(invalid(ReplayDiagnosticCode::IncompatibleManifest, std::string(optional.diagnostic) + " does not match replay runtime configuration"));
+            }
+        }
     }
 
     DualAircraftState state{config.upper.initial_state, config.lower.initial_state};
@@ -1486,6 +1524,7 @@ ReplayRunResult replay_session(
     CollisionAuthoritySwitch collision_switches[2];
     FlightCommand commands[2];
     CollisionContact pending_collisions[2];
+    ReplayCollision last_collisions[2];
     bool has_pending_collision[2] = {false, false};
     bool paused = false;
     double frame_remainder = 0.0;
@@ -1496,7 +1535,10 @@ ReplayRunResult replay_session(
     const auto vehicle_index = [&](const std::string &name) {
         return name == session.vehicles[0].name ? 0 : name == session.vehicles[1].name ? 1 : -1;
     };
-    const auto step_frame = [&]() {
+    const auto checkpoint = [&](std::uint64_t timestamp_us) {
+        checkpoints.push_back({timestamp_us, state, {last_collisions[0], last_collisions[1]}, scene_objects, environment_json});
+    };
+    const auto step_frame = [&](std::uint64_t timestamp_us) {
         if (has_pending_collision[0]) {
             collision_switches[0].step(state.upper, clocks[0], controllers[0], config.upper, commands[0], pending_collisions[0]);
             has_pending_collision[0] = false;
@@ -1509,22 +1551,23 @@ ReplayRunResult replay_session(
         } else {
             controllers[1].step_angle_mode(state.lower, clocks[1], config.lower, commands[1]);
         }
+        checkpoint(timestamp_us);
     };
-    const auto step_frames = [&](std::int64_t count) {
+    const auto step_frames = [&](std::int64_t count, std::uint64_t timestamp_us) {
         for (std::int64_t frame = 0; frame < count; ++frame) {
-            step_frame();
+            step_frame(timestamp_us);
         }
     };
-    const auto step_seconds = [&](double seconds) {
+    const auto step_seconds = [&](double seconds, std::uint64_t timestamp_us) {
         const double frames = seconds * static_cast<double>(config.upper.physics_hz);
         if (!std::isfinite(frames) || frames < 0.0 || frames > 1000000.0) {
             return false;
         }
-        step_frames(static_cast<std::int64_t>(std::ceil(frames)));
+        step_frames(static_cast<std::int64_t>(std::ceil(frames)), timestamp_us);
         frame_remainder = 0.0;
         return true;
     };
-    const auto advance_us = [&](std::uint64_t duration_us) {
+    const auto advance_us = [&](std::uint64_t duration_us, std::uint64_t timestamp_us) {
         const long double frames = static_cast<long double>(frame_remainder) +
                 static_cast<long double>(duration_us) * static_cast<long double>(config.upper.physics_hz) / 1000000.0L;
         if (!std::isfinite(static_cast<double>(frames)) || frames < 0.0L || frames > 1000000.0L) {
@@ -1532,13 +1575,13 @@ ReplayRunResult replay_session(
         }
         const auto frame_count = static_cast<std::int64_t>(std::floor(frames));
         frame_remainder = frames - static_cast<double>(frame_count);
-        step_frames(frame_count);
+        step_frames(frame_count, timestamp_us);
         return true;
     };
 
     for (const ReplayEvent &event : session.events) {
         if (!paused && event.timestamp_us >= previous_timestamp_us &&
-                !advance_us(event.timestamp_us - previous_timestamp_us)) {
+                !advance_us(event.timestamp_us - previous_timestamp_us, event.timestamp_us)) {
             return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay timeline interval exceeds runtime frame limit"));
         }
         previous_timestamp_us = event.timestamp_us;
@@ -1547,6 +1590,9 @@ ReplayRunResult replay_session(
             const int index = vehicle_index(event.vehicle_name);
             if (index < 0) {
                 return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
+            }
+            if (event.controller_authority != session.vehicles[index].controller_authority) {
+                return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority does not match vehicle authority"));
             }
             if (event.controller_authority != ReplayControllerAuthority::FlightCore) {
                 return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority requires actuator-level command data"));
@@ -1589,6 +1635,7 @@ ReplayRunResult replay_session(
                 return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "multiple replay collisions share one simulation frame"));
             }
             pending_collisions[index] = event.collision.contact;
+            last_collisions[index] = event.collision;
             has_pending_collision[index] = true;
             break;
         }
@@ -1601,10 +1648,10 @@ ReplayRunResult replay_session(
                 paused = false;
                 break;
             case ReplaySimulationOperation::StepFrames:
-                step_frames(static_cast<std::int64_t>(event.simulation_value));
+                step_frames(static_cast<std::int64_t>(event.simulation_value), event.timestamp_us);
                 break;
             case ReplaySimulationOperation::StepSeconds:
-                if (!step_seconds(event.simulation_value)) {
+                if (!step_seconds(event.simulation_value, event.timestamp_us)) {
                     return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay step seconds exceeds runtime frame limit"));
                 }
                 break;
@@ -1620,6 +1667,8 @@ ReplayRunResult replay_session(
                 environment_json.clear();
                 controllers[0].reset_flight(state.upper, clocks[0]);
                 controllers[1].reset_flight(state.lower, clocks[1]);
+                last_collisions[0] = {};
+                last_collisions[1] = {};
                 frame_remainder = 0.0;
                 break;
             case ReplaySimulationOperation::Respawn:
@@ -1634,21 +1683,23 @@ ReplayRunResult replay_session(
                 environment_json.clear();
                 controllers[0].reset_flight(state.upper, clocks[0]);
                 controllers[1].reset_flight(state.lower, clocks[1]);
+                last_collisions[0] = {};
+                last_collisions[1] = {};
                 frame_remainder = 0.0;
                 break;
             }
             break;
         }
-        checkpoints.push_back({event.timestamp_us, state, scene_objects, environment_json});
+        checkpoint(event.timestamp_us);
     }
     if (!paused && session.termination_timestamp_us >= previous_timestamp_us &&
-            !advance_us(session.termination_timestamp_us - previous_timestamp_us)) {
+            !advance_us(session.termination_timestamp_us - previous_timestamp_us, session.termination_timestamp_us)) {
         return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay termination interval exceeds runtime frame limit"));
     }
     if (has_pending_collision[0] || has_pending_collision[1]) {
         return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay collision was not consumed before termination"));
     }
-    checkpoints.push_back({session.termination_timestamp_us, state, scene_objects, environment_json});
+    checkpoint(session.termination_timestamp_us);
     return {true, {}, state, clocks[0], session.termination_timestamp_us,
             {session.vehicles[0].name, session.vehicles[1].name}, std::move(scene_objects),
             std::move(environment_json), std::move(checkpoints)};
@@ -1732,6 +1783,66 @@ ReplayDivergence compare_replay_runs(
         for (std::size_t field_index = 0; field_index < sizeof(left_values) / sizeof(left_values[0]); ++field_index) {
             if (!same_or_close(*left_values[field_index], *right_values[field_index], tolerance)) {
                 report_at(left.timestamp_us, field_names[field_index], *left_values[field_index], *right_values[field_index]);
+                return result;
+            }
+        }
+        for (std::size_t vehicle_index = 0; vehicle_index < 2; ++vehicle_index) {
+            const ReplayCollision &left_collision = left.collisions[vehicle_index];
+            const ReplayCollision &right_collision = right.collisions[vehicle_index];
+            const std::string vehicle_name = expected.vehicle_names[vehicle_index];
+            const auto report_collision = [&](const std::string &field, const std::string &expected_value,
+                                              const std::string &actual_value, double field_tolerance) {
+                result.diverged = true;
+                result.timestamp_us = left.timestamp_us;
+                result.vehicle_name = vehicle_name;
+                result.field = field;
+                result.expected = expected_value;
+                result.actual = actual_value;
+                result.tolerance = field_tolerance;
+            };
+            if (left_collision.authority != right_collision.authority) {
+                report_collision("collision.authority", authority_name(left_collision.authority), authority_name(right_collision.authority), 0.0);
+                return result;
+            }
+            if (left_collision.contact.touching != right_collision.contact.touching) {
+                report_collision("collision.touching", left_collision.contact.touching ? "true" : "false",
+                        right_collision.contact.touching ? "true" : "false", 0.0);
+                return result;
+            }
+            const double *left_collision_values[] = {
+                    &left_collision.contact.normal.x, &left_collision.contact.normal.y, &left_collision.contact.normal.z,
+                    &left_collision.contact.impulse.x, &left_collision.contact.impulse.y, &left_collision.contact.impulse.z,
+                    &left_collision.contact.restitution,
+                    &left_collision.contact.resolved_velocity.x, &left_collision.contact.resolved_velocity.y, &left_collision.contact.resolved_velocity.z,
+                    &left_collision.contact.resolved_angular_velocity.x, &left_collision.contact.resolved_angular_velocity.y, &left_collision.contact.resolved_angular_velocity.z,
+                    &left_collision.contact.max_kinetic_energy_joules,
+            };
+            const double *right_collision_values[] = {
+                    &right_collision.contact.normal.x, &right_collision.contact.normal.y, &right_collision.contact.normal.z,
+                    &right_collision.contact.impulse.x, &right_collision.contact.impulse.y, &right_collision.contact.impulse.z,
+                    &right_collision.contact.restitution,
+                    &right_collision.contact.resolved_velocity.x, &right_collision.contact.resolved_velocity.y, &right_collision.contact.resolved_velocity.z,
+                    &right_collision.contact.resolved_angular_velocity.x, &right_collision.contact.resolved_angular_velocity.y, &right_collision.contact.resolved_angular_velocity.z,
+                    &right_collision.contact.max_kinetic_energy_joules,
+            };
+            const char *collision_fields[] = {
+                    "collision.normal.x", "collision.normal.y", "collision.normal.z",
+                    "collision.impulse.x", "collision.impulse.y", "collision.impulse.z",
+                    "collision.restitution",
+                    "collision.resolved_velocity.x", "collision.resolved_velocity.y", "collision.resolved_velocity.z",
+                    "collision.resolved_angular_velocity.x", "collision.resolved_angular_velocity.y", "collision.resolved_angular_velocity.z",
+                    "collision.max_kinetic_energy_joules",
+            };
+            for (std::size_t collision_field = 0; collision_field < sizeof(left_collision_values) / sizeof(left_collision_values[0]); ++collision_field) {
+                if (!same_or_close(*left_collision_values[collision_field], *right_collision_values[collision_field], tolerance)) {
+                    report_collision(collision_fields[collision_field], divergence_number(*left_collision_values[collision_field]),
+                            divergence_number(*right_collision_values[collision_field]), tolerance);
+                    return result;
+                }
+            }
+            if (left_collision.contact.has_resolved_state != right_collision.contact.has_resolved_state) {
+                report_collision("collision.has_resolved_state", left_collision.contact.has_resolved_state ? "true" : "false",
+                        right_collision.contact.has_resolved_state ? "true" : "false", 0.0);
                 return result;
             }
         }
@@ -1855,6 +1966,37 @@ ReplayDivergence compare_replay_runs(
         result.expected = std::to_string(expected.scene_objects.size());
         result.actual = std::to_string(actual.scene_objects.size());
         return result;
+    }
+    for (std::size_t object_index = 0; object_index < expected.scene_objects.size(); ++object_index) {
+        const ReplaySceneObjectState &left_object = expected.scene_objects[object_index];
+        const ReplaySceneObjectState &right_object = actual.scene_objects[object_index];
+        if (left_object.name != right_object.name || left_object.asset_id != right_object.asset_id) {
+            result.diverged = true;
+            result.timestamp_us = std::min(expected.final_timestamp_us, actual.final_timestamp_us);
+            result.field = "scene_object.identity";
+            result.expected = left_object.name + ":" + left_object.asset_id;
+            result.actual = right_object.name + ":" + right_object.asset_id;
+            return result;
+        }
+        const double *left_transform[] = {
+                &left_object.position.x, &left_object.position.y, &left_object.position.z,
+                &left_object.orientation.x, &left_object.orientation.y, &left_object.orientation.z, &left_object.orientation.w,
+        };
+        const double *right_transform[] = {
+                &right_object.position.x, &right_object.position.y, &right_object.position.z,
+                &right_object.orientation.x, &right_object.orientation.y, &right_object.orientation.z, &right_object.orientation.w,
+        };
+        const char *transform_fields[] = {
+                "scene_object.position.x", "scene_object.position.y", "scene_object.position.z",
+                "scene_object.orientation.x", "scene_object.orientation.y", "scene_object.orientation.z", "scene_object.orientation.w",
+        };
+        for (std::size_t transform_index = 0; transform_index < sizeof(left_transform) / sizeof(left_transform[0]); ++transform_index) {
+            if (!same_or_close(*left_transform[transform_index], *right_transform[transform_index], tolerance)) {
+                report_at(std::min(expected.final_timestamp_us, actual.final_timestamp_us), transform_fields[transform_index],
+                        *left_transform[transform_index], *right_transform[transform_index]);
+                return result;
+            }
+        }
     }
     if (expected.environment_json != actual.environment_json) {
         result.diverged = true;
@@ -2004,8 +2146,38 @@ ReplayDivergence compare_replay_sessions(
                     left.collision.contact.impulse.y != right.collision.contact.impulse.y ||
                     left.collision.contact.impulse.z != right.collision.contact.impulse.z) {
                 report(left.timestamp_us, left.vehicle_name, "collision.impulse", vec_json(left.collision.contact.impulse), vec_json(right.collision.contact.impulse), tolerance);
+            } else if (left.collision.contact.restitution != right.collision.contact.restitution) {
+                report(left.timestamp_us, left.vehicle_name, "collision.restitution",
+                        divergence_number(left.collision.contact.restitution), divergence_number(right.collision.contact.restitution), tolerance);
+            } else if (left.collision.contact.has_resolved_state != right.collision.contact.has_resolved_state) {
+                report(left.timestamp_us, left.vehicle_name, "collision.has_resolved_state",
+                        left.collision.contact.has_resolved_state ? "true" : "false",
+                        right.collision.contact.has_resolved_state ? "true" : "false", 0.0);
             } else {
-                report(left.timestamp_us, left.vehicle_name, "collision.contact", "different", "different", tolerance);
+                const double left_values[] = {
+                        left.collision.contact.resolved_velocity.x, left.collision.contact.resolved_velocity.y,
+                        left.collision.contact.resolved_velocity.z, left.collision.contact.resolved_angular_velocity.x,
+                        left.collision.contact.resolved_angular_velocity.y, left.collision.contact.resolved_angular_velocity.z,
+                        left.collision.contact.max_kinetic_energy_joules,
+                };
+                const double right_values[] = {
+                        right.collision.contact.resolved_velocity.x, right.collision.contact.resolved_velocity.y,
+                        right.collision.contact.resolved_velocity.z, right.collision.contact.resolved_angular_velocity.x,
+                        right.collision.contact.resolved_angular_velocity.y, right.collision.contact.resolved_angular_velocity.z,
+                        right.collision.contact.max_kinetic_energy_joules,
+                };
+                const char *fields[] = {
+                        "collision.resolved_velocity.x", "collision.resolved_velocity.y", "collision.resolved_velocity.z",
+                        "collision.resolved_angular_velocity.x", "collision.resolved_angular_velocity.y",
+                        "collision.resolved_angular_velocity.z", "collision.max_kinetic_energy_joules",
+                };
+                for (std::size_t index = 0; index < sizeof(left_values) / sizeof(left_values[0]); ++index) {
+                    if (left_values[index] != right_values[index]) {
+                        report(left.timestamp_us, left.vehicle_name, fields[index],
+                                divergence_number(left_values[index]), divergence_number(right_values[index]), tolerance);
+                        break;
+                    }
+                }
             }
             return result;
         } else if (left.type == ReplayEventType::SceneObject &&
@@ -2022,7 +2194,28 @@ ReplayDivergence compare_replay_sessions(
             } else if (left.object_asset_id != right.object_asset_id) {
                 report(left.timestamp_us, {}, "scene_object.asset_id", left.object_asset_id, right.object_asset_id, 0.0);
             } else {
-                report(left.timestamp_us, {}, "scene_object.transform", vec_json(left.object_position), vec_json(right.object_position), tolerance);
+                const double left_values[] = {
+                        left.object_position.x, left.object_position.y, left.object_position.z,
+                        left.object_orientation.x, left.object_orientation.y,
+                        left.object_orientation.z, left.object_orientation.w,
+                };
+                const double right_values[] = {
+                        right.object_position.x, right.object_position.y, right.object_position.z,
+                        right.object_orientation.x, right.object_orientation.y,
+                        right.object_orientation.z, right.object_orientation.w,
+                };
+                const char *fields[] = {
+                        "scene_object.position.x", "scene_object.position.y", "scene_object.position.z",
+                        "scene_object.orientation.x", "scene_object.orientation.y",
+                        "scene_object.orientation.z", "scene_object.orientation.w",
+                };
+                for (std::size_t index = 0; index < sizeof(left_values) / sizeof(left_values[0]); ++index) {
+                    if (left_values[index] != right_values[index]) {
+                        report(left.timestamp_us, {}, fields[index],
+                                divergence_number(left_values[index]), divergence_number(right_values[index]), tolerance);
+                        break;
+                    }
+                }
             }
             return result;
         } else if (left.type == ReplayEventType::Environment && left.environment_json != right.environment_json) {

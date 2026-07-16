@@ -153,6 +153,7 @@ struct ReplaySceneObjectState {
 struct ReplayRunCheckpoint {
     std::uint64_t timestamp_us = 0;
     DualAircraftState state;
+    std::array<ReplayCollision, 2> collisions;
     std::vector<ReplaySceneObjectState> scene_objects;
     std::string environment_json;
 };

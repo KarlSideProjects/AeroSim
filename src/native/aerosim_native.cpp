@@ -70,6 +70,43 @@ bool per_motor_model_value(const Dictionary &model, aerosim::PerMotorPhysicsConf
     return true;
 }
 
+bool simulation_config_manifest_value(
+        const Dictionary &manifest,
+        aerosim::SimulationConfig &config) {
+    static constexpr const char *required_scalars[] = {
+            "mass_kg", "gravity_mps2", "physics_hz", "substep_hz",
+            "max_total_thrust_newtons", "hover_throttle", "motor_tau_s",
+            "battery_nominal_voltage_v", "battery_cells", "battery_cell_resistance_ohm",
+            "battery_remaining_mah", "max_total_current_a", "max_motor_rpm",
+    };
+    for (const char *key : required_scalars) {
+        if (!manifest.has(key) || (manifest[key].get_type() != Variant::FLOAT &&
+                manifest[key].get_type() != Variant::INT)) {
+            return false;
+        }
+    }
+    config.mass_kg = static_cast<double>(manifest["mass_kg"]);
+    config.gravity_mps2 = static_cast<double>(manifest["gravity_mps2"]);
+    config.physics_hz = static_cast<std::int32_t>(manifest["physics_hz"]);
+    config.substep_hz = static_cast<std::int32_t>(manifest["substep_hz"]);
+    config.max_total_thrust_newtons = static_cast<double>(manifest["max_total_thrust_newtons"]);
+    config.hover_throttle = static_cast<double>(manifest["hover_throttle"]);
+    config.motor_tau_s = static_cast<double>(manifest["motor_tau_s"]);
+    config.battery_nominal_voltage_v = static_cast<double>(manifest["battery_nominal_voltage_v"]);
+    config.battery_cells = static_cast<double>(manifest["battery_cells"]);
+    config.battery_cell_resistance_ohm = static_cast<double>(manifest["battery_cell_resistance_ohm"]);
+    config.battery_remaining_mah = static_cast<double>(manifest["battery_remaining_mah"]);
+    config.max_total_current_a = static_cast<double>(manifest["max_total_current_a"]);
+    config.max_motor_rpm = static_cast<double>(manifest["max_motor_rpm"]);
+    const Variant per_motor_variant = manifest.get("per_motor", Variant());
+    if (per_motor_variant.get_type() != Variant::DICTIONARY ||
+            !per_motor_model_value(static_cast<Dictionary>(per_motor_variant), config.per_motor)) {
+        return false;
+    }
+    return std::isfinite(config.mass_kg) && config.mass_kg > 0.0 &&
+            std::isfinite(config.gravity_mps2) && config.physics_hz > 0 && config.substep_hz > 0;
+}
+
 String string_value(const Dictionary &dict, const char *key, const String &fallback) {
     return dict.has(key) ? static_cast<String>(dict[key]) : fallback;
 }
@@ -93,6 +130,24 @@ aerosim::WindConfig preset_config(const String &preset) {
 
 bool valid_wind_preset(const String &preset) {
     return preset == "calm" || preset == "light" || preset == "moderate" || preset == "severe";
+}
+
+bool replay_authority_value(std::int32_t value, aerosim::ReplayControllerAuthority &authority) {
+    if (value < 0 || value > 2) {
+        return false;
+    }
+    authority = static_cast<aerosim::ReplayControllerAuthority>(value);
+    return true;
+}
+
+Dictionary replay_status(bool ok, const aerosim::ReplayDiagnostic *diagnostic = nullptr) {
+    Dictionary result;
+    result["ok"] = ok;
+    if (diagnostic != nullptr) {
+        result["diagnostic_code"] = static_cast<std::int32_t>(diagnostic->code);
+        result["diagnostic_message"] = String(diagnostic->message.c_str());
+    }
+    return result;
 }
 
 void apply_wind(
@@ -148,8 +203,35 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
             &AeroSimNative::step_simulation);
     ClassDB::bind_method(
-            D_METHOD("replay_complete_session", "serialized", "expected_settings_manifest_hash", "expected_upper_config_manifest_hash", "expected_lower_config_manifest_hash"),
+            D_METHOD("replay_complete_session", "serialized", "expected_settings_manifest_hash", "expected_upper_config_manifest_hash", "expected_lower_config_manifest_hash", "upper_config_manifest", "lower_config_manifest"),
             &AeroSimNative::replay_complete_session);
+    ClassDB::bind_method(
+            D_METHOD("replay_vehicle_config_manifest"),
+            &AeroSimNative::replay_vehicle_config_manifest);
+    ClassDB::bind_method(
+            D_METHOD("begin_complete_replay_recording", "seed", "settings_manifest_hash", "upper_name", "upper_config_manifest_hash", "upper_config_json", "upper_controller_authority", "lower_name", "lower_config_manifest_hash", "lower_config_json", "lower_controller_authority"),
+            &AeroSimNative::begin_complete_replay_recording);
+    ClassDB::bind_method(
+            D_METHOD("record_replay_command", "timestamp_us", "vehicle_name", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "controller_authority"),
+            &AeroSimNative::record_replay_command);
+    ClassDB::bind_method(
+            D_METHOD("record_replay_simulation_operation", "timestamp_us", "operation", "value"),
+            &AeroSimNative::record_replay_simulation_operation);
+    ClassDB::bind_method(
+            D_METHOD("record_replay_collision", "timestamp_us", "vehicle_name", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules", "has_resolved_state", "controller_authority"),
+            &AeroSimNative::record_replay_collision);
+    ClassDB::bind_method(
+            D_METHOD("record_replay_scene_object", "timestamp_us", "operation", "object_name", "asset_id", "position", "orientation"),
+            &AeroSimNative::record_replay_scene_object);
+    ClassDB::bind_method(
+            D_METHOD("record_replay_environment", "timestamp_us", "environment_json"),
+            &AeroSimNative::record_replay_environment);
+    ClassDB::bind_method(
+            D_METHOD("record_replay_async_command", "timestamp_us", "vehicle_name", "command_id", "method", "lifecycle"),
+            &AeroSimNative::record_replay_async_command);
+    ClassDB::bind_method(
+            D_METHOD("finish_complete_replay_recording", "timestamp_us", "reason"),
+            &AeroSimNative::finish_complete_replay_recording);
     ClassDB::bind_method(
             D_METHOD("step_px4_actuator_mode", "physics_hz", "substep_hz", "motor_0", "motor_1", "motor_2", "motor_3"),
             &AeroSimNative::step_px4_actuator_mode);
@@ -417,7 +499,9 @@ Dictionary AeroSimNative::replay_complete_session(
         const String &serialized,
         const String &expected_settings_manifest_hash,
         const String &expected_upper_config_manifest_hash,
-        const String &expected_lower_config_manifest_hash) {
+        const String &expected_lower_config_manifest_hash,
+        const Dictionary &upper_config_manifest,
+        const Dictionary &lower_config_manifest) {
     Dictionary result;
     if (expected_settings_manifest_hash.is_empty() || expected_upper_config_manifest_hash.is_empty() ||
             expected_lower_config_manifest_hash.is_empty()) {
@@ -441,9 +525,24 @@ Dictionary AeroSimNative::replay_complete_session(
     config.a4_ground_effect = a4_ground_effect_config_;
     config.a5_downwash = a5_downwash_config_;
     config.external_force_world = external_force_world_;
+    aerosim::SimulationConfig upper_config = config;
+    aerosim::SimulationConfig lower_config = config;
+    if (!simulation_config_manifest_value(upper_config_manifest, upper_config) ||
+            !simulation_config_manifest_value(lower_config_manifest, lower_config)) {
+        const aerosim::ReplayDiagnostic diagnostic{
+                aerosim::ReplayDiagnosticCode::MissingVehicleConfig,
+                "replay vehicle config manifests are malformed"};
+        return replay_status(false, &diagnostic);
+    }
+    upper_config.a4_ground_effect = a4_ground_effect_config_;
+    upper_config.a5_downwash = a5_downwash_config_;
+    upper_config.external_force_world = external_force_world_;
+    lower_config.a4_ground_effect = a4_ground_effect_config_;
+    lower_config.a5_downwash = a5_downwash_config_;
+    lower_config.external_force_world = external_force_world_;
     const aerosim::ReplayRunResult run = aerosim::replay_session(
             loaded.session,
-            aerosim::DualAircraftConfig{config, config},
+            aerosim::DualAircraftConfig{upper_config, lower_config},
             std::string(expected_settings_manifest_hash.utf8().get_data()),
             {std::string(expected_upper_config_manifest_hash.utf8().get_data()),
              std::string(expected_lower_config_manifest_hash.utf8().get_data())});
@@ -457,6 +556,217 @@ Dictionary AeroSimNative::replay_complete_session(
         result["scene_object_count"] = static_cast<std::int64_t>(run.scene_objects.size());
         result["environment_json"] = String(run.environment_json.c_str());
     }
+    return result;
+}
+
+Dictionary AeroSimNative::replay_vehicle_config_manifest() const {
+    const aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    Dictionary result;
+    result["mass_kg"] = config.mass_kg;
+    result["gravity_mps2"] = config.gravity_mps2;
+    result["physics_hz"] = config.physics_hz;
+    result["substep_hz"] = config.substep_hz;
+    result["max_total_thrust_newtons"] = config.max_total_thrust_newtons;
+    result["hover_throttle"] = config.hover_throttle;
+    result["motor_tau_s"] = config.motor_tau_s;
+    result["battery_nominal_voltage_v"] = config.battery_nominal_voltage_v;
+    result["battery_cells"] = config.battery_cells;
+    result["battery_cell_resistance_ohm"] = config.battery_cell_resistance_ohm;
+    result["battery_remaining_mah"] = config.battery_remaining_mah;
+    result["max_total_current_a"] = config.max_total_current_a;
+    result["max_motor_rpm"] = config.max_motor_rpm;
+    Dictionary per_motor;
+    per_motor["inertia_frd"] = godot_vec3(config.per_motor.inertia_kg_m2);
+    Array positions;
+    Array spins;
+    for (std::size_t index = 0; index < 4; ++index) {
+        positions.push_back(godot_vec3(config.per_motor.position_frd[index]));
+        spins.push_back(config.per_motor.spin_direction[index]);
+    }
+    per_motor["position_frd"] = positions;
+    per_motor["spin_direction"] = spins;
+    per_motor["max_thrust_per_motor_newtons"] = config.per_motor.max_thrust_per_motor_newtons;
+    per_motor["max_current_per_motor_a"] = config.per_motor.max_current_per_motor_a;
+    per_motor["yaw_torque_per_newton"] = config.per_motor.yaw_torque_per_newton;
+    result["per_motor"] = per_motor;
+    return result;
+}
+
+Dictionary AeroSimNative::begin_complete_replay_recording(
+        std::int64_t seed,
+        const String &settings_manifest_hash,
+        const String &upper_name,
+        const String &upper_config_manifest_hash,
+        const String &upper_config_json,
+        std::int32_t upper_controller_authority,
+        const String &lower_name,
+        const String &lower_config_manifest_hash,
+        const String &lower_config_json,
+        std::int32_t lower_controller_authority) {
+    if (seed < 0 || settings_manifest_hash.is_empty() || upper_name.is_empty() || upper_config_manifest_hash.is_empty() ||
+            upper_config_json.is_empty() || lower_name.is_empty() || lower_config_manifest_hash.is_empty() ||
+            lower_config_json.is_empty()) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::MissingManifest, "replay recording requires settings and vehicle manifests"};
+        return replay_status(false, &diagnostic);
+    }
+    aerosim::ReplayControllerAuthority upper_authority;
+    aerosim::ReplayControllerAuthority lower_authority;
+    if (!replay_authority_value(upper_controller_authority, upper_authority) ||
+            !replay_authority_value(lower_controller_authority, lower_authority)) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording controller authority is invalid"};
+        return replay_status(false, &diagnostic);
+    }
+    auto recorder = std::make_unique<aerosim::ReplaySessionRecorder>(
+            static_cast<std::uint64_t>(seed), std::string(settings_manifest_hash.utf8().get_data()));
+    if (!recorder->add_vehicle(std::string(upper_name.utf8().get_data()),
+                std::string(upper_config_manifest_hash.utf8().get_data()),
+                std::string(upper_config_json.utf8().get_data()), upper_authority) ||
+            !recorder->add_vehicle(std::string(lower_name.utf8().get_data()),
+                std::string(lower_config_manifest_hash.utf8().get_data()),
+                std::string(lower_config_json.utf8().get_data()), lower_authority)) {
+        return replay_status(false, &recorder->diagnostic());
+    }
+    replay_recorder_ = std::move(recorder);
+    return replay_status(true);
+}
+
+Dictionary AeroSimNative::record_replay_command(
+        std::int64_t timestamp_us,
+        const String &vehicle_name,
+        double throttle,
+        double roll_degrees,
+        double pitch_degrees,
+        double yaw_rate_degrees_per_second,
+        std::int32_t controller_authority) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
+        return replay_status(false, &diagnostic);
+    }
+    aerosim::ReplayControllerAuthority authority;
+    if (!replay_authority_value(controller_authority, authority)) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay command authority is invalid"};
+        return replay_status(false, &diagnostic);
+    }
+    aerosim::FlightCommand command;
+    command.throttle = throttle;
+    command.roll_degrees = roll_degrees;
+    command.pitch_degrees = pitch_degrees;
+    command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
+    const bool ok = replay_recorder_->record_command(static_cast<std::uint64_t>(timestamp_us),
+            std::string(vehicle_name.utf8().get_data()), command, authority);
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::record_replay_simulation_operation(
+        std::int64_t timestamp_us, std::int32_t operation, double value) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0 || operation < 0 || operation > 5) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay simulation operation is invalid or recording is inactive"};
+        return replay_status(false, &diagnostic);
+    }
+    const bool ok = replay_recorder_->record_simulation_operation(
+            static_cast<std::uint64_t>(timestamp_us), static_cast<aerosim::ReplaySimulationOperation>(operation), value);
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::record_replay_collision(
+        std::int64_t timestamp_us,
+        const String &vehicle_name,
+        bool touching,
+        double normal_x,
+        double normal_y,
+        double normal_z,
+        double impulse_x,
+        double impulse_y,
+        double impulse_z,
+        double restitution,
+        double resolved_velocity_x,
+        double resolved_velocity_y,
+        double resolved_velocity_z,
+        double resolved_angular_velocity_x,
+        double resolved_angular_velocity_y,
+        double resolved_angular_velocity_z,
+        double max_kinetic_energy_joules,
+        bool has_resolved_state,
+        std::int32_t controller_authority) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
+        return replay_status(false, &diagnostic);
+    }
+    aerosim::ReplayControllerAuthority authority;
+    if (!replay_authority_value(controller_authority, authority)) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay collision authority is invalid"};
+        return replay_status(false, &diagnostic);
+    }
+    aerosim::CollisionContact contact;
+    contact.touching = touching;
+    contact.normal = {normal_x, normal_y, normal_z};
+    contact.impulse = {impulse_x, impulse_y, impulse_z};
+    contact.restitution = restitution;
+    contact.resolved_velocity = {resolved_velocity_x, resolved_velocity_y, resolved_velocity_z};
+    contact.resolved_angular_velocity = {resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z};
+    contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
+    contact.has_resolved_state = has_resolved_state;
+    const bool ok = replay_recorder_->record_collision(static_cast<std::uint64_t>(timestamp_us),
+            std::string(vehicle_name.utf8().get_data()), contact, authority);
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::record_replay_scene_object(
+        std::int64_t timestamp_us,
+        std::int32_t operation,
+        const String &object_name,
+        const String &asset_id,
+        const Vector3 &position,
+        const Quaternion &orientation) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0 || operation < 0 || operation > 3) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay scene operation is invalid or recording is inactive"};
+        return replay_status(false, &diagnostic);
+    }
+    const bool ok = replay_recorder_->record_scene_object(static_cast<std::uint64_t>(timestamp_us),
+            static_cast<aerosim::ReplaySceneObjectOperation>(operation), std::string(object_name.utf8().get_data()),
+            std::string(asset_id.utf8().get_data()), {position.x, position.y, position.z},
+            {orientation.x, orientation.y, orientation.z, orientation.w});
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::record_replay_environment(
+        std::int64_t timestamp_us, const String &environment_json) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
+        return replay_status(false, &diagnostic);
+    }
+    const bool ok = replay_recorder_->record_environment(static_cast<std::uint64_t>(timestamp_us),
+            std::string(environment_json.utf8().get_data()));
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::record_replay_async_command(
+        std::int64_t timestamp_us,
+        const String &vehicle_name,
+        const String &command_id,
+        const String &method,
+        std::int32_t lifecycle) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0 || lifecycle < 0 || lifecycle > 4) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay async lifecycle is invalid or recording is inactive"};
+        return replay_status(false, &diagnostic);
+    }
+    const bool ok = replay_recorder_->record_async_command(static_cast<std::uint64_t>(timestamp_us),
+            std::string(vehicle_name.utf8().get_data()), std::string(command_id.utf8().get_data()),
+            std::string(method.utf8().get_data()), static_cast<aerosim::ReplayAsyncLifecycle>(lifecycle));
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::finish_complete_replay_recording(
+        std::int64_t timestamp_us, const String &reason) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
+        return replay_status(false, &diagnostic);
+    }
+    if (!replay_recorder_->finish(static_cast<std::uint64_t>(timestamp_us), std::string(reason.utf8().get_data()))) {
+        return replay_status(false, &replay_recorder_->diagnostic());
+    }
+    Dictionary result = replay_status(true);
+    result["serialized"] = String(replay_recorder_->serialize().c_str());
     return result;
 }
 

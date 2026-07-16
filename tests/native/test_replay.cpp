@@ -252,6 +252,48 @@ bool test_complete_session_schema() {
     if (aerosim::compare_replay_runs(first_run, second_run).diverged) {
         return false;
     }
+    aerosim::ReplaySession mismatched_config = recorder.session();
+    mismatched_config.vehicles[1].config_json = "{\"mass_kg\":1.0,\"gravity_mps2\":1.0}";
+    const aerosim::ReplayRunResult config_mismatch = aerosim::replay_session(
+            mismatched_config, config, "settings-manifest-v1", config_hashes);
+    if (config_mismatch.ok || config_mismatch.diagnostic.code != aerosim::ReplayDiagnosticCode::IncompatibleManifest) {
+        return false;
+    }
+    aerosim::ReplaySession collision_mismatch = recorder.session();
+    collision_mismatch.events[10].collision.contact.restitution = 0.25;
+    const aerosim::ReplayDivergence collision_divergence = aerosim::compare_replay_sessions(
+            recorder.session(), collision_mismatch);
+    if (!collision_divergence.diverged || collision_divergence.timestamp_us != 5000 ||
+            collision_divergence.vehicle_name != "DroneB" || collision_divergence.field != "collision.restitution" ||
+            collision_divergence.expected != "0" || collision_divergence.actual != "0.25") {
+        return false;
+    }
+    aerosim::ReplaySession scene_mismatch = recorder.session();
+    scene_mismatch.events[11].object_orientation.w = 0.5;
+    const aerosim::ReplayDivergence scene_divergence = aerosim::compare_replay_sessions(
+            recorder.session(), scene_mismatch);
+    if (!scene_divergence.diverged || scene_divergence.timestamp_us != 6000 ||
+            scene_divergence.field != "scene_object.orientation.w") {
+        return false;
+    }
+    bool found_collision_checkpoint = false;
+    aerosim::ReplayRunResult checkpoint_mismatch = second_run;
+    for (aerosim::ReplayRunCheckpoint &checkpoint : checkpoint_mismatch.checkpoints) {
+        if (checkpoint.collisions[1].contact.touching) {
+            checkpoint.collisions[1].contact.restitution += 0.25;
+            found_collision_checkpoint = true;
+            break;
+        }
+    }
+    if (!found_collision_checkpoint) {
+        return false;
+    }
+    const aerosim::ReplayDivergence checkpoint_divergence = aerosim::compare_replay_runs(
+            first_run, checkpoint_mismatch);
+    if (!checkpoint_divergence.diverged || checkpoint_divergence.vehicle_name != "DroneB" ||
+            checkpoint_divergence.field != "collision.restitution") {
+        return false;
+    }
     aerosim::ReplayRunResult divergent_run = second_run;
     divergent_run.final_state.upper.position.x += 0.25;
     const aerosim::ReplayDivergence run_divergence = aerosim::compare_replay_runs(first_run, divergent_run, 0.01);

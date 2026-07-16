@@ -38,6 +38,8 @@ var _sensor_handler: Callable
 var _camera_handler: Callable
 var _scene_object_handler: Callable
 var _environment_handler: Callable
+var _replay_simulation_handler: Callable
+var _replay_async_handler: Callable
 
 
 func set_session(owner_session: AirSimSession, owner_reset_handler: Callable = Callable()) -> void:
@@ -73,6 +75,11 @@ func set_camera_backend(camera_handler: Callable) -> void:
 func set_scene_environment_backend(scene_object_handler: Callable, environment_handler: Callable) -> void:
     _scene_object_handler = scene_object_handler
     _environment_handler = environment_handler
+
+
+func set_replay_handlers(simulation_handler: Callable, async_handler: Callable) -> void:
+    _replay_simulation_handler = simulation_handler
+    _replay_async_handler = async_handler
 
 
 func validate_bind_address(address: String) -> Dictionary:
@@ -249,6 +256,8 @@ func _queue_async_response(client: StreamPeerTCP, message_id, method: String, pa
     var pending := {
         "client": client,
         "message_id": message_id,
+        "command_id": "%s" % message_id,
+        "method": method,
         "vehicle_name": vehicle_name,
         "complete_frame": session.frame_index + _async_command_frames(method, params),
         "timeout_frame": session.frame_index + _async_timeout_frames(method, params),
@@ -256,6 +265,9 @@ func _queue_async_response(client: StreamPeerTCP, message_id, method: String, pa
     }
     _pending_async_responses.append(pending)
     _active_async_by_vehicle[vehicle_name] = pending
+    if _replay_async_handler.is_valid():
+        _replay_async_handler.call(session.simulation_time_seconds, vehicle_name, "%s" % message_id, method, 0)
+        _replay_async_handler.call(session.simulation_time_seconds, vehicle_name, "%s" % message_id, method, 1)
 
 
 func _cancel_pending_task(pending: Dictionary, reason: String, notify_backend: bool = true) -> void:
@@ -264,6 +276,9 @@ func _cancel_pending_task(pending: Dictionary, reason: String, notify_backend: b
         _active_async_by_vehicle.erase(String(pending["vehicle_name"]))
     if notify_backend and _cancel_handler.is_valid():
         _cancel_handler.call(String(pending["vehicle_name"]))
+    if _replay_async_handler.is_valid():
+        _replay_async_handler.call(session.simulation_time_seconds, String(pending["vehicle_name"]),
+            "%s" % pending.get("command_id", pending["message_id"]), String(pending.get("method", "")), 3)
     _cancelled_async_responses.append({
         "client": pending["client"],
         "message_id": pending["message_id"],
@@ -302,6 +317,9 @@ func _flush_pending_async_responses() -> void:
             _pending_async_responses.erase(pending)
             if _cancel_handler.is_valid():
                 _cancel_handler.call(String(pending["vehicle_name"]))
+            if _replay_async_handler.is_valid():
+                _replay_async_handler.call(session.simulation_time_seconds, String(pending["vehicle_name"]),
+                    "%s" % pending.get("command_id", pending["message_id"]), String(pending.get("method", "")), 4)
             var timeout_client: StreamPeerTCP = pending["client"]
             if not _clients.has(timeout_client):
                 continue
@@ -314,6 +332,9 @@ func _flush_pending_async_responses() -> void:
         if _active_async_by_vehicle.get(String(pending["vehicle_name"])) == pending:
             _active_async_by_vehicle.erase(String(pending["vehicle_name"]))
         var client: StreamPeerTCP = pending["client"]
+        if _replay_async_handler.is_valid():
+            _replay_async_handler.call(session.simulation_time_seconds, String(pending["vehicle_name"]),
+                "%s" % pending.get("command_id", pending["message_id"]), String(pending.get("method", "")), 2)
         if not _clients.has(client):
             continue
         if not _send_response(client, _success_response(pending["message_id"], pending["result"])):
@@ -385,6 +406,8 @@ func dispatch(request: Array) -> Array:
             if params.size() != 1 or typeof(params[0]) != TYPE_BOOL:
                 return _error_response(message_id, "simPause expects one boolean parameter")
             session.set_paused(params[0])
+            if _replay_simulation_handler.is_valid():
+                _replay_simulation_handler.call(0 if params[0] else 1, 0.0)
             return _success_response(message_id, null)
         "simIsPaused":
             if not params.is_empty():
@@ -393,15 +416,23 @@ func dispatch(request: Array) -> Array:
         "simContinueForFrames":
             if params.size() != 1 or typeof(params[0]) != TYPE_INT:
                 return _error_response(message_id, "simContinueForFrames expects one integer parameter")
-            return _session_response(message_id, session.continue_for_frames(params[0]))
+            var frame_result := session.continue_for_frames(params[0])
+            if bool(frame_result.get("ok", false)) and _replay_simulation_handler.is_valid():
+                _replay_simulation_handler.call(2, float(params[0]))
+            return _session_response(message_id, frame_result)
         "simContinueForTime":
             if params.size() != 1 or (typeof(params[0]) != TYPE_FLOAT and typeof(params[0]) != TYPE_INT):
                 return _error_response(message_id, "simContinueForTime expects one numeric parameter")
-            return _session_response(message_id, session.continue_for_time(float(params[0])))
+            var time_result := session.continue_for_time(float(params[0]))
+            if bool(time_result.get("ok", false)) and _replay_simulation_handler.is_valid():
+                _replay_simulation_handler.call(3, float(params[0]))
+            return _session_response(message_id, time_result)
         "reset":
             if not params.is_empty():
                 return _error_response(message_id, "reset expects no parameters")
             session.reset()
+            if _replay_simulation_handler.is_valid():
+                _replay_simulation_handler.call(4, 0.0)
             if reset_handler.is_valid():
                 reset_handler.call()
             reset_vehicle_control_state()

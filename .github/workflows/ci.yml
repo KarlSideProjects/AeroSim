@@ -176,6 +176,9 @@ jobs:
       - name: GUT GDScript unit tests
         run: scripts/run_gut_tests.sh
 
+      - name: Complete-session replay integration
+        run: scripts/test_replay_integration.sh
+
       - name: AirSim pinned client RPC integration
         run: scripts/test_airsim_rpc_client.sh
 
@@ -253,6 +256,12 @@ jobs:
 
       - name: Export Linux release artifact
         run: scripts/export_linux_release.sh
+
+      - name: Installed-package replay integration
+        env:
+          AEROSIM_EXPORTED: true
+          GODOT_BIN: build/release/AeroSim-linux/AeroSim.x86_64
+        run: scripts/test_replay_integration.sh
 
       - name: Store Linux release artifact locally
         run: |
