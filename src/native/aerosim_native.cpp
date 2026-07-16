@@ -418,6 +418,12 @@ Dictionary AeroSimNative::replay_complete_session(
         const String &serialized,
         const String &expected_settings_manifest_hash) {
     Dictionary result;
+    if (expected_settings_manifest_hash.is_empty()) {
+        result["ok"] = false;
+        result["diagnostic_code"] = static_cast<std::int32_t>(aerosim::ReplayDiagnosticCode::MissingManifest);
+        result["diagnostic_message"] = "expected settings manifest hash is required";
+        return result;
+    }
     const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(
             std::string(serialized.utf8().get_data()),
             std::string(expected_settings_manifest_hash.utf8().get_data()));
@@ -443,6 +449,8 @@ Dictionary AeroSimNative::replay_complete_session(
         result["upper_position"] = godot_vec3(run.final_state.upper.position);
         result["lower_position"] = godot_vec3(run.final_state.lower.position);
         result["total_substeps"] = static_cast<std::int64_t>(run.final_clock.total_substeps);
+        result["scene_object_count"] = static_cast<std::int64_t>(run.scene_objects.size());
+        result["environment_json"] = String(run.environment_json.c_str());
     }
     return result;
 }

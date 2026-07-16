@@ -83,7 +83,7 @@ struct ReplayEvent {
     std::string command_method;
     ReplayAsyncLifecycle command_lifecycle = ReplayAsyncLifecycle::Submitted;
     ReplaySimulationOperation simulation_operation = ReplaySimulationOperation::Pause;
-    std::int64_t simulation_value = 0;
+    double simulation_value = 0.0;
     ReplayCollision collision;
     ReplaySceneObjectOperation object_operation = ReplaySceneObjectOperation::Spawn;
     std::string object_name;
@@ -143,6 +143,13 @@ struct ReplayDivergence {
     double tolerance = 0.0;
 };
 
+struct ReplaySceneObjectState {
+    std::string name;
+    std::string asset_id;
+    Vec3 position;
+    Quat orientation;
+};
+
 class ReplayRecorder {
 private:
     RecordedInputSequence sequence_;
@@ -188,7 +195,7 @@ public:
     bool record_simulation_operation(
             std::uint64_t timestamp_us,
             ReplaySimulationOperation operation,
-            std::int64_t value = 0);
+            double value = 0.0);
     bool record_collision(
             std::uint64_t timestamp_us,
             const std::string &vehicle_name,
@@ -223,11 +230,19 @@ struct ReplayRunResult {
     ReplayDiagnostic diagnostic;
     DualAircraftState final_state;
     SimulationClock final_clock;
+    std::uint64_t final_timestamp_us = 0;
+    std::vector<ReplaySceneObjectState> scene_objects;
+    std::string environment_json;
 };
 
 ReplayRunResult replay_session(
         const ReplaySession &session,
         const DualAircraftConfig &config);
+
+ReplayDivergence compare_replay_runs(
+        const ReplayRunResult &expected,
+        const ReplayRunResult &actual,
+        double numeric_tolerance = 0.0);
 
 std::vector<TrajectorySample> replay_angle_mode(
         const SimulationConfig &config,

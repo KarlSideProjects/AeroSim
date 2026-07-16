@@ -137,8 +137,8 @@ aerosim::SimulationConfig replay_test_config() {
 
 bool test_complete_session_schema() {
     aerosim::ReplaySessionRecorder recorder(42, "settings-manifest-v1");
-    if (!recorder.add_vehicle("DroneA", "drone-a-hash", "{\"mass_kg\":0.72}") ||
-            !recorder.add_vehicle("DroneB", "drone-b-hash", "{\"mass_kg\":0.73}")) {
+    if (!recorder.add_vehicle("DroneA", "drone-a-hash", "{\"mass_kg\":1.0}") ||
+            !recorder.add_vehicle("DroneB", "drone-b-hash", "{\"mass_kg\":1.0}")) {
         return false;
     }
 
@@ -149,7 +149,7 @@ bool test_complete_session_schema() {
             !recorder.record_async_command(1000, "DroneA", "task-a", "moveByVelocity", aerosim::ReplayAsyncLifecycle::Accepted) ||
             !recorder.record_async_command(1000, "DroneB", "task-a", "hover", aerosim::ReplayAsyncLifecycle::Accepted) ||
             !recorder.record_command(1000, "DroneA", command, aerosim::ReplayControllerAuthority::FlightCore) ||
-            !recorder.record_command(1000, "DroneB", command, aerosim::ReplayControllerAuthority::Px4External) ||
+            !recorder.record_command(1000, "DroneB", command, aerosim::ReplayControllerAuthority::FlightCore) ||
             !recorder.record_simulation_operation(2000, aerosim::ReplaySimulationOperation::Pause) ||
             !recorder.record_simulation_operation(3000, aerosim::ReplaySimulationOperation::StepFrames, 2) ||
             !recorder.record_async_command(4000, "DroneA", "task-a", "moveByVelocity", aerosim::ReplayAsyncLifecycle::Completed) ||
@@ -242,6 +242,16 @@ bool test_complete_session_schema() {
     if (!first_run.ok || !second_run.ok || first_run.final_clock.total_substeps != second_run.final_clock.total_substeps ||
             first_run.final_state.upper.position.x != second_run.final_state.upper.position.x ||
             first_run.final_state.lower.position.y != second_run.final_state.lower.position.y) {
+        return false;
+    }
+    if (aerosim::compare_replay_runs(first_run, second_run).diverged) {
+        return false;
+    }
+    aerosim::ReplayRunResult divergent_run = second_run;
+    divergent_run.final_state.upper.position.x += 0.25;
+    const aerosim::ReplayDivergence run_divergence = aerosim::compare_replay_runs(first_run, divergent_run, 0.01);
+    if (!run_divergence.diverged || run_divergence.field != "upper.position.x" ||
+            run_divergence.expected == run_divergence.actual || run_divergence.tolerance != 0.01) {
         return false;
     }
     return true;

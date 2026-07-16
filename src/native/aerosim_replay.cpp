@@ -781,6 +781,10 @@ ReplayDiagnostic invalid(ReplayDiagnosticCode code, const std::string &message) 
     return {code, message};
 }
 
+ReplayRunResult failed_run(const ReplayDiagnostic &diagnostic) {
+    return {false, diagnostic, {}, {}, 0, {}, {}};
+}
+
 ReplayDiagnostic validate_session(const ReplaySession &session, bool require_termination) {
     if (session.schema_version != kCompleteReplaySchemaVersion) {
         return invalid(ReplayDiagnosticCode::UnsupportedSchema, "unsupported replay schema version");
@@ -828,6 +832,17 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
         }
         if (event.type == ReplayEventType::Command && !finite_command(event.command)) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
+        }
+        if (event.type == ReplayEventType::AsyncCommand && (event.command_id.empty() || event.command_method.empty())) {
+            return invalid(ReplayDiagnosticCode::InvalidLifecycle, "async replay command id and method are required");
+        }
+        if (event.type == ReplayEventType::SimulationTime &&
+                ((!std::isfinite(event.simulation_value)) ||
+                 (event.simulation_operation == ReplaySimulationOperation::StepFrames &&
+                        (event.simulation_value < 0.0 || std::floor(event.simulation_value) != event.simulation_value || event.simulation_value > 1000000.0)) ||
+                 (event.simulation_operation == ReplaySimulationOperation::StepSeconds &&
+                        (event.simulation_value < 0.0 || event.simulation_value > 1000000.0)))) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "invalid replay simulation step value");
         }
     }
     std::unordered_map<std::string, ReplayAsyncLifecycle> lifecycle;
@@ -893,7 +908,7 @@ std::string event_json(const ReplayEvent &event) {
         break;
     case ReplayEventType::SimulationTime:
         result += ",\"operation\":\"" + std::string(simulation_operation_name(event.simulation_operation)) +
-                "\",\"value\":" + std::to_string(event.simulation_value);
+                "\",\"value\":" + compact_number(event.simulation_value);
         break;
     case ReplayEventType::Collision:
         result += ",\"authority\":\"" + std::string(authority_name(event.collision.authority)) +
@@ -965,7 +980,7 @@ bool parse_event(const JsonValue &value, ReplayEvent &event) {
         const JsonValue *simulation_value = field(value, "value");
         return operation_value != nullptr && simulation_value != nullptr && string_value(*operation_value, operation) &&
                 parse_simulation_operation(operation, event.simulation_operation) &&
-                signed_integer_value(*simulation_value, event.simulation_value);
+                number_value(*simulation_value, event.simulation_value);
     }
     case ReplayEventType::Collision: {
         std::string authority;
@@ -1144,11 +1159,13 @@ bool ReplaySessionRecorder::record_async_command(
 bool ReplaySessionRecorder::record_simulation_operation(
         std::uint64_t timestamp_us,
         ReplaySimulationOperation operation,
-        std::int64_t value) {
+        double value) {
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
     }
-    if ((operation == ReplaySimulationOperation::StepFrames || operation == ReplaySimulationOperation::StepSeconds) && value < 0) {
+    if (!std::isfinite(value) || (operation == ReplaySimulationOperation::StepFrames &&
+            (value < 0.0 || std::floor(value) != value || value > 1000000.0)) ||
+            (operation == ReplaySimulationOperation::StepSeconds && (value < 0.0 || value > 1000000.0))) {
         return fail(ReplayDiagnosticCode::InvalidSession, "simulation step value must not be negative");
     }
     ReplayEvent event;
@@ -1320,8 +1337,10 @@ ReplayLoadResult load_replay_session(
     const JsonValue *vehicles = field(root, "vehicles");
     const JsonValue *events = field(root, "events");
     const JsonValue *termination = field(root, "termination");
-    double schema_number = 0.0;
-    if (schema == nullptr || !number_value(*schema, schema_number) || std::floor(schema_number) != schema_number) {
+    std::int64_t schema_number = 0;
+    if (schema == nullptr || !signed_integer_value(*schema, schema_number) ||
+            schema_number < std::numeric_limits<std::int32_t>::min() ||
+            schema_number > std::numeric_limits<std::int32_t>::max()) {
         return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "replay schema_version is required")};
     }
     session.schema_version = static_cast<std::int32_t>(schema_number);
@@ -1421,7 +1440,7 @@ ReplayRunResult replay_session(
         const DualAircraftConfig &config) {
     const ReplayDiagnostic validation = validate_session(session, true);
     if (!validation.ok()) {
-        return {false, validation, {}, {}};
+        return failed_run(validation);
     }
     if (config.upper.physics_hz <= 0 || config.upper.substep_hz <= 0 ||
             config.lower.physics_hz != config.upper.physics_hz ||
@@ -1429,7 +1448,20 @@ ReplayRunResult replay_session(
             config.upper.mass_kg <= 0.0 || config.lower.mass_kg <= 0.0 ||
             !validate_per_motor_config(config.upper.per_motor) ||
             !validate_per_motor_config(config.lower.per_motor)) {
-        return {false, invalid(ReplayDiagnosticCode::InvalidSession, "replay runtime configuration is invalid"), {}, {}};
+        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay runtime configuration is invalid"));
+    }
+    const SimulationConfig runtime_configs[] = {config.upper, config.lower};
+    for (std::size_t index = 0; index < 2; ++index) {
+        JsonValue parsed;
+        JsonParser parser(session.vehicles[index].config_json);
+        if (!parser.parse(parsed) || parsed.type != JsonValue::Type::Object) {
+            return failed_run(invalid(ReplayDiagnosticCode::MissingVehicleConfig, "vehicle config is not a JSON object"));
+        }
+        const JsonValue *mass = field(parsed, "mass_kg");
+        double recorded_mass = 0.0;
+        if (mass != nullptr && (!number_value(*mass, recorded_mass) || recorded_mass != runtime_configs[index].mass_kg)) {
+            return failed_run(invalid(ReplayDiagnosticCode::IncompatibleManifest, "vehicle mass does not match replay runtime configuration"));
+        }
     }
 
     DualAircraftState state{config.upper.initial_state, config.lower.initial_state};
@@ -1439,15 +1471,29 @@ ReplayRunResult replay_session(
     controllers[1].arm(0.0);
     CollisionAuthoritySwitch collision_switches[2];
     FlightCommand commands[2];
+    CollisionContact pending_collisions[2];
+    bool has_pending_collision[2] = {false, false};
     bool paused = false;
     double frame_remainder = 0.0;
+    std::vector<ReplaySceneObjectState> scene_objects;
+    std::string environment_json;
     std::uint64_t previous_timestamp_us = 0;
     const auto vehicle_index = [&](const std::string &name) {
         return name == session.vehicles[0].name ? 0 : name == session.vehicles[1].name ? 1 : -1;
     };
     const auto step_frame = [&]() {
-        controllers[0].step_angle_mode(state.upper, clocks[0], config.upper, commands[0]);
-        controllers[1].step_angle_mode(state.lower, clocks[1], config.lower, commands[1]);
+        if (has_pending_collision[0]) {
+            collision_switches[0].step(state.upper, clocks[0], controllers[0], config.upper, commands[0], pending_collisions[0]);
+            has_pending_collision[0] = false;
+        } else {
+            controllers[0].step_angle_mode(state.upper, clocks[0], config.upper, commands[0]);
+        }
+        if (has_pending_collision[1]) {
+            collision_switches[1].step(state.lower, clocks[1], controllers[1], config.lower, commands[1], pending_collisions[1]);
+            has_pending_collision[1] = false;
+        } else {
+            controllers[1].step_angle_mode(state.lower, clocks[1], config.lower, commands[1]);
+        }
     };
     const auto step_frames = [&](std::int64_t count) {
         for (std::int64_t frame = 0; frame < count; ++frame) {
@@ -1471,25 +1517,47 @@ ReplayRunResult replay_session(
         case ReplayEventType::Command: {
             const int index = vehicle_index(event.vehicle_name);
             if (index < 0) {
-                return {false, invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name), {}, {}};
+                return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
+            }
+            if (event.controller_authority != ReplayControllerAuthority::FlightCore) {
+                return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority requires actuator-level command data"));
             }
             commands[index] = event.command;
             break;
         }
         case ReplayEventType::AsyncCommand:
-        case ReplayEventType::SceneObject:
+            break;
+        case ReplayEventType::SceneObject: {
+            if (event.object_operation == ReplaySceneObjectOperation::Reset) {
+                scene_objects.clear();
+                break;
+            }
+            const auto existing = std::find_if(scene_objects.begin(), scene_objects.end(), [&](const ReplaySceneObjectState &object) {
+                return object.name == event.object_name;
+            });
+            if (event.object_operation == ReplaySceneObjectOperation::Destroy) {
+                if (existing != scene_objects.end()) {
+                    scene_objects.erase(existing);
+                }
+            } else if (existing == scene_objects.end()) {
+                scene_objects.push_back({event.object_name, event.object_asset_id, event.object_position, event.object_orientation});
+            } else {
+                existing->asset_id = event.object_asset_id;
+                existing->position = event.object_position;
+                existing->orientation = event.object_orientation;
+            }
+            break;
+        }
         case ReplayEventType::Environment:
+            environment_json = event.environment_json;
             break;
         case ReplayEventType::Collision: {
             const int index = vehicle_index(event.vehicle_name);
             if (index < 0) {
-                return {false, invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name), {}, {}};
+                return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
             }
-            if (index == 0) {
-                collision_switches[index].step(state.upper, clocks[index], controllers[index], config.upper, commands[index], event.collision.contact);
-            } else {
-                collision_switches[index].step(state.lower, clocks[index], controllers[index], config.lower, commands[index], event.collision.contact);
-            }
+            pending_collisions[index] = event.collision.contact;
+            has_pending_collision[index] = true;
             break;
         }
         case ReplayEventType::SimulationTime:
@@ -1501,10 +1569,10 @@ ReplayRunResult replay_session(
                 paused = false;
                 break;
             case ReplaySimulationOperation::StepFrames:
-                step_frames(event.simulation_value);
+                step_frames(static_cast<std::int64_t>(event.simulation_value));
                 break;
             case ReplaySimulationOperation::StepSeconds:
-                advance_us(static_cast<std::uint64_t>(event.simulation_value) * 1000000ULL);
+                advance_us(static_cast<std::uint64_t>(event.simulation_value * 1000000.0));
                 break;
             case ReplaySimulationOperation::Reset:
                 state = {};
@@ -1512,6 +1580,10 @@ ReplayRunResult replay_session(
                 clocks[1] = {};
                 commands[0] = {};
                 commands[1] = {};
+                has_pending_collision[0] = false;
+                has_pending_collision[1] = false;
+                scene_objects.clear();
+                environment_json.clear();
                 controllers[0].reset_flight(state.upper, clocks[0]);
                 controllers[1].reset_flight(state.lower, clocks[1]);
                 frame_remainder = 0.0;
@@ -1522,6 +1594,10 @@ ReplayRunResult replay_session(
                 clocks[1] = {};
                 commands[0] = {};
                 commands[1] = {};
+                has_pending_collision[0] = false;
+                has_pending_collision[1] = false;
+                scene_objects.clear();
+                environment_json.clear();
                 controllers[0].reset_flight(state.upper, clocks[0]);
                 controllers[1].reset_flight(state.lower, clocks[1]);
                 frame_remainder = 0.0;
@@ -1530,7 +1606,71 @@ ReplayRunResult replay_session(
             break;
         }
     }
-    return {true, {}, state, clocks[0]};
+    if (!paused && session.termination_timestamp_us >= previous_timestamp_us) {
+        advance_us(session.termination_timestamp_us - previous_timestamp_us);
+    }
+    return {true, {}, state, clocks[0], session.termination_timestamp_us, std::move(scene_objects), std::move(environment_json)};
+}
+
+ReplayDivergence compare_replay_runs(
+        const ReplayRunResult &expected,
+        const ReplayRunResult &actual,
+        double numeric_tolerance) {
+    const double tolerance = std::max(0.0, numeric_tolerance);
+    ReplayDivergence result;
+    const auto report = [&](const std::string &field, double expected_value, double actual_value) {
+        result.diverged = true;
+        result.timestamp_us = std::min(expected.final_timestamp_us, actual.final_timestamp_us);
+        result.field = field;
+        result.expected = divergence_number(expected_value);
+        result.actual = divergence_number(actual_value);
+        result.tolerance = tolerance;
+    };
+    if (!expected.ok || !actual.ok) {
+        result.diverged = true;
+        result.field = "run.diagnostic";
+        result.expected = expected.diagnostic.message;
+        result.actual = actual.diagnostic.message;
+        return result;
+    }
+    const double *expected_values[] = {
+            &expected.final_state.upper.position.x, &expected.final_state.upper.position.y, &expected.final_state.upper.position.z,
+            &expected.final_state.lower.position.x, &expected.final_state.lower.position.y, &expected.final_state.lower.position.z,
+            &expected.final_state.upper.velocity.x, &expected.final_state.upper.velocity.y, &expected.final_state.upper.velocity.z,
+            &expected.final_state.lower.velocity.x, &expected.final_state.lower.velocity.y, &expected.final_state.lower.velocity.z,
+    };
+    const double *actual_values[] = {
+            &actual.final_state.upper.position.x, &actual.final_state.upper.position.y, &actual.final_state.upper.position.z,
+            &actual.final_state.lower.position.x, &actual.final_state.lower.position.y, &actual.final_state.lower.position.z,
+            &actual.final_state.upper.velocity.x, &actual.final_state.upper.velocity.y, &actual.final_state.upper.velocity.z,
+            &actual.final_state.lower.velocity.x, &actual.final_state.lower.velocity.y, &actual.final_state.lower.velocity.z,
+    };
+    const char *fields[] = {
+            "upper.position.x", "upper.position.y", "upper.position.z",
+            "lower.position.x", "lower.position.y", "lower.position.z",
+            "upper.velocity.x", "upper.velocity.y", "upper.velocity.z",
+            "lower.velocity.x", "lower.velocity.y", "lower.velocity.z",
+    };
+    for (std::size_t index = 0; index < sizeof(expected_values) / sizeof(expected_values[0]); ++index) {
+        if (!same_or_close(*expected_values[index], *actual_values[index], tolerance)) {
+            report(fields[index], *expected_values[index], *actual_values[index]);
+            return result;
+        }
+    }
+    if (expected.scene_objects.size() != actual.scene_objects.size()) {
+        result.diverged = true;
+        result.field = "scene_objects.count";
+        result.expected = std::to_string(expected.scene_objects.size());
+        result.actual = std::to_string(actual.scene_objects.size());
+        return result;
+    }
+    if (expected.environment_json != actual.environment_json) {
+        result.diverged = true;
+        result.field = "environment";
+        result.expected = expected.environment_json;
+        result.actual = actual.environment_json;
+    }
+    return result;
 }
 
 ReplayDivergence compare_replay_sessions(
@@ -1641,7 +1781,7 @@ ReplayDivergence compare_replay_sessions(
                 return result;
             }
             if (left.simulation_value != right.simulation_value) {
-                report(left.timestamp_us, {}, "simulation.value", std::to_string(left.simulation_value), std::to_string(right.simulation_value), 0.0);
+                report(left.timestamp_us, {}, "simulation.value", divergence_number(left.simulation_value), divergence_number(right.simulation_value), 0.0);
                 return result;
             }
         } else if (left.type == ReplayEventType::Collision &&
