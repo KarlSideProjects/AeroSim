@@ -95,6 +95,7 @@ public:
             const godot::String &actual_serialized,
             const godot::String &expected_settings_manifest_hash);
     godot::Dictionary replay_vehicle_config_manifest() const;
+    godot::String replay_manifest_hash(const godot::String &config_json) const;
     godot::Dictionary begin_complete_replay_recording(
             std::int64_t seed,
             const godot::String &settings_manifest_hash,

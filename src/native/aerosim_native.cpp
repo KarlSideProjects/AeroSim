@@ -3,6 +3,7 @@
 #include "aerosim_aerodynamics.hpp"
 #include "aerosim_probe.hpp"
 #include <cmath>
+#include <godot_cpp/classes/hashing_context.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
@@ -68,6 +69,15 @@ bool per_motor_model_value(const Dictionary &model, aerosim::PerMotorPhysicsConf
     per_motor.max_current_per_motor_a = static_cast<double>(model["max_current_per_motor_a"]);
     per_motor.yaw_torque_per_newton = static_cast<double>(model["yaw_torque_per_newton"]);
     return true;
+}
+
+String sha256_string(const String &value) {
+    Ref<HashingContext> hashing = memnew(HashingContext);
+    if (hashing->start(HashingContext::HASH_SHA256) != OK) {
+        return {};
+    }
+    hashing->update(value.to_utf8_buffer());
+    return hashing->finish().hex_encode();
 }
 
 bool simulation_config_manifest_value(
@@ -237,6 +247,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("replay_vehicle_config_manifest"),
             &AeroSimNative::replay_vehicle_config_manifest);
+    ClassDB::bind_method(
+            D_METHOD("replay_manifest_hash", "config_json"),
+            &AeroSimNative::replay_manifest_hash);
     ClassDB::bind_method(
             D_METHOD("begin_complete_replay_recording", "seed", "settings_manifest_hash", "upper_name", "upper_config_manifest_hash", "upper_config_json", "upper_controller_authority", "lower_name", "lower_config_manifest_hash", "lower_config_json", "lower_controller_authority"),
             &AeroSimNative::begin_complete_replay_recording);
@@ -557,6 +570,14 @@ Dictionary AeroSimNative::replay_complete_session(
     if (!loaded.ok) {
         return result;
     }
+    for (const auto &vehicle : loaded.session.vehicles) {
+        if (std::string(sha256_string(String(vehicle.config_json.c_str())).utf8().get_data()) != vehicle.config_manifest_hash) {
+            const aerosim::ReplayDiagnostic diagnostic{
+                    aerosim::ReplayDiagnosticCode::IncompatibleManifest,
+                    "vehicle config manifest hash does not match its config JSON"};
+            return replay_status(false, &diagnostic);
+        }
+    }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = 240;
     config.substep_hz = 1000;
@@ -673,6 +694,10 @@ Dictionary AeroSimNative::replay_vehicle_config_manifest() const {
     per_motor["yaw_torque_per_newton"] = config.per_motor.yaw_torque_per_newton;
     result["per_motor"] = per_motor;
     return result;
+}
+
+String AeroSimNative::replay_manifest_hash(const String &config_json) const {
+    return sha256_string(config_json);
 }
 
 Dictionary AeroSimNative::begin_complete_replay_recording(

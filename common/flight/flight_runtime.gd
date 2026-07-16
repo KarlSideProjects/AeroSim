@@ -454,8 +454,8 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     var upper_config_json := _replay_canonical_json(native.call("replay_vehicle_config_manifest"))
     var lower_config_json := _replay_canonical_json(_airsim_secondary_native.call("replay_vehicle_config_manifest"))
     _replay_settings_manifest_hash = _replay_manifest_hash(settings_json)
-    _replay_upper_config_manifest_hash = _replay_manifest_hash(upper_config_json)
-    _replay_lower_config_manifest_hash = _replay_manifest_hash(lower_config_json)
+    _replay_upper_config_manifest_hash = String(native.call("replay_manifest_hash", upper_config_json)) if native.has_method("replay_manifest_hash") else _replay_manifest_hash(upper_config_json)
+    _replay_lower_config_manifest_hash = String(_airsim_secondary_native.call("replay_manifest_hash", lower_config_json)) if _airsim_secondary_native.has_method("replay_manifest_hash") else _replay_manifest_hash(lower_config_json)
     if _replay_settings_manifest_hash.is_empty() or _replay_upper_config_manifest_hash.is_empty() or _replay_lower_config_manifest_hash.is_empty():
         push_error("Complete replay recording manifest hashing failed")
         return
