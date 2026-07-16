@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <string>
 
 namespace {
 
@@ -106,6 +107,143 @@ bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
     return true;
 }
 
+std::string replace_once(std::string value, const std::string &from, const std::string &to) {
+    const std::size_t offset = value.find(from);
+    if (offset != std::string::npos) {
+        value.replace(offset, from.size(), to);
+    }
+    return value;
+}
+
+bool test_complete_session_schema() {
+    aerosim::ReplaySessionRecorder recorder(42, "settings-manifest-v1");
+    if (!recorder.add_vehicle("DroneA", "drone-a-hash", "{\"mass_kg\":0.72}") ||
+            !recorder.add_vehicle("DroneB", "drone-b-hash", "{\"mass_kg\":0.73}")) {
+        return false;
+    }
+
+    aerosim::FlightCommand command;
+    command.throttle = 0.55;
+    if (!recorder.record_async_command(0, "DroneA", "task-a", "moveByVelocity", aerosim::ReplayAsyncLifecycle::Submitted) ||
+            !recorder.record_async_command(0, "DroneB", "task-a", "hover", aerosim::ReplayAsyncLifecycle::Submitted) ||
+            !recorder.record_async_command(1000, "DroneA", "task-a", "moveByVelocity", aerosim::ReplayAsyncLifecycle::Accepted) ||
+            !recorder.record_command(1000, "DroneA", command, aerosim::ReplayControllerAuthority::FlightCore) ||
+            !recorder.record_command(1000, "DroneB", command, aerosim::ReplayControllerAuthority::Px4External) ||
+            !recorder.record_simulation_operation(2000, aerosim::ReplaySimulationOperation::Pause) ||
+            !recorder.record_simulation_operation(3000, aerosim::ReplaySimulationOperation::StepFrames, 2) ||
+            !recorder.record_async_command(4000, "DroneA", "task-a", "moveByVelocity", aerosim::ReplayAsyncLifecycle::Completed)) {
+        return false;
+    }
+
+    aerosim::CollisionContact contact;
+    contact.touching = true;
+    contact.normal = {0.0, 1.0, 0.0};
+    contact.impulse = {0.0, 2.0, 0.0};
+    if (!recorder.record_collision(5000, "DroneB", contact, aerosim::ReplayControllerAuthority::Jolt) ||
+            !recorder.record_scene_object(6000, aerosim::ReplaySceneObjectOperation::Spawn,
+                    "crate", "primitive_box", {1.0, 2.0, 3.0}) ||
+            !recorder.record_environment(7000, "{\"rain\":0.5,\"wind_preset\":\"light\"}") ||
+            !recorder.record_simulation_operation(8000, aerosim::ReplaySimulationOperation::Respawn) ||
+            !recorder.finish(9000, "completed")) {
+        return false;
+    }
+
+    const std::string serialized = recorder.serialize();
+    if (serialized.empty() || serialized.find("\"schema_version\":1") == std::string::npos ||
+            serialized.find("\"seed\":42") == std::string::npos ||
+            serialized.find("\"settings_manifest_hash\":\"settings-manifest-v1\"") == std::string::npos ||
+            serialized.find("\"vehicles\"") == std::string::npos ||
+            serialized.find("\"events\"") == std::string::npos ||
+            serialized.find("\"termination\"") == std::string::npos) {
+        return false;
+    }
+
+    const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(serialized, "settings-manifest-v1");
+    if (!loaded.ok || loaded.session.seed != 42 || loaded.session.vehicles.size() != 2 ||
+            loaded.session.vehicles[0].name != "DroneA" || loaded.session.vehicles[1].name != "DroneB" ||
+            loaded.session.events.size() != recorder.session().events.size() ||
+            loaded.session.events[1].vehicle_name != "DroneB" ||
+            loaded.session.events[6].simulation_value != 2 ||
+            loaded.session.events[8].collision.authority != aerosim::ReplayControllerAuthority::Jolt ||
+            loaded.session.events[9].object_name != "crate" ||
+            loaded.session.events[10].environment_json.find("rain") == std::string::npos ||
+            loaded.session.termination_reason != "completed") {
+        return false;
+    }
+
+    const aerosim::ReplayLoadResult mismatched_manifest = aerosim::load_replay_session(serialized, "other-manifest");
+    if (mismatched_manifest.ok || mismatched_manifest.diagnostic.code != aerosim::ReplayDiagnosticCode::IncompatibleManifest) {
+        return false;
+    }
+    const aerosim::ReplayLoadResult unsupported = aerosim::load_replay_session(
+            replace_once(serialized, "\"schema_version\":1", "\"schema_version\":99"));
+    if (unsupported.ok || unsupported.diagnostic.code != aerosim::ReplayDiagnosticCode::UnsupportedSchema) {
+        return false;
+    }
+    const aerosim::ReplayLoadResult truncated = aerosim::load_replay_session(serialized.substr(0, serialized.size() - 2));
+    if (truncated.ok || truncated.diagnostic.code != aerosim::ReplayDiagnosticCode::Truncated) {
+        return false;
+    }
+    const aerosim::ReplayLoadResult corrupt = aerosim::load_replay_session(
+            replace_once(serialized, "\"seed\":42", "\"seed\":NaN"));
+    if (corrupt.ok || corrupt.diagnostic.code != aerosim::ReplayDiagnosticCode::Corrupt) {
+        return false;
+    }
+    const aerosim::ReplayLoadResult invalid_lifecycle = aerosim::load_replay_session(
+            replace_once(serialized, "\"lifecycle\":\"submitted\"", "\"lifecycle\":\"completed\""));
+    if (invalid_lifecycle.ok || invalid_lifecycle.diagnostic.code != aerosim::ReplayDiagnosticCode::InvalidLifecycle) {
+        return false;
+    }
+    const aerosim::ReplayLoadResult non_monotonic = aerosim::load_replay_session(
+            replace_once(serialized, "\"timestamp_us\":4000", "\"timestamp_us\":100"));
+    if (non_monotonic.ok || non_monotonic.diagnostic.code != aerosim::ReplayDiagnosticCode::InvalidSession) {
+        return false;
+    }
+    return true;
+}
+
+bool test_session_identity_and_async_validation() {
+    aerosim::ReplaySessionRecorder recorder(1, "manifest");
+    if (recorder.add_vehicle("Drone A", "hash", "{}") ||
+            recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidIdentity ||
+            recorder.add_vehicle("DroneA", "", "{}") ||
+            recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::MissingVehicleConfig ||
+            !recorder.add_vehicle("DroneA", "hash-a", "{}") ||
+            recorder.add_vehicle("DroneA", "hash-a", "{}") ||
+            recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidIdentity ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{}")) {
+        return false;
+    }
+    if (recorder.record_command(0, "Unknown", {}, aerosim::ReplayControllerAuthority::FlightCore) ||
+            recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::UnknownVehicle ||
+            !recorder.record_async_command(0, "DroneA", "task", "hover", aerosim::ReplayAsyncLifecycle::Submitted) ||
+            recorder.record_async_command(1, "DroneA", "task", "hover", aerosim::ReplayAsyncLifecycle::Completed) ||
+            recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidLifecycle ||
+            !recorder.record_async_command(1, "DroneA", "task", "hover", aerosim::ReplayAsyncLifecycle::Accepted) ||
+            !recorder.record_async_command(2, "DroneA", "task", "hover", aerosim::ReplayAsyncLifecycle::Cancelled) ||
+            recorder.record_async_command(3, "DroneA", "task", "hover", aerosim::ReplayAsyncLifecycle::Completed) ||
+            recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidLifecycle) {
+        return false;
+    }
+    return true;
+}
+
+bool test_first_divergence_report() {
+    aerosim::ReplaySessionRecorder recorder(7, "manifest");
+    recorder.add_vehicle("DroneA", "hash-a", "{}");
+    recorder.add_vehicle("DroneB", "hash-b", "{}");
+    aerosim::FlightCommand command;
+    recorder.record_command(1000, "DroneA", command, aerosim::ReplayControllerAuthority::FlightCore);
+    recorder.finish(2000, "completed");
+    const aerosim::ReplaySession expected = recorder.session();
+    aerosim::ReplaySession actual = expected;
+    actual.events[0].command.throttle = 0.25;
+    const aerosim::ReplayDivergence divergence = aerosim::compare_replay_sessions(expected, actual);
+    return divergence.diverged && divergence.timestamp_us == 1000 &&
+            divergence.vehicle_name == "DroneA" && divergence.field == "command.throttle" &&
+            divergence.expected == "0" && divergence.actual == "0.25" && divergence.tolerance == 0.0;
+}
+
 } // namespace
 
 int main() {
@@ -181,6 +319,16 @@ int main() {
     }
     if (!write_artifact(std::getenv("AEROSIM_REPLAY_ARTIFACT"), platform_run.back())) {
         return fail("failed to write replay terminal-state artifact");
+    }
+
+    if (!test_complete_session_schema()) {
+        return fail("complete-session replay schema must round-trip and diagnose load failures");
+    }
+    if (!test_session_identity_and_async_validation()) {
+        return fail("complete-session replay must validate identities and async lifecycle transitions");
+    }
+    if (!test_first_divergence_report()) {
+        return fail("complete-session replay must report the first field divergence");
     }
 
     return EXIT_SUCCESS;
