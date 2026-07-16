@@ -74,6 +74,13 @@
       "full_collective_angular_accel_rad_s2": 0.0,
       "minimum_wake_entry_speed_mps": 0.0,
       "minimum_transverse_rate_rad_s": 0.0
+    },
+    "a5": {
+      "enabled": true,
+      "prop_radius_m": 0.0231348,
+      "coeff_1": 2267.18,
+      "coeff_2": 0.16,
+      "coeff_3": -0.11
     }
   },
   "aircraft": {

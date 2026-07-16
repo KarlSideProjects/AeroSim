@@ -889,6 +889,10 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
         push_error("A5 public path must reject a negative force magnitude coefficient")
         return false
     native.call("set_a6_propwash_model", false, 0.0, 0.0, 0.0)
+    native.call("set_a5_downwash_model", false, prop_radius, 2267.18, 0.16, -0.11)
+    native.call("set_a5_downwash_source_position", NAN, NAN, NAN)
+    native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012)
+    native.call("set_a4_ground_effect_model", true, 3.16e-10, 11.36859, prop_radius, prop_radius, 12000.0, 12000.0, 12000.0, 12000.0)
     return true
 
 
@@ -929,6 +933,7 @@ func _verify_named_a5_runtime_path(native: Object, prop_radius: float) -> bool:
     if effects_on_y >= effects_off_y:
         push_error("named A5 effects-on crossing runtime path must reduce lower trajectory")
         return false
+    native.call("set_a5_downwash_model", true, prop_radius, 2267.18, 0.16, -0.11)
     return true
 
 func _verify_collision_public_path(native: Object) -> bool:
@@ -1857,6 +1862,7 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     scene.queue_free()
+    await process_frame
     scene = SmokeScene.instantiate()
     var replacement_device_state := MutableGamepadDeviceState.new()
     replacement_device_state.replace_snapshot([known_device_id], [known_device_id])
