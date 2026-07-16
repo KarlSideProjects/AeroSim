@@ -28,7 +28,7 @@ func _initialize() -> void:
     if not native.call("set_hardware_per_motor_model", per_motor):
         _fail("native per-motor setup failed")
         return
-    var config_json := JSON.stringify(native.call("replay_vehicle_config_manifest"))
+    var config_json := JSON.stringify(_json_safe(native.call("replay_vehicle_config_manifest")))
     var config_hash := _hash(config_json)
     var begin: Dictionary = native.call(
         "begin_complete_replay_recording", 7, SETTINGS_HASH,
@@ -79,6 +79,22 @@ func _hash(value: String) -> String:
         return ""
     context.update(value.to_utf8_buffer())
     return context.finish().hex_encode()
+
+
+func _json_safe(value: Variant) -> Variant:
+    if value is Vector3:
+        return [value.x, value.y, value.z]
+    if value is Dictionary:
+        var result: Dictionary = {}
+        for key in value:
+            result[key] = _json_safe(value[key])
+        return result
+    if value is Array:
+        var result: Array = []
+        for item in value:
+            result.append(_json_safe(item))
+        return result
+    return value
 
 
 func _expect_ok(result: Dictionary, label: String) -> void:

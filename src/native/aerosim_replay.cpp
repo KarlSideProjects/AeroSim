@@ -1,4 +1,5 @@
 #include "aerosim_replay.hpp"
+#include "aerosim_wind.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -617,6 +618,171 @@ bool parse_vec(const JsonValue &value, Vec3 &result) {
     return true;
 }
 
+bool parse_vec_object_or_array(const JsonValue &value, Vec3 &result) {
+    if (parse_vec(value, result)) {
+        return true;
+    }
+    const JsonValue *x = field(value, "x");
+    const JsonValue *y = field(value, "y");
+    const JsonValue *z = field(value, "z");
+    return x != nullptr && y != nullptr && z != nullptr && number_value(*x, result.x) &&
+            number_value(*y, result.y) && number_value(*z, result.z);
+}
+
+bool apply_environment_config(const std::string &serialized, SimulationConfig configs[2]) {
+    JsonValue root;
+    JsonParser parser(serialized);
+    if (!parser.parse(root) || root.type != JsonValue::Type::Object) {
+        return false;
+    }
+    const JsonValue *steady_wind = field(root, "steady_wind");
+    if (steady_wind != nullptr) {
+        Vec3 wind;
+        if (!parse_vec_object_or_array(*steady_wind, wind)) {
+            return false;
+        }
+        configs[0].wind_world_mps = wind;
+        configs[1].wind_world_mps = wind;
+    }
+    const JsonValue *preset = field(root, "wind_preset");
+    if (preset != nullptr) {
+        std::string preset_name;
+        if (!string_value(*preset, preset_name)) {
+            return false;
+        }
+        WindConfig wind_config;
+        if (preset_name == "light") {
+            wind_config = wind_preset(WindPreset::Light);
+        } else if (preset_name == "moderate") {
+            wind_config = wind_preset(WindPreset::Moderate);
+        } else if (preset_name == "severe") {
+            wind_config = wind_preset(WindPreset::Severe);
+        } else if (preset_name != "calm" && !preset_name.empty()) {
+            return false;
+        }
+        if (!preset_name.empty()) {
+            configs[0].wind_turbulence_mps = wind_config.turbulence_sigma_mps;
+            configs[1].wind_turbulence_mps = wind_config.turbulence_sigma_mps;
+        }
+    }
+    return true;
+}
+
+bool config_number_matches(double actual, double expected) {
+    constexpr double kManifestTolerance = 1.0e-6;
+    return std::abs(actual - expected) <= kManifestTolerance * std::max({1.0, std::abs(actual), std::abs(expected)});
+}
+
+bool json_number_matches(const JsonValue &root, const char *key, double expected) {
+    const JsonValue *value = field(root, key);
+    double actual = 0.0;
+    return value != nullptr && number_value(*value, actual) && config_number_matches(actual, expected);
+}
+
+bool json_vec_matches(const JsonValue &root, const char *key, const Vec3 &expected) {
+    const JsonValue *value = field(root, key);
+    Vec3 actual;
+    const bool matched = value != nullptr && parse_vec_object_or_array(*value, actual) &&
+            config_number_matches(actual.x, expected.x) && config_number_matches(actual.y, expected.y) &&
+            config_number_matches(actual.z, expected.z);
+    return matched;
+}
+
+bool json_config_matches(const std::string &serialized, const SimulationConfig &expected) {
+    JsonValue root;
+    JsonParser parser(serialized);
+    if (!parser.parse(root) || root.type != JsonValue::Type::Object) {
+        return false;
+    }
+    const std::pair<const char *, double> scalars[] = {
+            {"mass_kg", expected.mass_kg}, {"gravity_mps2", expected.gravity_mps2},
+            {"physics_hz", expected.physics_hz}, {"substep_hz", expected.substep_hz},
+            {"max_total_thrust_newtons", expected.max_total_thrust_newtons}, {"hover_throttle", expected.hover_throttle},
+            {"motor_tau_s", expected.motor_tau_s}, {"battery_nominal_voltage_v", expected.battery_nominal_voltage_v},
+            {"battery_cells", expected.battery_cells}, {"battery_cell_resistance_ohm", expected.battery_cell_resistance_ohm},
+            {"battery_remaining_mah", expected.battery_remaining_mah}, {"max_total_current_a", expected.max_total_current_a},
+            {"max_motor_rpm", expected.max_motor_rpm},
+    };
+    for (const auto &scalar : scalars) {
+        if (!json_number_matches(root, scalar.first, scalar.second)) {
+            return false;
+        }
+    }
+    if (!json_vec_matches(root, "external_force_world", expected.external_force_world)) {
+        return false;
+    }
+    const JsonValue *per_motor_value = field(root, "per_motor");
+    if (per_motor_value == nullptr || per_motor_value->type != JsonValue::Type::Object ||
+            !json_vec_matches(*per_motor_value, "inertia_frd", expected.per_motor.inertia_kg_m2)) {
+        return false;
+    }
+    const JsonValue *positions = field(*per_motor_value, "position_frd");
+    const JsonValue *spins = field(*per_motor_value, "spin_direction");
+    if (positions == nullptr || positions->type != JsonValue::Type::Array || positions->array.size() != 4 ||
+            spins == nullptr || spins->type != JsonValue::Type::Array || spins->array.size() != 4) {
+        return false;
+    }
+    for (std::size_t index = 0; index < 4; ++index) {
+        Vec3 position;
+        double spin = 0.0;
+        if (!parse_vec_object_or_array(positions->array[index], position) ||
+                !config_number_matches(position.x, expected.per_motor.position_frd[index].x) ||
+                !config_number_matches(position.y, expected.per_motor.position_frd[index].y) ||
+                !config_number_matches(position.z, expected.per_motor.position_frd[index].z) ||
+                !number_value(spins->array[index], spin) || !config_number_matches(spin, expected.per_motor.spin_direction[index])) {
+            return false;
+        }
+    }
+    const std::pair<const char *, double> motor_scalars[] = {
+            {"max_thrust_per_motor_newtons", expected.per_motor.max_thrust_per_motor_newtons},
+            {"max_current_per_motor_a", expected.per_motor.max_current_per_motor_a},
+            {"yaw_torque_per_newton", expected.per_motor.yaw_torque_per_newton},
+    };
+    for (const auto &scalar : motor_scalars) {
+        if (!json_number_matches(*per_motor_value, scalar.first, scalar.second)) {
+            return false;
+        }
+    }
+    const JsonValue *a4 = field(root, "a4_ground_effect");
+    const JsonValue *a5 = field(root, "a5_downwash");
+    if (a4 == nullptr || a4->type != JsonValue::Type::Object || a5 == nullptr || a5->type != JsonValue::Type::Object) {
+        return false;
+    }
+    const std::pair<const char *, double> a4_scalars[] = {
+            {"kf", expected.a4_ground_effect.kf}, {"ground_effect_coeff", expected.a4_ground_effect.ground_effect_coeff},
+            {"prop_radius_m", expected.a4_ground_effect.prop_radius_m}, {"height_clip_m", expected.a4_ground_effect.height_clip_m},
+    };
+    for (const auto &scalar : a4_scalars) {
+        if (!json_number_matches(*a4, scalar.first, scalar.second)) {
+            return false;
+        }
+    }
+    const JsonValue *a4_enabled = field(*a4, "enabled");
+    bool enabled = false;
+    if (a4_enabled == nullptr || !bool_value(*a4_enabled, enabled) || enabled != expected.a4_ground_effect.enabled) {
+        return false;
+    }
+    for (std::size_t index = 0; index < 4; ++index) {
+        if (!json_number_matches(*a4, ("motor_" + std::to_string(index) + "_rpm").c_str(), expected.a4_ground_effect.motor_rpm[index])) {
+            return false;
+        }
+    }
+    const std::pair<const char *, double> a5_scalars[] = {
+            {"prop_radius_m", expected.a5_downwash.prop_radius_m}, {"coeff_1", expected.a5_downwash.coeff_1},
+            {"coeff_2", expected.a5_downwash.coeff_2}, {"coeff_3", expected.a5_downwash.coeff_3},
+    };
+    for (const auto &scalar : a5_scalars) {
+        if (!json_number_matches(*a5, scalar.first, scalar.second)) {
+            return false;
+        }
+    }
+    const JsonValue *a5_enabled = field(*a5, "enabled");
+    if (a5_enabled == nullptr || !bool_value(*a5_enabled, enabled) || enabled != expected.a5_downwash.enabled) {
+        return false;
+    }
+    return true;
+}
+
 bool parse_quat(const JsonValue &value, Quat &result) {
     if (value.type != JsonValue::Type::Array || value.array.size() != 4) {
         return false;
@@ -686,6 +852,8 @@ const char *command_mode_name(ReplayCommandMode value) {
         return "acro";
     case ReplayCommandMode::AltitudeHold:
         return "altitude_hold";
+    case ReplayCommandMode::Actuator:
+        return "actuator";
     }
     return "";
 }
@@ -697,6 +865,8 @@ bool parse_command_mode(const std::string &value, ReplayCommandMode &result) {
         result = ReplayCommandMode::Acro;
     } else if (value == "altitude_hold") {
         result = ReplayCommandMode::AltitudeHold;
+    } else if (value == "actuator") {
+        result = ReplayCommandMode::Actuator;
     } else {
         return false;
     }
@@ -908,6 +1078,23 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
                 !finite_acro_command(event.acro_command)) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "replay acro command contains a non-finite value");
         }
+        if (event.type == ReplayEventType::Command &&
+                (!std::isfinite(event.measured_altitude_m) ||
+                 (event.command_mode == ReplayCommandMode::Actuator &&
+                  std::any_of(event.actuator_commands.begin(), event.actuator_commands.end(), [](double value) {
+                      return !std::isfinite(value) || value < 0.0 || value > 1.0;
+                  })))) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "replay command contains invalid actuator or altitude data");
+        }
+        if (event.type == ReplayEventType::Collision &&
+                (event.collision.authority != ReplayControllerAuthority::FlightCore &&
+                 event.collision.authority != ReplayControllerAuthority::Jolt)) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "replay collision authority is invalid");
+        }
+        if (event.type == ReplayEventType::Collision && event.collision.contact.touching &&
+                event.collision.authority != ReplayControllerAuthority::Jolt) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "touching replay collision must use jolt authority");
+        }
         if (event.type == ReplayEventType::AsyncCommand && (event.command_id.empty() || event.command_method.empty())) {
             return invalid(ReplayDiagnosticCode::InvalidLifecycle, "async replay command id and method are required");
         }
@@ -994,6 +1181,11 @@ std::string acro_command_json(const AcroCommand &command) {
             ",\"expo\":" + compact_number(command.rates.expo) + "}";
 }
 
+std::string actuator_command_json(const std::array<double, 4> &commands) {
+    return "[" + compact_number(commands[0]) + "," + compact_number(commands[1]) + "," +
+            compact_number(commands[2]) + "," + compact_number(commands[3]) + "]";
+}
+
 std::string event_json(const ReplayEvent &event) {
     std::string result = "{\"timestamp_us\":" + std::to_string(event.timestamp_us) +
             ",\"type\":\"" + event_type_name(event.type) + "\"";
@@ -1004,9 +1196,12 @@ std::string event_json(const ReplayEvent &event) {
     case ReplayEventType::Command:
         result += ",\"authority\":\"" + std::string(authority_name(event.controller_authority)) +
                 "\",\"mode\":\"" + std::string(command_mode_name(event.command_mode)) +
-                "\",\"command\":" + command_json(event.command);
+                "\",\"command\":" + command_json(event.command) +
+                ",\"measured_altitude_m\":" + compact_number(event.measured_altitude_m);
         if (event.command_mode == ReplayCommandMode::Acro) {
             result += ",\"acro\":" + acro_command_json(event.acro_command);
+        } else if (event.command_mode == ReplayCommandMode::Actuator) {
+            result += ",\"actuators\":" + actuator_command_json(event.actuator_commands);
         }
         break;
     case ReplayEventType::AsyncCommand:
@@ -1069,6 +1264,18 @@ bool parse_acro_command(const JsonValue &value, AcroCommand &command) {
             number_value(*expo, command.rates.expo);
 }
 
+bool parse_actuator_command(const JsonValue &value, std::array<double, 4> &commands) {
+    if (value.type != JsonValue::Type::Array || value.array.size() != commands.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < commands.size(); ++index) {
+        if (!number_value(value.array[index], commands[index]) || commands[index] < 0.0 || commands[index] > 1.0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool parse_event(const JsonValue &value, ReplayEvent &event) {
     const JsonValue *timestamp = field(value, "timestamp_us");
     const JsonValue *type = field(value, "type");
@@ -1098,7 +1305,18 @@ bool parse_event(const JsonValue &value, ReplayEvent &event) {
         }
         if (event.command_mode == ReplayCommandMode::Acro) {
             const JsonValue *acro = field(value, "acro");
-            return acro != nullptr && parse_acro_command(*acro, event.acro_command);
+            if (acro == nullptr || !parse_acro_command(*acro, event.acro_command)) {
+                return false;
+            }
+        } else if (event.command_mode == ReplayCommandMode::Actuator) {
+            const JsonValue *actuators = field(value, "actuators");
+            if (actuators == nullptr || !parse_actuator_command(*actuators, event.actuator_commands)) {
+                return false;
+            }
+        }
+        const JsonValue *measured_altitude = field(value, "measured_altitude_m");
+        if (measured_altitude != nullptr && !number_value(*measured_altitude, event.measured_altitude_m)) {
+            return false;
         }
         return true;
     }
@@ -1229,6 +1447,10 @@ bool ReplaySessionRecorder::record_command(
     if (!has_vehicle(vehicle_name)) {
         return fail(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + vehicle_name);
     }
+    if (controller_authority != ReplayControllerAuthority::FlightCore &&
+            controller_authority != ReplayControllerAuthority::Jolt) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "collision replay authority must be flight_core or jolt");
+    }
     if (!finite_command(command)) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
     }
@@ -1249,15 +1471,17 @@ bool ReplaySessionRecorder::record_mode_command(
         ReplayCommandMode command_mode,
         const FlightCommand &command,
         const AcroCommand &acro_command,
-        ReplayControllerAuthority controller_authority) {
+        ReplayControllerAuthority controller_authority,
+        double measured_altitude_m) {
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
     }
     if (command_mode != ReplayCommandMode::Angle && command_mode != ReplayCommandMode::Acro &&
-            command_mode != ReplayCommandMode::AltitudeHold) {
+            command_mode != ReplayCommandMode::AltitudeHold && command_mode != ReplayCommandMode::Actuator) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay command mode is invalid");
     }
-    if (!finite_command(command) || (command_mode == ReplayCommandMode::Acro && !finite_acro_command(acro_command))) {
+    if (!finite_command(command) || !std::isfinite(measured_altitude_m) ||
+            (command_mode == ReplayCommandMode::Acro && !finite_acro_command(acro_command))) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
     }
     if (!has_vehicle(vehicle_name)) {
@@ -1271,6 +1495,35 @@ bool ReplaySessionRecorder::record_mode_command(
     event.command_mode = command_mode;
     event.command = command;
     event.acro_command = acro_command;
+    event.measured_altitude_m = measured_altitude_m;
+    session_.events.push_back(std::move(event));
+    diagnostic_ = {};
+    return true;
+}
+
+bool ReplaySessionRecorder::record_actuator_command(
+        std::uint64_t timestamp_us,
+        const std::string &vehicle_name,
+        const MotorCommands &commands,
+        ReplayControllerAuthority controller_authority) {
+    if (finished_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
+    }
+    if (controller_authority != ReplayControllerAuthority::Px4External || !has_vehicle(vehicle_name)) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "PX4 replay actuator authority is invalid");
+    }
+    for (double value : commands.normalized) {
+        if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
+            return fail(ReplayDiagnosticCode::InvalidSession, "replay actuator command is invalid");
+        }
+    }
+    ReplayEvent event;
+    event.timestamp_us = timestamp_us;
+    event.type = ReplayEventType::Command;
+    event.vehicle_name = vehicle_name;
+    event.controller_authority = controller_authority;
+    event.command_mode = ReplayCommandMode::Actuator;
+    event.actuator_commands = commands.normalized;
     session_.events.push_back(std::move(event));
     diagnostic_ = {};
     return true;
@@ -1647,7 +1900,8 @@ ReplayRunResult replay_session(
         const ReplaySession &session,
         const DualAircraftConfig &config,
         const std::string &expected_settings_manifest_hash,
-        const std::array<std::string, 2> &expected_vehicle_config_hashes) {
+        const std::array<std::string, 2> &expected_vehicle_config_hashes,
+        bool require_complete_vehicle_manifest) {
     const ReplayDiagnostic validation = validate_session(session, true);
     if (!validation.ok()) {
         return failed_run(validation);
@@ -1665,6 +1919,7 @@ ReplayRunResult replay_session(
         return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay runtime configuration is invalid"));
     }
     const SimulationConfig runtime_configs[] = {config.upper, config.lower};
+    SimulationConfig active_configs[] = {config.upper, config.lower};
     for (std::size_t index = 0; index < 2; ++index) {
         if (!expected_vehicle_config_hashes[index].empty() &&
                 session.vehicles[index].config_manifest_hash != expected_vehicle_config_hashes[index]) {
@@ -1674,6 +1929,9 @@ ReplayRunResult replay_session(
         JsonParser parser(session.vehicles[index].config_json);
         if (!parser.parse(parsed) || parsed.type != JsonValue::Type::Object) {
             return failed_run(invalid(ReplayDiagnosticCode::MissingVehicleConfig, "vehicle config is not a JSON object"));
+        }
+        if (require_complete_vehicle_manifest && !json_config_matches(session.vehicles[index].config_json, runtime_configs[index])) {
+            return failed_run(invalid(ReplayDiagnosticCode::IncompatibleManifest, "complete vehicle config manifest does not match replay runtime"));
         }
         const JsonValue *mass = field(parsed, "mass_kg");
         double recorded_mass = 0.0;
@@ -1728,8 +1986,13 @@ ReplayRunResult replay_session(
     CollisionAuthoritySwitch collision_switches[2];
     FlightCommand commands[2];
     AcroCommand acro_commands[2];
+    MotorCommands actuator_commands[2];
+    double measured_altitudes[2] = {0.0, 0.0};
     ReplayCommandMode command_modes[2] = {ReplayCommandMode::Angle, ReplayCommandMode::Angle};
+    bool vehicle_active[2] = {false, false};
     CollisionContact pending_collisions[2];
+    ReplayControllerAuthority pending_collision_authorities[2] = {
+            ReplayControllerAuthority::FlightCore, ReplayControllerAuthority::FlightCore};
     ReplayCollision last_collisions[2];
     bool has_pending_collision[2] = {false, false};
     bool paused = false;
@@ -1750,45 +2013,73 @@ ReplayRunResult replay_session(
     }
     const auto step_vehicle = [&](std::size_t index, RigidBodyState &vehicle_state, SimulationClock &clock,
                                   FlightController &controller, const SimulationConfig &vehicle_config) {
+        if (!vehicle_active[index]) {
+            return true;
+        }
         if (has_pending_collision[index]) {
-            if (command_modes[index] == ReplayCommandMode::Acro) {
-                collision_switches[index].step_acro(vehicle_state, clock, controller, vehicle_config,
+            CollisionStepResult result;
+            if (command_modes[index] == ReplayCommandMode::Actuator) {
+                result = collision_switches[index].step_per_motor(vehicle_state, clock, vehicle_config,
+                        actuator_commands[index], pending_collisions[index]);
+            } else if (command_modes[index] == ReplayCommandMode::Acro) {
+                result = collision_switches[index].step_acro(vehicle_state, clock, controller, vehicle_config,
                         acro_commands[index], pending_collisions[index]);
             } else if (command_modes[index] == ReplayCommandMode::AltitudeHold) {
-                collision_switches[index].step_altitude_hold(vehicle_state, clock, controller, vehicle_config,
-                        commands[index], vehicle_state.position.z, pending_collisions[index], vehicle_state.orientation);
+                result = collision_switches[index].step_altitude_hold(vehicle_state, clock, controller, vehicle_config,
+                        commands[index], measured_altitudes[index], pending_collisions[index], vehicle_state.orientation);
             } else {
-                collision_switches[index].step(vehicle_state, clock, controller, vehicle_config,
+                result = collision_switches[index].step(vehicle_state, clock, controller, vehicle_config,
                         commands[index], pending_collisions[index]);
             }
             has_pending_collision[index] = false;
+            const ReplayControllerAuthority actual_authority = result.authority == PhysicsAuthority::Jolt ?
+                    ReplayControllerAuthority::Jolt : ReplayControllerAuthority::FlightCore;
+            if (actual_authority != pending_collision_authorities[index]) {
+                return false;
+            }
+        } else if (command_modes[index] == ReplayCommandMode::Actuator &&
+                std::all_of(actuator_commands[index].normalized.begin(), actuator_commands[index].normalized.end(), [](double value) {
+                    return std::abs(value) <= 0.05;
+                })) {
+            return true;
         } else {
-            if (command_modes[index] == ReplayCommandMode::Acro) {
+            if (command_modes[index] == ReplayCommandMode::Actuator) {
+                step_per_motor_physics_frame(vehicle_state, clock, vehicle_config, actuator_commands[index]);
+            } else if (command_modes[index] == ReplayCommandMode::Acro) {
                 controller.step_acro_mode(vehicle_state, clock, vehicle_config, acro_commands[index]);
             } else if (command_modes[index] == ReplayCommandMode::AltitudeHold) {
                 controller.step_altitude_hold_mode(vehicle_state, clock, vehicle_config, commands[index],
-                        vehicle_state.position.z, vehicle_state.orientation);
+                        measured_altitudes[index], vehicle_state.orientation);
             } else {
                 controller.step_angle_mode(vehicle_state, clock, vehicle_config, commands[index]);
             }
         }
+        return true;
     };
     const auto step_frame = [&](std::uint64_t timestamp_us) {
-        step_vehicle(0, state.upper, clocks[0], controllers[0], config.upper);
-        step_vehicle(1, state.lower, clocks[1], controllers[1], config.lower);
+        if (!step_vehicle(0, state.upper, clocks[0], controllers[0], active_configs[0]) ||
+                !step_vehicle(1, state.lower, clocks[1], controllers[1], active_configs[1])) {
+            return false;
+        }
         checkpoint(timestamp_us);
+        return true;
     };
     const auto step_frames = [&](std::int64_t count, std::uint64_t timestamp_us) {
         for (std::int64_t frame = 0; frame < count; ++frame) {
-            step_frame(timestamp_us);
+            if (!step_frame(timestamp_us)) {
+                return false;
+            }
         }
+        return true;
     };
     const auto step_seconds = [&](double seconds, std::uint64_t timestamp_us) {
         const double frames = seconds * static_cast<double>(config.upper.physics_hz);
         if (!std::isfinite(frames) || frames < 0.0 || frames > 1000000.0) {
             return false;
         }
-        step_frames(static_cast<std::int64_t>(std::ceil(frames)), timestamp_us);
+        if (!step_frames(static_cast<std::int64_t>(std::ceil(frames)), timestamp_us)) {
+            return false;
+        }
         frame_remainder = 0.0;
         return true;
     };
@@ -1800,31 +2091,63 @@ ReplayRunResult replay_session(
         }
         const auto frame_count = static_cast<std::int64_t>(std::floor(frames));
         frame_remainder = frames - static_cast<double>(frame_count);
-        step_frames(frame_count, timestamp_us);
+        if (!step_frames(frame_count, timestamp_us)) {
+            return false;
+        }
         return true;
     };
 
-    for (const ReplayEvent &event : session.events) {
-        if (!paused && event.timestamp_us >= previous_timestamp_us &&
-                !advance_us(event.timestamp_us - previous_timestamp_us, event.timestamp_us)) {
+    std::size_t event_index = 0;
+    while (event_index < session.events.size()) {
+        const std::uint64_t timestamp_us = session.events[event_index].timestamp_us;
+        std::size_t group_end = event_index;
+        while (group_end < session.events.size() && session.events[group_end].timestamp_us == timestamp_us) {
+            ++group_end;
+        }
+        for (std::size_t index = event_index; index < group_end; ++index) {
+            const ReplayEvent &event = session.events[index];
+            if (event.type == ReplayEventType::Command) {
+                const int vehicle = vehicle_index(event.vehicle_name);
+                if (vehicle < 0) {
+                    return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
+                }
+                if (event.controller_authority != session.vehicles[vehicle].controller_authority) {
+                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority does not match vehicle authority"));
+                }
+                commands[vehicle] = event.command;
+                command_modes[vehicle] = event.command_mode;
+                acro_commands[vehicle] = event.acro_command;
+                actuator_commands[vehicle].normalized = event.actuator_commands;
+                measured_altitudes[vehicle] = event.measured_altitude_m;
+                vehicle_active[vehicle] = true;
+                if (event.controller_authority != ReplayControllerAuthority::FlightCore &&
+                        !(event.controller_authority == ReplayControllerAuthority::Px4External &&
+                          event.command_mode == ReplayCommandMode::Actuator)) {
+                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority requires matching command data"));
+                }
+            } else if (event.type == ReplayEventType::Collision) {
+                const int vehicle = vehicle_index(event.vehicle_name);
+                if (vehicle < 0) {
+                    return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
+                }
+                if (has_pending_collision[vehicle]) {
+                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "multiple replay collisions share one simulation frame"));
+                }
+                pending_collisions[vehicle] = event.collision.contact;
+                pending_collision_authorities[vehicle] = event.collision.authority;
+                last_collisions[vehicle] = event.collision;
+                has_pending_collision[vehicle] = true;
+            }
+        }
+        if (!paused && timestamp_us >= previous_timestamp_us &&
+                !advance_us(timestamp_us - previous_timestamp_us, timestamp_us)) {
             return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay timeline interval exceeds runtime frame limit"));
         }
-        previous_timestamp_us = event.timestamp_us;
+        previous_timestamp_us = timestamp_us;
+        for (std::size_t index = event_index; index < group_end; ++index) {
+        const ReplayEvent &event = session.events[index];
         switch (event.type) {
         case ReplayEventType::Command: {
-            const int index = vehicle_index(event.vehicle_name);
-            if (index < 0) {
-                return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
-            }
-            if (event.controller_authority != session.vehicles[index].controller_authority) {
-                return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority does not match vehicle authority"));
-            }
-            if (event.controller_authority != ReplayControllerAuthority::FlightCore) {
-                return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority requires actuator-level command data"));
-            }
-            commands[index] = event.command;
-            command_modes[index] = event.command_mode;
-            acro_commands[index] = event.acro_command;
             break;
         }
         case ReplayEventType::AsyncCommand:
@@ -1852,18 +2175,11 @@ ReplayRunResult replay_session(
         }
         case ReplayEventType::Environment:
             environment_json = event.environment_json;
+            if (!apply_environment_config(environment_json, active_configs)) {
+                return failed_run(invalid(ReplayDiagnosticCode::Corrupt, "replay environment state is unsupported"));
+            }
             break;
         case ReplayEventType::Collision: {
-            const int index = vehicle_index(event.vehicle_name);
-            if (index < 0) {
-                return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
-            }
-            if (has_pending_collision[index]) {
-                return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "multiple replay collisions share one simulation frame"));
-            }
-            pending_collisions[index] = event.collision.contact;
-            last_collisions[index] = event.collision;
-            has_pending_collision[index] = true;
             break;
         }
         case ReplayEventType::SimulationTime:
@@ -1875,7 +2191,9 @@ ReplayRunResult replay_session(
                 paused = false;
                 break;
             case ReplaySimulationOperation::StepFrames:
-                step_frames(static_cast<std::int64_t>(event.simulation_value), event.timestamp_us);
+                if (!step_frames(static_cast<std::int64_t>(event.simulation_value), event.timestamp_us)) {
+                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay collision authority diverged"));
+                }
                 break;
             case ReplaySimulationOperation::StepSeconds:
                 if (!step_seconds(event.simulation_value, event.timestamp_us)) {
@@ -1884,16 +2202,26 @@ ReplayRunResult replay_session(
                 break;
             case ReplaySimulationOperation::Reset:
                 state = {};
+                active_configs[0] = config.upper;
+                active_configs[1] = config.lower;
                 clocks[0] = {};
                 clocks[1] = {};
                 commands[0] = {};
                 commands[1] = {};
                 acro_commands[0] = {};
                 acro_commands[1] = {};
+                actuator_commands[0] = {};
+                actuator_commands[1] = {};
+                measured_altitudes[0] = 0.0;
+                measured_altitudes[1] = 0.0;
                 command_modes[0] = ReplayCommandMode::Angle;
                 command_modes[1] = ReplayCommandMode::Angle;
+                vehicle_active[0] = false;
+                vehicle_active[1] = false;
                 has_pending_collision[0] = false;
                 has_pending_collision[1] = false;
+                pending_collision_authorities[0] = ReplayControllerAuthority::FlightCore;
+                pending_collision_authorities[1] = ReplayControllerAuthority::FlightCore;
                 scene_objects.clear();
                 environment_json.clear();
                 controllers[0].reset_flight(state.upper, clocks[0]);
@@ -1904,16 +2232,26 @@ ReplayRunResult replay_session(
                 break;
             case ReplaySimulationOperation::Respawn:
                 state = {config.upper.initial_state, config.lower.initial_state};
+                active_configs[0] = config.upper;
+                active_configs[1] = config.lower;
                 clocks[0] = {};
                 clocks[1] = {};
                 commands[0] = {};
                 commands[1] = {};
                 acro_commands[0] = {};
                 acro_commands[1] = {};
+                actuator_commands[0] = {};
+                actuator_commands[1] = {};
+                measured_altitudes[0] = 0.0;
+                measured_altitudes[1] = 0.0;
                 command_modes[0] = ReplayCommandMode::Angle;
                 command_modes[1] = ReplayCommandMode::Angle;
+                vehicle_active[0] = false;
+                vehicle_active[1] = false;
                 has_pending_collision[0] = false;
                 has_pending_collision[1] = false;
+                pending_collision_authorities[0] = ReplayControllerAuthority::FlightCore;
+                pending_collision_authorities[1] = ReplayControllerAuthority::FlightCore;
                 scene_objects.clear();
                 environment_json.clear();
                 controllers[0].reset_flight(state.upper, clocks[0]);
@@ -1928,6 +2266,8 @@ ReplayRunResult replay_session(
         if (!has_recorded_checkpoints) {
             checkpoint(event.timestamp_us);
         }
+        }
+        event_index = group_end;
     }
     if (!paused && session.termination_timestamp_us >= previous_timestamp_us &&
             !advance_us(session.termination_timestamp_us - previous_timestamp_us, session.termination_timestamp_us)) {
@@ -2330,6 +2670,11 @@ ReplayDivergence compare_replay_sessions(
                 report(left.timestamp_us, left.vehicle_name, "command.mode", command_mode_name(left.command_mode), command_mode_name(right.command_mode), 0.0);
                 return result;
             }
+            if (!same_or_close(left.measured_altitude_m, right.measured_altitude_m, tolerance)) {
+                report(left.timestamp_us, left.vehicle_name, "command.measured_altitude_m",
+                        divergence_number(left.measured_altitude_m), divergence_number(right.measured_altitude_m), tolerance);
+                return result;
+            }
             const double left_values[] = {left.command.throttle, left.command.roll_degrees, left.command.pitch_degrees, left.command.yaw_rate_degrees_per_second};
             const double right_values[] = {right.command.throttle, right.command.roll_degrees, right.command.pitch_degrees, right.command.yaw_rate_degrees_per_second};
             const char *fields[] = {"command.throttle", "command.roll_degrees", "command.pitch_degrees", "command.yaw_rate_degrees_per_second"};
@@ -2352,6 +2697,15 @@ ReplayDivergence compare_replay_sessions(
                     if (!same_or_close(left_acro_values[value_index], right_acro_values[value_index], tolerance)) {
                         report(left.timestamp_us, left.vehicle_name, acro_fields[value_index],
                                 divergence_number(left_acro_values[value_index]), divergence_number(right_acro_values[value_index]), tolerance);
+                        return result;
+                    }
+                }
+            } else if (left.command_mode == ReplayCommandMode::Actuator) {
+                for (std::size_t value_index = 0; value_index < left.actuator_commands.size(); ++value_index) {
+                    if (!same_or_close(left.actuator_commands[value_index], right.actuator_commands[value_index], tolerance)) {
+                        report(left.timestamp_us, left.vehicle_name, "command.actuator_" + std::to_string(value_index),
+                                divergence_number(left.actuator_commands[value_index]),
+                                divergence_number(right.actuator_commands[value_index]), tolerance);
                         return result;
                     }
                 }

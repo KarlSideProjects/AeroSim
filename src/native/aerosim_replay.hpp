@@ -32,6 +32,7 @@ enum class ReplayCommandMode {
     Angle,
     Acro,
     AltitudeHold,
+    Actuator,
 };
 
 enum class ReplayAsyncLifecycle {
@@ -87,6 +88,8 @@ struct ReplayEvent {
     ReplayCommandMode command_mode = ReplayCommandMode::Angle;
     FlightCommand command;
     AcroCommand acro_command;
+    std::array<double, 4> actuator_commands = {0.0, 0.0, 0.0, 0.0};
+    double measured_altitude_m = 0.0;
     std::string command_id;
     std::string command_method;
     ReplayAsyncLifecycle command_lifecycle = ReplayAsyncLifecycle::Submitted;
@@ -209,6 +212,12 @@ public:
             ReplayCommandMode command_mode,
             const FlightCommand &command,
             const AcroCommand &acro_command,
+            ReplayControllerAuthority controller_authority,
+            double measured_altitude_m = 0.0);
+    bool record_actuator_command(
+            std::uint64_t timestamp_us,
+            const std::string &vehicle_name,
+            const MotorCommands &commands,
             ReplayControllerAuthority controller_authority);
     bool record_async_command(
             std::uint64_t timestamp_us,
@@ -266,7 +275,8 @@ ReplayRunResult replay_session(
         const ReplaySession &session,
         const DualAircraftConfig &config,
         const std::string &expected_settings_manifest_hash,
-        const std::array<std::string, 2> &expected_vehicle_config_hashes);
+        const std::array<std::string, 2> &expected_vehicle_config_hashes,
+        bool require_complete_vehicle_manifest = false);
 
 ReplayDivergence compare_replay_runs(
         const ReplayRunResult &expected,

@@ -268,6 +268,13 @@ bool test_complete_session_schema() {
             collision_divergence.expected != "0" || collision_divergence.actual != "0.25") {
         return false;
     }
+    aerosim::ReplaySession invalid_collision_authority = recorder.session();
+    invalid_collision_authority.events[10].collision.authority = aerosim::ReplayControllerAuthority::FlightCore;
+    const aerosim::ReplayRunResult rejected_collision_authority = aerosim::replay_session(
+            invalid_collision_authority, config, "settings-manifest-v1", config_hashes);
+    if (rejected_collision_authority.ok || rejected_collision_authority.diagnostic.code != aerosim::ReplayDiagnosticCode::InvalidSession) {
+        return false;
+    }
     aerosim::ReplaySession scene_mismatch = recorder.session();
     scene_mismatch.events[11].object_orientation.w = 0.5;
     const aerosim::ReplayDivergence scene_divergence = aerosim::compare_replay_sessions(
@@ -339,6 +346,8 @@ bool test_simulation_time_replay_contract() {
     aerosim::ReplaySessionRecorder recorder(11, "manifest");
     if (!recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
             !recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !recorder.record_command(0, "DroneA", {}, aerosim::ReplayControllerAuthority::FlightCore) ||
+            !recorder.record_command(0, "DroneB", {}, aerosim::ReplayControllerAuthority::FlightCore) ||
             !recorder.record_simulation_operation(0, aerosim::ReplaySimulationOperation::StepSeconds, 0.0005) ||
             !recorder.finish(1000000, "completed")) {
         return false;
@@ -351,12 +360,70 @@ bool test_simulation_time_replay_contract() {
     aerosim::ReplaySessionRecorder oversized(12, "manifest");
     if (!oversized.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
             !oversized.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !oversized.record_command(0, "DroneA", {}, aerosim::ReplayControllerAuthority::FlightCore) ||
+            !oversized.record_command(0, "DroneB", {}, aerosim::ReplayControllerAuthority::FlightCore) ||
             !oversized.record_simulation_operation(0, aerosim::ReplaySimulationOperation::StepSeconds, 11000.0) ||
             !oversized.finish(11000000000ULL, "completed")) {
         return false;
     }
     const aerosim::ReplayRunResult rejected = aerosim::replay_session(oversized.session(), config, "manifest", {{"hash-a", "hash-b"}});
     return !rejected.ok && rejected.diagnostic.code == aerosim::ReplayDiagnosticCode::InvalidSession;
+}
+
+bool test_replay_command_modes_and_inactive_vehicle() {
+    aerosim::ReplaySessionRecorder recorder(19, "manifest");
+    if (!recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}", aerosim::ReplayControllerAuthority::FlightCore) ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}", aerosim::ReplayControllerAuthority::Px4External)) {
+        return false;
+    }
+    aerosim::FlightCommand angle;
+    angle.throttle = 0.4;
+    aerosim::AcroCommand acro;
+    acro.throttle = 0.45;
+    acro.roll_stick = 0.1;
+    acro.pitch_stick = -0.2;
+    acro.yaw_stick = 0.3;
+    acro.rates = {1.0, 0.7, 0.1};
+    aerosim::MotorCommands actuators{{0.2, 0.3, 0.4, 0.5}};
+    if (!recorder.record_actuator_command(0, "DroneB", actuators, aerosim::ReplayControllerAuthority::Px4External) ||
+            !recorder.record_mode_command(0, "DroneA", aerosim::ReplayCommandMode::Angle, angle, acro,
+                    aerosim::ReplayControllerAuthority::FlightCore, 1.0) ||
+            !recorder.record_mode_command(10000, "DroneA", aerosim::ReplayCommandMode::Acro, angle, acro,
+                    aerosim::ReplayControllerAuthority::FlightCore, 1.1) ||
+            !recorder.record_mode_command(20000, "DroneA", aerosim::ReplayCommandMode::AltitudeHold, angle, acro,
+                    aerosim::ReplayControllerAuthority::FlightCore, 1.2) ||
+            !recorder.finish(30000, "completed")) {
+        return false;
+    }
+    const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(recorder.serialize(), "manifest");
+    if (!loaded.ok || loaded.session.events.size() != 4 ||
+            loaded.session.events[0].command_mode != aerosim::ReplayCommandMode::Actuator ||
+            loaded.session.events[0].actuator_commands != actuators.normalized ||
+            loaded.session.events[2].command_mode != aerosim::ReplayCommandMode::Acro ||
+            loaded.session.events[3].command_mode != aerosim::ReplayCommandMode::AltitudeHold ||
+            loaded.session.events[3].measured_altitude_m != 1.2) {
+        return false;
+    }
+    const aerosim::SimulationConfig config = replay_test_config();
+    const aerosim::ReplayRunResult run = aerosim::replay_session(
+            loaded.session, {config, config}, "manifest", {{"hash-a", "hash-b"}});
+    if (!run.ok) {
+        return false;
+    }
+
+    aerosim::ReplaySessionRecorder inactive(20, "manifest");
+    if (!inactive.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !inactive.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !inactive.record_command(0, "DroneA", {}, aerosim::ReplayControllerAuthority::FlightCore) ||
+            !inactive.finish(100000, "completed")) {
+        return false;
+    }
+    aerosim::SimulationConfig lower_config = replay_test_config();
+    lower_config.initial_state.velocity.y = 1.0;
+    const aerosim::ReplayRunResult inactive_run = aerosim::replay_session(
+            inactive.session(), {config, lower_config}, "manifest", {{"hash-a", "hash-b"}});
+    return inactive_run.ok && inactive_run.final_state.lower.position.y == 0.0 &&
+            inactive_run.final_state.lower.velocity.y == 1.0;
 }
 
 bool test_first_divergence_report() {
@@ -460,6 +527,9 @@ int main() {
     }
     if (!test_simulation_time_replay_contract()) {
         return fail("complete-session replay must preserve simulation-time semantics and bounds");
+    }
+    if (!test_replay_command_modes_and_inactive_vehicle()) {
+        return fail("complete-session replay must preserve command modes and inactive vehicle behavior");
     }
     if (!test_first_divergence_report()) {
         return fail("complete-session replay must report the first field divergence");

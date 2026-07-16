@@ -244,8 +244,11 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("record_replay_command", "timestamp_us", "vehicle_name", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "controller_authority"),
             &AeroSimNative::record_replay_command);
     ClassDB::bind_method(
-            D_METHOD("record_replay_mode_command", "timestamp_us", "vehicle_name", "mode", "throttle", "roll", "pitch", "yaw", "rc_rate", "super_rate", "expo", "controller_authority"),
+            D_METHOD("record_replay_mode_command", "timestamp_us", "vehicle_name", "mode", "throttle", "roll", "pitch", "yaw", "rc_rate", "super_rate", "expo", "measured_altitude_m", "controller_authority"),
             &AeroSimNative::record_replay_mode_command);
+    ClassDB::bind_method(
+            D_METHOD("record_replay_actuator_command", "timestamp_us", "vehicle_name", "motor_0", "motor_1", "motor_2", "motor_3", "controller_authority"),
+            &AeroSimNative::record_replay_actuator_command);
     ClassDB::bind_method(
             D_METHOD("record_replay_simulation_operation", "timestamp_us", "operation", "value"),
             &AeroSimNative::record_replay_simulation_operation);
@@ -574,7 +577,8 @@ Dictionary AeroSimNative::replay_complete_session(
             aerosim::DualAircraftConfig{upper_config, lower_config},
             std::string(expected_settings_manifest_hash.utf8().get_data()),
             {std::string(expected_upper_config_manifest_hash.utf8().get_data()),
-             std::string(expected_lower_config_manifest_hash.utf8().get_data())});
+             std::string(expected_lower_config_manifest_hash.utf8().get_data())},
+            true);
     result["ok"] = run.ok;
     result["diagnostic_code"] = static_cast<std::int32_t>(run.diagnostic.code);
     result["diagnostic_message"] = String(run.diagnostic.message.c_str());
@@ -747,6 +751,7 @@ Dictionary AeroSimNative::record_replay_mode_command(
         double rc_rate,
         double super_rate,
         double expo,
+        double measured_altitude_m,
         std::int32_t controller_authority) {
     if (replay_recorder_ == nullptr || timestamp_us < 0) {
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
@@ -781,7 +786,31 @@ Dictionary AeroSimNative::record_replay_mode_command(
     acro_command.yaw_stick = yaw;
     acro_command.rates = {rc_rate, super_rate, expo};
     const bool ok = replay_recorder_->record_mode_command(static_cast<std::uint64_t>(timestamp_us),
-            std::string(vehicle_name.utf8().get_data()), command_mode, angle_command, acro_command, authority);
+            std::string(vehicle_name.utf8().get_data()), command_mode, angle_command, acro_command, authority,
+            measured_altitude_m);
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::record_replay_actuator_command(
+        std::int64_t timestamp_us,
+        const String &vehicle_name,
+        double motor_0,
+        double motor_1,
+        double motor_2,
+        double motor_3,
+        std::int32_t controller_authority) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
+        return replay_status(false, &diagnostic);
+    }
+    aerosim::ReplayControllerAuthority authority;
+    if (!replay_authority_value(controller_authority, authority)) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay actuator authority is invalid"};
+        return replay_status(false, &diagnostic);
+    }
+    aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
+    const bool ok = replay_recorder_->record_actuator_command(static_cast<std::uint64_t>(timestamp_us),
+            std::string(vehicle_name.utf8().get_data()), commands, authority);
     return replay_status(ok, &replay_recorder_->diagnostic());
 }
 

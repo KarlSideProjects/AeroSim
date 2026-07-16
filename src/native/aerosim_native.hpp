@@ -125,6 +125,15 @@ public:
             double rc_rate,
             double super_rate,
             double expo,
+            double measured_altitude_m,
+            std::int32_t controller_authority);
+    godot::Dictionary record_replay_actuator_command(
+            std::int64_t timestamp_us,
+            const godot::String &vehicle_name,
+            double motor_0,
+            double motor_1,
+            double motor_2,
+            double motor_3,
             std::int32_t controller_authority);
     godot::Dictionary record_replay_simulation_operation(
             std::int64_t timestamp_us,
