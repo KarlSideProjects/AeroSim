@@ -20,6 +20,8 @@ static func verify(token: String, public_key_path: String, allowed_kids: Array, 
     var header: Variant = JSON.parse_string(header_bytes.get_string_from_utf8())
     if typeof(header) != TYPE_DICTIONARY or header.size() != 3:
         return _invalid("header shape")
+    if not header.has_all(["alg", "typ", "kid"]):
+        return _invalid("header keys")
     if typeof(header["alg"]) != TYPE_STRING or header["alg"] != "RS256":
         return _invalid("alg")
     if typeof(header["typ"]) != TYPE_STRING or header["typ"] != "aerosim-license+jwt":
@@ -31,12 +33,16 @@ static func verify(token: String, public_key_path: String, allowed_kids: Array, 
     var claims: Variant = JSON.parse_string(payload_json)
     if typeof(claims) != TYPE_DICTIONARY or claims.size() != 6:
         return _invalid("claims shape")
+    if not claims.has_all(["iss", "aud", "sub", "jti", "iat", "exp"]):
+        return _invalid("claim keys")
     if claims["iss"] != ISSUER or claims["aud"] != AUDIENCE:
         return _invalid("issuer audience")
     if typeof(claims["sub"]) != TYPE_STRING or not _is_uuid(claims["sub"]):
         return _invalid("sub")
     if typeof(claims["jti"]) != TYPE_STRING or not _is_uuid(claims["jti"]):
         return _invalid("jti")
+    if not _is_integral_number(claims["iat"]) or not _is_integral_number(claims["exp"]):
+        return _invalid("claim types")
     if not _is_integer_claim(payload_json, "iat") or not _is_integer_claim(payload_json, "exp"):
         return _invalid()
     var iat := int(claims["iat"])
@@ -126,6 +132,12 @@ static func _is_integer_claim(json: String, claim_name: String) -> bool:
 
 static func _is_json_space(character: String) -> bool:
     return " \t\r\n".contains(character)
+
+
+static func _is_integral_number(value: Variant) -> bool:
+    if typeof(value) == TYPE_INT:
+        return true
+    return typeof(value) == TYPE_FLOAT and is_finite(value) and value == floor(value)
 
 
 static func _invalid(_reason: String = "") -> Dictionary:
