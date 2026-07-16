@@ -10,6 +10,8 @@ const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
 const AirSimCameraSurface = preload("res://common/rpc/airsim_camera_surface.gd")
 const AirSimCoordinateContract = preload("res://common/rpc/airsim_coordinate_contract.gd")
+const SceneObjectCatalog = preload("res://common/rpc/scene_object_catalog.gd")
+const EnvironmentState = preload("res://common/rpc/environment_state.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
 const TimeTrialController = preload("res://common/flight/time_trial.gd")
@@ -43,9 +45,12 @@ var airsim_rpc_server: AirSimRpcServer
 var airsim_sensor_suite: AirSimSensorSuite
 var px4_sitl_bridge: Px4SitlBridge
 var airsim_camera_surface: AirSimCameraSurface
+var scene_object_catalog: SceneObjectCatalog
+var environment_state: EnvironmentState
 var airsim_stop_file := ""
 var loaded_map: Node3D
 var loaded_map_id := ""
+var loaded_map_wind_preset := "calm"
 var selected_wind_preset := ""
 var time_trial: TimeTrialController
 var paused := false
@@ -111,6 +116,7 @@ var _airsim_last_velocity := Vector3.ZERO
 var _airsim_linear_acceleration := Vector3.ZERO
 var _airsim_last_body_angular_velocity := Vector3.ZERO
 var _airsim_angular_acceleration := Vector3.ZERO
+var _airsim_environment_catalog_loaded := false
 var _px4_lockstep_sensor_pending := false
 var _airsim_collision_seen := false
 var _airsim_contact_this_frame := false
@@ -134,6 +140,9 @@ func _ready() -> void:
     airsim_rpc_server = AirSimRpcServer.new()
     airsim_sensor_suite = AirSimSensorSuite.new()
     airsim_camera_surface = AirSimCameraSurface.new()
+    scene_object_catalog = SceneObjectCatalog.new()
+    environment_state = EnvironmentState.new()
+    add_child(scene_object_catalog)
     add_child(airsim_camera_surface)
     airsim_rpc_server.set_session(airsim_session, Callable(self, "respawn"))
     add_child(airsim_rpc_server)
@@ -177,6 +186,8 @@ func _ready() -> void:
         Callable(self, "_airsim_task_complete")
     )
     airsim_rpc_server.set_sensor_backend(Callable(self, "_airsim_sensor"))
+    airsim_rpc_server.set_scene_environment_backend(Callable(self, "_airsim_scene_object"), Callable(self, "_airsim_environment"))
+    _load_scene_object_catalog()
     var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
     if not rpc_result.ok:
         push_error("AirSim RPC startup failed: %s" % rpc_result.error)
@@ -834,6 +845,7 @@ func load_map(map_id: String) -> bool:
     add_child(map_root)
     loaded_map = map_root
     loaded_map_id = map_id
+    loaded_map_wind_preset = str(descriptor.wind_preset)
     if native != null:
         var applied_wind_preset := selected_wind_preset if not selected_wind_preset.is_empty() else str(descriptor.wind_preset)
         native.call("configure_wind", {
@@ -857,6 +869,12 @@ func reset_to_spawn() -> bool:
         drone_body.freeze = true
     if time_trial != null:
         time_trial.reset()
+    if scene_object_catalog != null:
+        scene_object_catalog.reset()
+    if environment_state != null:
+        _apply_environment_result(environment_state.reset())
+        var baseline_preset := selected_wind_preset if not selected_wind_preset.is_empty() else loaded_map_wind_preset
+        _apply_environment_result(environment_state.apply({"wind_preset": baseline_preset}))
     return true
 
 func _spawn_position() -> Vector3:
@@ -867,12 +885,184 @@ func _spawn_position() -> Vector3:
     return SPAWN_POSITION
 
 func unload_map() -> void:
+    if scene_object_catalog != null:
+        scene_object_catalog.reset()
     if loaded_map != null:
         remove_child(loaded_map)
         loaded_map.queue_free()
         loaded_map = null
     loaded_map_id = ""
+    loaded_map_wind_preset = "calm"
     time_trial = null
+
+
+func _load_scene_object_catalog() -> void:
+    if scene_object_catalog == null:
+        return
+    var file := FileAccess.open("res://config/scene_object_catalog.json", FileAccess.READ)
+    if file == null:
+        push_error("Scene object catalog could not be opened")
+        return
+    var parsed = JSON.parse_string(file.get_as_text())
+    file.close()
+    if typeof(parsed) != TYPE_DICTIONARY:
+        push_error("Scene object catalog must contain a JSON object")
+        return
+    var result: Dictionary = scene_object_catalog.load_from_dictionary(parsed)
+    _airsim_environment_catalog_loaded = bool(result.ok)
+    if not result.ok:
+        push_error("Scene object catalog is invalid: %s" % result.error)
+
+
+func _airsim_scene_object(method: String, params: Array) -> Dictionary:
+    if not _airsim_environment_catalog_loaded or scene_object_catalog == null:
+        return {"ok": false, "error": "scene object catalog is unavailable"}
+    match method:
+        "simListSceneObjects":
+            return {"ok": true, "value": scene_object_catalog.list_named()}
+        "simSpawnObject":
+            var pose_result: Dictionary = _parse_airsim_pose(params[2])
+            if not pose_result.ok:
+                return pose_result
+            if not _unit_scale(params[3]):
+                return {"ok": false, "error": "catalog objects only support unit scale"}
+            var created: Dictionary = scene_object_catalog.create_named(
+                String(params[0]), String(params[1]), pose_result.godot_position)
+            if not created.ok:
+                return created
+            return {"ok": true, "value": String(created.object.name)}
+        "simGetObjectPose":
+            var queried: Dictionary = scene_object_catalog.query_named(String(params[0]))
+            if not queried.ok:
+                return queried
+            return {"ok": true, "value": _airsim_pose(queried.object.position)}
+        "simSetObjectPose":
+            var set_pose: Dictionary = _parse_airsim_pose(params[1])
+            if not set_pose.ok:
+                return set_pose
+            var moved: Dictionary = scene_object_catalog.move_named(String(params[0]), set_pose.godot_position)
+            if not moved.ok:
+                return moved
+            return {"ok": true, "value": true}
+        "simDestroyObject":
+            var destroyed: Dictionary = scene_object_catalog.destroy_named(String(params[0]))
+            if not destroyed.ok:
+                return destroyed
+            return {"ok": true, "value": true}
+        "simGetSegmentationObjectID":
+            if bool(params[1]):
+                return {"ok": false, "error": "segmentation regex matching is unsupported; use an exact catalog object name"}
+            var segmentation_query: Dictionary = scene_object_catalog.query_named(String(params[0]))
+            if not segmentation_query.ok:
+                return segmentation_query
+            return {"ok": true, "value": int(segmentation_query.object.segmentation_id)}
+        "simSetSegmentationObjectID":
+            if bool(params[2]):
+                return {"ok": false, "error": "segmentation regex matching is unsupported; use an exact catalog object name"}
+            var segmentation_set: Dictionary = scene_object_catalog.query_named(String(params[0]))
+            if not segmentation_set.ok:
+                return segmentation_set
+            if int(params[1]) != int(segmentation_set.object.segmentation_id):
+                return {"ok": false, "error": "catalog segmentation IDs are immutable"}
+            return {"ok": true, "value": true}
+    return {"ok": false, "error": "unsupported scene object method: %s" % method}
+
+
+func _airsim_environment(method: String, params: Array) -> Dictionary:
+    if environment_state == null:
+        return {"ok": false, "error": "environment state is unavailable"}
+    match method:
+        "simEnableWeather":
+            var weather_result: Dictionary = environment_state.apply({"weather_enabled": bool(params[0])})
+            return _apply_environment_result(weather_result)
+        "simSetWeatherParameter":
+            var weather_key := "rain" if int(params[0]) == 0 else "fog"
+            var parameter_result: Dictionary = environment_state.apply({weather_key: float(params[1]), "weather_enabled": true})
+            return _apply_environment_result(parameter_result)
+        "simSetTimeOfDay":
+            var time_result: Dictionary = environment_state.apply({
+                "time_of_day_enabled": bool(params[0]),
+                "start_datetime": String(params[1]),
+                "is_start_datetime_dst": bool(params[2]),
+                "celestial_clock_speed": float(params[3]),
+                "update_interval_secs": float(params[4]),
+                "move_sun": bool(params[5]),
+            })
+            return _apply_environment_result(time_result)
+        "simSetEnvironment":
+            var normalized: Dictionary = _normalize_environment_payload(params[0])
+            if not normalized.ok:
+                return normalized
+            return _apply_environment_result(environment_state.apply(normalized.state))
+        "simGetEnvironment":
+            return {"ok": true, "value": environment_state.snapshot()}
+    return {"ok": false, "error": "unsupported environment method: %s" % method}
+
+
+func _apply_environment_result(result: Dictionary) -> Dictionary:
+    if not result.ok:
+        return result
+    if native != null:
+        native.call("configure_wind", {
+            "preset": String(result.state.wind_preset),
+            "steady_wind": result.state.steady_wind,
+        })
+    return {"ok": true, "value": result.state}
+
+
+func _normalize_environment_payload(raw: Dictionary) -> Dictionary:
+    var state := raw.duplicate(true)
+    for key in ["steady_wind", "sun_position"]:
+        if state.has(key):
+            var vector_result: Dictionary = _parse_vector3r(state[key])
+            if not vector_result.ok:
+                return vector_result
+            state[key] = vector_result.value
+    return {"ok": true, "state": state}
+
+
+func _parse_airsim_pose(raw_pose: Dictionary) -> Dictionary:
+    if not raw_pose.has("position") or not raw_pose.has("orientation"):
+        return {"ok": false, "error": "pose requires position and orientation"}
+    var position_result: Dictionary = _parse_vector3r(raw_pose.position)
+    if not position_result.ok:
+        return position_result
+    var orientation = raw_pose.orientation
+    if typeof(orientation) != TYPE_DICTIONARY:
+        return {"ok": false, "error": "pose orientation must be a quaternion object"}
+    for key in ["w_val", "x_val", "y_val", "z_val"]:
+        if not orientation.has(key) or (typeof(orientation[key]) != TYPE_FLOAT and typeof(orientation[key]) != TYPE_INT) or not is_finite(float(orientation[key])):
+            return {"ok": false, "error": "pose orientation contains an invalid quaternion"}
+    var quaternion := Quaternion(float(orientation.x_val), float(orientation.y_val), float(orientation.z_val), float(orientation.w_val))
+    if quaternion.length_squared() <= 0.0:
+        return {"ok": false, "error": "pose orientation cannot be zero"}
+    return {
+        "ok": true,
+        "godot_position": AirSimCoordinateContract.ned_to_godot_world(position_result.value),
+        "godot_orientation": AirSimCoordinateContract.ned_orientation_to_godot(quaternion),
+    }
+
+
+func _parse_vector3r(raw_vector) -> Dictionary:
+    if typeof(raw_vector) != TYPE_DICTIONARY:
+        return {"ok": false, "error": "Vector3r must be an object"}
+    for key in ["x_val", "y_val", "z_val"]:
+        if not raw_vector.has(key) or (typeof(raw_vector[key]) != TYPE_FLOAT and typeof(raw_vector[key]) != TYPE_INT) or not is_finite(float(raw_vector[key])):
+            return {"ok": false, "error": "Vector3r contains an invalid component"}
+    return {"ok": true, "value": Vector3(float(raw_vector.x_val), float(raw_vector.y_val), float(raw_vector.z_val))}
+
+
+func _airsim_pose(godot_position: Vector3) -> Dictionary:
+    var position := AirSimCoordinateContract.godot_world_to_ned(godot_position)
+    return {
+        "position": {"x_val": position.x, "y_val": position.y, "z_val": position.z},
+        "orientation": {"w_val": 1.0, "x_val": 0.0, "y_val": 0.0, "z_val": 0.0},
+    }
+
+
+func _unit_scale(raw_scale: Dictionary) -> bool:
+    var parsed: Dictionary = _parse_vector3r(raw_scale)
+    return parsed.ok and parsed.value.is_equal_approx(Vector3.ONE)
 
 func _configure_time_trial(map_root: Node3D) -> void:
     var route := map_root.get_node_or_null("TimeTrial") as Node3D
@@ -1295,6 +1485,8 @@ func _update_status_diagram() -> void:
     if status_diagram == null or native == null or not native.has_method("telemetry_snapshot"):
         return
     status_diagram.update_from_snapshot(native.call("telemetry_snapshot"))
+    if environment_state != null and status_diagram.has_method("update_environment"):
+        status_diagram.update_environment(environment_state.snapshot())
 
 func _reset_drone_body() -> void:
     drone_body.reset_contact()
