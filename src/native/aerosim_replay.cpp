@@ -1250,6 +1250,9 @@ bool ReplaySessionRecorder::record_mode_command(
         const FlightCommand &command,
         const AcroCommand &acro_command,
         ReplayControllerAuthority controller_authority) {
+    if (finished_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
+    }
     if (command_mode != ReplayCommandMode::Angle && command_mode != ReplayCommandMode::Acro &&
             command_mode != ReplayCommandMode::AltitudeHold) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay command mode is invalid");
@@ -2478,6 +2481,57 @@ ReplayDivergence compare_replay_sessions(
         } else if (left.type == ReplayEventType::Environment && left.environment_json != right.environment_json) {
             report(left.timestamp_us, {}, "environment", left.environment_json, right.environment_json, 0.0);
             return result;
+        }
+    }
+    if (expected.checkpoints.size() != actual.checkpoints.size()) {
+        report(0, {}, "checkpoints.count", std::to_string(expected.checkpoints.size()),
+                std::to_string(actual.checkpoints.size()), 0.0);
+        return result;
+    }
+    for (std::size_t index = 0; index < expected.checkpoints.size(); ++index) {
+        const ReplayRunCheckpoint &left = expected.checkpoints[index];
+        const ReplayRunCheckpoint &right = actual.checkpoints[index];
+        if (left.timestamp_us != right.timestamp_us) {
+            report(std::min(left.timestamp_us, right.timestamp_us), {}, "checkpoint.timestamp_us",
+                    std::to_string(left.timestamp_us), std::to_string(right.timestamp_us), 0.0);
+            return result;
+        }
+        const double left_values[] = {
+                left.state.upper.position.x, left.state.upper.position.y, left.state.upper.position.z,
+                left.state.lower.position.x, left.state.lower.position.y, left.state.lower.position.z,
+                left.state.upper.velocity.x, left.state.upper.velocity.y, left.state.upper.velocity.z,
+                left.state.lower.velocity.x, left.state.lower.velocity.y, left.state.lower.velocity.z,
+                left.state.upper.orientation.x, left.state.upper.orientation.y, left.state.upper.orientation.z, left.state.upper.orientation.w,
+                left.state.lower.orientation.x, left.state.lower.orientation.y, left.state.lower.orientation.z, left.state.lower.orientation.w,
+                left.state.upper.angular_velocity.x, left.state.upper.angular_velocity.y, left.state.upper.angular_velocity.z,
+                left.state.lower.angular_velocity.x, left.state.lower.angular_velocity.y, left.state.lower.angular_velocity.z,
+        };
+        const double right_values[] = {
+                right.state.upper.position.x, right.state.upper.position.y, right.state.upper.position.z,
+                right.state.lower.position.x, right.state.lower.position.y, right.state.lower.position.z,
+                right.state.upper.velocity.x, right.state.upper.velocity.y, right.state.upper.velocity.z,
+                right.state.lower.velocity.x, right.state.lower.velocity.y, right.state.lower.velocity.z,
+                right.state.upper.orientation.x, right.state.upper.orientation.y, right.state.upper.orientation.z, right.state.upper.orientation.w,
+                right.state.lower.orientation.x, right.state.lower.orientation.y, right.state.lower.orientation.z, right.state.lower.orientation.w,
+                right.state.upper.angular_velocity.x, right.state.upper.angular_velocity.y, right.state.upper.angular_velocity.z,
+                right.state.lower.angular_velocity.x, right.state.lower.angular_velocity.y, right.state.lower.angular_velocity.z,
+        };
+        const char *fields[] = {
+                "checkpoint.upper.position.x", "checkpoint.upper.position.y", "checkpoint.upper.position.z",
+                "checkpoint.lower.position.x", "checkpoint.lower.position.y", "checkpoint.lower.position.z",
+                "checkpoint.upper.velocity.x", "checkpoint.upper.velocity.y", "checkpoint.upper.velocity.z",
+                "checkpoint.lower.velocity.x", "checkpoint.lower.velocity.y", "checkpoint.lower.velocity.z",
+                "checkpoint.upper.orientation.x", "checkpoint.upper.orientation.y", "checkpoint.upper.orientation.z", "checkpoint.upper.orientation.w",
+                "checkpoint.lower.orientation.x", "checkpoint.lower.orientation.y", "checkpoint.lower.orientation.z", "checkpoint.lower.orientation.w",
+                "checkpoint.upper.angular_velocity.x", "checkpoint.upper.angular_velocity.y", "checkpoint.upper.angular_velocity.z",
+                "checkpoint.lower.angular_velocity.x", "checkpoint.lower.angular_velocity.y", "checkpoint.lower.angular_velocity.z",
+        };
+        for (std::size_t field_index = 0; field_index < sizeof(left_values) / sizeof(left_values[0]); ++field_index) {
+            if (!same_or_close(left_values[field_index], right_values[field_index], tolerance)) {
+                report(left.timestamp_us, {}, fields[field_index], divergence_number(left_values[field_index]),
+                        divergence_number(right_values[field_index]), tolerance);
+                return result;
+            }
         }
     }
     if (expected.termination_timestamp_us != actual.termination_timestamp_us) {
