@@ -28,6 +28,12 @@ enum class ReplayControllerAuthority {
     Px4External,
 };
 
+enum class ReplayCommandMode {
+    Angle,
+    Acro,
+    AltitudeHold,
+};
+
 enum class ReplayAsyncLifecycle {
     Submitted,
     Accepted,
@@ -78,7 +84,9 @@ struct ReplayEvent {
     ReplayEventType type = ReplayEventType::Command;
     std::string vehicle_name;
     ReplayControllerAuthority controller_authority = ReplayControllerAuthority::FlightCore;
+    ReplayCommandMode command_mode = ReplayCommandMode::Angle;
     FlightCommand command;
+    AcroCommand acro_command;
     std::string command_id;
     std::string command_method;
     ReplayAsyncLifecycle command_lifecycle = ReplayAsyncLifecycle::Submitted;
@@ -93,12 +101,28 @@ struct ReplayEvent {
     std::string environment_json;
 };
 
+struct ReplaySceneObjectState {
+    std::string name;
+    std::string asset_id;
+    Vec3 position;
+    Quat orientation;
+};
+
+struct ReplayRunCheckpoint {
+    std::uint64_t timestamp_us = 0;
+    DualAircraftState state;
+    std::array<ReplayCollision, 2> collisions;
+    std::vector<ReplaySceneObjectState> scene_objects;
+    std::string environment_json;
+};
+
 struct ReplaySession {
     std::int32_t schema_version = kCompleteReplaySchemaVersion;
     std::uint64_t seed = 0;
     std::string settings_manifest_hash;
     std::vector<ReplayVehicleConfig> vehicles;
     std::vector<ReplayEvent> events;
+    std::vector<ReplayRunCheckpoint> checkpoints;
     std::uint64_t termination_timestamp_us = 0;
     std::string termination_reason;
 };
@@ -143,21 +167,6 @@ struct ReplayDivergence {
     double tolerance = 0.0;
 };
 
-struct ReplaySceneObjectState {
-    std::string name;
-    std::string asset_id;
-    Vec3 position;
-    Quat orientation;
-};
-
-struct ReplayRunCheckpoint {
-    std::uint64_t timestamp_us = 0;
-    DualAircraftState state;
-    std::array<ReplayCollision, 2> collisions;
-    std::vector<ReplaySceneObjectState> scene_objects;
-    std::string environment_json;
-};
-
 class ReplayRecorder {
 private:
     RecordedInputSequence sequence_;
@@ -194,6 +203,13 @@ public:
             const std::string &vehicle_name,
             const FlightCommand &command,
             ReplayControllerAuthority controller_authority);
+    bool record_mode_command(
+            std::uint64_t timestamp_us,
+            const std::string &vehicle_name,
+            ReplayCommandMode command_mode,
+            const FlightCommand &command,
+            const AcroCommand &acro_command,
+            ReplayControllerAuthority controller_authority);
     bool record_async_command(
             std::uint64_t timestamp_us,
             const std::string &vehicle_name,
@@ -217,6 +233,7 @@ public:
             const Vec3 &position,
             const Quat &orientation = {});
     bool record_environment(std::uint64_t timestamp_us, std::string environment_json);
+    bool record_checkpoint(std::uint64_t timestamp_us, const DualAircraftState &state);
     bool finish(std::uint64_t timestamp_us, std::string reason);
 
     const ReplaySession &session() const;

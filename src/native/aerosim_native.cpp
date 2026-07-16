@@ -244,6 +244,9 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("record_replay_command", "timestamp_us", "vehicle_name", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "controller_authority"),
             &AeroSimNative::record_replay_command);
     ClassDB::bind_method(
+            D_METHOD("record_replay_mode_command", "timestamp_us", "vehicle_name", "mode", "throttle", "roll", "pitch", "yaw", "rc_rate", "super_rate", "expo", "controller_authority"),
+            &AeroSimNative::record_replay_mode_command);
+    ClassDB::bind_method(
             D_METHOD("record_replay_simulation_operation", "timestamp_us", "operation", "value"),
             &AeroSimNative::record_replay_simulation_operation);
     ClassDB::bind_method(
@@ -255,6 +258,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("record_replay_environment", "timestamp_us", "environment_json"),
             &AeroSimNative::record_replay_environment);
+    ClassDB::bind_method(
+            D_METHOD("record_replay_checkpoint", "timestamp_us", "upper_row", "lower_row"),
+            &AeroSimNative::record_replay_checkpoint);
     ClassDB::bind_method(
             D_METHOD("record_replay_async_command", "timestamp_us", "vehicle_name", "command_id", "method", "lifecycle"),
             &AeroSimNative::record_replay_async_command);
@@ -573,6 +579,24 @@ Dictionary AeroSimNative::replay_complete_session(
     result["diagnostic_code"] = static_cast<std::int32_t>(run.diagnostic.code);
     result["diagnostic_message"] = String(run.diagnostic.message.c_str());
     if (run.ok) {
+        if (!loaded.session.checkpoints.empty()) {
+            aerosim::ReplayRunResult expected_run = run;
+            expected_run.checkpoints = loaded.session.checkpoints;
+            const aerosim::ReplayDivergence divergence = aerosim::compare_replay_runs(expected_run, run);
+            result["diverged"] = divergence.diverged;
+            result["divergence_timestamp_us"] = static_cast<std::int64_t>(divergence.timestamp_us);
+            result["divergence_vehicle_name"] = String(divergence.vehicle_name.c_str());
+            result["divergence_field"] = String(divergence.field.c_str());
+            result["divergence_expected"] = String(divergence.expected.c_str());
+            result["divergence_actual"] = String(divergence.actual.c_str());
+            result["divergence_tolerance"] = divergence.tolerance;
+            if (divergence.diverged) {
+                result["ok"] = false;
+                result["diagnostic_code"] = static_cast<std::int32_t>(aerosim::ReplayDiagnosticCode::InvalidSession);
+                result["diagnostic_message"] = String(("replay checkpoint diverged: " + divergence.field).c_str());
+                return result;
+            }
+        }
         result["upper_position"] = godot_vec3(run.final_state.upper.position);
         result["lower_position"] = godot_vec3(run.final_state.lower.position);
         result["total_substeps"] = static_cast<std::int64_t>(run.final_clock.total_substeps);
@@ -627,7 +651,7 @@ Dictionary AeroSimNative::replay_vehicle_config_manifest() const {
     result["battery_remaining_mah"] = config.battery_remaining_mah;
     result["max_total_current_a"] = config.max_total_current_a;
     result["max_motor_rpm"] = config.max_motor_rpm;
-    result["external_force_world"] = godot_vec3(config.external_force_world);
+    result["external_force_world"] = godot_vec3(external_force_world_);
     result["a4_ground_effect"] = a4_ground_effect_configuration();
     result["a5_downwash"] = a5_downwash_configuration();
     Dictionary per_motor;
@@ -712,6 +736,55 @@ Dictionary AeroSimNative::record_replay_command(
     return replay_status(ok, &replay_recorder_->diagnostic());
 }
 
+Dictionary AeroSimNative::record_replay_mode_command(
+        std::int64_t timestamp_us,
+        const String &vehicle_name,
+        const String &mode,
+        double throttle,
+        double roll,
+        double pitch,
+        double yaw,
+        double rc_rate,
+        double super_rate,
+        double expo,
+        std::int32_t controller_authority) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
+        return replay_status(false, &diagnostic);
+    }
+    aerosim::ReplayControllerAuthority authority;
+    if (!replay_authority_value(controller_authority, authority)) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay command authority is invalid"};
+        return replay_status(false, &diagnostic);
+    }
+    aerosim::ReplayCommandMode command_mode;
+    const std::string mode_name = std::string(mode.utf8().get_data());
+    if (mode_name == "ACRO") {
+        command_mode = aerosim::ReplayCommandMode::Acro;
+    } else if (mode_name == "ALTITUDE_HOLD") {
+        command_mode = aerosim::ReplayCommandMode::AltitudeHold;
+    } else if (mode_name == "ANGLE") {
+        command_mode = aerosim::ReplayCommandMode::Angle;
+    } else {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay command mode is invalid"};
+        return replay_status(false, &diagnostic);
+    }
+    aerosim::FlightCommand angle_command;
+    angle_command.throttle = throttle;
+    angle_command.roll_degrees = roll;
+    angle_command.pitch_degrees = pitch;
+    angle_command.yaw_rate_degrees_per_second = yaw;
+    aerosim::AcroCommand acro_command;
+    acro_command.throttle = throttle;
+    acro_command.roll_stick = roll;
+    acro_command.pitch_stick = pitch;
+    acro_command.yaw_stick = yaw;
+    acro_command.rates = {rc_rate, super_rate, expo};
+    const bool ok = replay_recorder_->record_mode_command(static_cast<std::uint64_t>(timestamp_us),
+            std::string(vehicle_name.utf8().get_data()), command_mode, angle_command, acro_command, authority);
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
 Dictionary AeroSimNative::record_replay_simulation_operation(
         std::int64_t timestamp_us, std::int32_t operation, double value) {
     if (replay_recorder_ == nullptr || timestamp_us < 0 || operation < 0 || operation > 5) {
@@ -792,6 +865,27 @@ Dictionary AeroSimNative::record_replay_environment(
     }
     const bool ok = replay_recorder_->record_environment(static_cast<std::uint64_t>(timestamp_us),
             std::string(environment_json.utf8().get_data()));
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::record_replay_checkpoint(
+        std::int64_t timestamp_us,
+        const PackedFloat64Array &upper_row,
+        const PackedFloat64Array &lower_row) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0 || upper_row.size() < 17 || lower_row.size() < 17) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay checkpoint state is invalid or recording is inactive"};
+        return replay_status(false, &diagnostic);
+    }
+    const auto state_from_row = [](const PackedFloat64Array &row) {
+        aerosim::RigidBodyState state;
+        state.position = {row[1], row[2], row[3]};
+        state.orientation = {row[4], row[5], row[6], row[7]};
+        state.velocity = {row[8], row[9], row[10]};
+        state.angular_velocity = {row[14], row[15], row[16]};
+        return state;
+    };
+    const aerosim::DualAircraftState state{state_from_row(upper_row), state_from_row(lower_row)};
+    const bool ok = replay_recorder_->record_checkpoint(static_cast<std::uint64_t>(timestamp_us), state);
     return replay_status(ok, &replay_recorder_->diagnostic());
 }
 

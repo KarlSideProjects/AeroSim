@@ -580,6 +580,13 @@ bool finite_command(const FlightCommand &command) {
             std::isfinite(command.pitch_degrees) && std::isfinite(command.yaw_rate_degrees_per_second);
 }
 
+bool finite_acro_command(const AcroCommand &command) {
+    return std::isfinite(command.throttle) && std::isfinite(command.roll_stick) &&
+            std::isfinite(command.pitch_stick) && std::isfinite(command.yaw_stick) &&
+            std::isfinite(command.rates.rc_rate) && std::isfinite(command.rates.super_rate) &&
+            std::isfinite(command.rates.expo);
+}
+
 bool finite_vec(const Vec3 &value) {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
@@ -624,6 +631,41 @@ bool parse_quat(const JsonValue &value, Quat &result) {
     return true;
 }
 
+bool integer_value(const JsonValue &value, std::uint64_t &result);
+
+std::string rigid_body_state_json(const RigidBodyState &state) {
+    return "{\"position\":" + vec_json(state.position) +
+            ",\"orientation\":" + quat_json(state.orientation) +
+            ",\"velocity\":" + vec_json(state.velocity) +
+            ",\"angular_velocity\":" + vec_json(state.angular_velocity) + '}';
+}
+
+bool parse_rigid_body_state(const JsonValue &value, RigidBodyState &state) {
+    const JsonValue *position = field(value, "position");
+    const JsonValue *orientation = field(value, "orientation");
+    const JsonValue *velocity = field(value, "velocity");
+    const JsonValue *angular_velocity = field(value, "angular_velocity");
+    return position != nullptr && orientation != nullptr && velocity != nullptr && angular_velocity != nullptr &&
+            parse_vec(*position, state.position) && parse_quat(*orientation, state.orientation) &&
+            parse_vec(*velocity, state.velocity) && parse_vec(*angular_velocity, state.angular_velocity);
+}
+
+std::string checkpoint_json(const ReplayRunCheckpoint &checkpoint) {
+    return "{\"timestamp_us\":" + std::to_string(checkpoint.timestamp_us) +
+            ",\"upper\":" + rigid_body_state_json(checkpoint.state.upper) +
+            ",\"lower\":" + rigid_body_state_json(checkpoint.state.lower) + '}';
+}
+
+bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint) {
+    const JsonValue *timestamp = field(value, "timestamp_us");
+    const JsonValue *upper = field(value, "upper");
+    const JsonValue *lower = field(value, "lower");
+    return timestamp != nullptr && upper != nullptr && lower != nullptr &&
+            integer_value(*timestamp, checkpoint.timestamp_us) &&
+            parse_rigid_body_state(*upper, checkpoint.state.upper) &&
+            parse_rigid_body_state(*lower, checkpoint.state.lower);
+}
+
 const char *authority_name(ReplayControllerAuthority value) {
     switch (value) {
     case ReplayControllerAuthority::FlightCore:
@@ -634,6 +676,31 @@ const char *authority_name(ReplayControllerAuthority value) {
         return "px4_external";
     }
     return "";
+}
+
+const char *command_mode_name(ReplayCommandMode value) {
+    switch (value) {
+    case ReplayCommandMode::Angle:
+        return "angle";
+    case ReplayCommandMode::Acro:
+        return "acro";
+    case ReplayCommandMode::AltitudeHold:
+        return "altitude_hold";
+    }
+    return "";
+}
+
+bool parse_command_mode(const std::string &value, ReplayCommandMode &result) {
+    if (value == "angle") {
+        result = ReplayCommandMode::Angle;
+    } else if (value == "acro") {
+        result = ReplayCommandMode::Acro;
+    } else if (value == "altitude_hold") {
+        result = ReplayCommandMode::AltitudeHold;
+    } else {
+        return false;
+    }
+    return true;
 }
 
 bool parse_authority(const std::string &value, ReplayControllerAuthority &result) {
@@ -837,6 +904,10 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
         if (event.type == ReplayEventType::Command && !finite_command(event.command)) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
         }
+        if (event.type == ReplayEventType::Command && event.command_mode == ReplayCommandMode::Acro &&
+                !finite_acro_command(event.acro_command)) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "replay acro command contains a non-finite value");
+        }
         if (event.type == ReplayEventType::AsyncCommand && (event.command_id.empty() || event.command_method.empty())) {
             return invalid(ReplayDiagnosticCode::InvalidLifecycle, "async replay command id and method are required");
         }
@@ -848,6 +919,25 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
                         (event.simulation_value < 0.0 || event.simulation_value > 1000000.0)))) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "invalid replay simulation step value");
         }
+    }
+    std::uint64_t previous_checkpoint_timestamp_us = 0;
+    bool has_previous_checkpoint = false;
+    for (const ReplayRunCheckpoint &checkpoint : session.checkpoints) {
+        if (has_previous_checkpoint && checkpoint.timestamp_us < previous_checkpoint_timestamp_us) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "replay checkpoints must be monotonic");
+        }
+        if (require_termination && checkpoint.timestamp_us > session.termination_timestamp_us) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "replay checkpoint occurs after termination");
+        }
+        const RigidBodyState *states[] = {&checkpoint.state.upper, &checkpoint.state.lower};
+        for (const RigidBodyState *state : states) {
+            if (!finite_vec(state->position) || !finite_quat(state->orientation) ||
+                    !finite_vec(state->velocity) || !finite_vec(state->angular_velocity)) {
+                return invalid(ReplayDiagnosticCode::InvalidSession, "replay checkpoint contains non-finite state");
+            }
+        }
+        previous_checkpoint_timestamp_us = checkpoint.timestamp_us;
+        has_previous_checkpoint = true;
     }
     std::unordered_map<std::string, ReplayAsyncLifecycle> lifecycle;
     std::unordered_map<std::string, std::string> methods;
@@ -894,6 +984,16 @@ std::string command_json(const FlightCommand &command) {
             ",\"yaw_rate_degrees_per_second\":" + compact_number(command.yaw_rate_degrees_per_second) + "}";
 }
 
+std::string acro_command_json(const AcroCommand &command) {
+    return "{\"throttle\":" + compact_number(command.throttle) +
+            ",\"roll_stick\":" + compact_number(command.roll_stick) +
+            ",\"pitch_stick\":" + compact_number(command.pitch_stick) +
+            ",\"yaw_stick\":" + compact_number(command.yaw_stick) +
+            ",\"rc_rate\":" + compact_number(command.rates.rc_rate) +
+            ",\"super_rate\":" + compact_number(command.rates.super_rate) +
+            ",\"expo\":" + compact_number(command.rates.expo) + "}";
+}
+
 std::string event_json(const ReplayEvent &event) {
     std::string result = "{\"timestamp_us\":" + std::to_string(event.timestamp_us) +
             ",\"type\":\"" + event_type_name(event.type) + "\"";
@@ -903,7 +1003,11 @@ std::string event_json(const ReplayEvent &event) {
     switch (event.type) {
     case ReplayEventType::Command:
         result += ",\"authority\":\"" + std::string(authority_name(event.controller_authority)) +
+                "\",\"mode\":\"" + std::string(command_mode_name(event.command_mode)) +
                 "\",\"command\":" + command_json(event.command);
+        if (event.command_mode == ReplayCommandMode::Acro) {
+            result += ",\"acro\":" + acro_command_json(event.acro_command);
+        }
         break;
     case ReplayEventType::AsyncCommand:
         result += ",\"command_id\":\"" + escape_json_string(event.command_id) +
@@ -949,6 +1053,22 @@ bool parse_command(const JsonValue &value, FlightCommand &command) {
             number_value(*pitch, command.pitch_degrees) && number_value(*yaw, command.yaw_rate_degrees_per_second);
 }
 
+bool parse_acro_command(const JsonValue &value, AcroCommand &command) {
+    const JsonValue *throttle = field(value, "throttle");
+    const JsonValue *roll = field(value, "roll_stick");
+    const JsonValue *pitch = field(value, "pitch_stick");
+    const JsonValue *yaw = field(value, "yaw_stick");
+    const JsonValue *rc_rate = field(value, "rc_rate");
+    const JsonValue *super_rate = field(value, "super_rate");
+    const JsonValue *expo = field(value, "expo");
+    return throttle != nullptr && roll != nullptr && pitch != nullptr && yaw != nullptr &&
+            rc_rate != nullptr && super_rate != nullptr && expo != nullptr &&
+            number_value(*throttle, command.throttle) && number_value(*roll, command.roll_stick) &&
+            number_value(*pitch, command.pitch_stick) && number_value(*yaw, command.yaw_stick) &&
+            number_value(*rc_rate, command.rates.rc_rate) && number_value(*super_rate, command.rates.super_rate) &&
+            number_value(*expo, command.rates.expo);
+}
+
 bool parse_event(const JsonValue &value, ReplayEvent &event) {
     const JsonValue *timestamp = field(value, "timestamp_us");
     const JsonValue *type = field(value, "type");
@@ -965,9 +1085,22 @@ bool parse_event(const JsonValue &value, ReplayEvent &event) {
     case ReplayEventType::Command: {
         std::string authority;
         const JsonValue *authority_value = field(value, "authority");
+        const JsonValue *mode_value = field(value, "mode");
         const JsonValue *command = field(value, "command");
-        return authority_value != nullptr && command != nullptr && string_value(*authority_value, authority) &&
-                parse_authority(authority, event.controller_authority) && parse_command(*command, event.command);
+        std::string mode = "angle";
+        if (mode_value != nullptr && !string_value(*mode_value, mode)) {
+            return false;
+        }
+        if (authority_value == nullptr || command == nullptr || !string_value(*authority_value, authority) ||
+                !parse_authority(authority, event.controller_authority) || !parse_command(*command, event.command) ||
+                !parse_command_mode(mode, event.command_mode)) {
+            return false;
+        }
+        if (event.command_mode == ReplayCommandMode::Acro) {
+            const JsonValue *acro = field(value, "acro");
+            return acro != nullptr && parse_acro_command(*acro, event.acro_command);
+        }
+        return true;
     }
     case ReplayEventType::AsyncCommand: {
         std::string lifecycle;
@@ -1105,6 +1238,36 @@ bool ReplaySessionRecorder::record_command(
     event.vehicle_name = vehicle_name;
     event.controller_authority = controller_authority;
     event.command = command;
+    session_.events.push_back(std::move(event));
+    diagnostic_ = {};
+    return true;
+}
+
+bool ReplaySessionRecorder::record_mode_command(
+        std::uint64_t timestamp_us,
+        const std::string &vehicle_name,
+        ReplayCommandMode command_mode,
+        const FlightCommand &command,
+        const AcroCommand &acro_command,
+        ReplayControllerAuthority controller_authority) {
+    if (command_mode != ReplayCommandMode::Angle && command_mode != ReplayCommandMode::Acro &&
+            command_mode != ReplayCommandMode::AltitudeHold) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay command mode is invalid");
+    }
+    if (!finite_command(command) || (command_mode == ReplayCommandMode::Acro && !finite_acro_command(acro_command))) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
+    }
+    if (!has_vehicle(vehicle_name)) {
+        return fail(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + vehicle_name);
+    }
+    ReplayEvent event;
+    event.timestamp_us = timestamp_us;
+    event.type = ReplayEventType::Command;
+    event.vehicle_name = vehicle_name;
+    event.controller_authority = controller_authority;
+    event.command_mode = command_mode;
+    event.command = command;
+    event.acro_command = acro_command;
     session_.events.push_back(std::move(event));
     diagnostic_ = {};
     return true;
@@ -1253,6 +1416,24 @@ bool ReplaySessionRecorder::record_environment(std::uint64_t timestamp_us, std::
     return true;
 }
 
+bool ReplaySessionRecorder::record_checkpoint(std::uint64_t timestamp_us, const DualAircraftState &state) {
+    if (finished_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
+    }
+    if (!finite_vec(state.upper.position) || !finite_quat(state.upper.orientation) ||
+            !finite_vec(state.upper.velocity) || !finite_vec(state.upper.angular_velocity) ||
+            !finite_vec(state.lower.position) || !finite_quat(state.lower.orientation) ||
+            !finite_vec(state.lower.velocity) || !finite_vec(state.lower.angular_velocity)) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay checkpoint state must be finite");
+    }
+    if (!session_.checkpoints.empty() && timestamp_us < session_.checkpoints.back().timestamp_us) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay checkpoints must be monotonic");
+    }
+    session_.checkpoints.push_back({timestamp_us, state, {}, {}, {}});
+    diagnostic_ = {};
+    return true;
+}
+
 bool ReplaySessionRecorder::finish(std::uint64_t timestamp_us, std::string reason) {
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
@@ -1315,6 +1496,13 @@ std::string serialize_replay_session(const ReplaySession &session) {
         }
         result += event_json(session.events[index]);
     }
+    result += "],\"checkpoints\":[";
+    for (std::size_t index = 0; index < session.checkpoints.size(); ++index) {
+        if (index != 0) {
+            result += ',';
+        }
+        result += checkpoint_json(session.checkpoints[index]);
+    }
     result += "],\"termination\":{\"timestamp_us\":" + std::to_string(session.termination_timestamp_us) +
             ",\"reason\":\"" + escape_json_string(session.termination_reason) + "\"}}";
     return result;
@@ -1340,6 +1528,7 @@ ReplayLoadResult load_replay_session(
     const JsonValue *manifest = field(root, "settings_manifest_hash");
     const JsonValue *vehicles = field(root, "vehicles");
     const JsonValue *events = field(root, "events");
+    const JsonValue *checkpoints = field(root, "checkpoints");
     const JsonValue *termination = field(root, "termination");
     std::int64_t schema_number = 0;
     if (schema == nullptr || !signed_integer_value(*schema, schema_number) ||
@@ -1393,6 +1582,18 @@ ReplayLoadResult load_replay_session(
             return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "invalid replay event")};
         }
         session.events.push_back(std::move(event));
+    }
+    if (checkpoints != nullptr) {
+        if (checkpoints->type != JsonValue::Type::Array) {
+            return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "replay checkpoints must be an array")};
+        }
+        for (const JsonValue &value : checkpoints->array) {
+            ReplayRunCheckpoint checkpoint;
+            if (!parse_checkpoint(value, checkpoint)) {
+                return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "invalid replay checkpoint")};
+            }
+            session.checkpoints.push_back(std::move(checkpoint));
+        }
     }
     if (termination == nullptr || termination->type != JsonValue::Type::Object) {
         return {false, {}, invalid(ReplayDiagnosticCode::Truncated, "replay termination is missing")};
@@ -1523,6 +1724,8 @@ ReplayRunResult replay_session(
     controllers[1].arm(0.0);
     CollisionAuthoritySwitch collision_switches[2];
     FlightCommand commands[2];
+    AcroCommand acro_commands[2];
+    ReplayCommandMode command_modes[2] = {ReplayCommandMode::Angle, ReplayCommandMode::Angle};
     CollisionContact pending_collisions[2];
     ReplayCollision last_collisions[2];
     bool has_pending_collision[2] = {false, false};
@@ -1531,6 +1734,7 @@ ReplayRunResult replay_session(
     std::vector<ReplaySceneObjectState> scene_objects;
     std::string environment_json;
     std::vector<ReplayRunCheckpoint> checkpoints;
+    const bool has_recorded_checkpoints = !session.checkpoints.empty();
     std::uint64_t previous_timestamp_us = 0;
     const auto vehicle_index = [&](const std::string &name) {
         return name == session.vehicles[0].name ? 0 : name == session.vehicles[1].name ? 1 : -1;
@@ -1538,19 +1742,37 @@ ReplayRunResult replay_session(
     const auto checkpoint = [&](std::uint64_t timestamp_us) {
         checkpoints.push_back({timestamp_us, state, {last_collisions[0], last_collisions[1]}, scene_objects, environment_json});
     };
+    if (has_recorded_checkpoints && !session.checkpoints.empty() && session.checkpoints.front().timestamp_us == 0) {
+        checkpoint(0);
+    }
+    const auto step_vehicle = [&](std::size_t index, RigidBodyState &vehicle_state, SimulationClock &clock,
+                                  FlightController &controller, const SimulationConfig &vehicle_config) {
+        if (has_pending_collision[index]) {
+            if (command_modes[index] == ReplayCommandMode::Acro) {
+                collision_switches[index].step_acro(vehicle_state, clock, controller, vehicle_config,
+                        acro_commands[index], pending_collisions[index]);
+            } else if (command_modes[index] == ReplayCommandMode::AltitudeHold) {
+                collision_switches[index].step_altitude_hold(vehicle_state, clock, controller, vehicle_config,
+                        commands[index], vehicle_state.position.z, pending_collisions[index], vehicle_state.orientation);
+            } else {
+                collision_switches[index].step(vehicle_state, clock, controller, vehicle_config,
+                        commands[index], pending_collisions[index]);
+            }
+            has_pending_collision[index] = false;
+        } else {
+            if (command_modes[index] == ReplayCommandMode::Acro) {
+                controller.step_acro_mode(vehicle_state, clock, vehicle_config, acro_commands[index]);
+            } else if (command_modes[index] == ReplayCommandMode::AltitudeHold) {
+                controller.step_altitude_hold_mode(vehicle_state, clock, vehicle_config, commands[index],
+                        vehicle_state.position.z, vehicle_state.orientation);
+            } else {
+                controller.step_angle_mode(vehicle_state, clock, vehicle_config, commands[index]);
+            }
+        }
+    };
     const auto step_frame = [&](std::uint64_t timestamp_us) {
-        if (has_pending_collision[0]) {
-            collision_switches[0].step(state.upper, clocks[0], controllers[0], config.upper, commands[0], pending_collisions[0]);
-            has_pending_collision[0] = false;
-        } else {
-            controllers[0].step_angle_mode(state.upper, clocks[0], config.upper, commands[0]);
-        }
-        if (has_pending_collision[1]) {
-            collision_switches[1].step(state.lower, clocks[1], controllers[1], config.lower, commands[1], pending_collisions[1]);
-            has_pending_collision[1] = false;
-        } else {
-            controllers[1].step_angle_mode(state.lower, clocks[1], config.lower, commands[1]);
-        }
+        step_vehicle(0, state.upper, clocks[0], controllers[0], config.upper);
+        step_vehicle(1, state.lower, clocks[1], controllers[1], config.lower);
         checkpoint(timestamp_us);
     };
     const auto step_frames = [&](std::int64_t count, std::uint64_t timestamp_us) {
@@ -1598,6 +1820,8 @@ ReplayRunResult replay_session(
                 return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority requires actuator-level command data"));
             }
             commands[index] = event.command;
+            command_modes[index] = event.command_mode;
+            acro_commands[index] = event.acro_command;
             break;
         }
         case ReplayEventType::AsyncCommand:
@@ -1661,6 +1885,10 @@ ReplayRunResult replay_session(
                 clocks[1] = {};
                 commands[0] = {};
                 commands[1] = {};
+                acro_commands[0] = {};
+                acro_commands[1] = {};
+                command_modes[0] = ReplayCommandMode::Angle;
+                command_modes[1] = ReplayCommandMode::Angle;
                 has_pending_collision[0] = false;
                 has_pending_collision[1] = false;
                 scene_objects.clear();
@@ -1677,6 +1905,10 @@ ReplayRunResult replay_session(
                 clocks[1] = {};
                 commands[0] = {};
                 commands[1] = {};
+                acro_commands[0] = {};
+                acro_commands[1] = {};
+                command_modes[0] = ReplayCommandMode::Angle;
+                command_modes[1] = ReplayCommandMode::Angle;
                 has_pending_collision[0] = false;
                 has_pending_collision[1] = false;
                 scene_objects.clear();
@@ -1690,16 +1922,20 @@ ReplayRunResult replay_session(
             }
             break;
         }
-        checkpoint(event.timestamp_us);
+        if (!has_recorded_checkpoints) {
+            checkpoint(event.timestamp_us);
+        }
     }
     if (!paused && session.termination_timestamp_us >= previous_timestamp_us &&
             !advance_us(session.termination_timestamp_us - previous_timestamp_us, session.termination_timestamp_us)) {
         return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay termination interval exceeds runtime frame limit"));
     }
+    if (!has_recorded_checkpoints) {
+        checkpoint(session.termination_timestamp_us);
+    }
     if (has_pending_collision[0] || has_pending_collision[1]) {
         return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay collision was not consumed before termination"));
     }
-    checkpoint(session.termination_timestamp_us);
     return {true, {}, state, clocks[0], session.termination_timestamp_us,
             {session.vehicles[0].name, session.vehicles[1].name}, std::move(scene_objects),
             std::move(environment_json), std::move(checkpoints)};
@@ -2087,6 +2323,10 @@ ReplayDivergence compare_replay_sessions(
             return result;
         }
         if (left.type == ReplayEventType::Command) {
+            if (left.command_mode != right.command_mode) {
+                report(left.timestamp_us, left.vehicle_name, "command.mode", command_mode_name(left.command_mode), command_mode_name(right.command_mode), 0.0);
+                return result;
+            }
             const double left_values[] = {left.command.throttle, left.command.roll_degrees, left.command.pitch_degrees, left.command.yaw_rate_degrees_per_second};
             const double right_values[] = {right.command.throttle, right.command.roll_degrees, right.command.pitch_degrees, right.command.yaw_rate_degrees_per_second};
             const char *fields[] = {"command.throttle", "command.roll_degrees", "command.pitch_degrees", "command.yaw_rate_degrees_per_second"};
@@ -2094,6 +2334,23 @@ ReplayDivergence compare_replay_sessions(
                 if (!same_or_close(left_values[value_index], right_values[value_index], tolerance)) {
                     report(left.timestamp_us, left.vehicle_name, fields[value_index], divergence_number(left_values[value_index]), divergence_number(right_values[value_index]), tolerance);
                     return result;
+                }
+            }
+            if (left.command_mode == ReplayCommandMode::Acro) {
+                const double left_acro_values[] = {left.acro_command.throttle, left.acro_command.roll_stick,
+                        left.acro_command.pitch_stick, left.acro_command.yaw_stick, left.acro_command.rates.rc_rate,
+                        left.acro_command.rates.super_rate, left.acro_command.rates.expo};
+                const double right_acro_values[] = {right.acro_command.throttle, right.acro_command.roll_stick,
+                        right.acro_command.pitch_stick, right.acro_command.yaw_stick, right.acro_command.rates.rc_rate,
+                        right.acro_command.rates.super_rate, right.acro_command.rates.expo};
+                const char *acro_fields[] = {"command.acro.throttle", "command.acro.roll_stick", "command.acro.pitch_stick",
+                        "command.acro.yaw_stick", "command.acro.rc_rate", "command.acro.super_rate", "command.acro.expo"};
+                for (int value_index = 0; value_index < 7; ++value_index) {
+                    if (!same_or_close(left_acro_values[value_index], right_acro_values[value_index], tolerance)) {
+                        report(left.timestamp_us, left.vehicle_name, acro_fields[value_index],
+                                divergence_number(left_acro_values[value_index]), divergence_number(right_acro_values[value_index]), tolerance);
+                        return result;
+                    }
                 }
             }
         } else if (left.type == ReplayEventType::AsyncCommand) {

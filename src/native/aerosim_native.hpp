@@ -114,6 +114,18 @@ public:
             double pitch_degrees,
             double yaw_rate_degrees_per_second,
             std::int32_t controller_authority);
+    godot::Dictionary record_replay_mode_command(
+            std::int64_t timestamp_us,
+            const godot::String &vehicle_name,
+            const godot::String &mode,
+            double throttle,
+            double roll,
+            double pitch,
+            double yaw,
+            double rc_rate,
+            double super_rate,
+            double expo,
+            std::int32_t controller_authority);
     godot::Dictionary record_replay_simulation_operation(
             std::int64_t timestamp_us,
             std::int32_t operation,
@@ -148,6 +160,10 @@ public:
     godot::Dictionary record_replay_environment(
             std::int64_t timestamp_us,
             const godot::String &environment_json);
+    godot::Dictionary record_replay_checkpoint(
+            std::int64_t timestamp_us,
+            const godot::PackedFloat64Array &upper_row,
+            const godot::PackedFloat64Array &lower_row);
     godot::Dictionary record_replay_async_command(
             std::int64_t timestamp_us,
             const godot::String &vehicle_name,

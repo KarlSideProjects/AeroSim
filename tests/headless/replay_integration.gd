@@ -37,10 +37,12 @@ func _initialize() -> void:
     if not bool(begin.get("ok", false)):
         _fail("replay recording did not start: %s" % String(begin.get("diagnostic_message", "unknown")))
         return
+    var initial_row := PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     _expect_ok(native.call("record_replay_command", 0, "DroneA", 0.55, 0.0, 0.0, 0.0, 0), "upper command")
     _expect_ok(native.call("record_replay_command", 0, "DroneB", 0.50, 0.0, 0.0, 0.0, 0), "lower command")
-    _expect_ok(native.call("record_replay_simulation_operation", 1000, 0, 0.0), "pause")
-    _expect_ok(native.call("record_replay_simulation_operation", 2000, 2, 1.0), "step")
+    _expect_ok(native.call("record_replay_checkpoint", 0, initial_row, initial_row), "initial checkpoint")
+    _expect_ok(native.call("record_replay_simulation_operation", 0, 0, 0.0), "pause")
+    _expect_ok(native.call("record_replay_simulation_operation", 2000, 2, 0.0), "step")
     _expect_ok(native.call("record_replay_scene_object", 2000, 0, "crate", "primitive_box", Vector3(1.0, 2.0, 3.0), Quaternion.IDENTITY), "scene")
     _expect_ok(native.call("record_replay_environment", 3000, "{\"rain\":0.25}"), "environment")
     _expect_ok(native.call("record_replay_simulation_operation", 4000, 1, 0.0), "resume")
@@ -60,6 +62,13 @@ func _initialize() -> void:
         "compare_complete_replay_sessions", finish.serialized, altered_serialized, SETTINGS_HASH)
     if not bool(divergence.get("ok", false)) or not bool(divergence.get("diverged", false)) or String(divergence.get("field", "")) != "command.throttle":
         _fail("replay divergence report failed: %s" % String(divergence.get("diagnostic_message", "unknown")))
+        return
+    var altered_checkpoint_serialized: String = finish.serialized.replace("\"position\":[0,0,0]", "\"position\":[0.25,0,0]")
+    var checkpoint_divergence: Dictionary = native.call(
+        "replay_complete_session", altered_checkpoint_serialized, SETTINGS_HASH, config_hash, config_hash,
+        config_manifest, config_manifest)
+    if bool(checkpoint_divergence.get("ok", true)) or not bool(checkpoint_divergence.get("diverged", false)) or String(checkpoint_divergence.get("divergence_field", "")) != "upper.position.x":
+        _fail("replay checkpoint divergence was not rejected")
         return
     _pass()
 
