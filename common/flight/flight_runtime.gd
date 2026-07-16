@@ -3090,7 +3090,7 @@ func _airsim_state(name: String) -> Dictionary:
         "object_name": "",
         "object_id": -1,
     }
-    var landed := position.y <= _spawn_position().y + 0.05 and linear_velocity.length() < 0.25
+    var landed := position.y <= _spawn_position().y + AIRSIM_GROUND_BODY_CLEARANCE_M and linear_velocity.length() < 0.25
     var state := {
         "collision": collision,
         "kinematics_estimated": {
@@ -3172,7 +3172,7 @@ func _airsim_secondary_state(name: String) -> Dictionary:
         "gps_location": gps_location,
         "imu_sample": native_imu_sample,
         "timestamp": int(round(airsim_session.simulation_time_seconds * 1_000_000_000.0)),
-        "landed_state": 0 if position.y <= _spawn_position().y + 0.05 and linear_velocity.length() < 0.25 else 1,
+        "landed_state": 0 if position.y <= _spawn_position().y + AIRSIM_GROUND_BODY_CLEARANCE_M and linear_velocity.length() < 0.25 else 1,
         "rc_data": {"timestamp": 0, "pitch": 0.0, "roll": 0.0, "throttle": 0.0, "yaw": 0.0, "is_initialized": false, "is_valid": false},
         "ready": _airsim_secondary_native != null,
         "ready_message": "" if _airsim_secondary_native != null else "native runtime unavailable",
