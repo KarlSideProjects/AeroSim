@@ -150,6 +150,13 @@ struct ReplaySceneObjectState {
     Quat orientation;
 };
 
+struct ReplayRunCheckpoint {
+    std::uint64_t timestamp_us = 0;
+    DualAircraftState state;
+    std::vector<ReplaySceneObjectState> scene_objects;
+    std::string environment_json;
+};
+
 class ReplayRecorder {
 private:
     RecordedInputSequence sequence_;
@@ -233,11 +240,13 @@ struct ReplayRunResult {
     std::uint64_t final_timestamp_us = 0;
     std::vector<ReplaySceneObjectState> scene_objects;
     std::string environment_json;
+    std::vector<ReplayRunCheckpoint> checkpoints;
 };
 
 ReplayRunResult replay_session(
         const ReplaySession &session,
-        const DualAircraftConfig &config);
+        const DualAircraftConfig &config,
+        const std::array<std::string, 2> &expected_vehicle_config_hashes = {});
 
 ReplayDivergence compare_replay_runs(
         const ReplayRunResult &expected,

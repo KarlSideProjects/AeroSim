@@ -148,9 +148,8 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
             &AeroSimNative::step_simulation);
     ClassDB::bind_method(
-            D_METHOD("replay_complete_session", "serialized", "expected_settings_manifest_hash"),
-            &AeroSimNative::replay_complete_session,
-            DEFVAL(String()));
+            D_METHOD("replay_complete_session", "serialized", "expected_settings_manifest_hash", "expected_upper_config_manifest_hash", "expected_lower_config_manifest_hash"),
+            &AeroSimNative::replay_complete_session);
     ClassDB::bind_method(
             D_METHOD("step_px4_actuator_mode", "physics_hz", "substep_hz", "motor_0", "motor_1", "motor_2", "motor_3"),
             &AeroSimNative::step_px4_actuator_mode);
@@ -416,12 +415,15 @@ PackedFloat64Array AeroSimNative::step_simulation(
 
 Dictionary AeroSimNative::replay_complete_session(
         const String &serialized,
-        const String &expected_settings_manifest_hash) {
+        const String &expected_settings_manifest_hash,
+        const String &expected_upper_config_manifest_hash,
+        const String &expected_lower_config_manifest_hash) {
     Dictionary result;
-    if (expected_settings_manifest_hash.is_empty()) {
+    if (expected_settings_manifest_hash.is_empty() || expected_upper_config_manifest_hash.is_empty() ||
+            expected_lower_config_manifest_hash.is_empty()) {
         result["ok"] = false;
         result["diagnostic_code"] = static_cast<std::int32_t>(aerosim::ReplayDiagnosticCode::MissingManifest);
-        result["diagnostic_message"] = "expected settings manifest hash is required";
+        result["diagnostic_message"] = "expected settings and vehicle config manifest hashes are required";
         return result;
     }
     const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(
@@ -441,7 +443,9 @@ Dictionary AeroSimNative::replay_complete_session(
     config.external_force_world = external_force_world_;
     const aerosim::ReplayRunResult run = aerosim::replay_session(
             loaded.session,
-            aerosim::DualAircraftConfig{config, config});
+            aerosim::DualAircraftConfig{config, config},
+            {std::string(expected_upper_config_manifest_hash.utf8().get_data()),
+             std::string(expected_lower_config_manifest_hash.utf8().get_data())});
     result["ok"] = run.ok;
     result["diagnostic_code"] = static_cast<std::int32_t>(run.diagnostic.code);
     result["diagnostic_message"] = String(run.diagnostic.message.c_str());

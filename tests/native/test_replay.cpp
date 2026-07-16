@@ -288,6 +288,30 @@ bool test_session_identity_and_async_validation() {
     return true;
 }
 
+bool test_simulation_time_replay_contract() {
+    aerosim::ReplaySessionRecorder recorder(11, "manifest");
+    if (!recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !recorder.record_simulation_operation(0, aerosim::ReplaySimulationOperation::StepSeconds, 0.0005) ||
+            !recorder.finish(1000000, "completed")) {
+        return false;
+    }
+    aerosim::DualAircraftConfig config{replay_test_config(), replay_test_config()};
+    const aerosim::ReplayRunResult run = aerosim::replay_session(recorder.session(), config);
+    if (!run.ok || run.final_clock.total_substeps != 101) {
+        return false;
+    }
+    aerosim::ReplaySessionRecorder oversized(12, "manifest");
+    if (!oversized.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !oversized.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !oversized.record_simulation_operation(0, aerosim::ReplaySimulationOperation::StepSeconds, 11000.0) ||
+            !oversized.finish(11000000000ULL, "completed")) {
+        return false;
+    }
+    const aerosim::ReplayRunResult rejected = aerosim::replay_session(oversized.session(), config);
+    return !rejected.ok && rejected.diagnostic.code == aerosim::ReplayDiagnosticCode::InvalidSession;
+}
+
 bool test_first_divergence_report() {
     aerosim::ReplaySessionRecorder recorder(7, "manifest");
     recorder.add_vehicle("DroneA", "hash-a", "{}");
@@ -386,6 +410,9 @@ int main() {
     }
     if (!test_session_identity_and_async_validation()) {
         return fail("complete-session replay must validate identities and async lifecycle transitions");
+    }
+    if (!test_simulation_time_replay_contract()) {
+        return fail("complete-session replay must preserve simulation-time semantics and bounds");
     }
     if (!test_first_divergence_report()) {
         return fail("complete-session replay must report the first field divergence");

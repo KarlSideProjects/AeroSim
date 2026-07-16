@@ -782,7 +782,7 @@ ReplayDiagnostic invalid(ReplayDiagnosticCode code, const std::string &message) 
 }
 
 ReplayRunResult failed_run(const ReplayDiagnostic &diagnostic) {
-    return {false, diagnostic, {}, {}, 0, {}, {}};
+    return {false, diagnostic, {}, {}, 0, {}, {}, {}};
 }
 
 ReplayDiagnostic validate_session(const ReplaySession &session, bool require_termination) {
@@ -1437,7 +1437,8 @@ ReplayLoadResult load_replay_session(
 
 ReplayRunResult replay_session(
         const ReplaySession &session,
-        const DualAircraftConfig &config) {
+        const DualAircraftConfig &config,
+        const std::array<std::string, 2> &expected_vehicle_config_hashes) {
     const ReplayDiagnostic validation = validate_session(session, true);
     if (!validation.ok()) {
         return failed_run(validation);
@@ -1452,6 +1453,10 @@ ReplayRunResult replay_session(
     }
     const SimulationConfig runtime_configs[] = {config.upper, config.lower};
     for (std::size_t index = 0; index < 2; ++index) {
+        if (!expected_vehicle_config_hashes[index].empty() &&
+                session.vehicles[index].config_manifest_hash != expected_vehicle_config_hashes[index]) {
+            return failed_run(invalid(ReplayDiagnosticCode::IncompatibleManifest, "vehicle config manifest is incompatible"));
+        }
         JsonValue parsed;
         JsonParser parser(session.vehicles[index].config_json);
         if (!parser.parse(parsed) || parsed.type != JsonValue::Type::Object) {
@@ -1459,7 +1464,7 @@ ReplayRunResult replay_session(
         }
         const JsonValue *mass = field(parsed, "mass_kg");
         double recorded_mass = 0.0;
-        if (mass != nullptr && (!number_value(*mass, recorded_mass) || recorded_mass != runtime_configs[index].mass_kg)) {
+        if (mass == nullptr || !number_value(*mass, recorded_mass) || recorded_mass != runtime_configs[index].mass_kg) {
             return failed_run(invalid(ReplayDiagnosticCode::IncompatibleManifest, "vehicle mass does not match replay runtime configuration"));
         }
     }
@@ -1477,6 +1482,7 @@ ReplayRunResult replay_session(
     double frame_remainder = 0.0;
     std::vector<ReplaySceneObjectState> scene_objects;
     std::string environment_json;
+    std::vector<ReplayRunCheckpoint> checkpoints;
     std::uint64_t previous_timestamp_us = 0;
     const auto vehicle_index = [&](const std::string &name) {
         return name == session.vehicles[0].name ? 0 : name == session.vehicles[1].name ? 1 : -1;
@@ -1499,6 +1505,15 @@ ReplayRunResult replay_session(
         for (std::int64_t frame = 0; frame < count; ++frame) {
             step_frame();
         }
+    };
+    const auto step_seconds = [&](double seconds) {
+        const double frames = seconds * static_cast<double>(config.upper.physics_hz);
+        if (!std::isfinite(frames) || frames < 0.0 || frames > 1000000.0) {
+            return false;
+        }
+        step_frames(static_cast<std::int64_t>(std::ceil(frames)));
+        frame_remainder = 0.0;
+        return true;
     };
     const auto advance_us = [&](std::uint64_t duration_us) {
         const double frames = frame_remainder +
@@ -1556,6 +1571,9 @@ ReplayRunResult replay_session(
             if (index < 0) {
                 return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
             }
+            if (has_pending_collision[index]) {
+                return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "multiple replay collisions share one simulation frame"));
+            }
             pending_collisions[index] = event.collision.contact;
             has_pending_collision[index] = true;
             break;
@@ -1572,7 +1590,9 @@ ReplayRunResult replay_session(
                 step_frames(static_cast<std::int64_t>(event.simulation_value));
                 break;
             case ReplaySimulationOperation::StepSeconds:
-                advance_us(static_cast<std::uint64_t>(event.simulation_value * 1000000.0));
+                if (!step_seconds(event.simulation_value)) {
+                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay step seconds exceeds runtime frame limit"));
+                }
                 break;
             case ReplaySimulationOperation::Reset:
                 state = {};
@@ -1605,11 +1625,19 @@ ReplayRunResult replay_session(
             }
             break;
         }
+        checkpoints.push_back({event.timestamp_us, state, scene_objects, environment_json});
     }
     if (!paused && session.termination_timestamp_us >= previous_timestamp_us) {
         advance_us(session.termination_timestamp_us - previous_timestamp_us);
     }
-    return {true, {}, state, clocks[0], session.termination_timestamp_us, std::move(scene_objects), std::move(environment_json)};
+    if (has_pending_collision[0]) {
+        collision_switches[0].step(state.upper, clocks[0], controllers[0], config.upper, commands[0], pending_collisions[0]);
+    }
+    if (has_pending_collision[1]) {
+        collision_switches[1].step(state.lower, clocks[1], controllers[1], config.lower, commands[1], pending_collisions[1]);
+    }
+    return {true, {}, state, clocks[0], session.termination_timestamp_us, std::move(scene_objects),
+            std::move(environment_json), std::move(checkpoints)};
 }
 
 ReplayDivergence compare_replay_runs(
@@ -1618,13 +1646,16 @@ ReplayDivergence compare_replay_runs(
         double numeric_tolerance) {
     const double tolerance = std::max(0.0, numeric_tolerance);
     ReplayDivergence result;
-    const auto report = [&](const std::string &field, double expected_value, double actual_value) {
+    const auto report_at = [&](std::uint64_t timestamp_us, const std::string &field, double expected_value, double actual_value) {
         result.diverged = true;
-        result.timestamp_us = std::min(expected.final_timestamp_us, actual.final_timestamp_us);
+        result.timestamp_us = timestamp_us;
         result.field = field;
         result.expected = divergence_number(expected_value);
         result.actual = divergence_number(actual_value);
         result.tolerance = tolerance;
+    };
+    const auto report = [&](const std::string &field, double expected_value, double actual_value) {
+        report_at(std::min(expected.final_timestamp_us, actual.final_timestamp_us), field, expected_value, actual_value);
     };
     if (!expected.ok || !actual.ok) {
         result.diverged = true;
@@ -1632,6 +1663,98 @@ ReplayDivergence compare_replay_runs(
         result.expected = expected.diagnostic.message;
         result.actual = actual.diagnostic.message;
         return result;
+    }
+    if (expected.checkpoints.size() != actual.checkpoints.size()) {
+        result.diverged = true;
+        result.field = "checkpoints.count";
+        result.expected = std::to_string(expected.checkpoints.size());
+        result.actual = std::to_string(actual.checkpoints.size());
+        return result;
+    }
+    for (std::size_t checkpoint_index = 0; checkpoint_index < expected.checkpoints.size(); ++checkpoint_index) {
+        const ReplayRunCheckpoint &left = expected.checkpoints[checkpoint_index];
+        const ReplayRunCheckpoint &right = actual.checkpoints[checkpoint_index];
+        if (left.timestamp_us != right.timestamp_us) {
+            result.diverged = true;
+            result.timestamp_us = std::min(left.timestamp_us, right.timestamp_us);
+            result.field = "checkpoint.timestamp_us";
+            result.expected = std::to_string(left.timestamp_us);
+            result.actual = std::to_string(right.timestamp_us);
+            return result;
+        }
+        const double *left_values[] = {
+                &left.state.upper.position.x, &left.state.upper.position.y, &left.state.upper.position.z,
+                &left.state.lower.position.x, &left.state.lower.position.y, &left.state.lower.position.z,
+                &left.state.upper.orientation.x, &left.state.upper.orientation.y, &left.state.upper.orientation.z, &left.state.upper.orientation.w,
+                &left.state.lower.orientation.x, &left.state.lower.orientation.y, &left.state.lower.orientation.z, &left.state.lower.orientation.w,
+                &left.state.upper.angular_velocity.x, &left.state.upper.angular_velocity.y, &left.state.upper.angular_velocity.z,
+                &left.state.lower.angular_velocity.x, &left.state.lower.angular_velocity.y, &left.state.lower.angular_velocity.z,
+        };
+        const double *right_values[] = {
+                &right.state.upper.position.x, &right.state.upper.position.y, &right.state.upper.position.z,
+                &right.state.lower.position.x, &right.state.lower.position.y, &right.state.lower.position.z,
+                &right.state.upper.orientation.x, &right.state.upper.orientation.y, &right.state.upper.orientation.z, &right.state.upper.orientation.w,
+                &right.state.lower.orientation.x, &right.state.lower.orientation.y, &right.state.lower.orientation.z, &right.state.lower.orientation.w,
+                &right.state.upper.angular_velocity.x, &right.state.upper.angular_velocity.y, &right.state.upper.angular_velocity.z,
+                &right.state.lower.angular_velocity.x, &right.state.lower.angular_velocity.y, &right.state.lower.angular_velocity.z,
+        };
+        const char *field_names[] = {
+                "upper.position.x", "upper.position.y", "upper.position.z", "lower.position.x", "lower.position.y", "lower.position.z",
+                "upper.orientation.x", "upper.orientation.y", "upper.orientation.z", "upper.orientation.w",
+                "lower.orientation.x", "lower.orientation.y", "lower.orientation.z", "lower.orientation.w",
+                "upper.angular_velocity.x", "upper.angular_velocity.y", "upper.angular_velocity.z",
+                "lower.angular_velocity.x", "lower.angular_velocity.y", "lower.angular_velocity.z",
+        };
+        for (std::size_t field_index = 0; field_index < sizeof(left_values) / sizeof(left_values[0]); ++field_index) {
+            if (!same_or_close(*left_values[field_index], *right_values[field_index], tolerance)) {
+                report_at(left.timestamp_us, field_names[field_index], *left_values[field_index], *right_values[field_index]);
+                return result;
+            }
+        }
+        if (left.scene_objects.size() != right.scene_objects.size()) {
+            result.diverged = true;
+            result.timestamp_us = left.timestamp_us;
+            result.field = "scene_objects.count";
+            result.expected = std::to_string(left.scene_objects.size());
+            result.actual = std::to_string(right.scene_objects.size());
+            return result;
+        }
+        if (left.environment_json != right.environment_json) {
+            result.diverged = true;
+            result.timestamp_us = left.timestamp_us;
+            result.field = "environment";
+            result.expected = left.environment_json;
+            result.actual = right.environment_json;
+            return result;
+        }
+        for (std::size_t object_index = 0; object_index < left.scene_objects.size(); ++object_index) {
+            const ReplaySceneObjectState &left_object = left.scene_objects[object_index];
+            const ReplaySceneObjectState &right_object = right.scene_objects[object_index];
+            if (left_object.name != right_object.name || left_object.asset_id != right_object.asset_id) {
+                result.diverged = true;
+                result.timestamp_us = left.timestamp_us;
+                result.field = "scene_object.identity";
+                result.expected = left_object.name + ":" + left_object.asset_id;
+                result.actual = right_object.name + ":" + right_object.asset_id;
+                return result;
+            }
+            const double *left_transform[] = {
+                    &left_object.position.x, &left_object.position.y, &left_object.position.z,
+                    &left_object.orientation.x, &left_object.orientation.y, &left_object.orientation.z, &left_object.orientation.w,
+            };
+            const double *right_transform[] = {
+                    &right_object.position.x, &right_object.position.y, &right_object.position.z,
+                    &right_object.orientation.x, &right_object.orientation.y, &right_object.orientation.z, &right_object.orientation.w,
+            };
+            const char *transform_fields[] = {"position.x", "position.y", "position.z", "orientation.x", "orientation.y", "orientation.z", "orientation.w"};
+            for (std::size_t transform_index = 0; transform_index < sizeof(left_transform) / sizeof(left_transform[0]); ++transform_index) {
+                if (!same_or_close(*left_transform[transform_index], *right_transform[transform_index], tolerance)) {
+                    report_at(left.timestamp_us, "scene_object." + std::string(transform_fields[transform_index]),
+                            *left_transform[transform_index], *right_transform[transform_index]);
+                    return result;
+                }
+            }
+        }
     }
     const double *expected_values[] = {
             &expected.final_state.upper.position.x, &expected.final_state.upper.position.y, &expected.final_state.upper.position.z,
@@ -1656,6 +1779,21 @@ ReplayDivergence compare_replay_runs(
             report(fields[index], *expected_values[index], *actual_values[index]);
             return result;
         }
+    }
+    if (expected.final_clock.total_substeps != actual.final_clock.total_substeps) {
+        result.diverged = true;
+        result.field = "final_clock.total_substeps";
+        result.expected = std::to_string(expected.final_clock.total_substeps);
+        result.actual = std::to_string(actual.final_clock.total_substeps);
+        return result;
+    }
+    if (expected.final_timestamp_us != actual.final_timestamp_us) {
+        result.diverged = true;
+        result.timestamp_us = std::min(expected.final_timestamp_us, actual.final_timestamp_us);
+        result.field = "final_timestamp_us";
+        result.expected = std::to_string(expected.final_timestamp_us);
+        result.actual = std::to_string(actual.final_timestamp_us);
+        return result;
     }
     if (expected.scene_objects.size() != actual.scene_objects.size()) {
         result.diverged = true;
