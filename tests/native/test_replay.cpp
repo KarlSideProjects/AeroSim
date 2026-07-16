@@ -115,6 +115,26 @@ std::string replace_once(std::string value, const std::string &from, const std::
     return value;
 }
 
+aerosim::SimulationConfig replay_test_config() {
+    aerosim::SimulationConfig config;
+    config.physics_hz = 100;
+    config.substep_hz = 100;
+    config.gravity_mps2 = 0.0;
+    config.mass_kg = 1.0;
+    config.per_motor.inertia_kg_m2 = {0.01, 0.01, 0.02};
+    config.per_motor.max_thrust_per_motor_newtons = 1.0;
+    config.per_motor.max_current_per_motor_a = 1.0;
+    config.per_motor.yaw_torque_per_newton = 0.01;
+    config.per_motor.position_frd = {{
+            {-0.10, 0.10, 0.0},
+            {0.10, 0.10, 0.0},
+            {-0.10, -0.10, 0.0},
+            {0.10, -0.10, 0.0},
+    }};
+    config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    return config;
+}
+
 bool test_complete_session_schema() {
     aerosim::ReplaySessionRecorder recorder(42, "settings-manifest-v1");
     if (!recorder.add_vehicle("DroneA", "drone-a-hash", "{\"mass_kg\":0.72}") ||
@@ -127,11 +147,13 @@ bool test_complete_session_schema() {
     if (!recorder.record_async_command(0, "DroneA", "task-a", "moveByVelocity", aerosim::ReplayAsyncLifecycle::Submitted) ||
             !recorder.record_async_command(0, "DroneB", "task-a", "hover", aerosim::ReplayAsyncLifecycle::Submitted) ||
             !recorder.record_async_command(1000, "DroneA", "task-a", "moveByVelocity", aerosim::ReplayAsyncLifecycle::Accepted) ||
+            !recorder.record_async_command(1000, "DroneB", "task-a", "hover", aerosim::ReplayAsyncLifecycle::Accepted) ||
             !recorder.record_command(1000, "DroneA", command, aerosim::ReplayControllerAuthority::FlightCore) ||
             !recorder.record_command(1000, "DroneB", command, aerosim::ReplayControllerAuthority::Px4External) ||
             !recorder.record_simulation_operation(2000, aerosim::ReplaySimulationOperation::Pause) ||
             !recorder.record_simulation_operation(3000, aerosim::ReplaySimulationOperation::StepFrames, 2) ||
-            !recorder.record_async_command(4000, "DroneA", "task-a", "moveByVelocity", aerosim::ReplayAsyncLifecycle::Completed)) {
+            !recorder.record_async_command(4000, "DroneA", "task-a", "moveByVelocity", aerosim::ReplayAsyncLifecycle::Completed) ||
+            !recorder.record_async_command(4000, "DroneB", "task-a", "hover", aerosim::ReplayAsyncLifecycle::Completed)) {
         return false;
     }
 
@@ -163,10 +185,10 @@ bool test_complete_session_schema() {
             loaded.session.vehicles[0].name != "DroneA" || loaded.session.vehicles[1].name != "DroneB" ||
             loaded.session.events.size() != recorder.session().events.size() ||
             loaded.session.events[1].vehicle_name != "DroneB" ||
-            loaded.session.events[6].simulation_value != 2 ||
-            loaded.session.events[8].collision.authority != aerosim::ReplayControllerAuthority::Jolt ||
-            loaded.session.events[9].object_name != "crate" ||
-            loaded.session.events[10].environment_json.find("rain") == std::string::npos ||
+            loaded.session.events[7].simulation_value != 2 ||
+            loaded.session.events[10].collision.authority != aerosim::ReplayControllerAuthority::Jolt ||
+            loaded.session.events[11].object_name != "crate" ||
+            loaded.session.events[12].environment_json.find("rain") == std::string::npos ||
             loaded.session.termination_reason != "completed") {
         return false;
     }
@@ -199,6 +221,29 @@ bool test_complete_session_schema() {
     if (non_monotonic.ok || non_monotonic.diagnostic.code != aerosim::ReplayDiagnosticCode::InvalidSession) {
         return false;
     }
+    const aerosim::ReplayLoadResult missing_vehicle = aerosim::load_replay_session(
+            replace_once(serialized, "\"vehicle\":\"DroneA\"", "\"vehicle_missing\":\"DroneA\""));
+    if (missing_vehicle.ok || missing_vehicle.diagnostic.code != aerosim::ReplayDiagnosticCode::InvalidIdentity) {
+        return false;
+    }
+    const aerosim::ReplayLoadResult exact_large_seed = aerosim::load_replay_session(
+            replace_once(serialized, "\"seed\":42", "\"seed\":9007199254740993"));
+    if (!exact_large_seed.ok || exact_large_seed.session.seed != 9007199254740993ULL) {
+        return false;
+    }
+    const aerosim::ReplayLoadResult malformed_number = aerosim::load_replay_session(
+            replace_once(serialized, "\"seed\":42", "\"seed\":01"));
+    if (malformed_number.ok || malformed_number.diagnostic.code != aerosim::ReplayDiagnosticCode::Corrupt) {
+        return false;
+    }
+    aerosim::DualAircraftConfig config{replay_test_config(), replay_test_config()};
+    const aerosim::ReplayRunResult first_run = aerosim::replay_session(recorder.session(), config);
+    const aerosim::ReplayRunResult second_run = aerosim::replay_session(recorder.session(), config);
+    if (!first_run.ok || !second_run.ok || first_run.final_clock.total_substeps != second_run.final_clock.total_substeps ||
+            first_run.final_state.upper.position.x != second_run.final_state.upper.position.x ||
+            first_run.final_state.lower.position.y != second_run.final_state.lower.position.y) {
+        return false;
+    }
     return true;
 }
 
@@ -222,6 +267,11 @@ bool test_session_identity_and_async_validation() {
             !recorder.record_async_command(1, "DroneA", "task", "hover", aerosim::ReplayAsyncLifecycle::Accepted) ||
             !recorder.record_async_command(2, "DroneA", "task", "hover", aerosim::ReplayAsyncLifecycle::Cancelled) ||
             recorder.record_async_command(3, "DroneA", "task", "hover", aerosim::ReplayAsyncLifecycle::Completed) ||
+            recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidLifecycle) {
+        return false;
+    }
+    if (!recorder.record_async_command(4, "DroneB", "other-task", "hover", aerosim::ReplayAsyncLifecycle::Submitted) ||
+            recorder.finish(5, "incomplete") ||
             recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidLifecycle) {
         return false;
     }

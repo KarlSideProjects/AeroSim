@@ -148,6 +148,10 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("step_simulation", "physics_hz", "substep_hz", "total_thrust_newtons"),
             &AeroSimNative::step_simulation);
     ClassDB::bind_method(
+            D_METHOD("replay_complete_session", "serialized", "expected_settings_manifest_hash"),
+            &AeroSimNative::replay_complete_session,
+            DEFVAL(String()));
+    ClassDB::bind_method(
             D_METHOD("step_px4_actuator_mode", "physics_hz", "substep_hz", "motor_0", "motor_1", "motor_2", "motor_3"),
             &AeroSimNative::step_px4_actuator_mode);
     ClassDB::bind_method(
@@ -408,6 +412,39 @@ PackedFloat64Array AeroSimNative::step_simulation(
     row.append(sample.state.velocity.z);
     row.append(static_cast<double>(sample.substeps));
     return row;
+}
+
+Dictionary AeroSimNative::replay_complete_session(
+        const String &serialized,
+        const String &expected_settings_manifest_hash) {
+    Dictionary result;
+    const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(
+            std::string(serialized.utf8().get_data()),
+            std::string(expected_settings_manifest_hash.utf8().get_data()));
+    result["ok"] = loaded.ok;
+    result["diagnostic_code"] = static_cast<std::int32_t>(loaded.diagnostic.code);
+    result["diagnostic_message"] = String(loaded.diagnostic.message.c_str());
+    if (!loaded.ok) {
+        return result;
+    }
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    config.physics_hz = 240;
+    config.substep_hz = 1000;
+    config.a4_ground_effect = a4_ground_effect_config_;
+    config.a5_downwash = a5_downwash_config_;
+    config.external_force_world = external_force_world_;
+    const aerosim::ReplayRunResult run = aerosim::replay_session(
+            loaded.session,
+            aerosim::DualAircraftConfig{config, config});
+    result["ok"] = run.ok;
+    result["diagnostic_code"] = static_cast<std::int32_t>(run.diagnostic.code);
+    result["diagnostic_message"] = String(run.diagnostic.message.c_str());
+    if (run.ok) {
+        result["upper_position"] = godot_vec3(run.final_state.upper.position);
+        result["lower_position"] = godot_vec3(run.final_state.lower.position);
+        result["total_substeps"] = static_cast<std::int64_t>(run.final_clock.total_substeps);
+    }
+    return result;
 }
 
 PackedFloat64Array AeroSimNative::step_px4_actuator_mode(

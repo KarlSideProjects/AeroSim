@@ -2,6 +2,7 @@
 
 #include "aerosim_collision.hpp"
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -159,6 +160,8 @@ private:
     ReplaySession session_;
     ReplayDiagnostic diagnostic_;
     std::unordered_map<std::string, ReplayAsyncLifecycle> async_lifecycle_;
+    std::unordered_map<std::string, std::string> async_methods_;
+    bool finished_ = false;
 
     bool fail(ReplayDiagnosticCode code, std::string message);
     bool has_vehicle(const std::string &vehicle_name) const;
@@ -214,6 +217,17 @@ ReplayDivergence compare_replay_sessions(
         const ReplaySession &expected,
         const ReplaySession &actual,
         double numeric_tolerance = 0.0);
+
+struct ReplayRunResult {
+    bool ok = false;
+    ReplayDiagnostic diagnostic;
+    DualAircraftState final_state;
+    SimulationClock final_clock;
+};
+
+ReplayRunResult replay_session(
+        const ReplaySession &session,
+        const DualAircraftConfig &config);
 
 std::vector<TrajectorySample> replay_angle_mode(
         const SimulationConfig &config,
