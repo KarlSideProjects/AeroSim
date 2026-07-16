@@ -43,4 +43,4 @@ AirSim v1.8.1 is MIT-licensed. This change copies no AirSim source, assets, or b
 
 ## Explicit partials
 
-The dashboard has an explicit primary `vehicle_name` identity in its telemetry snapshot, but a user-facing dashboard vehicle selector is not part of this slice. Dataset export/recording identity hooks beyond the replay sequence vehicle name are also not implemented. No synthetic dashboard or dataset data was added; both remain follow-up work.
+The operations dashboard now selects between the available named telemetry snapshots. Full dataset export/session recording identity beyond the replay sequence identity metadata is not implemented. No synthetic dashboard or dataset data was added; full dataset work remains follow-up scope.

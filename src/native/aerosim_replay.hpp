@@ -25,6 +25,7 @@ public:
     explicit ReplayRecorder(std::string vehicle_name = {});
     void record(const FlightCommand &command);
     const std::string &vehicle_name() const;
+    std::string serialized_identity() const;
     const RecordedInputSequence &sequence() const;
 };
 

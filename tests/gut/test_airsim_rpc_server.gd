@@ -336,7 +336,7 @@ func test_two_named_vehicles_keep_api_control_and_commands_isolated() -> void:
             "DroneB": {"VehicleType": "SimpleFlight"},
         },
     })
-    assert_true(startup.ok, startup.error)
+    assert_true(startup.ok, startup.get("error", ""))
     _install_test_backend(server)
 
     assert_eq(server.dispatch([0, 61, "listVehicles", []]), [1, 61, null, ["DroneA", "DroneB"]])

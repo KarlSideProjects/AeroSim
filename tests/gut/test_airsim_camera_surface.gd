@@ -62,8 +62,10 @@ func test_segmentation_catalog_ids_are_stable_and_unique() -> void:
 func test_camera_settings_and_source_identity_are_vehicle_scoped() -> void:
     var surface := AirSimCameraSurface.new()
     autofree(surface)
+    var world := Node3D.new()
+    autofree(world)
     surface.configure(
-        Node3D.new(),
+        world,
         Callable(),
         Callable(),
         null,

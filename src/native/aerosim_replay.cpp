@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace aerosim {
 namespace {
@@ -10,6 +11,40 @@ constexpr double kPi = 3.14159265358979323846;
 
 double square(double value) {
     return value * value;
+}
+
+std::string escape_json_string(const std::string &value) {
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string escaped;
+    for (unsigned char character : value) {
+        switch (character) {
+        case '\\':
+            escaped += "\\\\";
+            break;
+        case '"':
+            escaped += "\\\"";
+            break;
+        case '\n':
+            escaped += "\\n";
+            break;
+        case '\r':
+            escaped += "\\r";
+            break;
+        case '\t':
+            escaped += "\\t";
+            break;
+        default:
+            if (character < 0x20) {
+                escaped += "\\u00";
+                escaped += kHex[character >> 4];
+                escaped += kHex[character & 0x0f];
+            } else {
+                escaped += static_cast<char>(character);
+            }
+            break;
+        }
+    }
+    return escaped;
 }
 
 } // namespace
@@ -24,6 +59,11 @@ void ReplayRecorder::record(const FlightCommand &command) {
 
 const std::string &ReplayRecorder::vehicle_name() const {
     return sequence_.vehicle_name;
+}
+
+std::string ReplayRecorder::serialized_identity() const {
+    return "{\"vehicle_name\":\"" + escape_json_string(sequence_.vehicle_name) +
+            "\",\"frame_count\":" + std::to_string(sequence_.frames.size()) + "}";
 }
 
 const RecordedInputSequence &ReplayRecorder::sequence() const {

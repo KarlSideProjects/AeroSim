@@ -105,6 +105,7 @@ var controller_reconnected := false
 var disconnected_gamepad_device_id := -1
 var _airsim_vehicle_name := ""
 var _airsim_vehicle_names: Array[String] = []
+var _dashboard_vehicle_name := ""
 var _airsim_secondary_native: Object
 var _airsim_vehicle_contexts: Dictionary = {}
 var _airsim_secondary_a5_configuration: Dictionary = {}
@@ -173,6 +174,9 @@ func _ready() -> void:
             _airsim_vehicle_names.append(String(configured_name))
     if _airsim_vehicle_names.size() > 0:
         _airsim_vehicle_name = _airsim_vehicle_names[0]
+    _dashboard_vehicle_name = _airsim_vehicle_name
+    if status_diagram != null:
+        status_diagram.call("set_vehicle_names", _airsim_vehicle_names)
     _configure_airsim_vehicle_contexts()
     airsim_rpc_server.set_vehicle_backend(
         Callable(self, "_airsim_state"),
@@ -1516,14 +1520,26 @@ func _build_finish_panel() -> void:
 
 func _build_status_diagram() -> void:
     status_diagram = StatusDiagramDebug.new()
+    status_diagram.connect("vehicle_selected", Callable(self, "_on_dashboard_vehicle_selected"))
     add_child(status_diagram)
+
+
+func _on_dashboard_vehicle_selected(vehicle_name: String) -> void:
+    if _airsim_name_matches(vehicle_name):
+        _dashboard_vehicle_name = vehicle_name
 
 func _update_status_diagram() -> void:
     if status_diagram == null or native == null or not native.has_method("telemetry_snapshot"):
         return
-    var snapshot: Dictionary = native.call("telemetry_snapshot")
-    snapshot["vehicle_name"] = _airsim_vehicle_name
-    status_diagram.update_from_snapshot(snapshot)
+    var snapshots: Dictionary = {}
+    var primary_snapshot: Dictionary = native.call("telemetry_snapshot")
+    primary_snapshot["vehicle_name"] = _airsim_vehicle_name
+    snapshots[_airsim_vehicle_name] = primary_snapshot
+    if _airsim_secondary_native != null and _airsim_vehicle_names.size() > 1 and _airsim_secondary_native.has_method("telemetry_snapshot"):
+        var secondary_snapshot: Dictionary = _airsim_secondary_native.call("telemetry_snapshot")
+        secondary_snapshot["vehicle_name"] = String(_airsim_vehicle_names[1])
+        snapshots[String(_airsim_vehicle_names[1])] = secondary_snapshot
+    status_diagram.call("set_vehicle_snapshots", snapshots, _dashboard_vehicle_name)
 
 func _reset_drone_body() -> void:
     drone_body.reset_contact()

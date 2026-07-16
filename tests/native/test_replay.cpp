@@ -115,6 +115,13 @@ int main() {
     if (named_recorder.vehicle_name() != "DroneA" || named_recorder.sequence().vehicle_name != "DroneA") {
         return fail("replay recordings must retain their named vehicle identity");
     }
+    aerosim::ReplayRecorder other_named_recorder("DroneB");
+    other_named_recorder.record(named_command);
+    if (named_recorder.serialized_identity() == other_named_recorder.serialized_identity() ||
+            named_recorder.serialized_identity().find("DroneA") == std::string::npos ||
+            other_named_recorder.serialized_identity().find("DroneB") == std::string::npos) {
+        return fail("serialized replay identity must keep two vehicle records distinct");
+    }
 
     aerosim::SimulationConfig config;
     config.physics_hz = 240;

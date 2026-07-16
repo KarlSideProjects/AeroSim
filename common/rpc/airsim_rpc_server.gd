@@ -471,6 +471,8 @@ func _resolve_vehicle(message_id, requested_name: Variant) -> Dictionary:
     var name := String(requested_name)
     if name.is_empty() and _vehicle_names.size() == 1:
         name = String(_vehicle_names[0])
+        if name.is_empty():
+            return {"ok": true, "name": name}
     var validation := AirSimSettings.validate_vehicle_name(name, _vehicle_names)
     if not validation.ok:
         return {"ok": false, "response": _error_response(message_id, validation.error)}
