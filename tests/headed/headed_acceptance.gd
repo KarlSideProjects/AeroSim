@@ -75,6 +75,33 @@ func _run() -> void:
 		_click(settings_button)
 	await _settle(2)
 	_expect(runtime.screen == "settings", "Settings entry opens Settings")
+	var rates_button: Button = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Rates")
+	_expect(rates_button != null, "Settings exposes Rates")
+	if rates_button != null:
+		_click(rates_button)
+	await _settle(2)
+	_expect(runtime.screen == "rates", "Rates entry opens Rates")
+	_expect(runtime.rates_panel != null and runtime.rates_panel.is_visible_in_tree(), "Rates panel is visible")
+	_expect(runtime.rates_json_editor != null and runtime.rates_json_editor.text.contains("rc_rate"), "Rates panel exposes JSON editor")
+	var import_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/ImportJson")
+	_expect(import_button != null, "Rates panel exposes JSON import")
+	if runtime.rates_json_editor != null:
+		runtime.rates_json_editor.text = JSON.stringify({
+			"schema_version": 1,
+			"rc_rate": 1.15,
+			"super_rate": 0.72,
+			"expo": 0.25,
+		})
+	if import_button != null:
+		runtime._import_rates_json()
+	await _settle(2)
+	_expect(absf(float(runtime.rates_profile.get("rc_rate", 0.0)) - 1.15) <= 0.000001, "Rates JSON import applies RC Rate")
+	_expect(absf(float(runtime.rates_profile.get("expo", 0.0)) - 0.25) <= 0.000001, "Rates JSON import applies Expo")
+	var rates_back_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/Back")
+	if rates_back_button != null:
+		runtime.show_settings()
+	await _settle(2)
+	_expect(runtime.screen == "settings", "Rates panel returns to Settings")
 	var settings_controller_button: Button = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Controller")
 	_expect(settings_controller_button != null, "Settings exposes Controller")
 	if settings_controller_button != null:
@@ -145,6 +172,16 @@ func _run() -> void:
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
+	runtime.set_paused(true)
+	await _settle(2)
+	var pause_rates_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Rates")
+	_expect(runtime.paused and pause_rates_button != null, "Pause Overlay exposes Rates")
+	runtime.show_rates("flight")
+	await _settle(2)
+	_expect(runtime.screen == "rates" and runtime.paused, "Rates opened from Pause Overlay keeps pause state")
+	runtime._close_rates_panel()
+	_expect(runtime.screen == "flight" and runtime.paused, "Rates returns to paused flight")
+	runtime.set_paused(false)
 	_complete_time_trial(runtime)
 	await _settle(2)
 	_expect(runtime.screen == "finish" and runtime.paused, "reaching Finish stops flight and opens the Time Trial result state")
