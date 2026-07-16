@@ -3,6 +3,7 @@ extends Node3D
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
+const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
@@ -23,14 +24,11 @@ const MAP_SCENE_PATHS := {
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const TAKEOFF_VELOCITY := Vector3(0.0, 6.0, 0.0)
 const KEYBOARD_FLIGHT_THROTTLE := 0.75
-const ACRO_RC_RATE := 1.0
-const ACRO_SUPER_RATE := 13.0 / 18
-const ACRO_EXPO := 0.0
 const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
-const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Exit"
+const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   C ACRO   H Alt Hold   Esc Exit"
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
@@ -74,11 +72,21 @@ var main_menu_layer: CanvasLayer
 var main_menu_entries_container: VBoxContainer
 var settings_panel: Control
 var settings_status_label: Label
+var rates_panel: Control
+var rates_status_label: Label
+var rates_json_editor: TextEdit
+var rates_diff_label: Label
+var rates_curve_line: Line2D
+var rates_curve_plot: Control
+var rates_sliders: Dictionary = {}
+var rates_slider_labels: Dictionary = {}
+var rates_return_screen := "settings"
 var controller_settings_panel: Control
 var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
+var acro_mode_button: Button
 var time_trial_status_label: Label
 var pause_panel: Control
 var finish_panel: Control
@@ -122,6 +130,7 @@ var _airsim_collision_seen := false
 var _airsim_contact_this_frame := false
 var _airsim_collision_normal := Vector3.ZERO
 var _airsim_collision_point := Vector3.ZERO
+var rates_profile: Dictionary = RatesProfile.default_profile()
 
 func _ready() -> void:
     Input.joy_connection_changed.connect(_on_joy_connection_changed)
@@ -224,6 +233,11 @@ func _load_player_settings() -> void:
     var saved = result.document.get("confirmed_gamepad")
     if saved != null:
         persisted_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(saved)
+    var saved_rates = result.document.get("rates")
+    if saved_rates != null:
+        var rates_result: Dictionary = RatesProfile.validate_profile(saved_rates)
+        if rates_result.ok:
+            rates_profile = rates_result.profile
     if not result.ok and result.recovered:
         last_error_message = "Settings recovered to factory defaults: %s" % result.error
 
@@ -236,6 +250,21 @@ func _save_gamepad_profile(profile: InputProfiles.GamepadProfile) -> Dictionary:
     if result.ok:
         persisted_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(document["confirmed_gamepad"])
         keyboard_fallback_explicitly_selected = false
+    return result
+
+
+func _save_rates_profile(profile: Dictionary) -> Dictionary:
+    var validation: Dictionary = RatesProfile.validate_profile(profile)
+    if not validation.ok:
+        return validation
+    var loaded: Dictionary = settings_store.load_document()
+    if not loaded.ok:
+        return {"ok": false, "error": "cannot save rates while settings are unavailable: %s" % loaded.error}
+    var document: Dictionary = loaded.document
+    document["rates"] = validation.profile
+    var result: Dictionary = settings_store.save_document(document)
+    if result.ok:
+        rates_profile = validation.profile
     return result
 
 func _run_cold_start_probe() -> void:
@@ -309,6 +338,8 @@ func _unhandled_input(event: InputEvent) -> void:
         set_paused(not paused)
     elif event.is_action_pressed("flight_respawn"):
         respawn()
+    elif event.is_action_pressed("flight_acro"):
+        toggle_acro_mode()
     elif event.is_action_pressed("flight_altitude_hold"):
         toggle_altitude_hold()
     elif event.is_action_pressed("flight_exit"):
@@ -480,9 +511,9 @@ func _physics_process(delta: float) -> void:
                 acro_roll,
                 acro_pitch,
                 acro_yaw,
-                ACRO_RC_RATE,
-                ACRO_SUPER_RATE,
-                ACRO_EXPO,
+                _acro_rate("rc_rate"),
+                _acro_rate("super_rate"),
+                _acro_rate("expo"),
                 drone_body.contact_seen,
                 drone_body.contact_normal.x,
                 drone_body.contact_normal.y,
@@ -534,7 +565,7 @@ func _physics_process(delta: float) -> void:
         drone_body.reset_contact()
     else:
         if flight_mode == "ACRO":
-            row = native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, throttle, acro_roll, acro_pitch, acro_yaw, ACRO_RC_RATE, ACRO_SUPER_RATE, ACRO_EXPO)
+            row = native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, throttle, acro_roll, acro_pitch, acro_yaw, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo"))
         else:
             var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
             row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw)
@@ -1215,6 +1246,18 @@ func toggle_altitude_hold() -> void:
         flight_mode = "ALTITUDE_HOLD"
     update_fallback_status()
 
+
+func toggle_acro_mode() -> void:
+    if native == null or not takeoff_requested or screen != "flight" or paused:
+        return
+    flight_mode = "ANGLE" if flight_mode == "ACRO" else "ACRO"
+    update_fallback_status()
+    _refresh_flight_hud()
+
+
+func _acro_rate(key: String) -> float:
+    return float(rates_profile.get(key, RatesProfile.default_profile().get(key, 0.0)))
+
 func set_paused(value: bool, sync_session: bool = true) -> void:
     if not value and _airsim_lifecycle_stopped() and (airsim_session == null or not airsim_session.is_explicit_step_active()):
         return
@@ -1252,6 +1295,7 @@ func _build_main_menu() -> void:
             button.pressed.connect(show_settings)
     _build_settings_panel()
     _build_controller_settings_panel()
+    _build_rates_panel()
 
 func _build_settings_panel() -> void:
     var panel := PanelContainer.new()
@@ -1260,7 +1304,7 @@ func _build_settings_panel() -> void:
     panel.offset_left = 20.0
     panel.offset_top = 20.0
     panel.offset_right = 360.0
-    panel.offset_bottom = 230.0
+    panel.offset_bottom = 280.0
     settings_panel = panel
     main_menu_layer.add_child(panel)
 
@@ -1279,6 +1323,12 @@ func _build_settings_panel() -> void:
     controller_button.pressed.connect(show_controller_settings)
     rows.add_child(controller_button)
 
+    var rates_button := Button.new()
+    rates_button.name = "Rates"
+    rates_button.text = "RATES"
+    rates_button.pressed.connect(show_rates)
+    rows.add_child(rates_button)
+
     var factory_reset_button := Button.new()
     factory_reset_button.name = "FactoryReset"
     factory_reset_button.text = "FACTORY RESET SETTINGS"
@@ -1295,6 +1345,223 @@ func _build_settings_panel() -> void:
     back_button.text = "BACK"
     back_button.pressed.connect(show_main_menu)
     rows.add_child(back_button)
+
+
+func _build_rates_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "RatesPanel"
+    panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    panel.offset_left = 20.0
+    panel.offset_top = 20.0
+    panel.offset_right = 760.0
+    panel.offset_bottom = 700.0
+    rates_panel = panel
+    main_menu_layer.add_child(panel)
+
+    var scroll := ScrollContainer.new()
+    scroll.name = "Scroll"
+    panel.add_child(scroll)
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.custom_minimum_size = Vector2(690.0, 0.0)
+    rows.add_theme_constant_override("separation", 6)
+    scroll.add_child(rows)
+
+    var title := Label.new()
+    title.text = "BETAFLIGHT RATES"
+    rows.add_child(title)
+    var disclaimer := Label.new()
+    disclaimer.text = "SIM PROFILE: RC Rate / Super Rate / Expo affect ACRO mode only."
+    disclaimer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(disclaimer)
+
+    for setting in [
+        {"key": "rc_rate", "title": "RC RATE", "max": 3.0},
+        {"key": "super_rate", "title": "SUPER RATE", "max": 1.0},
+        {"key": "expo", "title": "EXPO", "max": 1.0},
+    ]:
+        var key: String = setting.key
+        var value_label := Label.new()
+        value_label.name = "%sValue" % key.capitalize()
+        rows.add_child(value_label)
+        rates_slider_labels[key] = value_label
+        var slider := HSlider.new()
+        slider.name = "%sSlider" % key.capitalize()
+        slider.min_value = 0.0
+        slider.max_value = float(setting.max)
+        slider.step = 0.01
+        slider.value = _acro_rate(key)
+        slider.value_changed.connect(_on_rates_slider_changed.bind(key))
+        rows.add_child(slider)
+        rates_sliders[key] = slider
+
+    var curve_title := Label.new()
+    curve_title.text = "RATE CURVE PREVIEW (degrees/second)"
+    rows.add_child(curve_title)
+    rates_curve_plot = Control.new()
+    rates_curve_plot.name = "CurvePreview"
+    rates_curve_plot.custom_minimum_size = Vector2(680.0, 170.0)
+    rows.add_child(rates_curve_plot)
+    var horizontal_axis := ColorRect.new()
+    horizontal_axis.position = Vector2(10.0, 84.0)
+    horizontal_axis.size = Vector2(660.0, 1.0)
+    horizontal_axis.color = Color(0.35, 0.35, 0.35)
+    rates_curve_plot.add_child(horizontal_axis)
+    var vertical_axis := ColorRect.new()
+    vertical_axis.position = Vector2(340.0, 10.0)
+    vertical_axis.size = Vector2(1.0, 150.0)
+    vertical_axis.color = Color(0.35, 0.35, 0.35)
+    rates_curve_plot.add_child(vertical_axis)
+    rates_curve_line = Line2D.new()
+    rates_curve_line.name = "Curve"
+    rates_curve_line.width = 2.0
+    rates_curve_line.default_color = Color(0.2, 0.85, 0.95)
+    rates_curve_plot.add_child(rates_curve_line)
+
+    var json_title := Label.new()
+    json_title.text = "JSON EXPORT / IMPORT"
+    rows.add_child(json_title)
+    rates_json_editor = TextEdit.new()
+    rates_json_editor.name = "RatesJson"
+    rates_json_editor.custom_minimum_size = Vector2(660.0, 110.0)
+    rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    rates_json_editor.text_changed.connect(_on_rates_json_changed)
+    rows.add_child(rates_json_editor)
+
+    rates_diff_label = Label.new()
+    rates_diff_label.name = "Diff"
+    rates_diff_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(rates_diff_label)
+    rates_status_label = Label.new()
+    rates_status_label.name = "Status"
+    rates_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(rates_status_label)
+
+    var actions := HBoxContainer.new()
+    actions.name = "Actions"
+    rows.add_child(actions)
+    var export_button := Button.new()
+    export_button.name = "ExportJson"
+    export_button.text = "EXPORT JSON"
+    export_button.pressed.connect(_export_rates_json)
+    actions.add_child(export_button)
+    var import_button := Button.new()
+    import_button.name = "ImportJson"
+    import_button.text = "IMPORT & APPLY JSON"
+    import_button.pressed.connect(_import_rates_json)
+    actions.add_child(import_button)
+    var reset_button := Button.new()
+    reset_button.name = "ResetDefaults"
+    reset_button.text = "RESET DEFAULTS"
+    reset_button.pressed.connect(_reset_rates_defaults)
+    actions.add_child(reset_button)
+    var back_button := Button.new()
+    back_button.name = "Back"
+    back_button.text = "BACK"
+    back_button.pressed.connect(_close_rates_panel)
+    actions.add_child(back_button)
+
+
+func _on_rates_slider_changed(value: float, key: String) -> void:
+    var candidate: Dictionary = rates_profile.duplicate(true)
+    candidate[key] = value
+    var result: Dictionary = _save_rates_profile(candidate)
+    if not result.ok:
+        rates_status_label.text = "Rates save failed: %s" % result.error
+        return
+    rates_status_label.text = "Saved rates profile"
+    if rates_json_editor != null:
+        rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    _refresh_rates_panel()
+
+
+func _export_rates_json() -> void:
+    if rates_json_editor != null:
+        rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    rates_status_label.text = "Exported current rates JSON to the editor"
+    _refresh_rates_import_diff()
+
+
+func _import_rates_json() -> void:
+    if rates_json_editor == null:
+        return
+    var result: Dictionary = RatesProfile.from_json(rates_json_editor.text)
+    if not result.ok:
+        rates_status_label.text = "Import rejected: %s" % result.error
+        _refresh_rates_import_diff()
+        return
+    var save_result: Dictionary = _save_rates_profile(result.profile)
+    if not save_result.ok:
+        rates_status_label.text = "Import save failed: %s" % save_result.error
+        return
+    rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    rates_status_label.text = "Imported and applied rates profile"
+    _refresh_rates_import_diff()
+
+
+func _reset_rates_defaults() -> void:
+    var result: Dictionary = _save_rates_profile(RatesProfile.default_profile())
+    if not result.ok:
+        rates_status_label.text = "Rates reset failed: %s" % result.error
+        return
+    rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    rates_status_label.text = "Rates reset to defaults"
+    _refresh_rates_import_diff()
+
+
+func _on_rates_json_changed() -> void:
+    _refresh_rates_import_diff()
+
+
+func _refresh_rates_import_diff() -> void:
+    if rates_json_editor == null or rates_diff_label == null:
+        return
+    var result: Dictionary = RatesProfile.from_json(rates_json_editor.text)
+    if not result.ok:
+        rates_diff_label.text = "BETAFLIGHT DIFF: invalid JSON (%s)" % result.error
+        return
+    var changes: Array[Dictionary] = RatesProfile.diff(rates_profile, result.profile)
+    if changes.is_empty():
+        rates_diff_label.text = "CURRENT vs BETAFLIGHT IMPORTED: no changes"
+        return
+    var lines := ["CURRENT vs BETAFLIGHT IMPORTED:"]
+    for change in changes:
+        lines.append("%s: %.2f -> %.2f" % [change.key, change.current, change.imported])
+    rates_diff_label.text = "\n".join(lines)
+
+
+func _refresh_rates_panel() -> void:
+    if rates_panel == null:
+        return
+    for key in rates_sliders:
+        var slider: HSlider = rates_sliders[key]
+        var value := _acro_rate(key)
+        if not is_equal_approx(slider.value, value):
+            slider.set_value_no_signal(value)
+        var label: Label = rates_slider_labels[key]
+        label.text = "%s: %.2f" % [key.to_upper(), value]
+    if rates_curve_line != null:
+        _refresh_rates_curve()
+    _refresh_rates_import_diff()
+
+
+func _refresh_rates_curve() -> void:
+    if native == null or not native.has_method("betaflight_rate_for_stick"):
+        rates_curve_line.points = PackedVector2Array()
+        return
+    var rates := PackedFloat64Array()
+    var maximum := 1000.0
+    for index in range(17):
+        var stick := -1.0 + float(index) / 8.0
+        var rate := float(native.call("betaflight_rate_for_stick", stick, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo")))
+        rates.append(rate)
+        maximum = maxf(maximum, absf(rate))
+    var points := PackedVector2Array()
+    for index in range(rates.size()):
+        var x := 10.0 + float(index) * 660.0 / 16.0
+        var y := 84.0 - float(rates[index]) / maximum * 70.0
+        points.append(Vector2(x, y))
+    rates_curve_line.points = points
 
 func _build_controller_settings_panel() -> void:
     var panel := PanelContainer.new()
@@ -1357,6 +1624,23 @@ func show_controller_settings() -> void:
     _refresh_controller_settings()
     _refresh_flight_hud()
 
+
+func show_rates(return_screen: String = "settings") -> void:
+    rates_return_screen = return_screen
+    screen = "rates"
+    if rates_json_editor != null:
+        rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    _refresh_rates_import_diff()
+    _refresh_flight_hud()
+
+
+func _close_rates_panel() -> void:
+    if rates_return_screen == "flight":
+        screen = "flight"
+        _refresh_flight_hud()
+    else:
+        show_settings()
+
 func reset_to_xbox_default() -> void:
     begin_controller_confirmation(_first_connected_device())
 
@@ -1369,6 +1653,9 @@ func factory_reset_player_settings() -> void:
         _refresh_flight_hud()
         return
     persisted_gamepad_profile = null
+    rates_profile = RatesProfile.default_profile()
+    if rates_json_editor != null:
+        rates_json_editor.text = RatesProfile.to_json(rates_profile)
     last_error_message = "Settings reset to factory defaults"
     screen = "settings"
     _refresh_flight_hud()
@@ -1458,6 +1745,10 @@ func _build_flight_hud() -> void:
     arm_takeoff_button.name = "ArmTakeoff"
     arm_takeoff_button.pressed.connect(_handle_primary_action)
     rows.add_child(arm_takeoff_button)
+    acro_mode_button = Button.new()
+    acro_mode_button.name = "AcroMode"
+    acro_mode_button.pressed.connect(toggle_acro_mode)
+    rows.add_child(acro_mode_button)
     _build_pause_panel()
     _build_controller_safety_panel()
     _build_finish_panel()
@@ -1495,6 +1786,11 @@ func _build_pause_panel() -> void:
     change.text = "CHANGE MAP"
     change.pressed.connect(change_map)
     rows.add_child(change)
+    var rates := Button.new()
+    rates.name = "Rates"
+    rates.text = "RATES"
+    rates.pressed.connect(show_rates.bind("flight"))
+    rows.add_child(rates)
     var exit := Button.new()
     exit.name = "Exit"
     exit.text = "EXIT"
@@ -1576,7 +1872,7 @@ func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
         return
     if main_menu_layer != null:
-        main_menu_layer.visible = screen in ["main_menu", "settings", "controller_settings"]
+        main_menu_layer.visible = screen in ["main_menu", "settings", "controller_settings", "rates"]
     if main_menu_entries_container != null:
         main_menu_entries_container.visible = screen == "main_menu"
     if settings_panel != null:
@@ -1585,8 +1881,10 @@ func _refresh_flight_hud() -> void:
         settings_status_label.text = last_error_message if not last_error_message.is_empty() else "Settings ready"
     if controller_settings_panel != null:
         controller_settings_panel.visible = screen == "controller_settings"
+    if rates_panel != null:
+        rates_panel.visible = screen == "rates"
     if flight_hud_layer != null:
-        flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings"]
+        flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings", "rates"]
     if pause_panel != null:
         pause_panel.visible = paused and screen == "flight"
     if controller_safety_panel != null:
@@ -1596,7 +1894,11 @@ func _refresh_flight_hud() -> void:
     if finish_panel != null:
         finish_panel.visible = screen == "finish"
     key_hints_label.text = KEY_HINTS_TEXT
+    _refresh_rates_panel()
     arm_takeoff_button.disabled = screen == "main_menu" or (controller_safety_latched and screen != "fallback_prompt")
+    if acro_mode_button != null:
+        acro_mode_button.disabled = screen != "flight" or paused or controller_safety_latched
+        acro_mode_button.text = "ACRO MODE (C): %s" % ("ON" if flight_mode == "ACRO" else "OFF")
     if time_trial_status_label != null:
         time_trial_status_label.visible = time_trial != null and screen in ["preflight", "flight", "finish"]
         if time_trial != null:
@@ -2199,7 +2501,7 @@ func _airsim_yaw_rate_from_mode(yaw_mode: Variant) -> float:
 
 func _airsim_rate_stick(rate_degrees_per_second: float) -> float:
     if native != null and native.has_method("betaflight_stick_for_rate"):
-        return float(native.call("betaflight_stick_for_rate", rate_degrees_per_second, ACRO_RC_RATE, ACRO_SUPER_RATE, ACRO_EXPO))
+        return float(native.call("betaflight_stick_for_rate", rate_degrees_per_second, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo")))
     return clampf(rate_degrees_per_second / 720.0, -1.0, 1.0)
 
 

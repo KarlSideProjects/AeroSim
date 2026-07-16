@@ -112,6 +112,11 @@ public:
             double rc_rate,
             double super_rate,
             double expo) const;
+    double betaflight_rate_for_stick(
+            double stick,
+            double rc_rate,
+            double super_rate,
+            double expo) const;
     void reset_flight();
     void capture_altitude_hold();
     void configure_imu(const godot::Dictionary &config);

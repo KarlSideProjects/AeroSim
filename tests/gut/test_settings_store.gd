@@ -2,6 +2,7 @@ extends GutTest
 
 const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const RatesProfile = preload("res://common/flight/rates_profile.gd")
 
 var test_path := "user://aerosim-settings-store-test.json"
 
@@ -56,6 +57,23 @@ func test_settings_store_rejects_unknown_or_future_schema_without_partial_apply(
     assert_string_contains(unknown.error, "future")
     assert_false(future.ok)
     assert_string_contains(future.error, "schema_version")
+
+
+func test_settings_store_validates_the_versioned_rates_slot() -> void:
+    var store = SettingsStoreScript.new("user://aerosim-test-settings.json")
+    var invalid := store.default_document()
+    invalid["rates"] = RatesProfile.default_profile()
+    invalid["rates"]["expo"] = 2.0
+
+    var rejected: Dictionary = store.validate_document(invalid)
+
+    assert_false(rejected.ok)
+    assert_string_contains(rejected.error, "expo")
+
+    var valid := store.default_document()
+    valid["rates"] = RatesProfile.default_profile()
+    var accepted: Dictionary = store.validate_document(valid)
+    assert_true(accepted.ok, accepted.error)
 
 
 func test_settings_store_rejects_nonintegral_json_schema_version() -> void:

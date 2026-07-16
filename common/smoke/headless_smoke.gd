@@ -443,8 +443,22 @@ func _same_imu_value(actual: Variant, expected: Variant) -> bool:
     return is_equal_approx(float(actual), float(expected))
 
 func _verify_flight_control_public_path(native: Object) -> bool:
-    if not native.has_method("step_acro_mode"):
+    if not native.has_method("step_acro_mode") or not native.has_method("betaflight_rate_for_stick"):
         push_error("AeroSimNative.step_acro_mode must exist for Acro/rates public path")
+        return false
+
+    var preview_stick := float(native.call("betaflight_stick_for_rate", 360.0, 1.0, 0.722222222222, 0.0))
+    var preview_rate := float(native.call("betaflight_rate_for_stick", preview_stick, 1.0, 0.722222222222, 0.0))
+    if absf(preview_rate - 360.0) > 0.5:
+        push_error("Betaflight public forward/inverse rates bindings must round-trip")
+        return false
+    if (
+            float(native.call("betaflight_rate_for_stick", 0.5, 3.1, 0.7, 0.0)) != 0.0 or
+            float(native.call("betaflight_rate_for_stick", 0.5, 1.0, 1.1, 0.0)) != 0.0 or
+            float(native.call("betaflight_rate_for_stick", 0.5, 1.0, 0.7, 1.1)) != 0.0 or
+            float(native.call("betaflight_rate_for_stick", NAN, 1.0, 0.7, 0.0)) != 0.0
+        ):
+        push_error("Betaflight public forward rates binding must reject out-of-range profiles")
         return false
 
     native.call("reset_flight")
@@ -2263,6 +2277,7 @@ func _verify_keyboard_profile_actions() -> bool:
         "flight_pause": KEY_P,
         "flight_respawn": KEY_R,
         "flight_altitude_hold": KEY_H,
+        "flight_acro": KEY_C,
         "flight_exit": KEY_ESCAPE
     }
     for action in actions:
