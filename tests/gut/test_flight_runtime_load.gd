@@ -50,6 +50,47 @@ func test_runtime_rejects_more_than_two_named_vehicles_before_dashboard_setup() 
     runtime.free()
 
 
+func test_runtime_rejects_secondary_px4_without_a_second_bridge() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var validation: Dictionary = runtime._validate_airsim_startup_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {
+            "DroneA": {"VehicleType": "SimpleFlight"},
+            "DroneB": {"VehicleType": "PX4Multirotor"},
+        },
+    })
+
+    assert_false(validation.ok)
+    assert_string_contains(validation.error, "secondary")
+    assert_string_contains(validation.error, "PX4Multirotor")
+    runtime.free()
+
+
+func test_single_vehicle_disables_secondary_collision_shape_and_restores_scene_ownership() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var body := RigidBody3D.new()
+    body.collision_layer = 4
+    body.collision_mask = 8
+    var shape := CollisionShape3D.new()
+    body.add_child(shape)
+    runtime.add_child(body)
+    runtime.secondary_drone_body = body
+
+    runtime._set_secondary_collision_enabled(false)
+    assert_eq(body.collision_layer, 0)
+    assert_eq(body.collision_mask, 0)
+    assert_true(shape.disabled)
+
+    runtime._set_secondary_collision_enabled(true)
+    assert_eq(body.collision_layer, 4)
+    assert_eq(body.collision_mask, 8)
+    assert_false(shape.disabled)
+    runtime.free()
+
+
 func test_controller_disconnect_latches_disarm_freeze_and_blocks_keyboard_resume() -> void:
     var runtime_script := load("res://common/flight/flight_runtime.gd")
     var runtime = runtime_script.new()

@@ -110,6 +110,10 @@ var _dashboard_vehicle_name := ""
 var _airsim_secondary_native: Object
 var _airsim_vehicle_contexts: Dictionary = {}
 var _airsim_secondary_a5_configuration: Dictionary = {}
+var _secondary_collision_state_captured := false
+var _secondary_collision_layer := 1
+var _secondary_collision_mask := 1
+var _secondary_collision_shapes: Array[Dictionary] = []
 var _airsim_api_control := false
 var _airsim_disarm_requested := false
 var _airsim_command_state: Dictionary = {}
@@ -201,7 +205,20 @@ func _ready() -> void:
 
 
 func _validate_airsim_startup_settings(raw_settings: Dictionary) -> Dictionary:
-    return AirSimSettings.validate(raw_settings)
+    var validation: Dictionary = AirSimSettings.validate(raw_settings)
+    if not bool(validation.get("ok", false)):
+        return validation
+    var vehicles: Dictionary = validation.get("settings", {}).get("Vehicles", {})
+    if vehicles.size() == 2:
+        var vehicle_names: Array = vehicles.keys()
+        var secondary_name := String(vehicle_names[1])
+        var secondary_settings: Dictionary = vehicles.get(secondary_name, {})
+        if String(secondary_settings.get("VehicleType", "SimpleFlight")) == "PX4Multirotor":
+            var error := "secondary named PX4Multirotor requires a second Px4SitlBridge; unsupported in this slice"
+            validation["ok"] = false
+            validation["error"] = error
+            validation["errors"] = [error]
+    return validation
 
 
 func _load_and_validate_airsim_settings() -> Dictionary:
@@ -254,7 +271,27 @@ func _configure_airsim_vehicle_contexts() -> void:
         }
 
 
+func _set_secondary_collision_enabled(enabled: bool) -> void:
+    if secondary_drone_body == null:
+        return
+    if not _secondary_collision_state_captured:
+        _secondary_collision_layer = secondary_drone_body.collision_layer
+        _secondary_collision_mask = secondary_drone_body.collision_mask
+        _secondary_collision_shapes.clear()
+        for child in secondary_drone_body.get_children():
+            if child is CollisionShape3D:
+                _secondary_collision_shapes.append({"node": child, "disabled": child.disabled})
+        _secondary_collision_state_captured = true
+    secondary_drone_body.collision_layer = _secondary_collision_layer if enabled else 0
+    secondary_drone_body.collision_mask = _secondary_collision_mask if enabled else 0
+    for shape_state in _secondary_collision_shapes:
+        var collision_shape = shape_state.get("node")
+        if is_instance_valid(collision_shape):
+            collision_shape.disabled = bool(shape_state.get("disabled", false)) if enabled else true
+
+
 func _configure_secondary_native(hardware_config: RefCounted) -> void:
+    _set_secondary_collision_enabled(false)
     if _airsim_vehicle_names.size() < 2 or secondary_drone_body == null:
         return
     _airsim_secondary_native = ClassDB.instantiate("AeroSimNative")
@@ -271,6 +308,7 @@ func _configure_secondary_native(hardware_config: RefCounted) -> void:
         return
     if not _sync_secondary_a5_model():
         return
+    _set_secondary_collision_enabled(true)
     secondary_drone_body.visible = true
     if secondary_chase_camera != null:
         secondary_chase_camera.current = false
@@ -1148,6 +1186,7 @@ func reset_to_spawn() -> bool:
         secondary_drone_body.reset_contact()
         secondary_drone_body.apply_native_state(spawn.global_position + Vector3(1.0, 0.0, 0.0), spawn.global_transform.basis.get_rotation_quaternion(), Vector3.ZERO, Vector3.ZERO)
         secondary_drone_body.freeze = true
+        _set_secondary_collision_enabled(_airsim_vehicle_names.size() > 1 and _airsim_secondary_native != null)
     if time_trial != null:
         time_trial.reset()
     return true
@@ -1627,6 +1666,7 @@ func _reset_drone_body() -> void:
         secondary_drone_body.reset_contact()
         secondary_drone_body.apply_native_state(_spawn_position() + Vector3(1.0, 0.0, 0.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
         secondary_drone_body.freeze = true
+        _set_secondary_collision_enabled(_airsim_vehicle_names.size() > 1 and _airsim_secondary_native != null)
 
 func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
