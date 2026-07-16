@@ -6,6 +6,7 @@ const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
+const AirSimSettings = preload("res://common/rpc/airsim_settings.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
 const AirSimCameraSurface = preload("res://common/rpc/airsim_camera_surface.gd")
@@ -128,6 +129,9 @@ func _ready() -> void:
     Input.joy_connection_changed.connect(_on_joy_connection_changed)
     settings_store = SettingsStoreScript.new()
     _load_player_settings()
+    var startup_settings := _load_and_validate_airsim_settings()
+    if startup_settings.is_empty():
+        return
     _build_main_menu()
     _build_flight_hud()
     _build_status_diagram()
@@ -145,29 +149,6 @@ func _ready() -> void:
     airsim_rpc_server.set_session(airsim_session, Callable(self, "respawn"))
     add_child(airsim_rpc_server)
     airsim_stop_file = _cold_start_arg("--airsim-stop-file")
-    var airsim_port := int(_cold_start_arg("--airsim-rpc-port", str(AirSimRpcServer.DEFAULT_PORT)))
-    var startup_settings := {
-        "SettingsVersion": 1.2,
-        "SimMode": "Multirotor",
-        "ApiServerPort": airsim_port,
-        "RpcEnabled": true,
-    }
-    var settings_path := _cold_start_arg("--airsim-settings-file")
-    if not settings_path.is_empty():
-        var settings_file := FileAccess.open(settings_path, FileAccess.READ)
-        if settings_file == null:
-            push_error("AirSim settings file could not be opened: %s" % settings_path)
-            get_tree().quit(1)
-            return
-        else:
-            var parsed_settings = JSON.parse_string(settings_file.get_as_text())
-            settings_file.close()
-            if typeof(parsed_settings) != TYPE_DICTIONARY:
-                push_error("AirSim settings file must contain a JSON object")
-                get_tree().quit(1)
-                return
-            else:
-                startup_settings = parsed_settings
     var configured_vehicles = startup_settings.get("Vehicles", {})
     if typeof(configured_vehicles) == TYPE_DICTIONARY:
         for configured_name in configured_vehicles.keys():
@@ -217,6 +198,41 @@ func _ready() -> void:
     _update_chase_camera()
     _refresh_flight_hud()
     call_deferred("_run_cold_start_probe")
+
+
+func _validate_airsim_startup_settings(raw_settings: Dictionary) -> Dictionary:
+    return AirSimSettings.validate(raw_settings)
+
+
+func _load_and_validate_airsim_settings() -> Dictionary:
+    var startup_settings := {
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": int(_cold_start_arg("--airsim-rpc-port", str(AirSimRpcServer.DEFAULT_PORT))),
+        "RpcEnabled": true,
+    }
+    var settings_path := _cold_start_arg("--airsim-settings-file")
+    if not settings_path.is_empty():
+        var settings_file := FileAccess.open(settings_path, FileAccess.READ)
+        if settings_file == null:
+            push_error("AirSim settings file could not be opened: %s" % settings_path)
+            get_tree().quit(1)
+            return {}
+        var parsed_settings = JSON.parse_string(settings_file.get_as_text())
+        settings_file.close()
+        if typeof(parsed_settings) != TYPE_DICTIONARY:
+            push_error("AirSim settings file must contain a JSON object")
+            get_tree().quit(1)
+            return {}
+        startup_settings = parsed_settings
+
+    var validation: Dictionary = _validate_airsim_startup_settings(startup_settings)
+    if not validation.ok:
+        last_error_message = String(validation.error)
+        push_error("AirSim settings validation failed: %s" % last_error_message)
+        get_tree().quit(1)
+        return {}
+    return validation.settings
 
 
 func _configure_airsim_vehicle_contexts() -> void:

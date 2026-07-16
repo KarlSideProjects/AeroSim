@@ -122,6 +122,18 @@ int main() {
             other_named_recorder.serialized_identity().find("DroneB") == std::string::npos) {
         return fail("serialized replay identity must keep two vehicle records distinct");
     }
+    const std::string special_name = "Drone\"\\\x01\n";
+    aerosim::ReplayRecorder special_recorder(special_name);
+    special_recorder.record(named_command);
+    const std::string expected_special_identity =
+            "{\"vehicle_name\":\"Drone" +
+            std::string("\\\"") +
+            "\\\\" +
+            "\\u0001" +
+            "\\n\",\"frame_count\":1}";
+    if (special_recorder.serialized_identity() != expected_special_identity) {
+        return fail("serialized replay identity must escape JSON special characters");
+    }
 
     aerosim::SimulationConfig config;
     config.physics_hz = 240;

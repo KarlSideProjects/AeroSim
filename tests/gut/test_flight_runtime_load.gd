@@ -32,6 +32,24 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
     assert_not_null(runtime_script)
 
 
+func test_runtime_rejects_more_than_two_named_vehicles_before_dashboard_setup() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var validation: Dictionary = runtime._validate_airsim_startup_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {
+            "DroneA": {"VehicleType": "SimpleFlight"},
+            "DroneB": {"VehicleType": "SimpleFlight"},
+            "DroneC": {"VehicleType": "SimpleFlight"},
+        },
+    })
+
+    assert_false(validation.ok)
+    assert_string_contains(validation.error, "one or two")
+    runtime.free()
+
+
 func test_controller_disconnect_latches_disarm_freeze_and_blocks_keyboard_resume() -> void:
     var runtime_script := load("res://common/flight/flight_runtime.gd")
     var runtime = runtime_script.new()
