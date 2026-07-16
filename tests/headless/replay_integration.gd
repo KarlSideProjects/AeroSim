@@ -57,6 +57,14 @@ func _initialize() -> void:
     if not bool(replay.get("ok", false)) or int(replay.get("scene_object_count", 0)) != 1 or String(replay.get("environment_json", "")).find("rain") < 0:
         _fail("native replay failed: %s" % String(replay.get("diagnostic_message", "unknown")))
         return
+    var altered_manifest: Dictionary = JSON.parse_string(finish.serialized)
+    altered_manifest["vehicles"][0]["config"]["mass_kg"] = 1.25
+    var strict_manifest_rejection: Dictionary = native.call(
+        "replay_complete_session", JSON.stringify(altered_manifest), SETTINGS_HASH, config_hash, config_hash,
+        config_manifest, config_manifest)
+    if bool(strict_manifest_rejection.get("ok", true)) or int(strict_manifest_rejection.get("diagnostic_code", 0)) == 0:
+        _fail("altered vehicle manifest was not rejected")
+        return
     var altered_serialized: String = finish.serialized.replace("\"throttle\":0.55", "\"throttle\":0.65")
     var divergence: Dictionary = native.call(
         "compare_complete_replay_sessions", finish.serialized, altered_serialized, SETTINGS_HASH)

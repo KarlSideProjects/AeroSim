@@ -2104,6 +2104,11 @@ ReplayRunResult replay_session(
         while (group_end < session.events.size() && session.events[group_end].timestamp_us == timestamp_us) {
             ++group_end;
         }
+        if (!paused && timestamp_us >= previous_timestamp_us &&
+                !advance_us(timestamp_us - previous_timestamp_us, timestamp_us)) {
+            return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay timeline interval exceeds runtime frame limit"));
+        }
+        previous_timestamp_us = timestamp_us;
         for (std::size_t index = event_index; index < group_end; ++index) {
             const ReplayEvent &event = session.events[index];
             if (event.type == ReplayEventType::Command) {
@@ -2139,11 +2144,6 @@ ReplayRunResult replay_session(
                 has_pending_collision[vehicle] = true;
             }
         }
-        if (!paused && timestamp_us >= previous_timestamp_us &&
-                !advance_us(timestamp_us - previous_timestamp_us, timestamp_us)) {
-            return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay timeline interval exceeds runtime frame limit"));
-        }
-        previous_timestamp_us = timestamp_us;
         for (std::size_t index = event_index; index < group_end; ++index) {
         const ReplayEvent &event = session.events[index];
         switch (event.type) {
