@@ -84,6 +84,16 @@ def exercise(port: int, dual: bool = False) -> None:
     assert len(images[0].image_data_uint8) == 256 * 144 * 3
     assert len(images[1].image_data_float) == 256 * 144
     assert images[0].time_stamp == images[1].time_stamp
+    if dual:
+        secondary_images = client.simGetImages([
+            airsim.ImageRequest("0", airsim.ImageType.Segmentation, False, False),
+            airsim.ImageRequest("0", airsim.ImageType.DepthPlanar, True, False),
+        ], vehicle_name="Drone2")
+        assert [response.image_type for response in secondary_images] == [airsim.ImageType.Segmentation, airsim.ImageType.DepthPlanar]
+        assert secondary_images[0].width == secondary_images[1].width == 256
+        assert secondary_images[0].height == secondary_images[1].height == 144
+        assert len(secondary_images[0].image_data_uint8) == 256 * 144 * 3
+        assert len(secondary_images[1].image_data_float) == 256 * 144
     client.enableApiControl(True, vehicle_name="Drone1")
     assert client.isApiControlEnabled("Drone1") is True
     assert client.armDisarm(True, vehicle_name="Drone1") is True
