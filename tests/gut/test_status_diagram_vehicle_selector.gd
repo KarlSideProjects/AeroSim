@@ -62,13 +62,24 @@ func test_dashboard_marks_snapshot_freshness_and_reports_rate_and_latency() -> v
     dashboard._ready()
     dashboard.set_vehicle_names(["DroneA", "DroneB"])
 
-    dashboard.set_vehicle_snapshots({"DroneA": _live_snapshot("DroneA", 1_000_000)}, "DroneA", 1_020_000)
+    dashboard.set_vehicle_snapshots({"DroneA": _live_snapshot("DroneA", 1_000_000)}, "DroneA", 10_000_000)
     assert_eq(String(dashboard.debug_values.get("connection_state", "")), "live")
     assert_eq(float(dashboard.debug_values.get("update_rate_hz", 0.0)), 30.0)
-    assert_eq(float(dashboard.debug_values.get("latency_ms", 0.0)), 20.0)
+    assert_eq(float(dashboard.debug_values.get("latency_ms", 0.0)), 0.0)
 
     assert_true(dashboard.select_vehicle("DroneB"))
     assert_eq(String(dashboard.debug_values.get("connection_state", "")), "disconnected")
 
-    dashboard.set_vehicle_snapshots({"DroneA": _live_snapshot("DroneA", 1_000_000)}, "DroneA", 1_200_001)
+    dashboard.set_vehicle_snapshots({"DroneA": _live_snapshot("DroneA", 1_000_000)}, "DroneA", 10_120_001)
     assert_eq(String(dashboard.debug_values.get("connection_state", "")), "stale")
+    assert_gt(float(dashboard.debug_values.get("latency_ms", 0.0)), 100.0)
+
+
+func test_single_unnamed_snapshot_still_updates_dashboard() -> void:
+    var dashboard := StatusDiagramDebug.new()
+    autofree(dashboard)
+    dashboard._ready()
+
+    dashboard.set_vehicle_snapshots({"": _live_snapshot("", 1_000_000)}, "", 10_000_000)
+    assert_eq(String(dashboard.debug_values.get("source", "")), "native_double_buffer")
+    assert_eq(int(dashboard.debug_values.get("timestamp_us", 0)), 1_000_000)

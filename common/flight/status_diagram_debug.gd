@@ -14,6 +14,8 @@ var _vehicle_selector: OptionButton
 var _dashboard_panel: PanelContainer
 var _dashboard_margin: MarginContainer
 var _now_timestamp_us := -1
+var _last_publish_counts: Dictionary = {}
+var _last_publish_received_us: Dictionary = {}
 var _labels := {}
 
 func _ready() -> void:
@@ -22,7 +24,7 @@ func _ready() -> void:
     var margin := MarginContainer.new()
     margin.name = "DashboardMargin"
     margin.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-    margin.offset_left = -320.0
+    margin.offset_left = -428.0
     margin.offset_bottom = 260.0
     margin.add_theme_constant_override("margin_left", 8)
     margin.add_theme_constant_override("margin_top", 8)
@@ -33,7 +35,7 @@ func _ready() -> void:
 
     var panel := PanelContainer.new()
     panel.name = "DashboardPanel"
-    panel.custom_minimum_size = Vector2(312.0, 244.0)
+    panel.custom_minimum_size = Vector2(420.0, 284.0)
     margin.add_child(panel)
     _dashboard_panel = panel
 
@@ -169,8 +171,15 @@ func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> v
         selected_vehicle_name = snapshot_vehicle_name
     var timestamp_us := int(snapshot.get("timestamp_us", 0))
     var effective_now_timestamp_us := now_timestamp_us if now_timestamp_us >= 0 else _now_timestamp_us
-    var connection_state := _connection_state(snapshot, effective_now_timestamp_us)
-    var latency_us := maxi(0, effective_now_timestamp_us - timestamp_us) if effective_now_timestamp_us >= 0 and timestamp_us > 0 else 0
+    var telemetry_vehicle_name := snapshot_vehicle_name if not snapshot_vehicle_name.is_empty() else selected_vehicle_name
+    var publish_count := int(snapshot.get("publish_count", 0))
+    if publish_count > 0 and (not _last_publish_counts.has(telemetry_vehicle_name) or int(_last_publish_counts[telemetry_vehicle_name]) != publish_count):
+        _last_publish_counts[telemetry_vehicle_name] = publish_count
+        _last_publish_received_us[telemetry_vehicle_name] = effective_now_timestamp_us
+    var received_us := int(_last_publish_received_us.get(telemetry_vehicle_name, -1))
+    var snapshot_age_us := maxi(0, effective_now_timestamp_us - received_us) if effective_now_timestamp_us >= 0 and received_us >= 0 else 0
+    var connection_state := _connection_state(snapshot, effective_now_timestamp_us, snapshot_age_us)
+    var latency_us := snapshot_age_us
     debug_values = snapshot.duplicate(true)
     debug_values.merge({
         "schema_version": int(snapshot.get("schema_version", 0)),
@@ -233,7 +242,7 @@ func _set_disconnected(vehicle_name: String) -> void:
     })
 
 
-func _connection_state(snapshot: Dictionary, now_timestamp_us: int) -> String:
+func _connection_state(snapshot: Dictionary, now_timestamp_us: int, snapshot_age_us: int) -> String:
     var explicit_state := String(snapshot.get("connection_state", ""))
     if explicit_state in ["live", "stale", "disconnected"]:
         return explicit_state
@@ -242,7 +251,7 @@ func _connection_state(snapshot: Dictionary, now_timestamp_us: int) -> String:
         return "disconnected"
     if now_timestamp_us < 0:
         return "live"
-    return "stale" if now_timestamp_us - timestamp_us > STALE_AFTER_US else "live"
+    return "stale" if snapshot_age_us > STALE_AFTER_US else "live"
 
 
 func _status_color(connection_state: String) -> Color:
@@ -259,9 +268,9 @@ func _apply_layout() -> void:
     if _dashboard_margin == null or _dashboard_panel == null:
         return
     var full := layout_mode == "full"
-    _dashboard_margin.offset_left = -420.0 if full else -320.0
+    _dashboard_margin.offset_left = -528.0 if full else -428.0
     _dashboard_margin.offset_bottom = 430.0 if full else 300.0
-    _dashboard_panel.custom_minimum_size = Vector2(412.0, 414.0) if full else Vector2(312.0, 284.0)
+    _dashboard_panel.custom_minimum_size = Vector2(520.0, 414.0) if full else Vector2(420.0, 284.0)
     for key in ["rate", "latency", "timestamp"]:
         _labels[key].visible = full
 

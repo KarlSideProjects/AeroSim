@@ -2285,9 +2285,7 @@ func _update_status_diagram() -> void:
                 "vehicle_name": vehicle_name,
                 "connection_state": "disconnected",
             }
-    var now_timestamp_us := -1
-    if airsim_session != null:
-        now_timestamp_us = int(round(airsim_session.simulation_time_seconds * 1_000_000.0))
+    var now_timestamp_us := Time.get_ticks_usec()
     status_diagram.call("set_vehicle_snapshots", snapshots, _dashboard_vehicle_name, now_timestamp_us)
     if environment_state != null and status_diagram.has_method("update_environment"):
         status_diagram.update_environment(environment_state.snapshot())
