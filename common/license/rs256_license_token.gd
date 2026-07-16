@@ -6,7 +6,7 @@ const TOKEN_TTL_SECONDS := 259200
 const MAX_FUTURE_IAT_SECONDS := 300
 
 
-static func verify(token: String, public_key_path: String, allowed_kids: Array, now: int) -> Dictionary:
+static func verify(token: String, public_key_path: String, allowed_kids: Array, now: int, allow_future_iat: bool = false, allow_expired: bool = false) -> Dictionary:
     var parts := token.split(".")
     if parts.size() != 3:
         return _invalid("parts")
@@ -49,7 +49,7 @@ static func verify(token: String, public_key_path: String, allowed_kids: Array, 
     var exp := int(claims["exp"])
     if exp - iat != TOKEN_TTL_SECONDS:
         return _invalid()
-    if now >= exp or iat > now + MAX_FUTURE_IAT_SECONDS:
+    if (not allow_expired and now >= exp) or (not allow_future_iat and iat > now + MAX_FUTURE_IAT_SECONDS):
         return _invalid()
 
     var key := CryptoKey.new()
