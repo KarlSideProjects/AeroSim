@@ -54,6 +54,16 @@
     "simGetVehiclePose",
     "simGetCollisionInfo",
     "simGetImages",
+    "simListSceneObjects",
+    "simSpawnObject",
+    "simGetObjectPose",
+    "simSetObjectPose",
+    "simDestroyObject",
+    "simGetSegmentationObjectID",
+    "simSetSegmentationObjectID",
+    "simEnableWeather",
+    "simSetWeatherParameter",
+    "simSetTimeOfDay",
     "getImuData",
     "getGpsData",
     "getMagnetometerData",
@@ -78,6 +88,10 @@
     "simContinueForTime",
     "simContinueForFrames",
     "reset"
+  ],
+  "lab_extension_api": [
+    "simSetEnvironment",
+    "simGetEnvironment"
   ],
   "settings": {
     "root": [
