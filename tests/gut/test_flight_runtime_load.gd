@@ -91,6 +91,23 @@ func test_single_vehicle_disables_secondary_collision_shape_and_restores_scene_o
     runtime.free()
 
 
+func test_set_paused_freezes_and_sleeps_secondary_until_resume() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var secondary_body := RigidBody3D.new()
+    runtime.add_child(secondary_body)
+    runtime.secondary_drone_body = secondary_body
+
+    runtime.set_paused(true, false)
+    assert_true(secondary_body.freeze)
+    assert_true(secondary_body.sleeping)
+
+    runtime.set_paused(false, false)
+    assert_false(secondary_body.freeze)
+    assert_false(secondary_body.sleeping)
+    runtime.free()
+
+
 func test_controller_disconnect_latches_disarm_freeze_and_blocks_keyboard_resume() -> void:
     var runtime_script := load("res://common/flight/flight_runtime.gd")
     var runtime = runtime_script.new()

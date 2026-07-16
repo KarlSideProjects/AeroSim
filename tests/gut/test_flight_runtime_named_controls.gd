@@ -14,10 +14,11 @@ class FakeBody extends RefCounted:
     var rotation := Vector3.ZERO
     var global_transform := Transform3D.IDENTITY
 
-    func apply_native_state(position: Vector3, orientation: Quaternion, velocity: Vector3, _angular: Vector3) -> void:
+    func apply_native_state(position: Vector3, orientation: Quaternion, velocity: Vector3, angular: Vector3) -> void:
         global_position = position
         global_transform = Transform3D(Basis(orientation), position)
         linear_velocity = velocity
+        angular_velocity = angular
 
     func reset_contact() -> void:
         contact_seen = false
@@ -28,25 +29,28 @@ class FakeBody extends RefCounted:
 class FakeSecondaryNative extends RefCounted:
     var last_step_method := ""
     var last_acro_controls := {}
+    var a5_config := {"enabled": false, "prop_radius_m": 0.0, "coeff_1": 0.0, "coeff_2": 0.0, "coeff_3": 0.0}
+    var last_a5_source_position := Vector3.ZERO
 
     func a5_downwash_configuration() -> Dictionary:
-        return {"enabled": false, "prop_radius_m": 0.0, "coeff_1": 0.0, "coeff_2": 0.0, "coeff_3": 0.0}
+        return a5_config.duplicate(true)
 
     func refresh_imu_sample() -> void:
         pass
 
-    func set_a5_downwash_model(_enabled: bool, _radius: float, _coeff_1: float, _coeff_2: float, _coeff_3: float) -> bool:
+    func set_a5_downwash_model(enabled: bool, radius: float, coeff_1: float, coeff_2: float, coeff_3: float) -> bool:
+        a5_config = {"enabled": enabled, "prop_radius_m": radius, "coeff_1": coeff_1, "coeff_2": coeff_2, "coeff_3": coeff_3}
         return true
 
-    func set_a5_downwash_source_position(_x: float, _y: float, _z: float) -> void:
-        pass
+    func set_a5_downwash_source_position(x: float, y: float, z: float) -> void:
+        last_a5_source_position = Vector3(x, y, z)
 
     func sync_flight_state(..._args) -> void:
         pass
 
     func step_collision_angle_mode(..._args) -> PackedFloat64Array:
         last_step_method = "step_collision_angle_mode"
-        return PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+        return PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 2.2, 3.3])
 
     func step_collision_acro_mode(...args) -> PackedFloat64Array:
         last_step_method = "step_collision_acro_mode"
@@ -56,7 +60,7 @@ class FakeSecondaryNative extends RefCounted:
             "pitch": args[4],
             "yaw": args[5],
         }
-        return PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+        return PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 2.2, 3.3])
 
 
 func _body(velocity: Vector3, yaw: float) -> FakeBody:
@@ -112,6 +116,22 @@ func test_secondary_position_commands_use_secondary_body_and_clear_on_completion
     assert_eq(completed_context.command_remaining_frames, 0)
 
 
+func test_secondary_rotate_by_yaw_rate_uses_secondary_body_and_primary_sign() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime.drone_body = _body(Vector3(4.0, 0.0, 0.0), 0.0)
+    var secondary_body := _body(Vector3.ZERO, 0.0)
+
+    var controls: Dictionary = runtime._airsim_secondary_controls(
+        {"command_state": {"method": "rotateByYawRate", "args": [30.0, 1.0]}},
+        secondary_body)
+
+    assert_eq(String(controls.get("mode", "")), "ANGLE")
+    assert_eq(float(controls.get("yaw_rate", 0.0)), -30.0)
+    assert_eq(float(controls.get("roll", 0.0)), 0.0)
+    assert_eq(float(controls.get("pitch", 0.0)), 0.0)
+
+
 func test_secondary_angle_rates_use_acro_collision_step_and_clear_command() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)
@@ -141,6 +161,39 @@ func test_secondary_angle_rates_use_acro_collision_step_and_clear_command() -> v
     assert_ne(float(secondary_native.last_acro_controls.roll), 0.0)
     assert_ne(float(secondary_native.last_acro_controls.pitch), 0.0)
     assert_ne(float(secondary_native.last_acro_controls.yaw), 0.0)
+    assert_almost_eq(secondary_body.angular_velocity.x, 1.1, 0.000001)
+    assert_almost_eq(secondary_body.angular_velocity.y, 2.2, 0.000001)
+    assert_almost_eq(secondary_body.angular_velocity.z, 3.3, 0.000001)
     var completed_context: Dictionary = runtime._airsim_vehicle_contexts["DroneB"]
     assert_true(completed_context.command_state.is_empty())
     assert_eq(completed_context.command_remaining_frames, 0)
+
+
+func test_secondary_runtime_applies_configured_a5_and_primary_source_each_substep() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var primary_body := _body(Vector3.ZERO, 0.0)
+    primary_body.global_position = Vector3(2.0, 3.0, 4.0)
+    var secondary_body := _body(Vector3.ZERO, 0.0)
+    var primary_native := FakeSecondaryNative.new()
+    primary_native.a5_config = {"enabled": true, "prop_radius_m": 0.0231348, "coeff_1": 2267.18, "coeff_2": 0.16, "coeff_3": -0.11}
+    var secondary_native := FakeSecondaryNative.new()
+    runtime.drone_body = primary_body
+    runtime.secondary_drone_body = secondary_body
+    runtime.native = primary_native
+    runtime._airsim_secondary_native = secondary_native
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime._airsim_vehicle_contexts["DroneB"] = {
+        "api_control": true,
+        "armed": true,
+        "command_state": {"method": "hover", "args": []},
+        "hold_controls": {},
+        "command_remaining_frames": 1,
+        "last_velocity": Vector3.ZERO,
+    }
+
+    runtime._step_secondary_airsim_vehicle("DroneB")
+
+    assert_true(bool(secondary_native.a5_config.enabled))
+    assert_almost_eq(float(secondary_native.a5_config.prop_radius_m), 0.0231348, 0.0000001)
+    assert_eq(secondary_native.last_a5_source_position, primary_body.global_position)

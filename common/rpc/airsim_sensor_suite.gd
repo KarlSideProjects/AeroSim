@@ -235,18 +235,22 @@ func _stream_key(vehicle_name: String, sensor_type: int, sensor_name: String) ->
 
 
 func _sample(stream: Dictionary, state: Dictionary, sample_time: float) -> Dictionary:
+    var sample: Dictionary
     match int(stream.sensor_type):
         SENSOR_IMU:
-            return _sample_imu(state, sample_time)
+            sample = _sample_imu(state, sample_time)
         SENSOR_GPS:
-            return _sample_gps(state, sample_time)
+            sample = _sample_gps(state, sample_time)
         SENSOR_MAGNETOMETER:
-            return _sample_magnetometer(state, sample_time)
+            sample = _sample_magnetometer(state, sample_time)
         SENSOR_BAROMETER:
-            return _sample_barometer(state, sample_time)
+            sample = _sample_barometer(state, sample_time)
         SENSOR_LIDAR:
-            return _sample_lidar(stream, state, sample_time)
-    return {"time_stamp": int(round(sample_time * 1_000_000_000.0))}
+            sample = _sample_lidar(stream, state, sample_time)
+        _:
+            sample = {"time_stamp": int(round(sample_time * 1_000_000_000.0))}
+    sample["aerosim_identity"] = {"vehicle_name": String(stream.vehicle_name)}
+    return sample
 
 
 func _sample_imu(state: Dictionary, sample_time: float) -> Dictionary:

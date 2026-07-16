@@ -797,12 +797,12 @@ func _step_secondary_airsim_vehicle(vehicle_name: String) -> void:
             body.angular_velocity.y,
             body.angular_velocity.z,
             _kinetic(body.linear_velocity, body.angular_velocity))
-    if row.size() >= 11:
+    if row.size() >= 17:
         body.apply_native_state(
             Vector3(row[1], row[2], row[3]),
             Quaternion(row[4], row[5], row[6], row[7]),
             Vector3(row[8], row[9], row[10]),
-            Vector3.ZERO)
+            Vector3(row[14], row[15], row[16]))
     if body.contact_seen:
         context["collision_seen"] = true
         context["contact_this_frame"] = true
@@ -878,6 +878,10 @@ func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
             var rotate_to_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
             rotate_to_controls["yaw_rate"] = clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
             return rotate_to_controls
+        "rotateByYawRate":
+            var rotate_rate_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
+            rotate_rate_controls["yaw_rate"] = clampf(-float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            return rotate_rate_controls
         "moveByAngleRatesThrottle":
             return {"mode": "ACRO", "throttle": float(args[3]), "acro_roll": _airsim_rate_stick(rad_to_deg(float(args[0]))), "acro_pitch": _airsim_rate_stick(rad_to_deg(float(args[1]))), "acro_yaw": _airsim_rate_stick(rad_to_deg(float(args[2])))}
     return _airsim_neutral_controls()
@@ -1301,8 +1305,10 @@ func set_paused(value: bool, sync_session: bool = true) -> void:
         airsim_session.set_paused(value)
     if drone_body != null:
         drone_body.freeze = value
-        if not value:
-            drone_body.sleeping = false
+        drone_body.sleeping = value
+    if secondary_drone_body != null:
+        secondary_drone_body.freeze = value
+        secondary_drone_body.sleeping = value
 
 func _build_main_menu() -> void:
     var layer := CanvasLayer.new()
@@ -2489,6 +2495,7 @@ func _airsim_state(name: String) -> Dictionary:
         "ready": native != null,
         "ready_message": "" if native != null else "native runtime unavailable",
         "can_arm": native != null,
+        "aerosim_identity": {"vehicle_name": _airsim_vehicle_name},
     }
     return {"ok": true, "state": state}
 
@@ -2556,6 +2563,7 @@ func _airsim_secondary_state(name: String) -> Dictionary:
         "ready": _airsim_secondary_native != null,
         "ready_message": "" if _airsim_secondary_native != null else "native runtime unavailable",
         "can_arm": _airsim_secondary_native != null,
+        "aerosim_identity": {"vehicle_name": name},
     }
     return {"ok": true, "state": state}
 

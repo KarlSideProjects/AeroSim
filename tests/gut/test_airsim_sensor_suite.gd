@@ -116,6 +116,7 @@ func test_sensor_drop_metadata_is_observable_after_a_large_simulation_gap() -> v
     assert_true(result.ok)
     assert_gt(result.sensor.dropped_count, 0)
     assert_eq(result.sensor.dropped_count, suite.stats("Drone1", AirSimSensorSuite.SENSOR_IMU, "").dropped_count)
+    assert_eq(result.sensor.aerosim_identity.vehicle_name, "Drone1")
 
 
 func test_sensor_names_and_invalid_requests_fail_loudly() -> void:

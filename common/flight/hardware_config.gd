@@ -56,6 +56,13 @@ const FACTORY_DEFAULT := {
             "full_collective_angular_accel_rad_s2": 0.0,
             "minimum_wake_entry_speed_mps": 0.0,
             "minimum_transverse_rate_rad_s": 0.0
+        },
+        "a5": {
+            "enabled": true,
+            "prop_radius_m": 0.0231348,
+            "coeff_1": 2267.18,
+            "coeff_2": 0.16,
+            "coeff_3": -0.11
         }
     },
     "aircraft": {
@@ -308,6 +315,24 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             last_error = "native runtime rejected A6 propwash model"
             push_error(last_error)
             return false
+        if not runtime.native.has_method("set_a5_downwash_model"):
+            last_ok = false
+            last_error = "native runtime missing A5 downwash model setter"
+            push_error(last_error)
+            return false
+        var a5: Dictionary = current.get("aerodynamics", {}).get("a5", {})
+        if not runtime.native.call(
+                "set_a5_downwash_model",
+                bool(a5.enabled),
+                float(a5.prop_radius_m),
+                float(a5.coeff_1),
+                float(a5.coeff_2),
+                float(a5.coeff_3)
+            ):
+            last_ok = false
+            last_error = "native runtime rejected A5 downwash model"
+            push_error(last_error)
+            return false
     runtime.set_meta("hardware_config_version", current.version)
     runtime.set_meta("hardware_config_path", path)
     return true
@@ -369,6 +394,9 @@ func _validate(config: Dictionary, schema: Dictionary) -> String:
     var a6_error := _validate_a6(config.aerodynamics.a6)
     if a6_error != "":
         return a6_error
+    var a5_error := _validate_a5(config.aerodynamics.a5)
+    if a5_error != "":
+        return a5_error
     return ""
 
 func _validate_a3(a3: Variant) -> String:
@@ -390,6 +418,18 @@ func _validate_a6(a6: Variant) -> String:
     for key in ["full_collective_angular_accel_rad_s2", "minimum_wake_entry_speed_mps", "minimum_transverse_rate_rad_s"]:
         if not a6.has(key) or not (a6[key] is float or a6[key] is int) or not is_finite(float(a6[key])) or float(a6[key]) < 0.0:
             return "aerodynamics.a6.%s must be finite and non-negative" % key
+    return ""
+
+func _validate_a5(a5: Variant) -> String:
+    if not (a5 is Dictionary) or not a5.has("enabled") or not (a5.enabled is bool):
+        return "aerodynamics.a5.enabled must be boolean"
+    for key in ["prop_radius_m", "coeff_1", "coeff_2", "coeff_3"]:
+        if not a5.has(key) or not (a5[key] is float or a5[key] is int) or not is_finite(float(a5[key])):
+            return "aerodynamics.a5.%s must be finite" % key
+    if float(a5.prop_radius_m) <= 0.0:
+        return "aerodynamics.a5.prop_radius_m must be positive"
+    if float(a5.coeff_1) < 0.0:
+        return "aerodynamics.a5.coeff_1 must be non-negative"
     return ""
 
 func _validate_propeller_table(table: Array, ranges: Dictionary) -> String:
