@@ -139,6 +139,22 @@ func test_named_land_completion_accepts_the_resting_body_clearance() -> void:
     assert_true(runtime._airsim_task_complete("DroneB"))
 
 
+func test_named_state_reports_landed_for_the_resting_body_clearance() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+    body.global_position = runtime._spawn_position() + Vector3(0.0, 0.16, 0.0)
+    runtime.secondary_drone_body = body
+    runtime._airsim_secondary_native = FakeSecondaryNative.new()
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime.airsim_session = AirSimSession.new(Engine.physics_ticks_per_second)
+
+    var state_result: Dictionary = runtime._airsim_state("DroneB")
+
+    assert_true(state_result.ok)
+    assert_eq(state_result.state.landed_state, 0)
+
+
 func test_secondary_rotate_by_yaw_rate_uses_secondary_body_and_primary_sign() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)
