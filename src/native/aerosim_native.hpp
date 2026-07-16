@@ -5,6 +5,7 @@
 #include "aerosim_collision.hpp"
 #include "aerosim_flight_control.hpp"
 #include "aerosim_imu.hpp"
+#include "aerosim_replay.hpp"
 #include "aerosim_simulation.hpp"
 #include "aerosim_wind.hpp"
 
@@ -81,7 +82,7 @@ public:
             double total_thrust_newtons);
     godot::Dictionary replay_complete_session(
             const godot::String &serialized,
-            const godot::String &expected_settings_manifest_hash = {});
+            const godot::String &expected_settings_manifest_hash);
     // PX4 actuator modes, including the collision variant, receive arming authority from the PX4 bridge, not the local flight controller.
     godot::PackedFloat64Array step_px4_actuator_mode(
             std::int32_t physics_hz,
