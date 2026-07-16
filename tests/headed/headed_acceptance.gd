@@ -43,6 +43,17 @@ func _run() -> void:
 	_expect(runtime.native != null, "native runtime is registered")
 	_expect(root.get_camera_3d() != null, "cold start has an active Camera3D")
 	_expect(runtime.screen == "main_menu", "cold start opens the main menu")
+	var dashboard: CanvasLayer = runtime.status_diagram
+	_expect(dashboard != null, "cold start attaches the Operations Dashboard")
+	if dashboard != null:
+		var dashboard_panel := dashboard.get_node_or_null("DashboardMargin/DashboardPanel") as PanelContainer
+		_expect(dashboard_panel != null and dashboard_panel.is_visible_in_tree(), "Operations Dashboard renders its panel")
+		var render_evidence: Dictionary = dashboard.call("get_render_evidence")
+		_expect(bool(render_evidence.get("visible", false)) and render_evidence.get("layout_mode", "") == "compact", "compact dashboard render evidence is observable")
+		_expect(bool(render_evidence.get("selector_visible", false)), "Operations Dashboard renders named vehicle selection")
+		runtime.set_dashboard_layout_mode("full")
+		_expect(dashboard.call("get_layout_mode") == "full", "Operations Dashboard supports full Lab Mode layout")
+		runtime.set_dashboard_layout_mode("compact")
 	var map_button: Button = runtime.get_node_or_null("MainMenu/Entries/Map")
 	_expect(map_button != null, "main menu exposes Map button")
 	if map_button != null:
