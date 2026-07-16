@@ -23,6 +23,7 @@ const MAP_SCENE_PATHS := {
     "industrial_yard": "res://levels/free_flight/industrial_yard.tscn"
 }
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
+const AIRSIM_GROUND_BODY_CLEARANCE_M := 0.25
 const TAKEOFF_VELOCITY := Vector3(0.0, 6.0, 0.0)
 const KEYBOARD_FLIGHT_THROTTLE := 0.75
 const ANGLE_MAX_TILT_DEGREES := 30.0
@@ -2704,7 +2705,7 @@ func _secondary_task_complete(context: Dictionary, body) -> bool:
         "takeoff":
             return position_ned.z <= -2.75 and body.linear_velocity.length() < 1.0
         "land":
-            var landed_on_ground: bool = body.global_position.y <= _spawn_position().y + 0.05 and body.linear_velocity.length() < 0.25
+            var landed_on_ground: bool = body.global_position.y <= _spawn_position().y + AIRSIM_GROUND_BODY_CLEARANCE_M and body.linear_velocity.length() < 0.25
             return position_ned.z >= -0.5 and (bool(context.get("contact_this_frame", false)) or landed_on_ground)
         "hover":
             return body.linear_velocity.length() < 2.0 and body.angular_velocity.length() < 1.0
@@ -2749,7 +2750,7 @@ func _airsim_task_complete(name: String) -> bool:
         "takeoff":
             return position_ned.z <= -2.75 and drone_body.linear_velocity.length() < 1.0
         "land":
-            var landed_on_ground: bool = drone_body.global_position.y <= _spawn_position().y + 0.05 and drone_body.linear_velocity.length() < 0.25
+            var landed_on_ground: bool = drone_body.global_position.y <= _spawn_position().y + AIRSIM_GROUND_BODY_CLEARANCE_M and drone_body.linear_velocity.length() < 0.25
             return position_ned.z >= -0.5 and (_airsim_contact_this_frame or landed_on_ground)
         "hover":
             return drone_body.linear_velocity.length() < 2.0 and drone_body.angular_velocity.length() < 1.0

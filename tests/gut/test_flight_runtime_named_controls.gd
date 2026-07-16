@@ -122,6 +122,23 @@ func test_secondary_position_commands_use_secondary_body_and_clear_on_completion
     assert_eq(completed_context.command_remaining_frames, 0)
 
 
+func test_named_land_completion_accepts_the_resting_body_clearance() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+    body.global_position = runtime._spawn_position() + Vector3(0.0, 0.16, 0.0)
+    runtime.secondary_drone_body = body
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime._airsim_vehicle_contexts["DroneB"] = {
+        "command_state": {"method": "land", "args": []},
+        "hold_controls": {},
+        "command_remaining_frames": 0,
+        "contact_this_frame": false,
+    }
+
+    assert_true(runtime._airsim_task_complete("DroneB"))
+
+
 func test_secondary_rotate_by_yaw_rate_uses_secondary_body_and_primary_sign() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)
