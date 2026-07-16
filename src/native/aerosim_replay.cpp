@@ -1442,10 +1442,15 @@ ReplayLoadResult load_replay_session(
 ReplayRunResult replay_session(
         const ReplaySession &session,
         const DualAircraftConfig &config,
+        const std::string &expected_settings_manifest_hash,
         const std::array<std::string, 2> &expected_vehicle_config_hashes) {
     const ReplayDiagnostic validation = validate_session(session, true);
     if (!validation.ok()) {
         return failed_run(validation);
+    }
+    if (expected_settings_manifest_hash.empty() || session.settings_manifest_hash != expected_settings_manifest_hash ||
+            expected_vehicle_config_hashes[0].empty() || expected_vehicle_config_hashes[1].empty()) {
+        return failed_run(invalid(ReplayDiagnosticCode::IncompatibleManifest, "replay compatibility manifests are required and must match"));
     }
     if (config.upper.physics_hz <= 0 || config.upper.substep_hz <= 0 ||
             config.lower.physics_hz != config.upper.physics_hz ||

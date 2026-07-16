@@ -444,6 +444,7 @@ Dictionary AeroSimNative::replay_complete_session(
     const aerosim::ReplayRunResult run = aerosim::replay_session(
             loaded.session,
             aerosim::DualAircraftConfig{config, config},
+            std::string(expected_settings_manifest_hash.utf8().get_data()),
             {std::string(expected_upper_config_manifest_hash.utf8().get_data()),
              std::string(expected_lower_config_manifest_hash.utf8().get_data())});
     result["ok"] = run.ok;

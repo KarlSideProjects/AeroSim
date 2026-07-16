@@ -247,6 +247,7 @@ struct ReplayRunResult {
 ReplayRunResult replay_session(
         const ReplaySession &session,
         const DualAircraftConfig &config,
+        const std::string &expected_settings_manifest_hash,
         const std::array<std::string, 2> &expected_vehicle_config_hashes);
 
 ReplayDivergence compare_replay_runs(
