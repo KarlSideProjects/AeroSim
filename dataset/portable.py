@@ -53,7 +53,7 @@ class DatasetWriter:
         if self.root.exists():
             raise FileExistsError(self.root)
         self.root.mkdir(parents=True)
-        self.manifest = json.loads(json.dumps(manifest))
+        self.manifest = json.loads(json.dumps(manifest, allow_nan=False))
         self.manifest["format"] = FORMAT
         self.manifest["schema_version"] = SCHEMA_VERSION
         self.manifest["status"] = "recording"
@@ -94,8 +94,8 @@ class DatasetWriter:
         output = {
             "sample_index": self._sample_index,
             "timestamp_ns": timestamp,
-            "vehicles": json.loads(json.dumps(vehicles)),
-            "environment": json.loads(json.dumps(sample["environment"])),
+            "vehicles": json.loads(json.dumps(vehicles, allow_nan=False)),
+            "environment": json.loads(json.dumps(sample["environment"], allow_nan=False)),
             "observations": [],
         }
         seen_streams: set[str] = set()
@@ -110,7 +110,7 @@ class DatasetWriter:
             _check_observation_identity(observation, stream)
             sequence, gap = _expected_stream_position(stream, self._last_stream_timestamp.get(stream_id), timestamp)
             path = self._write_observation(self._sample_index, observation)
-            item = {key: json.loads(json.dumps(value)) for key, value in observation.items() if key != "data"}
+            item = {key: json.loads(json.dumps(value, allow_nan=False)) for key, value in observation.items() if key != "data"}
             if observation["kind"] == "lidar":
                 item["point_count"] = len(observation["data"]) // 3
             item.update({"timestamp_ns": timestamp, "sequence": sequence, "gap_count": gap, "path": path, "byte_order": "little"})
@@ -120,7 +120,7 @@ class DatasetWriter:
             self._stream_counts[stream_id][0] += 1
             self._stream_counts[stream_id][1] += gap
 
-        self._sample_file.write(json.dumps(output, sort_keys=True, separators=(",", ":")) + "\n")
+        self._sample_file.write(json.dumps(output, allow_nan=False, sort_keys=True, separators=(",", ":")) + "\n")
         self._sample_file.flush()
         self._sample_index += 1
         self._last_timestamp = timestamp
@@ -268,7 +268,7 @@ def validate_dataset(root: os.PathLike[str] | str) -> ValidationResult:
         lines = []
     for line_number, line in enumerate(lines, 1):
         try:
-            sample = json.loads(line)
+            sample = json.loads(line, parse_constant=_reject_constant)
         except (json.JSONDecodeError, UnicodeError) as error:
             errors.append(f"samples.jsonl:{line_number} malformed JSON: {error}")
             continue
@@ -487,10 +487,14 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
 
 def _read_json(path: Path, errors: list[str], label: str) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_constant)
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         errors.append(f"{label} is missing or malformed: {error}")
         return None
+
+
+def _reject_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant: {value}")
 
 
 def _unique_ids(value: Any, key: str, errors: list[str], label: str) -> list[str]:
