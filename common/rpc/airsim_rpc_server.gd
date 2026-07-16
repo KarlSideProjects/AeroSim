@@ -36,6 +36,8 @@ var _cancel_handler: Callable
 var _completion_handler: Callable
 var _sensor_handler: Callable
 var _camera_handler: Callable
+var _scene_object_handler: Callable
+var _environment_handler: Callable
 
 
 func set_session(owner_session: AirSimSession, owner_reset_handler: Callable = Callable()) -> void:
@@ -66,6 +68,11 @@ func set_sensor_backend(sensor_handler: Callable) -> void:
 
 func set_camera_backend(camera_handler: Callable) -> void:
     _camera_handler = camera_handler
+
+
+func set_scene_environment_backend(scene_object_handler: Callable, environment_handler: Callable) -> void:
+    _scene_object_handler = scene_object_handler
+    _environment_handler = environment_handler
 
 
 func validate_bind_address(address: String) -> Dictionary:
@@ -415,6 +422,10 @@ func dispatch(request: Array) -> Array:
             if not params.is_empty():
                 return _error_response(message_id, "listVehicles expects no parameters")
             return _success_response(message_id, _vehicle_names.duplicate())
+        "simListSceneObjects", "simSpawnObject", "simGetObjectPose", "simSetObjectPose", "simDestroyObject", "simGetSegmentationObjectID", "simSetSegmentationObjectID":
+            return _dispatch_scene_object(message_id, method, params)
+        "simEnableWeather", "simSetWeatherParameter", "simSetTimeOfDay", "simSetEnvironment", "simGetEnvironment":
+            return _dispatch_environment(message_id, method, params)
         "enableApiControl":
             return _dispatch_enable_api_control(message_id, params)
         "isApiControlEnabled":
@@ -449,6 +460,75 @@ func dispatch(request: Array) -> Array:
             return _dispatch_vehicle_command(message_id, method, params)
         _:
             return _error_response(message_id, "unsupported RPC method: %s" % method)
+
+
+func _dispatch_scene_object(message_id, method: String, params: Array) -> Array:
+    if not _scene_object_handler.is_valid():
+        return _error_response(message_id, "scene object catalog backend is unavailable")
+    if method == "simListSceneObjects":
+        if params.size() != 1 and not params.is_empty():
+            return _error_response(message_id, "simListSceneObjects expects an optional name regex")
+        if params.size() == 1 and typeof(params[0]) != TYPE_STRING:
+            return _error_response(message_id, "simListSceneObjects name regex must be a string")
+    elif method == "simSpawnObject":
+        if params.size() != 5 and params.size() != 6:
+            return _error_response(message_id, "simSpawnObject expects object name, catalog asset, pose, scale, and physics flag")
+        if typeof(params[0]) != TYPE_STRING or typeof(params[1]) != TYPE_STRING or typeof(params[2]) != TYPE_DICTIONARY or typeof(params[3]) != TYPE_DICTIONARY or typeof(params[4]) != TYPE_BOOL:
+            return _error_response(message_id, "simSpawnObject has invalid parameter types")
+        if params.size() == 6 and typeof(params[5]) != TYPE_BOOL:
+            return _error_response(message_id, "simSpawnObject blueprint flag must be boolean")
+    elif method == "simGetObjectPose" or method == "simDestroyObject":
+        if params.size() != 1 or typeof(params[0]) != TYPE_STRING:
+            return _error_response(message_id, "%s expects one object name" % method)
+    elif method == "simSetObjectPose":
+        if params.size() != 3 or typeof(params[0]) != TYPE_STRING or typeof(params[1]) != TYPE_DICTIONARY or typeof(params[2]) != TYPE_BOOL:
+            return _error_response(message_id, "simSetObjectPose expects object name, pose, and teleport flag")
+    elif method == "simGetSegmentationObjectID":
+        if params.size() != 1 or typeof(params[0]) != TYPE_STRING:
+            return _error_response(message_id, "simGetSegmentationObjectID expects one object name")
+    elif method == "simSetSegmentationObjectID":
+        if params.size() != 3 or typeof(params[0]) != TYPE_STRING or typeof(params[1]) != TYPE_INT or typeof(params[2]) != TYPE_BOOL:
+            return _error_response(message_id, "simSetSegmentationObjectID expects object name, integer ID, and regex flag")
+    var backend_params: Array = params.duplicate()
+    if method == "simListSceneObjects" and backend_params.is_empty():
+        backend_params.append(".*")
+    var result: Dictionary = _scene_object_handler.call(method, backend_params)
+    return _backend_response(message_id, result)
+
+
+func _dispatch_environment(message_id: int, method: String, params: Array) -> Array:
+    if not _environment_handler.is_valid():
+        return _error_response(message_id, "environment backend is unavailable")
+    match method:
+        "simEnableWeather":
+            if params.size() != 1 or typeof(params[0]) != TYPE_BOOL:
+                return _error_response(message_id, "simEnableWeather expects one boolean parameter")
+        "simSetWeatherParameter":
+            if params.size() != 2 or typeof(params[0]) != TYPE_INT or typeof(params[1]) != TYPE_FLOAT and typeof(params[1]) != TYPE_INT:
+                return _error_response(message_id, "simSetWeatherParameter expects an integer parameter and numeric value")
+            if int(params[0]) not in [0, 7]:
+                return _error_response(message_id, "only AirSim Rain (0) and Fog (7) are supported")
+            if float(params[1]) < 0.0 or float(params[1]) > 1.0:
+                return _error_response(message_id, "weather value must be in the range 0..1")
+        "simSetTimeOfDay":
+            if params.size() != 6 or typeof(params[0]) != TYPE_BOOL or typeof(params[1]) != TYPE_STRING or typeof(params[2]) != TYPE_BOOL or (typeof(params[3]) != TYPE_FLOAT and typeof(params[3]) != TYPE_INT) or (typeof(params[4]) != TYPE_FLOAT and typeof(params[4]) != TYPE_INT) or typeof(params[5]) != TYPE_BOOL:
+                return _error_response(message_id, "simSetTimeOfDay has invalid parameters")
+            if float(params[3]) <= 0.0 or float(params[4]) <= 0.0:
+                return _error_response(message_id, "time-of-day clock speed and update interval must be positive")
+        "simSetEnvironment":
+            if params.size() != 1 or typeof(params[0]) != TYPE_DICTIONARY:
+                return _error_response(message_id, "simSetEnvironment expects one state object")
+        "simGetEnvironment":
+            if not params.is_empty():
+                return _error_response(message_id, "simGetEnvironment expects no parameters")
+    var result: Dictionary = _environment_handler.call(method, params)
+    return _backend_response(message_id, result)
+
+
+func _backend_response(message_id: int, result: Dictionary) -> Array:
+    if not result.get("ok", false):
+        return _error_response(message_id, String(result.get("error", "backend rejected request")))
+    return _success_response(message_id, result.get("value"))
 
 
 func _configure_vehicles(new_settings: Dictionary) -> void:

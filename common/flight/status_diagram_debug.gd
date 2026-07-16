@@ -11,7 +11,7 @@ func _ready() -> void:
     var margin := MarginContainer.new()
     margin.set_anchors_preset(Control.PRESET_TOP_RIGHT)
     margin.offset_left = -320.0
-    margin.offset_bottom = 220.0
+    margin.offset_bottom = 260.0
     margin.add_theme_constant_override("margin_left", 8)
     margin.add_theme_constant_override("margin_top", 8)
     margin.add_theme_constant_override("margin_right", 8)
@@ -19,7 +19,7 @@ func _ready() -> void:
     add_child(margin)
 
     var panel := PanelContainer.new()
-    panel.custom_minimum_size = Vector2(312.0, 204.0)
+    panel.custom_minimum_size = Vector2(312.0, 244.0)
     margin.add_child(panel)
 
     var rows := VBoxContainer.new()
@@ -31,6 +31,7 @@ func _ready() -> void:
         _add_label(rows, key)
     _add_label(rows, "battery")
     _add_label(rows, "wind")
+    _add_label(rows, "environment")
     _add_label(rows, "pid")
 
 func update_from_snapshot(snapshot: Dictionary) -> void:
@@ -68,6 +69,22 @@ func update_from_snapshot(snapshot: Dictionary) -> void:
     ]
     _labels.wind.text = "WIND body %.2f %.2f %.2f m/s" % [wind_body.x, wind_body.y, wind_body.z]
     _labels.pid.text = "PID sat %s" % _pid_saturation_text(pid)
+
+
+func update_environment(snapshot: Dictionary) -> void:
+    if snapshot.is_empty() or not _labels.has("environment"):
+        return
+    var sun_position: Vector3 = snapshot.get("sun_position", Vector3(0.0, 1.0, 0.0))
+    _labels.environment.text = "ENV r%d %s R%.2f F%.2f T%.1fh S%.1f/%.1f/%.1f" % [
+        int(snapshot.get("revision", 0)),
+        "LIVE" if bool(snapshot.get("weather_enabled", false)) else "READY",
+        float(snapshot.get("rain", 0.0)),
+        float(snapshot.get("fog", 0.0)),
+        float(snapshot.get("time_of_day", 12.0)),
+        sun_position.x,
+        sun_position.y,
+        sun_position.z,
+    ]
 
 func _add_label(parent: VBoxContainer, key: String) -> void:
     var label := Label.new()

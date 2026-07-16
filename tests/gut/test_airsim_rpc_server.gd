@@ -113,6 +113,41 @@ func test_dispatches_explicit_frame_step_and_rejects_unknown_methods() -> void:
     assert_string_contains(unknown[2], "unsupported RPC method")
 
 
+func test_dispatches_catalog_object_lifecycle_and_rejects_unsupported_segmentation_regex() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var backend := FakeSceneEnvironmentBackend.new()
+    autofree(backend)
+    server.set_scene_environment_backend(Callable(backend, "scene"), Callable(backend, "environment"))
+    var pose := {
+        "position": {"x_val": 1.0, "y_val": 2.0, "z_val": 3.0},
+        "orientation": {"w_val": 1.0, "x_val": 0.0, "y_val": 0.0, "z_val": 0.0},
+    }
+    assert_eq(server.dispatch([0, 80, "simListSceneObjects", [".*"]]), [1, 80, null, []])
+    assert_eq(server.dispatch([0, 81, "simSpawnObject", ["crate_a", "crate_blue", pose, {"x_val": 1.0, "y_val": 1.0, "z_val": 1.0}, true]]), [1, 81, null, "crate_a"])
+    assert_eq(server.dispatch([0, 82, "simGetObjectPose", ["crate_a"]])[2], null)
+    assert_eq(server.dispatch([0, 83, "simSetObjectPose", ["crate_a", pose, true]]), [1, 83, null, true])
+    assert_eq(server.dispatch([0, 84, "simGetSegmentationObjectID", ["crate_a"]]), [1, 84, null, 8])
+    var regex_response: Array = server.dispatch([0, 85, "simSetSegmentationObjectID", ["crate.*", 8, true]])
+    assert_string_contains(regex_response[2], "regex")
+    assert_eq(server.dispatch([0, 86, "simDestroyObject", ["crate_a"]]), [1, 86, null, true])
+
+
+func test_dispatches_bounded_environment_methods_and_rejects_unsupported_weather() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var backend := FakeSceneEnvironmentBackend.new()
+    autofree(backend)
+    server.set_scene_environment_backend(Callable(backend, "scene"), Callable(backend, "environment"))
+    assert_eq(server.dispatch([0, 90, "simEnableWeather", [true]]), [1, 90, null, null])
+    assert_eq(server.dispatch([0, 91, "simSetWeatherParameter", [0, 0.5]]), [1, 91, null, null])
+    var unsupported: Array = server.dispatch([0, 92, "simSetWeatherParameter", [2, 0.5]])
+    assert_string_contains(unsupported[2], "only AirSim Rain")
+    var invalid: Array = server.dispatch([0, 93, "simSetWeatherParameter", [7, 2.0]])
+    assert_string_contains(invalid[2], "range 0..1")
+    assert_eq(server.dispatch([0, 94, "simGetEnvironment", []]), [1, 94, null, {"rain": 0.5}])
+
+
 func test_loopback_transport_dispatches_one_messagepack_request() -> void:
     var server := AirSimRpcServer.new()
     autofree(server)
@@ -176,6 +211,10 @@ func test_manifest_names_the_current_compatibility_surface() -> void:
     assert_true(manifest["supported_api"].has("getMultirotorState"))
     assert_true(manifest["supported_api"].has("simContinueForFrames"))
     assert_true(manifest["supported_api"].has("simGetImages"))
+    assert_true(manifest["supported_api"].has("simSpawnObject"))
+    assert_true(manifest["supported_api"].has("simSetWeatherParameter"))
+    assert_false(manifest["supported_api"].has("simSetEnvironment"))
+    assert_true(manifest["lab_extension_api"].has("simSetEnvironment"))
     assert_true(manifest["settings"]["root"].has("Vehicles"))
 
 
@@ -250,6 +289,45 @@ class FakeCameraSurface extends RefCounted:
             }
             responses.append(item)
         return {"ok": true, "responses": responses}
+
+
+class FakeSceneEnvironmentBackend extends RefCounted:
+    var names: Array = []
+    var environment_state := {"rain": 0.0}
+
+    func scene(method: String, params: Array) -> Dictionary:
+        match method:
+            "simListSceneObjects":
+                return {"ok": true, "value": names.duplicate()}
+            "simSpawnObject":
+                names.append(String(params[0]))
+                return {"ok": true, "value": String(params[0])}
+            "simGetObjectPose":
+                return {"ok": true, "value": {}}
+            "simSetObjectPose":
+                return {"ok": true, "value": true}
+            "simGetSegmentationObjectID":
+                return {"ok": true, "value": 8}
+            "simSetSegmentationObjectID":
+                if bool(params[2]):
+                    return {"ok": false, "error": "segmentation regex is unsupported"}
+                return {"ok": true, "value": true}
+            "simDestroyObject":
+                names.erase(String(params[0]))
+                return {"ok": true, "value": true}
+        return {"ok": false, "error": "unknown scene method"}
+
+    func environment(method: String, params: Array) -> Dictionary:
+        match method:
+            "simEnableWeather":
+                return {"ok": true}
+            "simSetWeatherParameter":
+                if int(params[0]) == 0:
+                    environment_state["rain"] = float(params[1])
+                return {"ok": true}
+            "simGetEnvironment":
+                return {"ok": true, "value": environment_state.duplicate(true)}
+        return {"ok": true}
 
 
 func test_start_with_settings_validates_before_opening_listener() -> void:
