@@ -50,8 +50,12 @@ func test_dashboard_supports_compact_and_full_layouts() -> void:
     dashboard._ready()
 
     assert_eq(dashboard.get_layout_mode(), "compact")
+    assert_true(dashboard._dashboard_panel.custom_minimum_size.x >= 420.0)
+    assert_true(dashboard._dashboard_margin.offset_left <= -436.0)
     dashboard.set_layout_mode("full")
     assert_eq(dashboard.get_layout_mode(), "full")
+    assert_true(dashboard._dashboard_panel.custom_minimum_size.x >= 520.0)
+    assert_true(dashboard._dashboard_margin.offset_left <= -536.0)
     dashboard.set_layout_mode("compact")
     assert_eq(dashboard.get_layout_mode(), "compact")
 
@@ -83,3 +87,7 @@ func test_single_unnamed_snapshot_still_updates_dashboard() -> void:
     dashboard.set_vehicle_snapshots({"": _live_snapshot("", 1_000_000)}, "", 10_000_000)
     assert_eq(String(dashboard.debug_values.get("source", "")), "native_double_buffer")
     assert_eq(int(dashboard.debug_values.get("timestamp_us", 0)), 1_000_000)
+    assert_eq(String(dashboard.debug_values.get("connection_state", "")), "live")
+
+    dashboard.set_vehicle_snapshots({"": _live_snapshot("", 1_000_000)}, "", 10_120_001)
+    assert_eq(String(dashboard.debug_values.get("connection_state", "")), "stale")

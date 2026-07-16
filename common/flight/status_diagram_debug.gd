@@ -24,7 +24,7 @@ func _ready() -> void:
     var margin := MarginContainer.new()
     margin.name = "DashboardMargin"
     margin.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-    margin.offset_left = -428.0
+    margin.offset_left = -436.0
     margin.offset_bottom = 260.0
     margin.add_theme_constant_override("margin_left", 8)
     margin.add_theme_constant_override("margin_top", 8)
@@ -268,7 +268,7 @@ func _apply_layout() -> void:
     if _dashboard_margin == null or _dashboard_panel == null:
         return
     var full := layout_mode == "full"
-    _dashboard_margin.offset_left = -528.0 if full else -428.0
+    _dashboard_margin.offset_left = -536.0 if full else -436.0
     _dashboard_margin.offset_bottom = 430.0 if full else 300.0
     _dashboard_panel.custom_minimum_size = Vector2(520.0, 414.0) if full else Vector2(420.0, 284.0)
     for key in ["rate", "latency", "timestamp"]:
