@@ -1274,6 +1274,8 @@ func arm_and_takeoff() -> void:
     request_takeoff()
 
 func request_exit() -> void:
+    if airsim_rpc_server != null:
+        airsim_rpc_server.cancel_pending_async_tasks("complete replay recording terminated")
     _finish_complete_replay_recording("exit")
     exit_requested = true
     takeoff_requested = false

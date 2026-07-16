@@ -82,6 +82,11 @@ func set_replay_handlers(simulation_handler: Callable, async_handler: Callable) 
     _replay_async_handler = async_handler
 
 
+func cancel_pending_async_tasks(reason: String = "RPC session terminated") -> void:
+    for pending in _pending_async_responses.duplicate():
+        _cancel_pending_task(pending, reason)
+
+
 func validate_bind_address(address: String) -> Dictionary:
     if address != DEFAULT_BIND_ADDRESS:
         return {
