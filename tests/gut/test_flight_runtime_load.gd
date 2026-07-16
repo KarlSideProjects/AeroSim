@@ -58,6 +58,12 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
     assert_not_null(runtime_script)
 
 
+func test_exported_replay_runner_is_available_to_the_main_scene() -> void:
+    var runner_script := load("res://common/flight/replay_integration_runner.gd")
+
+    assert_not_null(runner_script)
+
+
 func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)

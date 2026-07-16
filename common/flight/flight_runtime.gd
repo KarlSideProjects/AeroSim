@@ -17,6 +17,7 @@ const EnvironmentState = preload("res://common/rpc/environment_state.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
 const TimeTrialController = preload("res://common/flight/time_trial.gd")
+const ReplayIntegrationRunner = preload("res://common/flight/replay_integration_runner.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const DEFAULT_FREE_FLIGHT_MAP_ID := "industrial_yard"
 const MAP_SCENE_PATHS := {
@@ -157,6 +158,9 @@ var _airsim_collision_point := Vector3.ZERO
 var rates_profile: Dictionary = RatesProfile.default_profile()
 
 func _ready() -> void:
+    if _has_arg("--aerosim-replay-integration"):
+        _run_replay_integration()
+        return
     Input.joy_connection_changed.connect(_on_joy_connection_changed)
     settings_store = SettingsStoreScript.new()
     _load_player_settings()
@@ -253,6 +257,16 @@ func _ready() -> void:
     _update_chase_camera()
     _refresh_flight_hud()
     call_deferred("_run_cold_start_probe")
+
+
+func _run_replay_integration() -> void:
+    var result: Dictionary = ReplayIntegrationRunner.new().run()
+    if bool(result.get("ok", false)):
+        print("complete-session replay integration: PASS")
+        get_tree().quit(0)
+    else:
+        push_error(String(result.get("error", "unknown")))
+        get_tree().quit(1)
 
 
 func _validate_airsim_startup_settings(raw_settings: Dictionary) -> Dictionary:
@@ -867,6 +881,9 @@ func _cold_start_arg(name: String, default_value := "") -> String:
         if args[index] == name:
             return args[index + 1]
     return default_value
+
+func _has_arg(name: String) -> bool:
+    return OS.get_cmdline_user_args().has(name)
 
 func _cold_start_frame_is_observable(image: Image) -> bool:
     if image.is_empty():

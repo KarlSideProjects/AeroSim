@@ -11,7 +11,8 @@ elif ! command -v "$godot_bin" >/dev/null; then
 fi
 
 if [ "${AEROSIM_EXPORTED:-false}" = true ]; then
-    "$godot_bin" --headless --script res://tests/headless/replay_integration.gd
+    timeout --signal=TERM --kill-after=5s "${AEROSIM_REPLAY_TIMEOUT_SECONDS:-30}s" \
+        "$godot_bin" --headless -- --aerosim-replay-integration
 else
     mkdir -p "$project_path/.godot" "$project_path/build" "$project_path/.deps"
     touch "$project_path/build/.gdignore" "$project_path/.deps/.gdignore"
