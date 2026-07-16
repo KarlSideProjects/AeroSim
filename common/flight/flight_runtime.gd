@@ -1184,6 +1184,10 @@ func reset_to_spawn() -> bool:
     var spawn := loaded_map.get_node_or_null("SpawnNorth") as Marker3D
     if spawn == null:
         return _set_map_error("Cannot reset Free Flight map %s: SpawnNorth is missing" % loaded_map_id)
+    _airsim_last_velocity = Vector3.ZERO
+    _airsim_linear_acceleration = Vector3.ZERO
+    _airsim_last_body_angular_velocity = Vector3.ZERO
+    _airsim_angular_acceleration = Vector3.ZERO
     if native != null:
         native.call("reset_flight")
     if drone_body != null:

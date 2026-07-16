@@ -2,6 +2,7 @@ extends GutTest
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
+const CollisionProbeBody = preload("res://common/flight/collision_probe_body.gd")
 
 
 class FakeNative:
@@ -106,6 +107,32 @@ func test_set_paused_freezes_and_sleeps_secondary_until_resume() -> void:
     assert_false(secondary_body.freeze)
     assert_false(secondary_body.sleeping)
     runtime.free()
+
+
+func test_direct_spawn_reset_clears_primary_acceleration_sampling_state() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    runtime._airsim_last_velocity = Vector3(4.0, 5.0, 6.0)
+    runtime._airsim_linear_acceleration = Vector3(7.0, 8.0, 9.0)
+    runtime._airsim_last_body_angular_velocity = Vector3(1.0, 2.0, 3.0)
+    runtime._airsim_angular_acceleration = Vector3(4.0, 5.0, 6.0)
+
+    assert_true(runtime.reset_to_spawn())
+
+    assert_eq(runtime._airsim_last_velocity, Vector3.ZERO)
+    assert_eq(runtime._airsim_linear_acceleration, Vector3.ZERO)
+    assert_eq(runtime._airsim_last_body_angular_velocity, Vector3.ZERO)
+    assert_eq(runtime._airsim_angular_acceleration, Vector3.ZERO)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
 
 
 func test_controller_disconnect_latches_disarm_freeze_and_blocks_keyboard_resume() -> void:
