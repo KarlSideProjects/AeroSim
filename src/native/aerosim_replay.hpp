@@ -238,6 +238,7 @@ struct ReplayRunResult {
     DualAircraftState final_state;
     SimulationClock final_clock;
     std::uint64_t final_timestamp_us = 0;
+    std::array<std::string, 2> vehicle_names;
     std::vector<ReplaySceneObjectState> scene_objects;
     std::string environment_json;
     std::vector<ReplayRunCheckpoint> checkpoints;
@@ -246,7 +247,7 @@ struct ReplayRunResult {
 ReplayRunResult replay_session(
         const ReplaySession &session,
         const DualAircraftConfig &config,
-        const std::array<std::string, 2> &expected_vehicle_config_hashes = {});
+        const std::array<std::string, 2> &expected_vehicle_config_hashes);
 
 ReplayDivergence compare_replay_runs(
         const ReplayRunResult &expected,

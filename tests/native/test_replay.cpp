@@ -237,8 +237,9 @@ bool test_complete_session_schema() {
         return false;
     }
     aerosim::DualAircraftConfig config{replay_test_config(), replay_test_config()};
-    const aerosim::ReplayRunResult first_run = aerosim::replay_session(recorder.session(), config);
-    const aerosim::ReplayRunResult second_run = aerosim::replay_session(recorder.session(), config);
+    const std::array<std::string, 2> config_hashes = {{"drone-a-hash", "drone-b-hash"}};
+    const aerosim::ReplayRunResult first_run = aerosim::replay_session(recorder.session(), config, config_hashes);
+    const aerosim::ReplayRunResult second_run = aerosim::replay_session(recorder.session(), config, config_hashes);
     if (!first_run.ok || !second_run.ok || first_run.final_clock.total_substeps != second_run.final_clock.total_substeps ||
             first_run.final_state.upper.position.x != second_run.final_state.upper.position.x ||
             first_run.final_state.lower.position.y != second_run.final_state.lower.position.y) {
@@ -297,7 +298,7 @@ bool test_simulation_time_replay_contract() {
         return false;
     }
     aerosim::DualAircraftConfig config{replay_test_config(), replay_test_config()};
-    const aerosim::ReplayRunResult run = aerosim::replay_session(recorder.session(), config);
+    const aerosim::ReplayRunResult run = aerosim::replay_session(recorder.session(), config, {{"hash-a", "hash-b"}});
     if (!run.ok || run.final_clock.total_substeps != 101) {
         return false;
     }
@@ -308,7 +309,7 @@ bool test_simulation_time_replay_contract() {
             !oversized.finish(11000000000ULL, "completed")) {
         return false;
     }
-    const aerosim::ReplayRunResult rejected = aerosim::replay_session(oversized.session(), config);
+    const aerosim::ReplayRunResult rejected = aerosim::replay_session(oversized.session(), config, {{"hash-a", "hash-b"}});
     return !rejected.ok && rejected.diagnostic.code == aerosim::ReplayDiagnosticCode::InvalidSession;
 }
 

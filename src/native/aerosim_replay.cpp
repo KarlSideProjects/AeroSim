@@ -782,7 +782,7 @@ ReplayDiagnostic invalid(ReplayDiagnosticCode code, const std::string &message) 
 }
 
 ReplayRunResult failed_run(const ReplayDiagnostic &diagnostic) {
-    return {false, diagnostic, {}, {}, 0, {}, {}, {}};
+    return {false, diagnostic, {}, {}, 0, {}, {}, {}, {}};
 }
 
 ReplayDiagnostic validate_session(const ReplaySession &session, bool require_termination) {
@@ -821,6 +821,10 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
         has_previous_timestamp = true;
         if (require_termination && event.timestamp_us > session.termination_timestamp_us) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "replay event occurs after termination");
+        }
+        if (require_termination && event.type == ReplayEventType::Collision &&
+                event.timestamp_us >= session.termination_timestamp_us) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "collision must precede replay termination by a simulation frame");
         }
         const bool requires_vehicle = event.type == ReplayEventType::Command ||
                 event.type == ReplayEventType::AsyncCommand || event.type == ReplayEventType::Collision;
@@ -1516,16 +1520,21 @@ ReplayRunResult replay_session(
         return true;
     };
     const auto advance_us = [&](std::uint64_t duration_us) {
-        const double frames = frame_remainder +
-                static_cast<double>(duration_us) * static_cast<double>(config.upper.physics_hz) / 1000000.0;
+        const long double frames = static_cast<long double>(frame_remainder) +
+                static_cast<long double>(duration_us) * static_cast<long double>(config.upper.physics_hz) / 1000000.0L;
+        if (!std::isfinite(static_cast<double>(frames)) || frames < 0.0L || frames > 1000000.0L) {
+            return false;
+        }
         const auto frame_count = static_cast<std::int64_t>(std::floor(frames));
         frame_remainder = frames - static_cast<double>(frame_count);
         step_frames(frame_count);
+        return true;
     };
 
     for (const ReplayEvent &event : session.events) {
-        if (!paused && event.timestamp_us >= previous_timestamp_us) {
-            advance_us(event.timestamp_us - previous_timestamp_us);
+        if (!paused && event.timestamp_us >= previous_timestamp_us &&
+                !advance_us(event.timestamp_us - previous_timestamp_us)) {
+            return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay timeline interval exceeds runtime frame limit"));
         }
         previous_timestamp_us = event.timestamp_us;
         switch (event.type) {
@@ -1627,16 +1636,16 @@ ReplayRunResult replay_session(
         }
         checkpoints.push_back({event.timestamp_us, state, scene_objects, environment_json});
     }
-    if (!paused && session.termination_timestamp_us >= previous_timestamp_us) {
-        advance_us(session.termination_timestamp_us - previous_timestamp_us);
+    if (!paused && session.termination_timestamp_us >= previous_timestamp_us &&
+            !advance_us(session.termination_timestamp_us - previous_timestamp_us)) {
+        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay termination interval exceeds runtime frame limit"));
     }
-    if (has_pending_collision[0]) {
-        collision_switches[0].step(state.upper, clocks[0], controllers[0], config.upper, commands[0], pending_collisions[0]);
+    if (has_pending_collision[0] || has_pending_collision[1]) {
+        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay collision was not consumed before termination"));
     }
-    if (has_pending_collision[1]) {
-        collision_switches[1].step(state.lower, clocks[1], controllers[1], config.lower, commands[1], pending_collisions[1]);
-    }
-    return {true, {}, state, clocks[0], session.termination_timestamp_us, std::move(scene_objects),
+    checkpoints.push_back({session.termination_timestamp_us, state, scene_objects, environment_json});
+    return {true, {}, state, clocks[0], session.termination_timestamp_us,
+            {session.vehicles[0].name, session.vehicles[1].name}, std::move(scene_objects),
             std::move(environment_json), std::move(checkpoints)};
 }
 
@@ -1649,6 +1658,11 @@ ReplayDivergence compare_replay_runs(
     const auto report_at = [&](std::uint64_t timestamp_us, const std::string &field, double expected_value, double actual_value) {
         result.diverged = true;
         result.timestamp_us = timestamp_us;
+        if (field.rfind("upper.", 0) == 0) {
+            result.vehicle_name = expected.vehicle_names[0];
+        } else if (field.rfind("lower.", 0) == 0) {
+            result.vehicle_name = expected.vehicle_names[1];
+        }
         result.field = field;
         result.expected = divergence_number(expected_value);
         result.actual = divergence_number(actual_value);
@@ -1685,6 +1699,8 @@ ReplayDivergence compare_replay_runs(
         const double *left_values[] = {
                 &left.state.upper.position.x, &left.state.upper.position.y, &left.state.upper.position.z,
                 &left.state.lower.position.x, &left.state.lower.position.y, &left.state.lower.position.z,
+                &left.state.upper.velocity.x, &left.state.upper.velocity.y, &left.state.upper.velocity.z,
+                &left.state.lower.velocity.x, &left.state.lower.velocity.y, &left.state.lower.velocity.z,
                 &left.state.upper.orientation.x, &left.state.upper.orientation.y, &left.state.upper.orientation.z, &left.state.upper.orientation.w,
                 &left.state.lower.orientation.x, &left.state.lower.orientation.y, &left.state.lower.orientation.z, &left.state.lower.orientation.w,
                 &left.state.upper.angular_velocity.x, &left.state.upper.angular_velocity.y, &left.state.upper.angular_velocity.z,
@@ -1693,6 +1709,8 @@ ReplayDivergence compare_replay_runs(
         const double *right_values[] = {
                 &right.state.upper.position.x, &right.state.upper.position.y, &right.state.upper.position.z,
                 &right.state.lower.position.x, &right.state.lower.position.y, &right.state.lower.position.z,
+                &right.state.upper.velocity.x, &right.state.upper.velocity.y, &right.state.upper.velocity.z,
+                &right.state.lower.velocity.x, &right.state.lower.velocity.y, &right.state.lower.velocity.z,
                 &right.state.upper.orientation.x, &right.state.upper.orientation.y, &right.state.upper.orientation.z, &right.state.upper.orientation.w,
                 &right.state.lower.orientation.x, &right.state.lower.orientation.y, &right.state.lower.orientation.z, &right.state.lower.orientation.w,
                 &right.state.upper.angular_velocity.x, &right.state.upper.angular_velocity.y, &right.state.upper.angular_velocity.z,
@@ -1700,6 +1718,7 @@ ReplayDivergence compare_replay_runs(
         };
         const char *field_names[] = {
                 "upper.position.x", "upper.position.y", "upper.position.z", "lower.position.x", "lower.position.y", "lower.position.z",
+                "upper.velocity.x", "upper.velocity.y", "upper.velocity.z", "lower.velocity.x", "lower.velocity.y", "lower.velocity.z",
                 "upper.orientation.x", "upper.orientation.y", "upper.orientation.z", "upper.orientation.w",
                 "lower.orientation.x", "lower.orientation.y", "lower.orientation.z", "lower.orientation.w",
                 "upper.angular_velocity.x", "upper.angular_velocity.y", "upper.angular_velocity.z",
@@ -1777,6 +1796,36 @@ ReplayDivergence compare_replay_runs(
     for (std::size_t index = 0; index < sizeof(expected_values) / sizeof(expected_values[0]); ++index) {
         if (!same_or_close(*expected_values[index], *actual_values[index], tolerance)) {
             report(fields[index], *expected_values[index], *actual_values[index]);
+            return result;
+        }
+    }
+    const double *expected_attitude[] = {
+            &expected.final_state.upper.orientation.x, &expected.final_state.upper.orientation.y,
+            &expected.final_state.upper.orientation.z, &expected.final_state.upper.orientation.w,
+            &expected.final_state.lower.orientation.x, &expected.final_state.lower.orientation.y,
+            &expected.final_state.lower.orientation.z, &expected.final_state.lower.orientation.w,
+            &expected.final_state.upper.angular_velocity.x, &expected.final_state.upper.angular_velocity.y,
+            &expected.final_state.upper.angular_velocity.z, &expected.final_state.lower.angular_velocity.x,
+            &expected.final_state.lower.angular_velocity.y, &expected.final_state.lower.angular_velocity.z,
+    };
+    const double *actual_attitude[] = {
+            &actual.final_state.upper.orientation.x, &actual.final_state.upper.orientation.y,
+            &actual.final_state.upper.orientation.z, &actual.final_state.upper.orientation.w,
+            &actual.final_state.lower.orientation.x, &actual.final_state.lower.orientation.y,
+            &actual.final_state.lower.orientation.z, &actual.final_state.lower.orientation.w,
+            &actual.final_state.upper.angular_velocity.x, &actual.final_state.upper.angular_velocity.y,
+            &actual.final_state.upper.angular_velocity.z, &actual.final_state.lower.angular_velocity.x,
+            &actual.final_state.lower.angular_velocity.y, &actual.final_state.lower.angular_velocity.z,
+    };
+    const char *attitude_fields[] = {
+            "upper.orientation.x", "upper.orientation.y", "upper.orientation.z", "upper.orientation.w",
+            "lower.orientation.x", "lower.orientation.y", "lower.orientation.z", "lower.orientation.w",
+            "upper.angular_velocity.x", "upper.angular_velocity.y", "upper.angular_velocity.z",
+            "lower.angular_velocity.x", "lower.angular_velocity.y", "lower.angular_velocity.z",
+    };
+    for (std::size_t index = 0; index < sizeof(expected_attitude) / sizeof(expected_attitude[0]); ++index) {
+        if (!same_or_close(*expected_attitude[index], *actual_attitude[index], tolerance)) {
+            report(attitude_fields[index], *expected_attitude[index], *actual_attitude[index]);
             return result;
         }
     }
