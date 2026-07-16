@@ -1,0 +1,22 @@
+{
+  "format": "aerosim.dataset",
+  "schema_version": 1,
+  "status": ["recording", "interrupted", "complete"],
+  "coordinate_frame": "NED",
+  "timebase": {"unit": "ns", "clock": "simulation"},
+  "byte_order": "little",
+  "files": {"samples": "samples.jsonl"},
+  "manifest_required": ["format", "schema_version", "status", "coordinate_frame", "timebase", "byte_order", "vehicles", "streams", "files", "sample_count", "dropped_count"],
+  "vehicle": {"required": ["vehicle_id", "name"]},
+  "stream": {"required": ["stream_id", "vehicle_id", "device_id", "kind", "period_ns", "start_time_ns"], "kinds": ["rgb", "segmentation", "depth", "lidar"]},
+  "sample_required": ["sample_index", "timestamp_ns", "vehicles", "environment", "observations"],
+  "vehicle_sample_required": ["command", "state", "collision"],
+  "observation_required": ["stream_id", "vehicle_id", "device_id", "kind", "timestamp_ns", "sequence", "gap_count", "path", "byte_order", "sha256"],
+  "asset_rules": {
+    "rgb": {"extension": ".png", "format": "8-bit RGB PNG"},
+    "segmentation": {"extension": ".png", "format": "8-bit RGB PNG"},
+    "depth": {"extension": ".pfm", "format": "Pf planar depth, little-endian float32"},
+    "lidar": {"extension": ".bin", "format": "raw little-endian float32 x/y/z triples"}
+  },
+  "version_rule": "Readers accept exactly schema_version 1; a format or byte-order change requires a new schema version."
+}
