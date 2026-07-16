@@ -401,7 +401,10 @@ func _replay_frame_timestamp_us() -> int:
     if airsim_session == null or airsim_session.physics_hz <= 0:
         return _replay_timestamp_us()
     var next_timestamp_us := int(round((airsim_session.simulation_time_seconds + 1.0 / float(airsim_session.physics_hz)) * 1_000_000.0))
-    return _replay_timestamp_for_simulation_us(next_timestamp_us)
+    # This is a look-ahead value for the post-step checkpoint. Do not commit
+    # it yet: the command/contact record for this frame still belongs at the
+    # current frame start and is recorded later in _physics_process.
+    return next_timestamp_us + _replay_epoch_offset_us
 
 
 func _replay_manifest_hash(payload: String) -> String:

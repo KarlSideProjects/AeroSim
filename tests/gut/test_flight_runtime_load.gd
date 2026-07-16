@@ -85,9 +85,11 @@ func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void
     runtime._airsim_vehicle_name = "DroneA"
     runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
     runtime.airsim_session = AirSimSession.new(240)
-    runtime.drone_body = null
+    runtime.drone_body = CollisionProbeBody.new()
     runtime.secondary_drone_body = CollisionProbeBody.new()
+    autofree(runtime.drone_body)
     autofree(runtime.secondary_drone_body)
+    get_tree().root.add_child(runtime.drone_body)
     get_tree().root.add_child(runtime.secondary_drone_body)
     runtime.takeoff_requested = true
     runtime._airsim_vehicle_contexts["DroneB"] = {
