@@ -4,6 +4,8 @@ const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const CollisionProbeBody = preload("res://common/flight/collision_probe_body.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
+const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
 
 
 class FakeNative:
@@ -54,6 +56,86 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
     var runtime_script := load("res://common/flight/flight_runtime.gd")
 
     assert_not_null(runtime_script)
+
+
+func test_exported_replay_runner_is_available_to_the_main_scene() -> void:
+    var runner_script := load("res://common/flight/replay_integration_runner.gd")
+
+    assert_not_null(runner_script)
+
+
+func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    if not ClassDB.class_exists("AeroSimNative"):
+        pending("native extension is intentionally unavailable in GUT recovery mode")
+        return
+    var upper: Object = ClassDB.instantiate("AeroSimNative")
+    var lower: Object = ClassDB.instantiate("AeroSimNative")
+    if upper == null or lower == null:
+        pending("native extension is intentionally unavailable in GUT recovery mode")
+        return
+    assert_not_null(upper)
+    assert_not_null(lower)
+    var per_motor := {
+        "inertia_frd": Vector3(0.01, 0.01, 0.02),
+        "position_frd": [Vector3(-0.1, 0.1, 0.0), Vector3(0.1, 0.1, 0.0), Vector3(-0.1, -0.1, 0.0), Vector3(0.1, -0.1, 0.0)],
+        "spin_direction": [1.0, -1.0, -1.0, 1.0],
+        "max_thrust_per_motor_newtons": 1.0,
+        "max_current_per_motor_a": 1.0,
+        "yaw_torque_per_newton": 0.01,
+    }
+    for vehicle in [upper, lower]:
+        assert_true(bool(vehicle.call("set_hardware_mass_kg", 1.0)))
+        assert_true(bool(vehicle.call("set_hardware_power_model", 4.0, 0.5, 0.03, 22.2, 6.0, 0.003, 4.0)))
+        assert_true(bool(vehicle.call("set_hardware_telemetry_model", 10000.0, 1000.0)))
+        assert_true(bool(vehicle.call("set_hardware_per_motor_model", per_motor)))
+    runtime.native = upper
+    runtime._airsim_secondary_native = lower
+    runtime._airsim_vehicle_name = "DroneA"
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.drone_body = CollisionProbeBody.new()
+    runtime.secondary_drone_body = CollisionProbeBody.new()
+    autofree(runtime.drone_body)
+    autofree(runtime.secondary_drone_body)
+    get_tree().root.add_child(runtime.drone_body)
+    get_tree().root.add_child(runtime.secondary_drone_body)
+    runtime.takeoff_requested = true
+    runtime._airsim_vehicle_contexts["DroneB"] = {
+        "api_control": true,
+        "armed": true,
+        "command_state": {},
+        "hold_controls": {"mode": "ANGLE", "throttle": 0.0, "roll": 0.0, "pitch": 0.0, "yaw_rate": 0.0},
+        "command_remaining_frames": 0,
+    }
+
+    runtime._begin_complete_replay_recording({"SettingsVersion": 1.2, "SimMode": "Multirotor"})
+    assert_true(runtime._replay_recording_active)
+    runtime._physics_process(1.0 / 240.0)
+    var finish: Dictionary = runtime._finish_complete_replay_recording("gut-runtime")
+    assert_true(bool(finish.get("ok", false)))
+    var recorded: Dictionary = JSON.parse_string(String(finish.get("serialized", "")))
+    assert_true(recorded.events.size() >= 2)
+    var replay: Dictionary = runtime.replay_complete_session(
+            String(finish.get("serialized", "")), runtime._replay_settings_manifest_hash,
+            runtime._replay_upper_config_manifest_hash, runtime._replay_lower_config_manifest_hash)
+    assert_true(bool(replay.get("ok", false)), "runtime replay failed: %s" % replay)
+
+    var altered_manifest := recorded.duplicate(true)
+    altered_manifest.vehicles[0].config.mass_kg = 1.25
+    var altered_result: Dictionary = runtime.replay_complete_session(
+            JSON.stringify(altered_manifest), runtime._replay_settings_manifest_hash,
+            runtime._replay_upper_config_manifest_hash, runtime._replay_lower_config_manifest_hash)
+    assert_false(bool(altered_result.get("ok", true)))
+
+    var swapped_manifest := recorded.duplicate(true)
+    swapped_manifest.vehicles[0].name = "DroneB"
+    swapped_manifest.vehicles[1].name = "DroneA"
+    var swapped_result: Dictionary = runtime.replay_complete_session(
+            JSON.stringify(swapped_manifest), runtime._replay_settings_manifest_hash,
+            runtime._replay_upper_config_manifest_hash, runtime._replay_lower_config_manifest_hash)
+    assert_false(bool(swapped_result.get("ok", true)))
 
 
 func test_runtime_rejects_more_than_two_named_vehicles_before_dashboard_setup() -> void:

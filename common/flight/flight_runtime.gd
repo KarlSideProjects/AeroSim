@@ -17,6 +17,7 @@ const EnvironmentState = preload("res://common/rpc/environment_state.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
 const TimeTrialController = preload("res://common/flight/time_trial.gd")
+const ReplayIntegrationRunner = preload("res://common/flight/replay_integration_runner.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const DEFAULT_FREE_FLIGHT_MAP_ID := "industrial_yard"
 const MAP_SCENE_PATHS := {
@@ -123,6 +124,16 @@ var _airsim_vehicle_name := ""
 var _airsim_vehicle_names: Array[String] = []
 var _dashboard_vehicle_name := ""
 var _airsim_secondary_native: Object
+var _replay_recording_active := false
+var _replay_settings_manifest_hash := ""
+var _replay_upper_config_manifest_hash := ""
+var _replay_lower_config_manifest_hash := ""
+var _replay_last_timestamp_us := 0
+var _replay_epoch_offset_us := 0
+var _replay_last_simulation_timestamp_us := 0
+var _replay_epoch_pending := false
+var _last_complete_replay_serialized := ""
+var _replay_secondary_row := PackedFloat64Array()
 var _airsim_vehicle_contexts: Dictionary = {}
 var _airsim_secondary_a5_configuration: Dictionary = {}
 var _secondary_collision_state_captured := false
@@ -147,6 +158,9 @@ var _airsim_collision_point := Vector3.ZERO
 var rates_profile: Dictionary = RatesProfile.default_profile()
 
 func _ready() -> void:
+    if _has_arg("--aerosim-replay-integration"):
+        _run_replay_integration()
+        return
     Input.joy_connection_changed.connect(_on_joy_connection_changed)
     settings_store = SettingsStoreScript.new()
     _load_player_settings()
@@ -193,6 +207,7 @@ func _ready() -> void:
     )
     airsim_rpc_server.set_sensor_backend(Callable(self, "_airsim_sensor"))
     airsim_rpc_server.set_scene_environment_backend(Callable(self, "_airsim_scene_object"), Callable(self, "_airsim_environment"))
+    airsim_rpc_server.set_replay_handlers(Callable(self, "_record_replay_simulation_operation"), Callable(self, "_record_replay_async"))
     _load_scene_object_catalog()
     var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
     if not rpc_result.ok:
@@ -227,6 +242,7 @@ func _ready() -> void:
             airsim_rpc_server.stop()
         get_tree().quit(1)
         return
+    _begin_complete_replay_recording(startup_settings)
     var ready_file := _cold_start_arg("--airsim-ready-file")
     if not ready_file.is_empty() and _airsim_vehicle_names.size() >= 2 and loaded_map == null:
         if not load_map(DEFAULT_FREE_FLIGHT_MAP_ID):
@@ -241,6 +257,16 @@ func _ready() -> void:
     _update_chase_camera()
     _refresh_flight_hud()
     call_deferred("_run_cold_start_probe")
+
+
+func _run_replay_integration() -> void:
+    var result: Dictionary = ReplayIntegrationRunner.new().run()
+    if bool(result.get("ok", false)):
+        print("complete-session replay integration: PASS")
+        get_tree().quit(0)
+    else:
+        push_error(String(result.get("error", "unknown")))
+        get_tree().quit(1)
 
 
 func _validate_airsim_startup_settings(raw_settings: Dictionary) -> Dictionary:
@@ -354,6 +380,388 @@ func _configure_secondary_native(hardware_config: RefCounted) -> bool:
     if secondary_chase_camera != null:
         secondary_chase_camera.current = false
     return true
+
+
+func _replay_timestamp_for_simulation_us(simulation_timestamp_us: int) -> int:
+    if _replay_epoch_pending:
+        var frame_interval_us := maxi(1, int(round(1_000_000.0 / float(airsim_session.physics_hz))) if airsim_session != null and airsim_session.physics_hz > 0 else 1)
+        if simulation_timestamp_us <= _replay_last_simulation_timestamp_us:
+            _replay_epoch_offset_us = maxi(
+                _replay_epoch_offset_us,
+                _replay_last_timestamp_us + frame_interval_us - simulation_timestamp_us)
+        _replay_epoch_pending = false
+    _replay_last_simulation_timestamp_us = simulation_timestamp_us
+    _replay_last_timestamp_us = maxi(_replay_last_timestamp_us, simulation_timestamp_us + _replay_epoch_offset_us)
+    return _replay_last_timestamp_us
+
+
+func _replay_timestamp_for_recorded_frame(timestamp_us: int) -> int:
+    if _replay_epoch_pending:
+        var frame_interval_us := maxi(1, int(round(1_000_000.0 / float(airsim_session.physics_hz))) if airsim_session != null and airsim_session.physics_hz > 0 else 1)
+        timestamp_us = maxi(timestamp_us, _replay_last_timestamp_us + frame_interval_us)
+        _replay_epoch_pending = false
+        _replay_last_timestamp_us = timestamp_us
+    else:
+        _replay_last_timestamp_us = maxi(_replay_last_timestamp_us, timestamp_us + _replay_epoch_offset_us)
+    return _replay_last_timestamp_us
+
+
+func _replay_timestamp_us() -> int:
+    var simulation_timestamp_us := int(round((airsim_session.simulation_time_seconds if airsim_session != null else 0.0) * 1_000_000.0))
+    return _replay_timestamp_for_simulation_us(simulation_timestamp_us)
+
+
+func _replay_frame_timestamp_us() -> int:
+    if airsim_session == null or airsim_session.physics_hz <= 0:
+        return _replay_timestamp_us()
+    var next_timestamp_us := int(round((airsim_session.simulation_time_seconds + 1.0 / float(airsim_session.physics_hz)) * 1_000_000.0))
+    # This is a look-ahead value for the post-step checkpoint. Do not commit
+    # it yet: the command/contact record for this frame still belongs at the
+    # current frame start and is recorded later in _physics_process.
+    return next_timestamp_us + _replay_epoch_offset_us
+
+
+func _replay_manifest_hash(payload: String) -> String:
+    var hashing := HashingContext.new()
+    if hashing.start(HashingContext.HASH_SHA256) != OK:
+        return ""
+    hashing.update(payload.to_utf8_buffer())
+    return hashing.finish().hex_encode()
+
+
+func _replay_canonical_value(value: Variant) -> Variant:
+    if value is Vector3:
+        return [_replay_canonical_value(value.x), _replay_canonical_value(value.y), _replay_canonical_value(value.z)]
+    if value is Dictionary:
+        var sorted_keys: Array = value.keys()
+        sorted_keys.sort()
+        var sorted: Dictionary = {}
+        for key in sorted_keys:
+            sorted[key] = _replay_canonical_value(value[key])
+        return sorted
+    if value is Array:
+        var normalized: Array = []
+        for item in value:
+            normalized.append(_replay_canonical_value(item))
+        return normalized
+    if value is float and is_equal_approx(value, round(value)):
+        return int(round(value))
+    return value
+
+
+func _replay_canonical_json(value: Variant) -> String:
+    return JSON.stringify(_replay_canonical_value(value))
+
+
+func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
+    _replay_recording_active = false
+    _replay_last_timestamp_us = 0
+    _replay_epoch_offset_us = 0
+    _replay_last_simulation_timestamp_us = 0
+    _replay_epoch_pending = false
+    if native == null or _airsim_vehicle_names.size() != 2 or _airsim_secondary_native == null:
+        return
+    if not native.has_method("begin_complete_replay_recording") or not native.has_method("replay_vehicle_config_manifest"):
+        push_error("Complete replay recording hooks are unavailable")
+        return
+    var settings_json := JSON.stringify(startup_settings)
+    var upper_config_json := _replay_canonical_json(native.call("replay_vehicle_config_manifest"))
+    var lower_config_json := _replay_canonical_json(_airsim_secondary_native.call("replay_vehicle_config_manifest"))
+    _replay_settings_manifest_hash = _replay_manifest_hash(settings_json)
+    _replay_upper_config_manifest_hash = String(native.call("replay_manifest_hash", upper_config_json)) if native.has_method("replay_manifest_hash") else _replay_manifest_hash(upper_config_json)
+    _replay_lower_config_manifest_hash = String(_airsim_secondary_native.call("replay_manifest_hash", lower_config_json)) if _airsim_secondary_native.has_method("replay_manifest_hash") else _replay_manifest_hash(lower_config_json)
+    if _replay_settings_manifest_hash.is_empty() or _replay_upper_config_manifest_hash.is_empty() or _replay_lower_config_manifest_hash.is_empty():
+        push_error("Complete replay recording manifest hashing failed")
+        return
+    var result: Dictionary = native.call(
+        "begin_complete_replay_recording",
+        0,
+        _replay_settings_manifest_hash,
+        String(_airsim_vehicle_names[0]),
+        _replay_upper_config_manifest_hash,
+        upper_config_json,
+        2 if px4_sitl_bridge != null else 0,
+        String(_airsim_vehicle_names[1]),
+        _replay_lower_config_manifest_hash,
+        lower_config_json,
+        0)
+    if not bool(result.get("ok", false)):
+        push_error("Complete replay recording could not start: %s" % String(result.get("diagnostic_message", "unknown error")))
+        return
+    _replay_recording_active = true
+
+
+func _finish_complete_replay_recording(reason: String) -> Dictionary:
+    if not _replay_recording_active or native == null:
+        return {"ok": false, "error": "complete replay recording is inactive"}
+    var result: Dictionary = native.call("finish_complete_replay_recording", _replay_timestamp_us(), reason)
+    _replay_recording_active = false
+    if bool(result.get("ok", false)):
+        _last_complete_replay_serialized = String(result.get("serialized", ""))
+        if not _last_complete_replay_serialized.is_empty():
+            DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://replays"))
+            var replay_file := FileAccess.open("user://replays/last_complete_replay.json", FileAccess.WRITE)
+            if replay_file == null:
+                push_error("Complete replay recording could not be persisted")
+            else:
+                replay_file.store_string(_last_complete_replay_serialized)
+                replay_file.close()
+    else:
+        push_error("Complete replay recording could not finish: %s" % String(result.get("diagnostic_message", "unknown error")))
+    return result
+
+
+func complete_replay_recording() -> String:
+    return _last_complete_replay_serialized
+
+
+func _record_replay_command(vehicle_name: String, controls: Dictionary, timestamp_us: int = -1) -> void:
+    if not _replay_recording_active or native == null:
+        return
+    var mode := String(controls.get("mode", "ANGLE"))
+    var recorded_timestamp_us := _replay_timestamp_us() if timestamp_us < 0 else _replay_timestamp_for_recorded_frame(timestamp_us)
+    var result: Dictionary
+    if native.has_method("record_replay_mode_command"):
+        result = native.call(
+            "record_replay_mode_command",
+            recorded_timestamp_us,
+            vehicle_name,
+            mode,
+            float(controls.get("throttle", 0.0)),
+            float(controls.get("acro_roll", controls.get("roll", 0.0))) if mode == "ACRO" else float(controls.get("roll", 0.0)),
+            float(controls.get("acro_pitch", controls.get("pitch", 0.0))) if mode == "ACRO" else float(controls.get("pitch", 0.0)),
+            float(controls.get("acro_yaw", controls.get("yaw_rate", 0.0))) if mode == "ACRO" else float(controls.get("yaw_rate", 0.0)),
+            _acro_rate("rc_rate"),
+            _acro_rate("super_rate"),
+            _acro_rate("expo"),
+            float(controls.get("altitude_m", 0.0)),
+            0)
+    else:
+        result = native.call(
+            "record_replay_command",
+            recorded_timestamp_us,
+            vehicle_name,
+            float(controls.get("throttle", 0.0)),
+            float(controls.get("roll", 0.0)),
+            float(controls.get("pitch", 0.0)),
+            float(controls.get("yaw_rate", 0.0)),
+            0)
+    if not bool(result.get("ok", false)):
+        push_error("Complete replay command recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+
+
+func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: PackedFloat32Array, timestamp_us: int) -> void:
+    if not _replay_recording_active or native == null or actuator_outputs.size() < 4:
+        return
+    var result: Dictionary = native.call(
+        "record_replay_actuator_command",
+        _replay_timestamp_for_recorded_frame(timestamp_us),
+        vehicle_name,
+        clampf(float(actuator_outputs[0]), 0.0, 1.0),
+        clampf(float(actuator_outputs[1]), 0.0, 1.0),
+        clampf(float(actuator_outputs[2]), 0.0, 1.0),
+        clampf(float(actuator_outputs[3]), 0.0, 1.0),
+        2)
+    if not bool(result.get("ok", false)):
+        push_error("Complete replay actuator recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+
+
+func _record_replay_collision(vehicle_name: String, body, authority: int = 1, timestamp_us: int = -1) -> void:
+    if not _replay_recording_active or native == null or body == null or not body.contact_seen:
+        return
+    var result: Dictionary = native.call(
+        "record_replay_collision",
+        _replay_timestamp_us() if timestamp_us < 0 else _replay_timestamp_for_recorded_frame(timestamp_us),
+        vehicle_name,
+        true,
+        body.contact_normal.x,
+        body.contact_normal.y,
+        body.contact_normal.z,
+        body.contact_impulse.x,
+        body.contact_impulse.y,
+        body.contact_impulse.z,
+        0.0,
+        body.linear_velocity.x,
+        body.linear_velocity.y,
+        body.linear_velocity.z,
+        body.angular_velocity.x,
+        body.angular_velocity.y,
+        body.angular_velocity.z,
+        _kinetic(body.linear_velocity, body.angular_velocity),
+        true,
+        authority)
+    if not bool(result.get("ok", false)):
+        push_error("Complete replay collision recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+
+
+func _record_replay_scene_object(operation: int, snapshot: Dictionary) -> void:
+    if not _replay_recording_active or native == null or snapshot.is_empty():
+        return
+    var position: Vector3 = snapshot.get("position", Vector3.ZERO)
+    var orientation: Quaternion = snapshot.get("orientation", Quaternion.IDENTITY)
+    var result: Dictionary = native.call(
+        "record_replay_scene_object",
+        _replay_timestamp_us(),
+        operation,
+        String(snapshot.get("name", "")),
+        String(snapshot.get("asset_id", "")),
+        position,
+        orientation)
+    if not bool(result.get("ok", false)):
+        push_error("Complete replay scene recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+
+
+func _record_replay_environment(state: Dictionary) -> void:
+    if not _replay_recording_active or native == null:
+        return
+    var result: Dictionary = native.call("record_replay_environment", _replay_timestamp_us(), JSON.stringify(state))
+    if not bool(result.get("ok", false)):
+        push_error("Complete replay environment recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+
+
+func _record_replay_checkpoint(timestamp_us: int, upper_row: PackedFloat64Array) -> void:
+    if not _replay_recording_active or native == null or upper_row.size() < 17 or _replay_secondary_row.size() < 17:
+        return
+    var result: Dictionary = native.call("record_replay_checkpoint", timestamp_us, upper_row, _replay_secondary_row)
+    if not bool(result.get("ok", false)):
+        push_error("Complete replay checkpoint recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+
+
+func _record_replay_simulation_operation(operation: int, value: float) -> void:
+    if not _replay_recording_active or native == null:
+        return
+    var result: Dictionary = native.call("record_replay_simulation_operation", _replay_timestamp_us(), operation, value)
+    if not bool(result.get("ok", false)):
+        push_error("Complete replay simulation recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+    elif operation == 4 or operation == 5:
+        _replay_epoch_pending = true
+
+
+func _record_replay_async(simulation_time_seconds: float, vehicle_name: String, command_id: String, method: String, lifecycle: int) -> void:
+    if not _replay_recording_active or native == null:
+        return
+    var timestamp_us := _replay_timestamp_for_simulation_us(int(round(simulation_time_seconds * 1_000_000.0)))
+    var result: Dictionary = native.call("record_replay_async_command", timestamp_us, vehicle_name, command_id, method, lifecycle)
+    if not bool(result.get("ok", false)):
+        push_error("Complete replay async recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+
+
+func _replay_json_safe(value: Variant) -> Variant:
+    if value is Vector3:
+        return [value.x, value.y, value.z]
+    if value is Dictionary:
+        var result: Dictionary = {}
+        for key in value:
+            result[key] = _replay_json_safe(value[key])
+        return result
+    if value is Array:
+        var result: Array = []
+        for item in value:
+            result.append(_replay_json_safe(item))
+        return result
+    return value
+
+
+func _validate_replay_world_events(events: Array) -> Dictionary:
+    for event in events:
+        if typeof(event) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "replay event is malformed"}
+        match String(event.get("type", "")):
+            "scene_object":
+                var position_values: Variant = event.get("position", [])
+                var orientation_values: Variant = event.get("orientation", [])
+                var operation := String(event.get("operation", ""))
+                if typeof(position_values) != TYPE_ARRAY or typeof(orientation_values) != TYPE_ARRAY or position_values.size() != 3 or orientation_values.size() != 4 or scene_object_catalog == null:
+                    return {"ok": false, "error": "replay scene object transform is malformed"}
+                if operation not in ["spawn", "move", "destroy", "reset"]:
+                    return {"ok": false, "error": "unsupported replay scene operation"}
+            "environment":
+                if typeof(event.get("state", {})) != TYPE_DICTIONARY:
+                    return {"ok": false, "error": "replay environment state is malformed"}
+            "simulation_time":
+                if String(event.get("operation", "")) not in ["pause", "resume", "step_frames", "step_seconds", "reset", "respawn"]:
+                    return {"ok": false, "error": "unsupported replay simulation operation"}
+    return {"ok": true}
+
+
+func _apply_replay_world_events(events: Array) -> Dictionary:
+    for event in events:
+        match String(event.get("type", "")):
+            "scene_object":
+                var position_values: Array = event.get("position", [])
+                var orientation_values: Array = event.get("orientation", [])
+                var position := Vector3(float(position_values[0]), float(position_values[1]), float(position_values[2]))
+                var orientation := Quaternion(float(orientation_values[0]), float(orientation_values[1]), float(orientation_values[2]), float(orientation_values[3]))
+                var operation := String(event.get("operation", ""))
+                var world_result: Dictionary
+                if operation == "spawn":
+                    world_result = scene_object_catalog.create_named(String(event.get("name", "")), String(event.get("asset_id", "")), position, orientation)
+                elif operation == "move":
+                    world_result = scene_object_catalog.move_named(String(event.get("name", "")), position, orientation)
+                elif operation == "destroy":
+                    world_result = scene_object_catalog.destroy_named(String(event.get("name", "")))
+                else:
+                    scene_object_catalog.reset()
+                    world_result = {"ok": true}
+                if not bool(world_result.get("ok", false)):
+                    return {"ok": false, "error": String(world_result.get("error", "replay scene application failed"))}
+            "environment":
+                var environment_result := _airsim_environment("simSetEnvironment", [event.get("state", {})])
+                if not bool(environment_result.get("ok", false)):
+                    return environment_result
+            "simulation_time":
+                if String(event.get("operation", "")) in ["reset", "respawn"]:
+                    scene_object_catalog.reset()
+                    if environment_state != null:
+                        _apply_environment_result(environment_state.reset())
+    return {"ok": true}
+
+
+func replay_complete_session(serialized: String, expected_settings_manifest_hash: String, expected_upper_config_manifest_hash: String, expected_lower_config_manifest_hash: String) -> Dictionary:
+    if native == null or not native.has_method("replay_complete_session"):
+        return {"ok": false, "error": "native replay runtime is unavailable"}
+    _replay_recording_active = false
+    var parsed = JSON.parse_string(serialized)
+    if typeof(parsed) != TYPE_DICTIONARY or typeof(parsed.get("events")) != TYPE_ARRAY or typeof(parsed.get("vehicles")) != TYPE_ARRAY:
+        return {"ok": false, "error": "replay world payload is malformed"}
+    var parsed_vehicles: Array = parsed.get("vehicles", [])
+    if parsed_vehicles.size() != 2:
+        return {"ok": false, "error": "replay requires exactly two vehicle manifests"}
+    if _airsim_vehicle_names.size() != 2:
+        return {"ok": false, "error": "runtime requires exactly two vehicle names for replay"}
+    var expected_vehicle_hashes := [expected_upper_config_manifest_hash, expected_lower_config_manifest_hash]
+    for index in 2:
+        if typeof(parsed_vehicles[index]) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "replay vehicle manifest is malformed"}
+        var vehicle: Dictionary = parsed_vehicles[index]
+        if String(vehicle.get("name", "")) != String(_airsim_vehicle_names[index]):
+            return {"ok": false, "error": "replay vehicle identity does not match runtime slot"}
+        if typeof(vehicle.get("config", null)) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "replay vehicle config manifest is malformed"}
+        var config: Dictionary = vehicle.get("config", {})
+        if String(vehicle.get("config_manifest_hash", "")) != String(expected_vehicle_hashes[index]) or _replay_manifest_hash(_replay_canonical_json(config)) != String(expected_vehicle_hashes[index]):
+            return {"ok": false, "error": "replay vehicle config manifest integrity check failed"}
+    var world_validation := _validate_replay_world_events(parsed.events)
+    if not bool(world_validation.get("ok", false)):
+        return world_validation
+    var native_result: Dictionary = native.call(
+        "replay_complete_session", serialized, expected_settings_manifest_hash,
+        expected_upper_config_manifest_hash, expected_lower_config_manifest_hash,
+        native.call("replay_vehicle_config_manifest"),
+        _airsim_secondary_native.call("replay_vehicle_config_manifest") if _airsim_secondary_native != null else {})
+    if not bool(native_result.get("ok", false)):
+        return native_result
+    var world_result := _apply_replay_world_events(parsed.events)
+    if not bool(world_result.get("ok", false)):
+        return world_result
+    native_result["world_applied"] = true
+    return native_result
+
+
+func compare_complete_replay_sessions(expected_serialized: String, actual_serialized: String, expected_settings_manifest_hash: String) -> Dictionary:
+    if native == null or not native.has_method("compare_complete_replay_sessions"):
+        return {"ok": false, "error": "native replay comparison is unavailable"}
+    return native.call("compare_complete_replay_sessions", expected_serialized, actual_serialized, expected_settings_manifest_hash)
 
 
 func _secondary_body(vehicle_name: String):
@@ -474,6 +882,9 @@ func _cold_start_arg(name: String, default_value := "") -> String:
             return args[index + 1]
     return default_value
 
+func _has_arg(name: String) -> bool:
+    return OS.get_cmdline_user_args().has(name)
+
 func _cold_start_frame_is_observable(image: Image) -> bool:
     if image.is_empty():
         return false
@@ -539,8 +950,14 @@ func _physics_process(delta: float) -> void:
             set_paused(false, false)
         if paused:
             return
+    # AirSim advances its session clock before stepping native physics below.
+    # Commands and contacts therefore belong to this frame's native start time;
+    # checkpoints use the post-step frame timestamp separately.
+    var replay_timestamp_us := _replay_timestamp_us()
+    var replay_frame_timestamp_us := _replay_frame_timestamp_us()
+    _replay_secondary_row = PackedFloat64Array()
     if _airsim_secondary_native != null and secondary_drone_body != null and (airsim_session == null or not airsim_session.is_paused()):
-        _step_secondary_airsim_vehicle(String(_airsim_vehicle_names[1]))
+        _step_secondary_airsim_vehicle(String(_airsim_vehicle_names[1]), replay_timestamp_us)
     if px4_sitl_bridge != null:
         px4_sitl_bridge.poll(Time.get_ticks_usec() / 1000000.0)
         if px4_sitl_bridge.state == "failed":
@@ -595,6 +1012,18 @@ func _physics_process(delta: float) -> void:
         acro_yaw = float(airsim_controls.get("acro_yaw", acro_yaw))
         if airsim_controls.has("mode"):
             flight_mode = String(airsim_controls["mode"])
+    if px4_sitl_bridge == null:
+        _record_replay_command(_airsim_vehicle_name, {
+            "mode": flight_mode,
+            "throttle": throttle,
+            "roll": angle_roll,
+            "pitch": angle_pitch,
+            "yaw_rate": angle_yaw,
+            "acro_roll": acro_roll,
+            "acro_pitch": acro_pitch,
+            "acro_yaw": acro_yaw,
+            "altitude_m": drone_body.global_position.y if drone_body != null else 0.0,
+        }, replay_timestamp_us)
     var row: PackedFloat64Array
     if px4_sitl_bridge != null:
         var actuator_outputs := px4_sitl_bridge.actuator_outputs()
@@ -612,6 +1041,7 @@ func _physics_process(delta: float) -> void:
                 _publish_px4_lockstep_sensor_if_needed()
             _advance_airsim_sensors()
             return
+        _record_replay_actuator_command(_airsim_vehicle_name, actuator_outputs, replay_timestamp_us)
         var actuator_has_thrust := false
         for actuator in actuator_outputs:
             if absf(float(actuator)) > 0.05:
@@ -663,6 +1093,7 @@ func _physics_process(delta: float) -> void:
             _kinetic(drone_body.linear_velocity, drone_body.angular_velocity) if drone_body != null else -1.0
         )
         if drone_body != null and drone_body.contact_seen:
+            _record_replay_collision(_airsim_vehicle_name, drone_body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
             collision_handoff_count += 1
             _airsim_contact_this_frame = true
             _airsim_collision_seen = true
@@ -727,6 +1158,7 @@ func _physics_process(delta: float) -> void:
                 energy_limit
             )
         if drone_body.contact_seen:
+            _record_replay_collision(_airsim_vehicle_name, drone_body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
             collision_handoff_count += 1
             _airsim_contact_this_frame = true
             _airsim_collision_seen = true
@@ -742,6 +1174,7 @@ func _physics_process(delta: float) -> void:
     if row.size() >= 13:
         last_collision_authority = int(row[12])
     if drone_body != null and row.size() >= 17:
+        _record_replay_checkpoint(replay_frame_timestamp_us, row)
         drone_body.apply_native_state(
             Vector3(row[1], row[2], row[3]),
             Quaternion(row[4], row[5], row[6], row[7]),
@@ -790,7 +1223,7 @@ func _advance_airsim_sensors() -> void:
             airsim_sensor_suite.advance(airsim_session.simulation_time_seconds, String(name), sensor_state.state)
 
 
-func _step_secondary_airsim_vehicle(vehicle_name: String) -> void:
+func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: int = -1) -> void:
     var context: Dictionary = _airsim_vehicle_contexts.get(vehicle_name, {})
     if context.is_empty() or not bool(context.get("api_control", false)) or not bool(context.get("armed", false)):
         return
@@ -809,6 +1242,8 @@ func _step_secondary_airsim_vehicle(vehicle_name: String) -> void:
             drone_body.global_position.y,
             drone_body.global_position.z)
     var controls := _airsim_secondary_controls(context, body)
+    controls["altitude_m"] = body.global_position.y
+    _record_replay_command(vehicle_name, controls, replay_timestamp_us)
     var row: PackedFloat64Array
     if String(controls.get("mode", "ANGLE")) == "ACRO":
         row = _airsim_secondary_native.call(
@@ -822,6 +1257,30 @@ func _step_secondary_airsim_vehicle(vehicle_name: String) -> void:
             _acro_rate("rc_rate"),
             _acro_rate("super_rate"),
             _acro_rate("expo"),
+            body.contact_seen,
+            body.contact_normal.x,
+            body.contact_normal.y,
+            body.contact_normal.z,
+            body.contact_impulse.x,
+            body.contact_impulse.y,
+            body.contact_impulse.z,
+            0.0,
+            body.linear_velocity.x,
+            body.linear_velocity.y,
+            body.linear_velocity.z,
+            body.angular_velocity.x,
+            body.angular_velocity.y,
+            body.angular_velocity.z,
+            _kinetic(body.linear_velocity, body.angular_velocity))
+    elif String(controls.get("mode", "ANGLE")) == "ALTITUDE_HOLD":
+        row = _airsim_secondary_native.call(
+            "step_collision_altitude_hold_mode",
+            Engine.physics_ticks_per_second,
+            1000,
+            float(controls.get("throttle", 0.0)),
+            float(controls.get("roll", 0.0)),
+            float(controls.get("pitch", 0.0)),
+            float(controls.get("yaw_rate", 0.0)),
             body.contact_seen,
             body.contact_normal.x,
             body.contact_normal.y,
@@ -862,12 +1321,14 @@ func _step_secondary_airsim_vehicle(vehicle_name: String) -> void:
             body.angular_velocity.z,
             _kinetic(body.linear_velocity, body.angular_velocity))
     if row.size() >= 17:
+        _replay_secondary_row = row
         body.apply_native_state(
             Vector3(row[1], row[2], row[3]),
             Quaternion(row[4], row[5], row[6], row[7]),
             Vector3(row[8], row[9], row[10]),
             Vector3(row[14], row[15], row[16]))
     if body.contact_seen:
+        _record_replay_collision(vehicle_name, body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
         context["collision_seen"] = true
         context["contact_this_frame"] = true
         context["collision_normal"] = body.contact_normal
@@ -1033,6 +1494,9 @@ func arm_and_takeoff() -> void:
     request_takeoff()
 
 func request_exit() -> void:
+    if airsim_rpc_server != null:
+        airsim_rpc_server.cancel_pending_async_tasks("complete replay recording terminated")
+    _finish_complete_replay_recording("exit")
     exit_requested = true
     takeoff_requested = false
     paused = true
@@ -1287,6 +1751,7 @@ func reset_to_spawn() -> bool:
     var spawn := loaded_map.get_node_or_null("SpawnNorth") as Marker3D
     if spawn == null:
         return _set_map_error("Cannot reset Free Flight map %s: SpawnNorth is missing" % loaded_map_id)
+    _record_replay_simulation_operation(5, 0.0)
     _airsim_last_velocity = Vector3.ZERO
     _airsim_linear_acceleration = Vector3.ZERO
     _airsim_last_body_angular_velocity = Vector3.ZERO
@@ -1385,6 +1850,7 @@ func _airsim_scene_object(method: String, params: Array) -> Dictionary:
                 String(params[0]), String(params[1]), pose_result.godot_position, pose_result.godot_orientation)
             if not created.ok:
                 return created
+            _record_replay_scene_object(0, created.object)
             return {"ok": true, "value": String(created.object.name)}
         "simGetObjectPose":
             var queried: Dictionary = scene_object_catalog.query_named(String(params[0]))
@@ -1400,11 +1866,16 @@ func _airsim_scene_object(method: String, params: Array) -> Dictionary:
             var moved: Dictionary = scene_object_catalog.move_named(String(params[0]), set_pose.godot_position, set_pose.godot_orientation)
             if not moved.ok:
                 return moved
+            _record_replay_scene_object(1, moved.object)
             return {"ok": true, "value": true}
         "simDestroyObject":
+            var destroy_snapshot: Dictionary = scene_object_catalog.query_named(String(params[0]))
+            if not destroy_snapshot.ok:
+                return destroy_snapshot
             var destroyed: Dictionary = scene_object_catalog.destroy_named(String(params[0]))
             if not destroyed.ok:
                 return destroyed
+            _record_replay_scene_object(2, destroy_snapshot.object)
             return {"ok": true, "value": true}
         "simGetSegmentationObjectID":
             var segmentation_query: Dictionary = scene_object_catalog.query_named(String(params[0]))
@@ -1463,6 +1934,7 @@ func _apply_environment_result(result: Dictionary) -> Dictionary:
             "steady_wind": result.state.steady_wind,
         })
     _apply_environment_visuals(result.state)
+    _record_replay_environment(_environment_rpc_snapshot(result.state))
     return {"ok": true, "value": _environment_rpc_snapshot(result.state)}
 
 
@@ -1652,6 +2124,11 @@ func _acro_rate(key: String) -> float:
 func set_paused(value: bool, sync_session: bool = true) -> void:
     if not value and _airsim_lifecycle_stopped() and (airsim_session == null or not airsim_session.is_explicit_step_active()):
         return
+    if paused != value and sync_session and _replay_recording_active and native != null:
+        var replay_pause_result: Dictionary = native.call(
+            "record_replay_simulation_operation", _replay_timestamp_us(), 0 if value else 1, 0.0)
+        if not bool(replay_pause_result.get("ok", false)):
+            push_error("Complete replay pause recording failed: %s" % String(replay_pause_result.get("diagnostic_message", "unknown error")))
     paused = value
     if sync_session and airsim_session != null:
         airsim_session.set_paused(value)

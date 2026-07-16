@@ -1,16 +1,19 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 
 #include "aerosim_collision.hpp"
 #include "aerosim_flight_control.hpp"
 #include "aerosim_imu.hpp"
+#include "aerosim_replay.hpp"
 #include "aerosim_simulation.hpp"
 #include "aerosim_wind.hpp"
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_float64_array.hpp>
+#include <godot_cpp/variant/quaternion.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
 class AeroSimNative : public godot::RefCounted {
@@ -37,6 +40,7 @@ private:
     aerosim::ImuSample last_imu_sample_;
     bool has_last_imu_sample_ = false;
     aerosim::WindField wind_field_;
+    std::unique_ptr<aerosim::ReplaySessionRecorder> replay_recorder_;
     godot::String wind_preset_name_ = "custom";
     bool imu_noise_enabled_ = false;
     bool imu_bias_enabled_ = false;
@@ -79,6 +83,106 @@ public:
             std::int32_t physics_hz,
             std::int32_t substep_hz,
             double total_thrust_newtons);
+    godot::Dictionary replay_complete_session(
+            const godot::String &serialized,
+            const godot::String &expected_settings_manifest_hash,
+            const godot::String &expected_upper_config_manifest_hash,
+            const godot::String &expected_lower_config_manifest_hash,
+            const godot::Dictionary &upper_config_manifest,
+            const godot::Dictionary &lower_config_manifest);
+    godot::Dictionary compare_complete_replay_sessions(
+            const godot::String &expected_serialized,
+            const godot::String &actual_serialized,
+            const godot::String &expected_settings_manifest_hash);
+    godot::Dictionary replay_vehicle_config_manifest() const;
+    godot::String replay_manifest_hash(const godot::String &config_json) const;
+    godot::Dictionary begin_complete_replay_recording(
+            std::int64_t seed,
+            const godot::String &settings_manifest_hash,
+            const godot::String &upper_name,
+            const godot::String &upper_config_manifest_hash,
+            const godot::String &upper_config_json,
+            std::int32_t upper_controller_authority,
+            const godot::String &lower_name,
+            const godot::String &lower_config_manifest_hash,
+            const godot::String &lower_config_json,
+            std::int32_t lower_controller_authority);
+    godot::Dictionary record_replay_command(
+            std::int64_t timestamp_us,
+            const godot::String &vehicle_name,
+            double throttle,
+            double roll_degrees,
+            double pitch_degrees,
+            double yaw_rate_degrees_per_second,
+            std::int32_t controller_authority);
+    godot::Dictionary record_replay_mode_command(
+            std::int64_t timestamp_us,
+            const godot::String &vehicle_name,
+            const godot::String &mode,
+            double throttle,
+            double roll,
+            double pitch,
+            double yaw,
+            double rc_rate,
+            double super_rate,
+            double expo,
+            double measured_altitude_m,
+            std::int32_t controller_authority);
+    godot::Dictionary record_replay_actuator_command(
+            std::int64_t timestamp_us,
+            const godot::String &vehicle_name,
+            double motor_0,
+            double motor_1,
+            double motor_2,
+            double motor_3,
+            std::int32_t controller_authority);
+    godot::Dictionary record_replay_simulation_operation(
+            std::int64_t timestamp_us,
+            std::int32_t operation,
+            double value);
+    godot::Dictionary record_replay_collision(
+            std::int64_t timestamp_us,
+            const godot::String &vehicle_name,
+            bool touching,
+            double normal_x,
+            double normal_y,
+            double normal_z,
+            double impulse_x,
+            double impulse_y,
+            double impulse_z,
+            double restitution,
+            double resolved_velocity_x,
+            double resolved_velocity_y,
+            double resolved_velocity_z,
+            double resolved_angular_velocity_x,
+            double resolved_angular_velocity_y,
+            double resolved_angular_velocity_z,
+            double max_kinetic_energy_joules,
+            bool has_resolved_state,
+            std::int32_t controller_authority);
+    godot::Dictionary record_replay_scene_object(
+            std::int64_t timestamp_us,
+            std::int32_t operation,
+            const godot::String &object_name,
+            const godot::String &asset_id,
+            const godot::Vector3 &position,
+            const godot::Quaternion &orientation);
+    godot::Dictionary record_replay_environment(
+            std::int64_t timestamp_us,
+            const godot::String &environment_json);
+    godot::Dictionary record_replay_checkpoint(
+            std::int64_t timestamp_us,
+            const godot::PackedFloat64Array &upper_row,
+            const godot::PackedFloat64Array &lower_row);
+    godot::Dictionary record_replay_async_command(
+            std::int64_t timestamp_us,
+            const godot::String &vehicle_name,
+            const godot::String &command_id,
+            const godot::String &method,
+            std::int32_t lifecycle);
+    godot::Dictionary finish_complete_replay_recording(
+            std::int64_t timestamp_us,
+            const godot::String &reason);
     // PX4 actuator modes, including the collision variant, receive arming authority from the PX4 bridge, not the local flight controller.
     godot::PackedFloat64Array step_px4_actuator_mode(
             std::int32_t physics_hz,

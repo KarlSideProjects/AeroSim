@@ -315,3 +315,16 @@ func test_secondary_kinematic_context_resets_without_an_acceleration_spike() -> 
     assert_eq(context.linear_acceleration, Vector3.ZERO)
     assert_eq(context.last_body_angular_velocity, Vector3.ZERO)
     assert_eq(context.angular_acceleration, Vector3.ZERO)
+
+
+func test_replay_reset_epoch_moves_the_first_post_reset_event_forward() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime._replay_last_timestamp_us = 1000
+    runtime._replay_last_simulation_timestamp_us = 1000
+    runtime._replay_epoch_pending = true
+
+    assert_eq(runtime._replay_timestamp_for_simulation_us(0), 1001)
+
+    runtime._replay_epoch_pending = true
+    assert_eq(runtime._replay_timestamp_for_recorded_frame(1001), 1002)
