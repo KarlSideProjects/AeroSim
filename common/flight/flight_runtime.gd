@@ -128,6 +128,7 @@ var _replay_settings_manifest_hash := ""
 var _replay_upper_config_manifest_hash := ""
 var _replay_lower_config_manifest_hash := ""
 var _replay_last_timestamp_us := 0
+var _last_complete_replay_serialized := ""
 var _airsim_vehicle_contexts: Dictionary = {}
 var _airsim_secondary_a5_configuration: Dictionary = {}
 var _secondary_collision_state_captured := false
@@ -425,9 +426,23 @@ func _finish_complete_replay_recording(reason: String) -> Dictionary:
         return {"ok": false, "error": "complete replay recording is inactive"}
     var result: Dictionary = native.call("finish_complete_replay_recording", _replay_timestamp_us(), reason)
     _replay_recording_active = false
-    if not bool(result.get("ok", false)):
+    if bool(result.get("ok", false)):
+        _last_complete_replay_serialized = String(result.get("serialized", ""))
+        if not _last_complete_replay_serialized.is_empty():
+            DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://replays"))
+            var replay_file := FileAccess.open("user://replays/last_complete_replay.json", FileAccess.WRITE)
+            if replay_file == null:
+                push_error("Complete replay recording could not be persisted")
+            else:
+                replay_file.store_string(_last_complete_replay_serialized)
+                replay_file.close()
+    else:
         push_error("Complete replay recording could not finish: %s" % String(result.get("diagnostic_message", "unknown error")))
     return result
+
+
+func complete_replay_recording() -> String:
+    return _last_complete_replay_serialized
 
 
 func _record_replay_command(vehicle_name: String, controls: Dictionary, timestamp_us: int = -1) -> void:

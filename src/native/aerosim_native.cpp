@@ -103,6 +103,32 @@ bool simulation_config_manifest_value(
             !per_motor_model_value(static_cast<Dictionary>(per_motor_variant), config.per_motor)) {
         return false;
     }
+    if (manifest.has("external_force_world")) {
+        config.external_force_world = vec3_value(manifest, "external_force_world", config.external_force_world);
+    }
+    const Variant a4_variant = manifest.get("a4_ground_effect", Variant());
+    if (a4_variant.get_type() == Variant::DICTIONARY) {
+        const Dictionary a4 = a4_variant;
+        config.a4_ground_effect.enabled = bool_value(a4, "enabled", config.a4_ground_effect.enabled);
+        config.a4_ground_effect.kf = double_value(a4, "kf", config.a4_ground_effect.kf);
+        config.a4_ground_effect.ground_effect_coeff = double_value(a4, "ground_effect_coeff", config.a4_ground_effect.ground_effect_coeff);
+        config.a4_ground_effect.prop_radius_m = double_value(a4, "prop_radius_m", config.a4_ground_effect.prop_radius_m);
+        config.a4_ground_effect.height_clip_m = double_value(a4, "height_clip_m", config.a4_ground_effect.height_clip_m);
+        for (std::int32_t index = 0; index < 4; ++index) {
+            config.a4_ground_effect.motor_rpm[static_cast<std::size_t>(index)] = double_value(
+                    a4, ("motor_" + std::to_string(index) + "_rpm").c_str(),
+                    config.a4_ground_effect.motor_rpm[static_cast<std::size_t>(index)]);
+        }
+    }
+    const Variant a5_variant = manifest.get("a5_downwash", Variant());
+    if (a5_variant.get_type() == Variant::DICTIONARY) {
+        const Dictionary a5 = a5_variant;
+        config.a5_downwash.enabled = bool_value(a5, "enabled", config.a5_downwash.enabled);
+        config.a5_downwash.prop_radius_m = double_value(a5, "prop_radius_m", config.a5_downwash.prop_radius_m);
+        config.a5_downwash.coeff_1 = double_value(a5, "coeff_1", config.a5_downwash.coeff_1);
+        config.a5_downwash.coeff_2 = double_value(a5, "coeff_2", config.a5_downwash.coeff_2);
+        config.a5_downwash.coeff_3 = double_value(a5, "coeff_3", config.a5_downwash.coeff_3);
+    }
     return std::isfinite(config.mass_kg) && config.mass_kg > 0.0 &&
             std::isfinite(config.gravity_mps2) && config.physics_hz > 0 && config.substep_hz > 0;
 }
@@ -537,12 +563,6 @@ Dictionary AeroSimNative::replay_complete_session(
                 "replay vehicle config manifests are malformed"};
         return replay_status(false, &diagnostic);
     }
-    upper_config.a4_ground_effect = a4_ground_effect_config_;
-    upper_config.a5_downwash = a5_downwash_config_;
-    upper_config.external_force_world = external_force_world_;
-    lower_config.a4_ground_effect = a4_ground_effect_config_;
-    lower_config.a5_downwash = a5_downwash_config_;
-    lower_config.external_force_world = external_force_world_;
     const aerosim::ReplayRunResult run = aerosim::replay_session(
             loaded.session,
             aerosim::DualAircraftConfig{upper_config, lower_config},
@@ -607,6 +627,9 @@ Dictionary AeroSimNative::replay_vehicle_config_manifest() const {
     result["battery_remaining_mah"] = config.battery_remaining_mah;
     result["max_total_current_a"] = config.max_total_current_a;
     result["max_motor_rpm"] = config.max_motor_rpm;
+    result["external_force_world"] = godot_vec3(config.external_force_world);
+    result["a4_ground_effect"] = a4_ground_effect_configuration();
+    result["a5_downwash"] = a5_downwash_configuration();
     Dictionary per_motor;
     per_motor["inertia_frd"] = godot_vec3(config.per_motor.inertia_kg_m2);
     Array positions;
