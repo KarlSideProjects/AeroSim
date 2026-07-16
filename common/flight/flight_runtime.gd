@@ -412,6 +412,30 @@ func _replay_manifest_hash(payload: String) -> String:
     return hashing.finish().hex_encode()
 
 
+func _replay_canonical_value(value: Variant) -> Variant:
+    if value is Vector3:
+        return [_replay_canonical_value(value.x), _replay_canonical_value(value.y), _replay_canonical_value(value.z)]
+    if value is Dictionary:
+        var sorted_keys: Array = value.keys()
+        sorted_keys.sort()
+        var sorted: Dictionary = {}
+        for key in sorted_keys:
+            sorted[key] = _replay_canonical_value(value[key])
+        return sorted
+    if value is Array:
+        var normalized: Array = []
+        for item in value:
+            normalized.append(_replay_canonical_value(item))
+        return normalized
+    if value is float and is_equal_approx(value, round(value)):
+        return int(round(value))
+    return value
+
+
+func _replay_canonical_json(value: Variant) -> String:
+    return JSON.stringify(_replay_canonical_value(value))
+
+
 func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     _replay_recording_active = false
     _replay_last_timestamp_us = 0
@@ -424,8 +448,8 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
         push_error("Complete replay recording hooks are unavailable")
         return
     var settings_json := JSON.stringify(startup_settings)
-    var upper_config_json := JSON.stringify(_replay_json_safe(native.call("replay_vehicle_config_manifest")))
-    var lower_config_json := JSON.stringify(_replay_json_safe(_airsim_secondary_native.call("replay_vehicle_config_manifest")))
+    var upper_config_json := _replay_canonical_json(native.call("replay_vehicle_config_manifest"))
+    var lower_config_json := _replay_canonical_json(_airsim_secondary_native.call("replay_vehicle_config_manifest"))
     _replay_settings_manifest_hash = _replay_manifest_hash(settings_json)
     _replay_upper_config_manifest_hash = _replay_manifest_hash(upper_config_json)
     _replay_lower_config_manifest_hash = _replay_manifest_hash(lower_config_json)
@@ -631,10 +655,17 @@ func replay_complete_session(serialized: String, expected_settings_manifest_hash
     var parsed_vehicles: Array = parsed.get("vehicles", [])
     if parsed_vehicles.size() != 2:
         return {"ok": false, "error": "replay requires exactly two vehicle manifests"}
+    if _airsim_vehicle_names.size() != 2:
+        return {"ok": false, "error": "runtime requires exactly two vehicle names for replay"}
     var expected_vehicle_hashes := [expected_upper_config_manifest_hash, expected_lower_config_manifest_hash]
     for index in 2:
+        if typeof(parsed_vehicles[index]) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "replay vehicle manifest is malformed"}
         var vehicle: Dictionary = parsed_vehicles[index]
-        if String(vehicle.get("config_manifest_hash", "")) != String(expected_vehicle_hashes[index]):
+        if String(vehicle.get("name", "")) != String(_airsim_vehicle_names[index]):
+            return {"ok": false, "error": "replay vehicle identity does not match runtime slot"}
+        var config: Dictionary = vehicle.get("config", {})
+        if String(vehicle.get("config_manifest_hash", "")) != String(expected_vehicle_hashes[index]) or _replay_manifest_hash(_replay_canonical_json(config)) != String(expected_vehicle_hashes[index]):
             return {"ok": false, "error": "replay vehicle config manifest integrity check failed"}
     for event in parsed.events:
         if typeof(event) != TYPE_DICTIONARY:
@@ -872,6 +903,9 @@ func _physics_process(delta: float) -> void:
             set_paused(false, false)
         if paused:
             return
+    # AirSim advances its session clock before stepping native physics below.
+    # Commands and contacts therefore belong to this frame's native start time;
+    # checkpoints use the post-step frame timestamp separately.
     var replay_timestamp_us := _replay_timestamp_us()
     var replay_frame_timestamp_us := _replay_frame_timestamp_us()
     _replay_secondary_row = PackedFloat64Array()
