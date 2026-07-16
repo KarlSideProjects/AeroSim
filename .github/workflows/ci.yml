@@ -155,7 +155,7 @@ jobs:
         run: scripts/test_delivery_drill.sh
 
       - name: License server API test
-        run: python3 -m unittest license_server.test_license_server
+        run: build/license-venv/bin/python -m unittest license_server.test_license_server
 
       - name: Performance report unit test
         run: python3 tests/test_performance_report.py
@@ -204,7 +204,7 @@ jobs:
         run: xvfb-run -a python3 tests/test_performance_runner.py
 
       - name: Store headed screenshots locally
-        if: always()
+        if: ${{ always() && hashFiles('build/headed/**') != '' }}
         run: |
           install -d "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux"
           cp -a build/headed/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux/"
