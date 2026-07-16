@@ -64,3 +64,38 @@ GitHub Actions 會執行：
 6. headless smoke，確認 GDScript 可呼叫 native probe 並輸出檔案。
 7. Linux headed acceptance 與 release artifact checks。
 8. Linux replay terminal-state artifact 與 build provenance 檢查。
+
+## Ubuntu DEV-M 授權 fixture
+
+要先驗證「啟用後可以玩、斷網仍可進入 grace」時，不需要 production private key。使用下列腳本在 `build/` 產生一次性的 ephemeral RSA-2048 key、license key、SQLite license database、Godot provider config，以及本機 server 啟動器：
+
+```bash
+scripts/test_license_dependencies.sh
+scripts/generate_devm_license_fixture.sh
+```
+
+腳本預設輸出到 `build/devm-license-fixture/`。它不會把 private key 或 license key 印到 console，也不會修改 repo 內的 production key/config。啟動本機 server：
+
+```bash
+build/devm-license-fixture/start_server.sh
+```
+
+將產生的 `license_provider.json` 傳給 Godot 的 `LicenseProvider.configure_from_path()`，再以 `license.key` 的內容呼叫 `activate()`：
+
+```gdscript
+var provider := preload("res://common/license/license_provider.gd").new()
+add_child(provider)
+assert(provider.configure_from_path("/absolute/path/to/build/devm-license-fixture/license_provider.json").ok)
+var license_key := FileAccess.get_file_as_string("/absolute/path/to/build/devm-license-fixture/license.key").strip_edges()
+var activation := await provider.activate(license_key)
+assert(activation.ok)
+assert(provider.get_snapshot().status == "online_valid")
+```
+
+測試斷網 grace 時，先保留 Godot 的 state file，再停止 `start_server.sh`；provider 應回報 `offline_grace_valid`。fixture 的 private key、license key、database 都只存在 `build/devm-license-fixture/`，測試完成後刪除整個目錄：
+
+```bash
+rm -rf build/devm-license-fixture
+```
+
+這是 DEV-M 整合測試資料，不是 production 金鑰流程；production private key 仍必須由外部 secret store 管理。
