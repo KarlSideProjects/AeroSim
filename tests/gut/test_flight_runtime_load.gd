@@ -4,6 +4,8 @@ const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const CollisionProbeBody = preload("res://common/flight/collision_probe_body.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
+const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
 
 
 class FakeNative:
@@ -54,6 +56,45 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
     var runtime_script := load("res://common/flight/flight_runtime.gd")
 
     assert_not_null(runtime_script)
+
+
+func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var upper: Object = ClassDB.instantiate("AeroSimNative")
+    var lower: Object = ClassDB.instantiate("AeroSimNative")
+    assert_not_null(upper)
+    assert_not_null(lower)
+    if upper == null or lower == null:
+        return
+    var per_motor := {
+        "inertia_frd": Vector3(0.01, 0.01, 0.02),
+        "position_frd": [Vector3(-0.1, 0.1, 0.0), Vector3(0.1, 0.1, 0.0), Vector3(-0.1, -0.1, 0.0), Vector3(0.1, -0.1, 0.0)],
+        "spin_direction": [1.0, -1.0, -1.0, 1.0],
+        "max_thrust_per_motor_newtons": 1.0,
+        "max_current_per_motor_a": 1.0,
+        "yaw_torque_per_newton": 0.01,
+    }
+    for vehicle in [upper, lower]:
+        assert_true(bool(vehicle.call("set_hardware_mass_kg", 1.0)))
+        assert_true(bool(vehicle.call("set_hardware_power_model", 4.0, 0.5, 0.03, 22.2, 6.0, 0.003, 4.0)))
+        assert_true(bool(vehicle.call("set_hardware_telemetry_model", 10000.0, 1000.0)))
+        assert_true(bool(vehicle.call("set_hardware_per_motor_model", per_motor)))
+    runtime.native = upper
+    runtime._airsim_secondary_native = lower
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime.airsim_session = AirSimSession.new(240)
+
+    runtime._begin_complete_replay_recording({"SettingsVersion": 1.2, "SimMode": "Multirotor"})
+    assert_true(runtime._replay_recording_active)
+    runtime._record_replay_command("DroneA", {"mode": "ANGLE", "throttle": 0.0, "roll": 0.0, "pitch": 0.0, "yaw_rate": 0.0, "altitude_m": 0.0}, 0)
+    runtime._record_replay_command("DroneB", {"mode": "ANGLE", "throttle": 0.0, "roll": 0.0, "pitch": 0.0, "yaw_rate": 0.0, "altitude_m": 0.0}, 0)
+    var finish: Dictionary = runtime._finish_complete_replay_recording("gut-runtime")
+    assert_true(bool(finish.get("ok", false)))
+    var replay: Dictionary = runtime.replay_complete_session(
+            String(finish.get("serialized", "")), runtime._replay_settings_manifest_hash,
+            runtime._replay_upper_config_manifest_hash, runtime._replay_lower_config_manifest_hash)
+    assert_true(bool(replay.get("ok", false)), "runtime replay failed: %s" % replay)
 
 
 func test_runtime_rejects_more_than_two_named_vehicles_before_dashboard_setup() -> void:

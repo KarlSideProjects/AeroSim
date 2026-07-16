@@ -634,8 +634,7 @@ func replay_complete_session(serialized: String, expected_settings_manifest_hash
     var expected_vehicle_hashes := [expected_upper_config_manifest_hash, expected_lower_config_manifest_hash]
     for index in 2:
         var vehicle: Dictionary = parsed_vehicles[index]
-        var config: Dictionary = vehicle.get("config", {})
-        if _replay_manifest_hash(JSON.stringify(config)) != String(expected_vehicle_hashes[index]):
+        if String(vehicle.get("config_manifest_hash", "")) != String(expected_vehicle_hashes[index]):
             return {"ok": false, "error": "replay vehicle config manifest integrity check failed"}
     for event in parsed.events:
         if typeof(event) != TYPE_DICTIONARY:
