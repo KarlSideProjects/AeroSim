@@ -790,6 +790,7 @@ func open_map_menu() -> void:
         presets.add_child(button)
     var environment_controls := VBoxContainer.new()
     environment_controls.name = "EnvironmentControls"
+    environment_controls.position = Vector2(240.0, 0.0)
     layer.add_child(environment_controls)
     _add_environment_slider(environment_controls, "Rain", "rain", 0.0, 1.0, 0.05)
     _add_environment_slider(environment_controls, "Fog", "fog", 0.0, 1.0, 0.05)
