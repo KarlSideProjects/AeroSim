@@ -430,9 +430,9 @@ func dispatch(request: Array) -> Array:
         "reset":
             if not params.is_empty():
                 return _error_response(message_id, "reset expects no parameters")
-            session.reset()
             if _replay_simulation_handler.is_valid():
                 _replay_simulation_handler.call(4, 0.0)
+            session.reset()
             if reset_handler.is_valid():
                 reset_handler.call()
             reset_vehicle_control_state()

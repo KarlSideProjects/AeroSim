@@ -90,6 +90,10 @@ public:
             const godot::String &expected_lower_config_manifest_hash,
             const godot::Dictionary &upper_config_manifest,
             const godot::Dictionary &lower_config_manifest);
+    godot::Dictionary compare_complete_replay_sessions(
+            const godot::String &expected_serialized,
+            const godot::String &actual_serialized,
+            const godot::String &expected_settings_manifest_hash);
     godot::Dictionary replay_vehicle_config_manifest() const;
     godot::Dictionary begin_complete_replay_recording(
             std::int64_t seed,

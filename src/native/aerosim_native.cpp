@@ -206,6 +206,9 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("replay_complete_session", "serialized", "expected_settings_manifest_hash", "expected_upper_config_manifest_hash", "expected_lower_config_manifest_hash", "upper_config_manifest", "lower_config_manifest"),
             &AeroSimNative::replay_complete_session);
     ClassDB::bind_method(
+            D_METHOD("compare_complete_replay_sessions", "expected_serialized", "actual_serialized", "expected_settings_manifest_hash"),
+            &AeroSimNative::compare_complete_replay_sessions);
+    ClassDB::bind_method(
             D_METHOD("replay_vehicle_config_manifest"),
             &AeroSimNative::replay_vehicle_config_manifest);
     ClassDB::bind_method(
@@ -556,6 +559,35 @@ Dictionary AeroSimNative::replay_complete_session(
         result["scene_object_count"] = static_cast<std::int64_t>(run.scene_objects.size());
         result["environment_json"] = String(run.environment_json.c_str());
     }
+    return result;
+}
+
+Dictionary AeroSimNative::compare_complete_replay_sessions(
+        const String &expected_serialized,
+        const String &actual_serialized,
+        const String &expected_settings_manifest_hash) {
+    Dictionary result;
+    const aerosim::ReplayLoadResult expected = aerosim::load_replay_session(
+            std::string(expected_serialized.utf8().get_data()),
+            std::string(expected_settings_manifest_hash.utf8().get_data()));
+    if (!expected.ok) {
+        return replay_status(false, &expected.diagnostic);
+    }
+    const aerosim::ReplayLoadResult actual = aerosim::load_replay_session(
+            std::string(actual_serialized.utf8().get_data()),
+            std::string(expected_settings_manifest_hash.utf8().get_data()));
+    if (!actual.ok) {
+        return replay_status(false, &actual.diagnostic);
+    }
+    const aerosim::ReplayDivergence divergence = aerosim::compare_replay_sessions(expected.session, actual.session);
+    result["ok"] = true;
+    result["diverged"] = divergence.diverged;
+    result["timestamp_us"] = static_cast<std::int64_t>(divergence.timestamp_us);
+    result["vehicle_name"] = String(divergence.vehicle_name.c_str());
+    result["field"] = String(divergence.field.c_str());
+    result["expected"] = String(divergence.expected.c_str());
+    result["actual"] = String(divergence.actual.c_str());
+    result["tolerance"] = divergence.tolerance;
     return result;
 }
 

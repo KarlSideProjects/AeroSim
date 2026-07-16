@@ -55,6 +55,12 @@ func _initialize() -> void:
     if not bool(replay.get("ok", false)) or int(replay.get("scene_object_count", 0)) != 1 or String(replay.get("environment_json", "")).find("rain") < 0:
         _fail("native replay failed: %s" % String(replay.get("diagnostic_message", "unknown")))
         return
+    var altered_serialized: String = finish.serialized.replace("\"throttle\":0.55", "\"throttle\":0.65")
+    var divergence: Dictionary = native.call(
+        "compare_complete_replay_sessions", finish.serialized, altered_serialized, SETTINGS_HASH)
+    if not bool(divergence.get("ok", false)) or not bool(divergence.get("diverged", false)) or String(divergence.get("field", "")) != "command.throttle":
+        _fail("replay divergence report failed: %s" % String(divergence.get("diagnostic_message", "unknown")))
+        return
     _pass()
 
 
