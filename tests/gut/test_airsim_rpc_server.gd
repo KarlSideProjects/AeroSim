@@ -34,8 +34,8 @@ func _test_cancel(_name: String) -> void:
     pass
 
 
-func _test_sensor(sensor_type: int, sensor_name: String, _vehicle_name: String) -> Dictionary:
-    return {"ok": true, "sensor": {"sensor_type": sensor_type, "sensor_name": sensor_name, "time_stamp": 42}}
+func _test_sensor(sensor_type: int, sensor_name: String, vehicle_name: String) -> Dictionary:
+    return {"ok": true, "sensor": {"sensor_type": sensor_type, "sensor_name": sensor_name, "time_stamp": 42, "aerosim_identity": {"vehicle_name": vehicle_name}}}
 
 
 func _test_state(_name: String) -> Dictionary:
@@ -208,6 +208,8 @@ func test_sim_get_images_preserves_request_order_and_encoding_contract() -> void
     assert_true(response[3][0]["image_data_uint8"] is PackedByteArray)
     assert_true(response[3][1]["image_data_float"] is PackedFloat32Array)
     assert_eq(response[3][2]["compress"], false)
+    for item in response[3]:
+        assert_false(item.has("aerosim_identity"))
 
 
 func test_sim_get_images_rejects_unsupported_types_and_bad_requests() -> void:
@@ -226,7 +228,7 @@ func test_sim_get_images_rejects_unsupported_types_and_bad_requests() -> void:
 
 
 class FakeCameraSurface extends RefCounted:
-    func capture(requests: Array, _vehicle_name: String, _external: bool) -> Dictionary:
+    func capture(requests: Array, vehicle_name: String, _external: bool) -> Dictionary:
         if requests.size() == 0:
             return {"ok": true, "responses": []}
         if typeof(requests[0]) != TYPE_DICTIONARY:
@@ -250,6 +252,7 @@ class FakeCameraSurface extends RefCounted:
                 "width": 1,
                 "height": 1,
                 "image_type": image_type,
+                "aerosim_identity": {"vehicle_name": vehicle_name},
             }
             responses.append(item)
         return {"ok": true, "responses": responses}
@@ -416,6 +419,7 @@ func test_baseline_sensor_methods_preserve_pinned_client_payload_dispatch() -> v
         assert_eq(response[0], 1)
         assert_eq(response[2], null)
         assert_eq(response[3]["sensor_type"], request[1])
+        assert_false(response[3].has("aerosim_identity"))
 
     var invalid: Array = server.dispatch([0, 70, "getImuData", ["only-one-argument"]])
     assert_string_contains(invalid[2], "sensor_name and vehicle_name")

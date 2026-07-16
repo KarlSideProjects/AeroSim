@@ -603,7 +603,9 @@ func _dispatch_sensor(message_id, params: Array, sensor_type: int, method: Strin
     var result = _sensor_handler.call(sensor_type, String(params[0]), String(vehicle.name))
     if typeof(result) != TYPE_DICTIONARY or not bool(result.get("ok", false)):
         return _error_response(message_id, String(result.get("error", "sensor backend rejected the request")) if typeof(result) == TYPE_DICTIONARY else "sensor backend returned an invalid result")
-    return _success_response(message_id, result["sensor"].duplicate(true))
+    var public_sensor: Dictionary = result["sensor"].duplicate(true)
+    public_sensor.erase("aerosim_identity")
+    return _success_response(message_id, public_sensor)
 
 
 func _dispatch_images(message_id, params: Array) -> Array:
@@ -624,7 +626,12 @@ func _dispatch_images(message_id, params: Array) -> Array:
     var responses = result.get("responses", [])
     if typeof(responses) != TYPE_ARRAY:
         return _error_response(message_id, "camera backend returned invalid image responses")
-    return _success_response(message_id, responses)
+    var public_responses: Array = []
+    for response in responses:
+        var public_response: Dictionary = response.duplicate(true)
+        public_response.erase("aerosim_identity")
+        public_responses.append(public_response)
+    return _success_response(message_id, public_responses)
 
 
 func _state_for_vehicle(name: String) -> Dictionary:
