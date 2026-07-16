@@ -648,6 +648,61 @@ func _replay_json_safe(value: Variant) -> Variant:
     return value
 
 
+func _validate_replay_world_events(events: Array) -> Dictionary:
+    for event in events:
+        if typeof(event) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "replay event is malformed"}
+        match String(event.get("type", "")):
+            "scene_object":
+                var position_values: Variant = event.get("position", [])
+                var orientation_values: Variant = event.get("orientation", [])
+                var operation := String(event.get("operation", ""))
+                if typeof(position_values) != TYPE_ARRAY or typeof(orientation_values) != TYPE_ARRAY or position_values.size() != 3 or orientation_values.size() != 4 or scene_object_catalog == null:
+                    return {"ok": false, "error": "replay scene object transform is malformed"}
+                if operation not in ["spawn", "move", "destroy", "reset"]:
+                    return {"ok": false, "error": "unsupported replay scene operation"}
+            "environment":
+                if typeof(event.get("state", {})) != TYPE_DICTIONARY:
+                    return {"ok": false, "error": "replay environment state is malformed"}
+            "simulation_time":
+                if String(event.get("operation", "")) not in ["pause", "resume", "step", "reset", "respawn"]:
+                    return {"ok": false, "error": "unsupported replay simulation operation"}
+    return {"ok": true}
+
+
+func _apply_replay_world_events(events: Array) -> Dictionary:
+    for event in events:
+        match String(event.get("type", "")):
+            "scene_object":
+                var position_values: Array = event.get("position", [])
+                var orientation_values: Array = event.get("orientation", [])
+                var position := Vector3(float(position_values[0]), float(position_values[1]), float(position_values[2]))
+                var orientation := Quaternion(float(orientation_values[0]), float(orientation_values[1]), float(orientation_values[2]), float(orientation_values[3]))
+                var operation := String(event.get("operation", ""))
+                var world_result: Dictionary
+                if operation == "spawn":
+                    world_result = scene_object_catalog.create_named(String(event.get("name", "")), String(event.get("asset_id", "")), position, orientation)
+                elif operation == "move":
+                    world_result = scene_object_catalog.move_named(String(event.get("name", "")), position, orientation)
+                elif operation == "destroy":
+                    world_result = scene_object_catalog.destroy_named(String(event.get("name", "")))
+                else:
+                    scene_object_catalog.reset()
+                    world_result = {"ok": true}
+                if not bool(world_result.get("ok", false)):
+                    return {"ok": false, "error": String(world_result.get("error", "replay scene application failed"))}
+            "environment":
+                var environment_result := _airsim_environment("simSetEnvironment", [event.get("state", {})])
+                if not bool(environment_result.get("ok", false)):
+                    return environment_result
+            "simulation_time":
+                if String(event.get("operation", "")) in ["reset", "respawn"]:
+                    scene_object_catalog.reset()
+                    if environment_state != null:
+                        _apply_environment_result(environment_state.reset())
+    return {"ok": true}
+
+
 func replay_complete_session(serialized: String, expected_settings_manifest_hash: String, expected_upper_config_manifest_hash: String, expected_lower_config_manifest_hash: String) -> Dictionary:
     if native == null or not native.has_method("replay_complete_session"):
         return {"ok": false, "error": "native replay runtime is unavailable"}
@@ -667,45 +722,14 @@ func replay_complete_session(serialized: String, expected_settings_manifest_hash
         var vehicle: Dictionary = parsed_vehicles[index]
         if String(vehicle.get("name", "")) != String(_airsim_vehicle_names[index]):
             return {"ok": false, "error": "replay vehicle identity does not match runtime slot"}
+        if typeof(vehicle.get("config", null)) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "replay vehicle config manifest is malformed"}
         var config: Dictionary = vehicle.get("config", {})
         if String(vehicle.get("config_manifest_hash", "")) != String(expected_vehicle_hashes[index]) or _replay_manifest_hash(_replay_canonical_json(config)) != String(expected_vehicle_hashes[index]):
             return {"ok": false, "error": "replay vehicle config manifest integrity check failed"}
-    for event in parsed.events:
-        if typeof(event) != TYPE_DICTIONARY:
-            return {"ok": false, "error": "replay event is malformed"}
-        match String(event.get("type", "")):
-            "scene_object":
-                var position_values: Array = event.get("position", [])
-                var orientation_values: Array = event.get("orientation", [])
-                if position_values.size() != 3 or orientation_values.size() != 4 or scene_object_catalog == null:
-                    return {"ok": false, "error": "replay scene object transform is malformed"}
-                var position := Vector3(float(position_values[0]), float(position_values[1]), float(position_values[2]))
-                var orientation := Quaternion(float(orientation_values[0]), float(orientation_values[1]), float(orientation_values[2]), float(orientation_values[3]))
-                var operation := String(event.get("operation", ""))
-                var world_result: Dictionary
-                if operation == "spawn":
-                    world_result = scene_object_catalog.create_named(String(event.get("name", "")), String(event.get("asset_id", "")), position, orientation)
-                elif operation == "move":
-                    world_result = scene_object_catalog.move_named(String(event.get("name", "")), position, orientation)
-                elif operation == "destroy":
-                    world_result = scene_object_catalog.destroy_named(String(event.get("name", "")))
-                elif operation == "reset":
-                    scene_object_catalog.reset()
-                    world_result = {"ok": true}
-                else:
-                    return {"ok": false, "error": "unsupported replay scene operation"}
-                if not bool(world_result.get("ok", false)):
-                    return {"ok": false, "error": String(world_result.get("error", "replay scene application failed"))}
-            "environment":
-                var environment_result := _airsim_environment("simSetEnvironment", [event.get("state", {})])
-                if not bool(environment_result.get("ok", false)):
-                    return environment_result
-            "simulation_time":
-                if String(event.get("operation", "")) in ["reset", "respawn"]:
-                    if scene_object_catalog != null:
-                        scene_object_catalog.reset()
-                    if environment_state != null:
-                        _apply_environment_result(environment_state.reset())
+    var world_validation := _validate_replay_world_events(parsed.events)
+    if not bool(world_validation.get("ok", false)):
+        return world_validation
     var native_result: Dictionary = native.call(
         "replay_complete_session", serialized, expected_settings_manifest_hash,
         expected_upper_config_manifest_hash, expected_lower_config_manifest_hash,
@@ -713,6 +737,9 @@ func replay_complete_session(serialized: String, expected_settings_manifest_hash
         _airsim_secondary_native.call("replay_vehicle_config_manifest") if _airsim_secondary_native != null else {})
     if not bool(native_result.get("ok", false)):
         return native_result
+    var world_result := _apply_replay_world_events(parsed.events)
+    if not bool(world_result.get("ok", false)):
+        return world_result
     native_result["world_applied"] = true
     return native_result
 
