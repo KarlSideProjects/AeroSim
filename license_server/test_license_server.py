@@ -7,6 +7,7 @@ import uuid
 from http import client
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 import jwt
 from cryptography.hazmat.primitives import serialization
@@ -49,7 +50,7 @@ class ApiClient:
 
     def post(self, path, payload):
         body = json.dumps(payload).encode()
-        return self.raw_post(path, body, {"Content-Length": str(len(body))})
+        return self.raw_post(path, body, {"Content-Length": str(len(body)), "Content-Type": "application/json"})
 
     def raw_post(self, path, body=b"", headers=None):
         connection = client.HTTPConnection(*self.base_url)
@@ -60,7 +61,8 @@ class ApiClient:
         if body:
             connection.send(body)
         response = connection.getresponse()
-        result = response.status, json.loads(response.read())
+        payload = response.read()
+        result = response.status, json.loads(payload) if payload else None
         connection.close()
         return result
 
@@ -112,6 +114,24 @@ class LicenseServerApiTest(unittest.TestCase):
         self.assertNotIn("rig-42", json.dumps(payload))
         self.assertEqual(read_jwt(token, self.private_key, {KID}, now=now), payload)
 
+    def test_future_iat_allows_five_minutes_but_not_more(self):
+        now = 1_700_000_000
+        claims = {
+            "iss": ISSUER,
+            "aud": AUDIENCE,
+            "sub": "00000000-0000-4000-8000-000000000001",
+            "jti": "00000000-0000-4000-8000-000000000002",
+            "iat": now + 300,
+            "exp": now + 300 + TOKEN_TTL_SECONDS,
+        }
+        token = jwt.encode(claims, self.private_key, algorithm="RS256", headers={"typ": "aerosim-license+jwt", "kid": KID})
+        self.assertEqual(read_jwt(token, self.private_key, {KID}, now=now), claims)
+        claims["iat"] += 1
+        claims["exp"] += 1
+        token = jwt.encode(claims, self.private_key, algorithm="RS256", headers={"typ": "aerosim-license+jwt", "kid": KID})
+        with self.assertRaises(ValueError):
+            read_jwt(token, self.private_key, {KID}, now=now)
+
     def test_unknown_kid_is_rejected(self):
         now = 1_700_000_000
         license_key = admin_register(Path(self.directory.name) / "licenses.sqlite3", "cust-1")
@@ -135,6 +155,22 @@ class LicenseServerApiTest(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(result, {"valid": False, "error": "invalid_token"})
         self.assertIsNotNone(license_key)
+
+    def test_active_kid_is_required_and_kid_format_is_bounded(self):
+        now = 1_700_000_000
+        claims = {
+            "iss": ISSUER,
+            "aud": AUDIENCE,
+            "sub": "00000000-0000-4000-8000-000000000001",
+            "jti": "00000000-0000-4000-8000-000000000002",
+            "iat": now,
+            "exp": now + TOKEN_TTL_SECONDS,
+        }
+        token = jwt.encode(claims, self.private_key, algorithm="RS256", headers={"typ": "aerosim-license+jwt", "kid": "other-key"})
+        with self.assertRaises(ValueError):
+            read_jwt(token, self.private_key, {KID, "other-key"}, now=now, active_kid=KID)
+        with self.assertRaises(ValueError):
+            make_server(("127.0.0.1", 0), private_key_path=self.key_path, kid="bad/kid", allowed_kids={"bad/kid"})
 
     def test_expiry_is_valid_before_boundary_and_invalid_at_boundary(self):
         now = 1_700_000_000
@@ -169,25 +205,31 @@ class LicenseServerApiTest(unittest.TestCase):
         self.assertEqual(api.post("/unknown", {})[0], 404)
         self.assertEqual(api.raw_post("/issue?admin=1", b"{}", {"Content-Length": "2"})[0], 404)
 
+    def test_request_requires_json_and_string_fields(self):
+        api = self.api()
+        self.assertEqual(api.raw_post("/issue", b"{}", {"Content-Length": "2"})[0], 415)
+        self.assertEqual(api.post("/issue", {"license_key": 42})[0], 400)
+        self.assertEqual(api.post("/verify", {"token": None})[0], 400)
+
     def test_request_requires_explicit_content_length_and_rejects_chunked(self):
         api = self.api()
 
-        self.assertEqual(api.raw_post("/issue", b"{}", {})[0], 411)
-        self.assertEqual(api.raw_post("/issue", b"{}", {"Transfer-Encoding": "chunked"})[0], 400)
+        self.assertEqual(api.raw_post("/issue", b"{}", {"Content-Type": "application/json"})[0], 411)
+        self.assertEqual(api.raw_post("/issue", b"{}", {"Content-Type": "application/json", "Transfer-Encoding": "chunked"})[0], 400)
 
     def test_request_rejects_malformed_and_oversized_content_length(self):
         api = self.api()
 
-        self.assertEqual(api.raw_post("/issue", b"{}", {"Content-Length": "bad"})[0], 400)
-        self.assertEqual(api.raw_post("/issue", b"{", {"Content-Length": "1"})[0], 400)
-        self.assertEqual(api.raw_post("/issue", b"{}", {"Content-Length": str(MAX_BODY_BYTES + 1)})[0], 413)
+        self.assertEqual(api.raw_post("/issue", b"{}", {"Content-Type": "application/json", "Content-Length": "bad"})[0], 400)
+        self.assertEqual(api.raw_post("/issue", b"{", {"Content-Type": "application/json", "Content-Length": "1"})[0], 400)
+        self.assertEqual(api.raw_post("/issue", b"{}", {"Content-Type": "application/json", "Content-Length": str(MAX_BODY_BYTES + 1)})[0], 413)
 
     def test_request_rejects_oversized_json_body(self):
         api = self.api()
         body = b"{" + b"\"x\":" + b"\"a\"" * MAX_BODY_BYTES + b"}"
 
         self.assertEqual(len(body) > MAX_BODY_BYTES, True)
-        self.assertEqual(api.raw_post("/issue", body, {"Content-Length": str(len(body))})[0], 413)
+        self.assertEqual(api.raw_post("/issue", body, {"Content-Type": "application/json", "Content-Length": str(len(body))})[0], 413)
 
     def test_bad_key_configuration_fails_closed(self):
         with self.assertRaises(ValueError):
@@ -207,17 +249,22 @@ class LicenseServerApiTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             make_server(("127.0.0.1", 0), private_key_path=self.key_path, kid=KID, allowed_kids=set())
+        for host in ("0.0.0.0", "192.0.2.10", "localhost"):
+            with self.assertRaises(ValueError):
+                make_server((host, 0), private_key_path=self.key_path, kid=KID, allowed_kids={KID})
 
     def test_admin_cli_registers_and_revokes_without_network_routes(self):
         db_path = Path(self.directory.name) / "admin.sqlite3"
+        key_path = Path(self.directory.name) / "license.key"
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            self.assertEqual(admin_main(["--db", str(db_path), "register", "--customer-id", "cust-5"]), 0)
-        license_key = json.loads(output.getvalue())["license_key"]
+            self.assertEqual(admin_main(["--db", str(db_path), "register", "--customer-id", "cust-5", "--output", str(key_path)]), 0)
+        license_key = key_path.read_text()
+        self.assertNotIn(license_key, output.getvalue())
 
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            self.assertEqual(admin_main(["--db", str(db_path), "revoke", "--license-key", license_key]), 0)
+        with contextlib.redirect_stdout(output), mock.patch("sys.stdin", io.StringIO(license_key)):
+            self.assertEqual(admin_main(["--db", str(db_path), "revoke"]), 0)
         self.assertEqual(json.loads(output.getvalue()), {"revoked": True})
 
 

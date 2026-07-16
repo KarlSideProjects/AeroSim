@@ -1,5 +1,7 @@
 import argparse
+import ipaddress
 import json
+import re
 import sqlite3
 import sys
 import time
@@ -17,6 +19,7 @@ ISSUER = "urn:aerosim:license-server"
 AUDIENCE = "urn:aerosim:ubuntu-client"
 JWT_HEADER = {"alg": "RS256", "typ": "aerosim-license+jwt"}
 CLAIMS = {"iss", "aud", "sub", "jti", "iat", "exp"}
+KID_RE = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
 
 
 def _load_private_key(path):
@@ -36,7 +39,7 @@ def _allowed_kids(kids):
         result = frozenset(kids)
     except TypeError as error:
         raise ValueError("kid allowlist is required") from error
-    if not result or any(not isinstance(kid, str) or not kid for kid in result):
+    if not result or any(not isinstance(kid, str) or not KID_RE.fullmatch(kid) for kid in result):
         raise ValueError("kid allowlist is required")
     return result
 
@@ -59,14 +62,15 @@ def sign_jwt(claims, private_key, kid):
     )
 
 
-def read_jwt(token, private_key, allowed_kids, now=None):
+def read_jwt(token, private_key, allowed_kids, now=None, active_kid=None):
     try:
         header = jwt.get_unverified_header(token)
         if set(header) != {"alg", "typ", "kid"}:
             raise ValueError("invalid token")
         if header["alg"] != JWT_HEADER["alg"] or header["typ"] != JWT_HEADER["typ"]:
             raise ValueError("invalid token")
-        if header["kid"] not in _allowed_kids(allowed_kids):
+        allowed_kids = _allowed_kids(allowed_kids)
+        if header["kid"] not in allowed_kids or (active_kid is not None and header["kid"] != active_kid):
             raise ValueError("invalid token")
         claims = jwt.decode(
             token,
@@ -87,7 +91,7 @@ def read_jwt(token, private_key, allowed_kids, now=None):
         _uuid_claim(claims["sub"])
         _uuid_claim(claims["jti"])
         current_time = int(time.time() if now is None else now)
-        if claims["iat"] > current_time or current_time >= claims["exp"]:
+        if claims["iat"] > current_time + 300 or current_time >= claims["exp"]:
             raise ValueError("invalid token")
         return claims
     except (jwt.InvalidTokenError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
@@ -259,8 +263,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": str(error)})
 
     def issue(self, body):
+        license_key = self._required_string(body, "license_key")
         try:
-            token = self.server.token_for(body["license_key"])
+            token = self.server.token_for(license_key)
         except ValueError as error:
             if str(error) == "revoked":
                 self.send_json(403, {"error": "revoked"})
@@ -269,12 +274,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"token": token})
 
     def verify(self, body):
+        token = self._required_string(body, "token")
         try:
             claims = read_jwt(
-                body["token"],
+                token,
                 self.server.public_key,
                 self.server.allowed_kids,
                 now=self.server.clock(),
+                active_kid=self.server.kid,
             )
         except (KeyError, ValueError):
             self.send_json(401, {"valid": False, "error": "invalid_token"})
@@ -289,6 +296,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(200, {"valid": True, "token": self.server.token_for_subject(claims["sub"])})
 
     def read_json(self):
+        if self.headers.get("Content-Type") != "application/json":
+            raise RequestError(415, "unsupported_media_type")
         transfer_encoding = self.headers.get("Transfer-Encoding")
         if transfer_encoding:
             raise RequestError(400, "bad_request")
@@ -306,6 +315,13 @@ class Handler(BaseHTTPRequestHandler):
             raise RequestError(400, "bad_request")
         value = json.loads(body)
         if not isinstance(value, dict):
+            raise RequestError(400, "bad_request")
+        return value
+
+    @staticmethod
+    def _required_string(body, field):
+        value = body.get(field)
+        if not isinstance(value, str) or not value:
             raise RequestError(400, "bad_request")
         return value
 
@@ -329,6 +345,13 @@ def make_server(
     clock=time.time,
     db_path=":memory:",
 ):
+    host = address[0]
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError as error:
+        raise ValueError("cleartext server must bind to numeric loopback") from error
+    if not is_loopback:
+        raise ValueError("cleartext server must bind to numeric loopback")
     return LicenseServer(address, private_key_path, kid, allowed_kids, clock, db_path)
 
 
