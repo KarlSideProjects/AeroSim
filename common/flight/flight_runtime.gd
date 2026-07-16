@@ -721,7 +721,7 @@ func _physics_process(delta: float) -> void:
 func _advance_airsim_sensors() -> void:
     if airsim_sensor_suite == null or airsim_session == null:
         return
-    var names := _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name]
+    var names: Array = _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name]
     for name in names:
         var sensor_state := _airsim_state(String(name))
         if bool(sensor_state.get("ok", false)):
