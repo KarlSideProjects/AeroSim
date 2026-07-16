@@ -2,15 +2,7 @@ extends GutTest
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
-const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
-
-var rates_test_path := "user://aerosim-rates-runtime-test.json"
-
-
-func after_each() -> void:
-    DirAccess.remove_absolute(rates_test_path)
-    DirAccess.remove_absolute("%s.tmp" % rates_test_path)
 
 
 class FakeNative:
@@ -35,6 +27,28 @@ class FakeDeviceState:
         return "Xbox Controller"
 
 
+class RecoverySettingsStore:
+    extends RefCounted
+
+    var save_called := false
+    var retained_document := {
+        "schema_version": 1,
+        "confirmed_gamepad": null,
+        "rates": null,
+        "osd": null,
+        "camera": null,
+        "language": {"locale": "en"},
+        "quality": null,
+    }
+
+    func load_document() -> Dictionary:
+        return {"ok": false, "error": "settings recovery required", "document": retained_document, "recovered": true}
+
+    func save_document(_candidate: Dictionary) -> Dictionary:
+        save_called = true
+        return {"ok": true, "error": "", "document": retained_document}
+
+
 func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() -> void:
     var runtime_script := load("res://common/flight/flight_runtime.gd")
 
@@ -42,18 +56,18 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
 
 
 func test_rates_save_does_not_overwrite_settings_when_load_recovers() -> void:
-    var malformed := FileAccess.open(rates_test_path, FileAccess.WRITE)
-    malformed.store_string("{not-json")
-    malformed.close()
-
     var runtime_script := load("res://common/flight/flight_runtime.gd")
     var runtime = runtime_script.new()
-    runtime.settings_store = SettingsStoreScript.new(rates_test_path)
+    var recovery_store := RecoverySettingsStore.new()
+    runtime.settings_store = recovery_store
 
     var result: Dictionary = runtime._save_rates_profile(RatesProfile.default_profile())
 
     assert_false(result.ok)
     assert_string_contains(result.error, "unavailable")
+    assert_false(recovery_store.save_called)
+    assert_eq(recovery_store.retained_document.language.locale, "en")
+    assert_null(recovery_store.retained_document.rates)
     runtime.free()
 
 

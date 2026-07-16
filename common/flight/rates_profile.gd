@@ -58,7 +58,10 @@ static func to_json(profile: Dictionary) -> String:
 
 
 static func from_json(encoded: String) -> Dictionary:
-    var parsed = JSON.parse_string(encoded)
+    var parser := JSON.new()
+    if parser.parse(encoded) != OK:
+        return {"ok": false, "error": "rates JSON is malformed"}
+    var parsed = parser.data
     var result := validate_profile(parsed)
     if not result.ok:
         return result

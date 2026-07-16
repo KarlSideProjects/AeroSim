@@ -83,8 +83,10 @@ func _run() -> void:
 	_expect(runtime.screen == "rates", "Rates entry opens Rates")
 	_expect(runtime.rates_panel != null and runtime.rates_panel.is_visible_in_tree(), "Rates panel is visible")
 	_expect(runtime.rates_json_editor != null and runtime.rates_json_editor.text.contains("rc_rate"), "Rates panel exposes JSON editor")
+	var export_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/ExportJson")
 	var import_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/ImportJson")
-	_expect(import_button != null, "Rates panel exposes JSON import")
+	var reset_rates_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/ResetDefaults")
+	_expect(export_button != null and import_button != null and reset_rates_button != null, "Rates panel exposes JSON export, import, and reset")
 	if runtime.rates_json_editor != null:
 		runtime.rates_json_editor.text = JSON.stringify({
 			"schema_version": 1,
@@ -92,6 +94,8 @@ func _run() -> void:
 			"super_rate": 0.72,
 			"expo": 0.25,
 		})
+	await _settle(1)
+	_expect(runtime.rates_diff_label.text.contains("CURRENT vs BETAFLIGHT IMPORTED"), "Rates panel shows current-vs-Betaflight diff")
 	if import_button != null:
 		var rates_scroll: ScrollContainer = runtime.get_node("MainMenu/RatesPanel/Scroll")
 		rates_scroll.scroll_vertical = rates_scroll.get_v_scroll_bar().max_value
@@ -103,6 +107,18 @@ func _run() -> void:
 	var persisted_rates: Dictionary = runtime.settings_store.load_document()
 	var persisted_rate_values = persisted_rates.document.get("rates") if persisted_rates.ok else null
 	_expect(persisted_rates.ok and typeof(persisted_rate_values) == TYPE_DICTIONARY and absf(float(persisted_rate_values.get("rc_rate", 0.0)) - 1.15) <= 0.000001, "Rates JSON import persists through SettingsStore")
+	if export_button != null:
+		export_button.pressed.emit()
+	_expect(runtime.rates_json_editor.text.contains("1.15"), "Rates panel exports the current JSON")
+	var retained_rc_rate := float(runtime.rates_profile.get("rc_rate", 0.0))
+	if runtime.rates_json_editor != null:
+		runtime.rates_json_editor.text = "{invalid-json"
+	if import_button != null:
+		import_button.pressed.emit()
+	_expect(runtime.rates_status_label.text.contains("Import rejected") and absf(float(runtime.rates_profile.get("rc_rate", 0.0)) - retained_rc_rate) <= 0.000001, "Invalid rates import is rejected without applying")
+	if reset_rates_button != null:
+		reset_rates_button.pressed.emit()
+	_expect(absf(float(runtime.rates_profile.get("rc_rate", 0.0)) - 1.0) <= 0.000001, "Rates reset restores defaults")
 	var rates_back_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/Back")
 	if rates_back_button != null:
 		runtime.show_settings()

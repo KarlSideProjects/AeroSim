@@ -452,7 +452,12 @@ func _verify_flight_control_public_path(native: Object) -> bool:
     if absf(preview_rate - 360.0) > 0.5:
         push_error("Betaflight public forward/inverse rates bindings must round-trip")
         return false
-    if float(native.call("betaflight_rate_for_stick", 0.5, 1.0, 1.1, 0.0)) != 0.0:
+    if (
+            float(native.call("betaflight_rate_for_stick", 0.5, 3.1, 0.7, 0.0)) != 0.0 or
+            float(native.call("betaflight_rate_for_stick", 0.5, 1.0, 1.1, 0.0)) != 0.0 or
+            float(native.call("betaflight_rate_for_stick", 0.5, 1.0, 0.7, 1.1)) != 0.0 or
+            float(native.call("betaflight_rate_for_stick", NAN, 1.0, 0.7, 0.0)) != 0.0
+        ):
         push_error("Betaflight public forward rates binding must reject out-of-range profiles")
         return false
 
