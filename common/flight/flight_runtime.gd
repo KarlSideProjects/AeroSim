@@ -71,6 +71,7 @@ var flight_mode := "ANGLE"
 var acro_roll_stick := 0.0
 var acro_pitch_stick := 0.0
 var acro_yaw_stick := 0.0
+var dashboard_layout_mode := "compact"
 var status_diagram: CanvasLayer
 var main_menu_layer: CanvasLayer
 var main_menu_entries_container: VBoxContainer
@@ -2248,6 +2249,16 @@ func _build_status_diagram() -> void:
     status_diagram = StatusDiagramDebug.new()
     status_diagram.connect("vehicle_selected", Callable(self, "_on_dashboard_vehicle_selected"))
     add_child(status_diagram)
+    status_diagram.call("set_layout_mode", dashboard_layout_mode)
+
+
+func set_dashboard_layout_mode(mode: String) -> bool:
+    if mode not in ["compact", "full"]:
+        return false
+    dashboard_layout_mode = mode
+    if status_diagram != null:
+        status_diagram.call("set_layout_mode", mode)
+    return true
 
 
 func _on_dashboard_vehicle_selected(vehicle_name: String) -> void:
@@ -2261,11 +2272,21 @@ func _update_status_diagram() -> void:
     var primary_snapshot: Dictionary = native.call("telemetry_snapshot")
     primary_snapshot["vehicle_name"] = _airsim_vehicle_name
     snapshots[_airsim_vehicle_name] = primary_snapshot
-    if _airsim_secondary_native != null and _airsim_vehicle_names.size() > 1 and _airsim_secondary_native.has_method("telemetry_snapshot"):
-        var secondary_snapshot: Dictionary = _airsim_secondary_native.call("telemetry_snapshot")
-        secondary_snapshot["vehicle_name"] = String(_airsim_vehicle_names[1])
-        snapshots[String(_airsim_vehicle_names[1])] = secondary_snapshot
-    status_diagram.call("set_vehicle_snapshots", snapshots, _dashboard_vehicle_name)
+    for vehicle_name_variant in _airsim_vehicle_names:
+        var vehicle_name := String(vehicle_name_variant)
+        if vehicle_name == _airsim_vehicle_name:
+            continue
+        if _airsim_secondary_native != null and _airsim_secondary_native.has_method("telemetry_snapshot"):
+            var secondary_snapshot: Dictionary = _airsim_secondary_native.call("telemetry_snapshot")
+            secondary_snapshot["vehicle_name"] = vehicle_name
+            snapshots[vehicle_name] = secondary_snapshot
+        else:
+            snapshots[vehicle_name] = {
+                "vehicle_name": vehicle_name,
+                "connection_state": "disconnected",
+            }
+    var now_timestamp_us := Time.get_ticks_usec()
+    status_diagram.call("set_vehicle_snapshots", snapshots, _dashboard_vehicle_name, now_timestamp_us)
     if environment_state != null and status_diagram.has_method("update_environment"):
         status_diagram.update_environment(environment_state.snapshot())
 
