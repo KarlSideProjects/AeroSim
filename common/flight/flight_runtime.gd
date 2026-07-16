@@ -3,6 +3,7 @@ extends Node3D
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
+const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
@@ -11,6 +12,8 @@ const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
 const AirSimCameraSurface = preload("res://common/rpc/airsim_camera_surface.gd")
 const AirSimCoordinateContract = preload("res://common/rpc/airsim_coordinate_contract.gd")
+const SceneObjectCatalog = preload("res://common/rpc/scene_object_catalog.gd")
+const EnvironmentState = preload("res://common/rpc/environment_state.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
 const TimeTrialController = preload("res://common/flight/time_trial.gd")
@@ -22,14 +25,11 @@ const MAP_SCENE_PATHS := {
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const TAKEOFF_VELOCITY := Vector3(0.0, 6.0, 0.0)
 const KEYBOARD_FLIGHT_THROTTLE := 0.75
-const ACRO_RC_RATE := 1.0
-const ACRO_SUPER_RATE := 13.0 / 18
-const ACRO_EXPO := 0.0
 const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
-const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   H Alt Hold   Esc Exit"
+const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   C ACRO   H Alt Hold   Esc Exit"
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
@@ -46,9 +46,12 @@ var airsim_rpc_server: AirSimRpcServer
 var airsim_sensor_suite: AirSimSensorSuite
 var px4_sitl_bridge: Px4SitlBridge
 var airsim_camera_surface: AirSimCameraSurface
+var scene_object_catalog: SceneObjectCatalog
+var environment_state: EnvironmentState
 var airsim_stop_file := ""
 var loaded_map: Node3D
 var loaded_map_id := ""
+var loaded_map_wind_preset := "calm"
 var selected_wind_preset := ""
 var time_trial: TimeTrialController
 var paused := false
@@ -72,11 +75,21 @@ var main_menu_layer: CanvasLayer
 var main_menu_entries_container: VBoxContainer
 var settings_panel: Control
 var settings_status_label: Label
+var rates_panel: Control
+var rates_status_label: Label
+var rates_json_editor: TextEdit
+var rates_diff_label: Label
+var rates_curve_line: Line2D
+var rates_curve_plot: Control
+var rates_sliders: Dictionary = {}
+var rates_slider_labels: Dictionary = {}
+var rates_return_screen := "settings"
 var controller_settings_panel: Control
 var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
+var acro_mode_button: Button
 var time_trial_status_label: Label
 var pause_panel: Control
 var finish_panel: Control
@@ -123,11 +136,13 @@ var _airsim_last_velocity := Vector3.ZERO
 var _airsim_linear_acceleration := Vector3.ZERO
 var _airsim_last_body_angular_velocity := Vector3.ZERO
 var _airsim_angular_acceleration := Vector3.ZERO
+var _airsim_environment_catalog_loaded := false
 var _px4_lockstep_sensor_pending := false
 var _airsim_collision_seen := false
 var _airsim_contact_this_frame := false
 var _airsim_collision_normal := Vector3.ZERO
 var _airsim_collision_point := Vector3.ZERO
+var rates_profile: Dictionary = RatesProfile.default_profile()
 
 func _ready() -> void:
     Input.joy_connection_changed.connect(_on_joy_connection_changed)
@@ -149,6 +164,9 @@ func _ready() -> void:
     airsim_rpc_server = AirSimRpcServer.new()
     airsim_sensor_suite = AirSimSensorSuite.new()
     airsim_camera_surface = AirSimCameraSurface.new()
+    scene_object_catalog = SceneObjectCatalog.new()
+    environment_state = EnvironmentState.new()
+    add_child(scene_object_catalog)
     add_child(airsim_camera_surface)
     airsim_rpc_server.set_session(airsim_session, Callable(self, "respawn"))
     add_child(airsim_rpc_server)
@@ -172,6 +190,8 @@ func _ready() -> void:
         Callable(self, "_airsim_task_complete")
     )
     airsim_rpc_server.set_sensor_backend(Callable(self, "_airsim_sensor"))
+    airsim_rpc_server.set_scene_environment_backend(Callable(self, "_airsim_scene_object"), Callable(self, "_airsim_environment"))
+    _load_scene_object_catalog()
     var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
     if not rpc_result.ok:
         push_error("AirSim RPC startup failed: %s" % rpc_result.error)
@@ -379,6 +399,11 @@ func _load_player_settings() -> void:
     var saved = result.document.get("confirmed_gamepad")
     if saved != null:
         persisted_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(saved)
+    var saved_rates = result.document.get("rates")
+    if saved_rates != null:
+        var rates_result: Dictionary = RatesProfile.validate_profile(saved_rates)
+        if rates_result.ok:
+            rates_profile = rates_result.profile
     if not result.ok and result.recovered:
         last_error_message = "Settings recovered to factory defaults: %s" % result.error
 
@@ -391,6 +416,21 @@ func _save_gamepad_profile(profile: InputProfiles.GamepadProfile) -> Dictionary:
     if result.ok:
         persisted_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(document["confirmed_gamepad"])
         keyboard_fallback_explicitly_selected = false
+    return result
+
+
+func _save_rates_profile(profile: Dictionary) -> Dictionary:
+    var validation: Dictionary = RatesProfile.validate_profile(profile)
+    if not validation.ok:
+        return validation
+    var loaded: Dictionary = settings_store.load_document()
+    if not loaded.ok:
+        return {"ok": false, "error": "cannot save rates while settings are unavailable: %s" % loaded.error}
+    var document: Dictionary = loaded.document
+    document["rates"] = validation.profile
+    var result: Dictionary = settings_store.save_document(document)
+    if result.ok:
+        rates_profile = validation.profile
     return result
 
 func _run_cold_start_probe() -> void:
@@ -464,6 +504,8 @@ func _unhandled_input(event: InputEvent) -> void:
         set_paused(not paused)
     elif event.is_action_pressed("flight_respawn"):
         respawn()
+    elif event.is_action_pressed("flight_acro"):
+        toggle_acro_mode()
     elif event.is_action_pressed("flight_altitude_hold"):
         toggle_altitude_hold()
     elif event.is_action_pressed("flight_exit"):
@@ -637,9 +679,9 @@ func _physics_process(delta: float) -> void:
                 acro_roll,
                 acro_pitch,
                 acro_yaw,
-                ACRO_RC_RATE,
-                ACRO_SUPER_RATE,
-                ACRO_EXPO,
+                _acro_rate("rc_rate"),
+                _acro_rate("super_rate"),
+                _acro_rate("expo"),
                 drone_body.contact_seen,
                 drone_body.contact_normal.x,
                 drone_body.contact_normal.y,
@@ -691,7 +733,7 @@ func _physics_process(delta: float) -> void:
         drone_body.reset_contact()
     else:
         if flight_mode == "ACRO":
-            row = native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, throttle, acro_roll, acro_pitch, acro_yaw, ACRO_RC_RATE, ACRO_SUPER_RATE, ACRO_EXPO)
+            row = native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, throttle, acro_roll, acro_pitch, acro_yaw, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo"))
         else:
             var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
             row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw)
@@ -1103,7 +1145,12 @@ func select_map(map_id: String, wind_preset: String) -> void:
     if map_id != DEFAULT_FREE_FLIGHT_MAP_ID or not WIND_PRESETS.has(wind_preset):
         return
     selected_wind_preset = wind_preset
-    if native != null:
+    if environment_state != null:
+        _apply_environment_result(environment_state.apply({
+            "wind_preset": wind_preset,
+            "steady_wind": scene_steady_wind_mps,
+        }))
+    elif native != null:
         native.call("configure_wind", {
             "preset": wind_preset,
             "steady_wind": scene_steady_wind_mps,
@@ -1125,6 +1172,41 @@ func open_map_menu() -> void:
         button.text = preset.capitalize()
         button.pressed.connect(select_map.bind(DEFAULT_FREE_FLIGHT_MAP_ID, preset))
         presets.add_child(button)
+    var environment_controls := VBoxContainer.new()
+    environment_controls.name = "EnvironmentControls"
+    environment_controls.position = Vector2(240.0, 0.0)
+    layer.add_child(environment_controls)
+    _add_environment_slider(environment_controls, "Rain", "rain", 0.0, 1.0, 0.05)
+    _add_environment_slider(environment_controls, "Fog", "fog", 0.0, 1.0, 0.05)
+    _add_environment_slider(environment_controls, "Time of day", "time_of_day", 0.0, 23.99, 0.25)
+
+
+func _add_environment_slider(parent: VBoxContainer, label_text: String, key: String, minimum: float, maximum: float, step: float) -> void:
+    if environment_state == null:
+        return
+    var label := Label.new()
+    label.text = label_text
+    parent.add_child(label)
+    var slider := HSlider.new()
+    slider.name = label_text.replace(" ", "")
+    slider.min_value = minimum
+    slider.max_value = maximum
+    slider.step = step
+    slider.value = float(environment_state.snapshot().get(key, minimum))
+    slider.value_changed.connect(_set_environment_scalar.bind(key))
+    parent.add_child(slider)
+
+
+func _set_environment_scalar(value: float, key: String) -> void:
+    if environment_state == null:
+        return
+    var update := {key: value}
+    if key == "rain" or key == "fog":
+        update["weather_enabled"] = true
+    elif key == "time_of_day":
+        update["time_of_day_enabled"] = true
+        update["move_sun"] = true
+    _apply_environment_result(environment_state.apply(update))
 
 func respawn() -> void:
     if controller_safety_latched:
@@ -1187,6 +1269,7 @@ func load_map(map_id: String) -> bool:
     add_child(map_root)
     loaded_map = map_root
     loaded_map_id = map_id
+    loaded_map_wind_preset = str(descriptor.wind_preset)
     if native != null:
         var applied_wind_preset := selected_wind_preset if not selected_wind_preset.is_empty() else str(descriptor.wind_preset)
         native.call("configure_wind", {
@@ -1221,6 +1304,15 @@ func reset_to_spawn() -> bool:
     _reset_secondary_kinematic_contexts()
     if time_trial != null:
         time_trial.reset()
+    if scene_object_catalog != null:
+        scene_object_catalog.reset()
+    if environment_state != null:
+        _apply_environment_result(environment_state.reset())
+        var baseline_preset := selected_wind_preset if not selected_wind_preset.is_empty() else loaded_map_wind_preset
+        _apply_environment_result(environment_state.apply({
+            "wind_preset": baseline_preset,
+            "steady_wind": scene_steady_wind_mps,
+        }))
     return true
 
 func _reset_secondary_kinematic_contexts() -> void:
@@ -1240,12 +1332,220 @@ func _spawn_position() -> Vector3:
     return SPAWN_POSITION
 
 func unload_map() -> void:
+    if scene_object_catalog != null:
+        scene_object_catalog.reset()
     if loaded_map != null:
         remove_child(loaded_map)
         loaded_map.queue_free()
         loaded_map = null
     loaded_map_id = ""
+    loaded_map_wind_preset = "calm"
     time_trial = null
+
+
+func _load_scene_object_catalog() -> void:
+    if scene_object_catalog == null:
+        return
+    var file := FileAccess.open("res://config/scene_object_catalog.json", FileAccess.READ)
+    if file == null:
+        push_error("Scene object catalog could not be opened")
+        return
+    var parsed = JSON.parse_string(file.get_as_text())
+    file.close()
+    if typeof(parsed) != TYPE_DICTIONARY:
+        push_error("Scene object catalog must contain a JSON object")
+        return
+    var result: Dictionary = scene_object_catalog.load_from_dictionary(parsed)
+    _airsim_environment_catalog_loaded = bool(result.ok)
+    if not result.ok:
+        push_error("Scene object catalog is invalid: %s" % result.error)
+
+
+func _airsim_scene_object(method: String, params: Array) -> Dictionary:
+    if not _airsim_environment_catalog_loaded or scene_object_catalog == null:
+        return {"ok": false, "error": "scene object catalog is unavailable"}
+    match method:
+        "simListSceneObjects":
+            if String(params[0]) != ".*":
+                return {"ok": false, "error": "scene object regex filters are unsupported; use the default .* query"}
+            return {"ok": true, "value": scene_object_catalog.list_named()}
+        "simSpawnObject":
+            if not bool(params[4]):
+                return {"ok": false, "error": "physics_enabled=false is unsupported for catalog collision objects"}
+            if params.size() == 6 and bool(params[5]):
+                return {"ok": false, "error": "blueprint spawning is unsupported; use a catalog asset ID"}
+            var pose_result: Dictionary = _parse_airsim_pose(params[2])
+            if not pose_result.ok:
+                return pose_result
+            if not _unit_scale(params[3]):
+                return {"ok": false, "error": "catalog objects only support unit scale"}
+            var created: Dictionary = scene_object_catalog.create_named(
+                String(params[0]), String(params[1]), pose_result.godot_position, pose_result.godot_orientation)
+            if not created.ok:
+                return created
+            return {"ok": true, "value": String(created.object.name)}
+        "simGetObjectPose":
+            var queried: Dictionary = scene_object_catalog.query_named(String(params[0]))
+            if not queried.ok:
+                return queried
+            return {"ok": true, "value": _airsim_pose(queried.object.position, queried.object.orientation)}
+        "simSetObjectPose":
+            if not bool(params[2]):
+                return {"ok": false, "error": "teleport=false sweep movement is unsupported for catalog collision objects"}
+            var set_pose: Dictionary = _parse_airsim_pose(params[1])
+            if not set_pose.ok:
+                return set_pose
+            var moved: Dictionary = scene_object_catalog.move_named(String(params[0]), set_pose.godot_position, set_pose.godot_orientation)
+            if not moved.ok:
+                return moved
+            return {"ok": true, "value": true}
+        "simDestroyObject":
+            var destroyed: Dictionary = scene_object_catalog.destroy_named(String(params[0]))
+            if not destroyed.ok:
+                return destroyed
+            return {"ok": true, "value": true}
+        "simGetSegmentationObjectID":
+            var segmentation_query: Dictionary = scene_object_catalog.query_named(String(params[0]))
+            if not segmentation_query.ok:
+                return segmentation_query
+            return {"ok": true, "value": int(segmentation_query.object.segmentation_id)}
+        "simSetSegmentationObjectID":
+            if bool(params[2]):
+                return {"ok": false, "error": "segmentation regex matching is unsupported; use an exact catalog object name"}
+            var segmentation_set: Dictionary = scene_object_catalog.query_named(String(params[0]))
+            if not segmentation_set.ok:
+                return segmentation_set
+            if int(params[1]) != int(segmentation_set.object.segmentation_id):
+                return {"ok": false, "error": "catalog segmentation IDs are immutable"}
+            return {"ok": true, "value": true}
+    return {"ok": false, "error": "unsupported scene object method: %s" % method}
+
+
+func _airsim_environment(method: String, params: Array) -> Dictionary:
+    if environment_state == null:
+        return {"ok": false, "error": "environment state is unavailable"}
+    match method:
+        "simEnableWeather":
+            var weather_result: Dictionary = environment_state.apply({"weather_enabled": bool(params[0])})
+            return _apply_environment_result(weather_result)
+        "simSetWeatherParameter":
+            var weather_key := "rain" if int(params[0]) == 0 else "fog"
+            var parameter_result: Dictionary = environment_state.apply({weather_key: float(params[1]), "weather_enabled": true})
+            return _apply_environment_result(parameter_result)
+        "simSetTimeOfDay":
+            var time_result: Dictionary = environment_state.apply({
+                "time_of_day_enabled": bool(params[0]),
+                "start_datetime": String(params[1]),
+                "is_start_datetime_dst": bool(params[2]),
+                "celestial_clock_speed": float(params[3]),
+                "update_interval_secs": float(params[4]),
+                "move_sun": bool(params[5]),
+            })
+            return _apply_environment_result(time_result)
+        "simSetEnvironment":
+            var normalized: Dictionary = _normalize_environment_payload(params[0])
+            if not normalized.ok:
+                return normalized
+            return _apply_environment_result(environment_state.apply(normalized.state))
+        "simGetEnvironment":
+            return {"ok": true, "value": _environment_rpc_snapshot(environment_state.snapshot())}
+    return {"ok": false, "error": "unsupported environment method: %s" % method}
+
+
+func _apply_environment_result(result: Dictionary) -> Dictionary:
+    if not result.ok:
+        return result
+    if native != null:
+        native.call("configure_wind", {
+            "preset": String(result.state.wind_preset),
+            "steady_wind": result.state.steady_wind,
+        })
+    _apply_environment_visuals(result.state)
+    return {"ok": true, "value": _environment_rpc_snapshot(result.state)}
+
+
+func _apply_environment_visuals(state: Dictionary) -> void:
+    if loaded_map == null:
+        return
+    var world_environment := loaded_map.get_node_or_null("AeroSimEnvironment") as WorldEnvironment
+    if world_environment == null:
+        world_environment = WorldEnvironment.new()
+        world_environment.name = "AeroSimEnvironment"
+        loaded_map.add_child(world_environment)
+    if world_environment.environment == null:
+        world_environment.environment = Environment.new()
+    var visual_environment: Environment = world_environment.environment
+    visual_environment.fog_enabled = bool(state.get("weather_enabled", false)) and float(state.get("fog", 0.0)) > 0.0
+    visual_environment.fog_density = float(state.get("fog", 0.0)) * 0.05
+    if bool(state.get("time_of_day_enabled", false)) and bool(state.get("move_sun", true)):
+        var sun := loaded_map.get_node_or_null("Sun") as DirectionalLight3D
+        var sun_direction: Vector3 = state.get("sun_position", Vector3(0.0, 1.0, 0.0))
+        if sun != null and sun_direction.length_squared() > 0.0:
+            sun.rotation = Vector3(-asin(clampf(sun_direction.y, -1.0, 1.0)), atan2(sun_direction.x, sun_direction.z), 0.0)
+
+
+func _normalize_environment_payload(raw: Dictionary) -> Dictionary:
+    var state := raw.duplicate(true)
+    for key in ["steady_wind", "sun_position"]:
+        if state.has(key):
+            var vector_result: Dictionary = _parse_vector3r(state[key])
+            if not vector_result.ok:
+                return vector_result
+            state[key] = vector_result.value
+    return {"ok": true, "state": state}
+
+
+func _parse_airsim_pose(raw_pose: Dictionary) -> Dictionary:
+    if not raw_pose.has("position") or not raw_pose.has("orientation"):
+        return {"ok": false, "error": "pose requires position and orientation"}
+    var position_result: Dictionary = _parse_vector3r(raw_pose.position)
+    if not position_result.ok:
+        return position_result
+    var orientation = raw_pose.orientation
+    if typeof(orientation) != TYPE_DICTIONARY:
+        return {"ok": false, "error": "pose orientation must be a quaternion object"}
+    for key in ["w_val", "x_val", "y_val", "z_val"]:
+        if not orientation.has(key) or (typeof(orientation[key]) != TYPE_FLOAT and typeof(orientation[key]) != TYPE_INT) or not is_finite(float(orientation[key])):
+            return {"ok": false, "error": "pose orientation contains an invalid quaternion"}
+    var quaternion := Quaternion(float(orientation.x_val), float(orientation.y_val), float(orientation.z_val), float(orientation.w_val))
+    if quaternion.length_squared() <= 0.0:
+        return {"ok": false, "error": "pose orientation cannot be zero"}
+    return {
+        "ok": true,
+        "godot_position": AirSimCoordinateContract.ned_to_godot_world(position_result.value),
+        "godot_orientation": AirSimCoordinateContract.ned_orientation_to_godot(quaternion),
+    }
+
+
+func _parse_vector3r(raw_vector) -> Dictionary:
+    if typeof(raw_vector) != TYPE_DICTIONARY:
+        return {"ok": false, "error": "Vector3r must be an object"}
+    for key in ["x_val", "y_val", "z_val"]:
+        if not raw_vector.has(key) or (typeof(raw_vector[key]) != TYPE_FLOAT and typeof(raw_vector[key]) != TYPE_INT) or not is_finite(float(raw_vector[key])):
+            return {"ok": false, "error": "Vector3r contains an invalid component"}
+    return {"ok": true, "value": Vector3(float(raw_vector.x_val), float(raw_vector.y_val), float(raw_vector.z_val))}
+
+
+func _airsim_pose(godot_position: Vector3, godot_orientation: Quaternion = Quaternion(0.0, 0.0, 0.0, 1.0)) -> Dictionary:
+    var position := AirSimCoordinateContract.godot_world_to_ned(godot_position)
+    var orientation := AirSimCoordinateContract.godot_orientation_to_ned(godot_orientation)
+    return {
+        "position": {"x_val": position.x, "y_val": position.y, "z_val": position.z},
+        "orientation": {"w_val": orientation.w, "x_val": orientation.x, "y_val": orientation.y, "z_val": orientation.z},
+    }
+
+
+func _environment_rpc_snapshot(state: Dictionary) -> Dictionary:
+    var result := state.duplicate(true)
+    for key in ["steady_wind", "sun_position"]:
+        var value: Vector3 = result[key]
+        result[key] = {"x_val": value.x, "y_val": value.y, "z_val": value.z}
+    return result
+
+
+func _unit_scale(raw_scale: Dictionary) -> bool:
+    var parsed: Dictionary = _parse_vector3r(raw_scale)
+    return parsed.ok and parsed.value.is_equal_approx(Vector3.ONE)
 
 func _configure_time_trial(map_root: Node3D) -> void:
     var route := map_root.get_node_or_null("TimeTrial") as Node3D
@@ -1335,6 +1635,18 @@ func toggle_altitude_hold() -> void:
         flight_mode = "ALTITUDE_HOLD"
     update_fallback_status()
 
+
+func toggle_acro_mode() -> void:
+    if native == null or not takeoff_requested or screen != "flight" or paused:
+        return
+    flight_mode = "ANGLE" if flight_mode == "ACRO" else "ACRO"
+    update_fallback_status()
+    _refresh_flight_hud()
+
+
+func _acro_rate(key: String) -> float:
+    return float(rates_profile.get(key, RatesProfile.default_profile().get(key, 0.0)))
+
 func set_paused(value: bool, sync_session: bool = true) -> void:
     if not value and _airsim_lifecycle_stopped() and (airsim_session == null or not airsim_session.is_explicit_step_active()):
         return
@@ -1374,6 +1686,7 @@ func _build_main_menu() -> void:
             button.pressed.connect(show_settings)
     _build_settings_panel()
     _build_controller_settings_panel()
+    _build_rates_panel()
 
 func _build_settings_panel() -> void:
     var panel := PanelContainer.new()
@@ -1382,7 +1695,7 @@ func _build_settings_panel() -> void:
     panel.offset_left = 20.0
     panel.offset_top = 20.0
     panel.offset_right = 360.0
-    panel.offset_bottom = 230.0
+    panel.offset_bottom = 280.0
     settings_panel = panel
     main_menu_layer.add_child(panel)
 
@@ -1401,6 +1714,12 @@ func _build_settings_panel() -> void:
     controller_button.pressed.connect(show_controller_settings)
     rows.add_child(controller_button)
 
+    var rates_button := Button.new()
+    rates_button.name = "Rates"
+    rates_button.text = "RATES"
+    rates_button.pressed.connect(show_rates)
+    rows.add_child(rates_button)
+
     var factory_reset_button := Button.new()
     factory_reset_button.name = "FactoryReset"
     factory_reset_button.text = "FACTORY RESET SETTINGS"
@@ -1417,6 +1736,223 @@ func _build_settings_panel() -> void:
     back_button.text = "BACK"
     back_button.pressed.connect(show_main_menu)
     rows.add_child(back_button)
+
+
+func _build_rates_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "RatesPanel"
+    panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    panel.offset_left = 20.0
+    panel.offset_top = 20.0
+    panel.offset_right = 760.0
+    panel.offset_bottom = 700.0
+    rates_panel = panel
+    main_menu_layer.add_child(panel)
+
+    var scroll := ScrollContainer.new()
+    scroll.name = "Scroll"
+    panel.add_child(scroll)
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.custom_minimum_size = Vector2(690.0, 0.0)
+    rows.add_theme_constant_override("separation", 6)
+    scroll.add_child(rows)
+
+    var title := Label.new()
+    title.text = "BETAFLIGHT RATES"
+    rows.add_child(title)
+    var disclaimer := Label.new()
+    disclaimer.text = "SIM PROFILE: RC Rate / Super Rate / Expo affect ACRO mode only."
+    disclaimer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(disclaimer)
+
+    for setting in [
+        {"key": "rc_rate", "title": "RC RATE", "max": 3.0},
+        {"key": "super_rate", "title": "SUPER RATE", "max": 1.0},
+        {"key": "expo", "title": "EXPO", "max": 1.0},
+    ]:
+        var key: String = setting.key
+        var value_label := Label.new()
+        value_label.name = "%sValue" % key.capitalize()
+        rows.add_child(value_label)
+        rates_slider_labels[key] = value_label
+        var slider := HSlider.new()
+        slider.name = "%sSlider" % key.capitalize()
+        slider.min_value = 0.0
+        slider.max_value = float(setting.max)
+        slider.step = 0.01
+        slider.value = _acro_rate(key)
+        slider.value_changed.connect(_on_rates_slider_changed.bind(key))
+        rows.add_child(slider)
+        rates_sliders[key] = slider
+
+    var curve_title := Label.new()
+    curve_title.text = "RATE CURVE PREVIEW (degrees/second)"
+    rows.add_child(curve_title)
+    rates_curve_plot = Control.new()
+    rates_curve_plot.name = "CurvePreview"
+    rates_curve_plot.custom_minimum_size = Vector2(680.0, 170.0)
+    rows.add_child(rates_curve_plot)
+    var horizontal_axis := ColorRect.new()
+    horizontal_axis.position = Vector2(10.0, 84.0)
+    horizontal_axis.size = Vector2(660.0, 1.0)
+    horizontal_axis.color = Color(0.35, 0.35, 0.35)
+    rates_curve_plot.add_child(horizontal_axis)
+    var vertical_axis := ColorRect.new()
+    vertical_axis.position = Vector2(340.0, 10.0)
+    vertical_axis.size = Vector2(1.0, 150.0)
+    vertical_axis.color = Color(0.35, 0.35, 0.35)
+    rates_curve_plot.add_child(vertical_axis)
+    rates_curve_line = Line2D.new()
+    rates_curve_line.name = "Curve"
+    rates_curve_line.width = 2.0
+    rates_curve_line.default_color = Color(0.2, 0.85, 0.95)
+    rates_curve_plot.add_child(rates_curve_line)
+
+    var json_title := Label.new()
+    json_title.text = "JSON EXPORT / IMPORT"
+    rows.add_child(json_title)
+    rates_json_editor = TextEdit.new()
+    rates_json_editor.name = "RatesJson"
+    rates_json_editor.custom_minimum_size = Vector2(660.0, 110.0)
+    rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    rates_json_editor.text_changed.connect(_on_rates_json_changed)
+    rows.add_child(rates_json_editor)
+
+    rates_diff_label = Label.new()
+    rates_diff_label.name = "Diff"
+    rates_diff_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(rates_diff_label)
+    rates_status_label = Label.new()
+    rates_status_label.name = "Status"
+    rates_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(rates_status_label)
+
+    var actions := HBoxContainer.new()
+    actions.name = "Actions"
+    rows.add_child(actions)
+    var export_button := Button.new()
+    export_button.name = "ExportJson"
+    export_button.text = "EXPORT JSON"
+    export_button.pressed.connect(_export_rates_json)
+    actions.add_child(export_button)
+    var import_button := Button.new()
+    import_button.name = "ImportJson"
+    import_button.text = "IMPORT & APPLY JSON"
+    import_button.pressed.connect(_import_rates_json)
+    actions.add_child(import_button)
+    var reset_button := Button.new()
+    reset_button.name = "ResetDefaults"
+    reset_button.text = "RESET DEFAULTS"
+    reset_button.pressed.connect(_reset_rates_defaults)
+    actions.add_child(reset_button)
+    var back_button := Button.new()
+    back_button.name = "Back"
+    back_button.text = "BACK"
+    back_button.pressed.connect(_close_rates_panel)
+    actions.add_child(back_button)
+
+
+func _on_rates_slider_changed(value: float, key: String) -> void:
+    var candidate: Dictionary = rates_profile.duplicate(true)
+    candidate[key] = value
+    var result: Dictionary = _save_rates_profile(candidate)
+    if not result.ok:
+        rates_status_label.text = "Rates save failed: %s" % result.error
+        return
+    rates_status_label.text = "Saved rates profile"
+    if rates_json_editor != null:
+        rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    _refresh_rates_panel()
+
+
+func _export_rates_json() -> void:
+    if rates_json_editor != null:
+        rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    rates_status_label.text = "Exported current rates JSON to the editor"
+    _refresh_rates_import_diff()
+
+
+func _import_rates_json() -> void:
+    if rates_json_editor == null:
+        return
+    var result: Dictionary = RatesProfile.from_json(rates_json_editor.text)
+    if not result.ok:
+        rates_status_label.text = "Import rejected: %s" % result.error
+        _refresh_rates_import_diff()
+        return
+    var save_result: Dictionary = _save_rates_profile(result.profile)
+    if not save_result.ok:
+        rates_status_label.text = "Import save failed: %s" % save_result.error
+        return
+    rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    rates_status_label.text = "Imported and applied rates profile"
+    _refresh_rates_import_diff()
+
+
+func _reset_rates_defaults() -> void:
+    var result: Dictionary = _save_rates_profile(RatesProfile.default_profile())
+    if not result.ok:
+        rates_status_label.text = "Rates reset failed: %s" % result.error
+        return
+    rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    rates_status_label.text = "Rates reset to defaults"
+    _refresh_rates_import_diff()
+
+
+func _on_rates_json_changed() -> void:
+    _refresh_rates_import_diff()
+
+
+func _refresh_rates_import_diff() -> void:
+    if rates_json_editor == null or rates_diff_label == null:
+        return
+    var result: Dictionary = RatesProfile.from_json(rates_json_editor.text)
+    if not result.ok:
+        rates_diff_label.text = "BETAFLIGHT DIFF: invalid JSON (%s)" % result.error
+        return
+    var changes: Array[Dictionary] = RatesProfile.diff(rates_profile, result.profile)
+    if changes.is_empty():
+        rates_diff_label.text = "CURRENT vs BETAFLIGHT IMPORTED: no changes"
+        return
+    var lines := ["CURRENT vs BETAFLIGHT IMPORTED:"]
+    for change in changes:
+        lines.append("%s: %.2f -> %.2f" % [change.key, change.current, change.imported])
+    rates_diff_label.text = "\n".join(lines)
+
+
+func _refresh_rates_panel() -> void:
+    if rates_panel == null:
+        return
+    for key in rates_sliders:
+        var slider: HSlider = rates_sliders[key]
+        var value := _acro_rate(key)
+        if not is_equal_approx(slider.value, value):
+            slider.set_value_no_signal(value)
+        var label: Label = rates_slider_labels[key]
+        label.text = "%s: %.2f" % [key.to_upper(), value]
+    if rates_curve_line != null:
+        _refresh_rates_curve()
+    _refresh_rates_import_diff()
+
+
+func _refresh_rates_curve() -> void:
+    if native == null or not native.has_method("betaflight_rate_for_stick"):
+        rates_curve_line.points = PackedVector2Array()
+        return
+    var rates := PackedFloat64Array()
+    var maximum := 1000.0
+    for index in range(17):
+        var stick := -1.0 + float(index) / 8.0
+        var rate := float(native.call("betaflight_rate_for_stick", stick, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo")))
+        rates.append(rate)
+        maximum = maxf(maximum, absf(rate))
+    var points := PackedVector2Array()
+    for index in range(rates.size()):
+        var x := 10.0 + float(index) * 660.0 / 16.0
+        var y := 84.0 - float(rates[index]) / maximum * 70.0
+        points.append(Vector2(x, y))
+    rates_curve_line.points = points
 
 func _build_controller_settings_panel() -> void:
     var panel := PanelContainer.new()
@@ -1479,6 +2015,23 @@ func show_controller_settings() -> void:
     _refresh_controller_settings()
     _refresh_flight_hud()
 
+
+func show_rates(return_screen: String = "settings") -> void:
+    rates_return_screen = return_screen
+    screen = "rates"
+    if rates_json_editor != null:
+        rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    _refresh_rates_import_diff()
+    _refresh_flight_hud()
+
+
+func _close_rates_panel() -> void:
+    if rates_return_screen == "flight":
+        screen = "flight"
+        _refresh_flight_hud()
+    else:
+        show_settings()
+
 func reset_to_xbox_default() -> void:
     begin_controller_confirmation(_first_connected_device())
 
@@ -1491,6 +2044,9 @@ func factory_reset_player_settings() -> void:
         _refresh_flight_hud()
         return
     persisted_gamepad_profile = null
+    rates_profile = RatesProfile.default_profile()
+    if rates_json_editor != null:
+        rates_json_editor.text = RatesProfile.to_json(rates_profile)
     last_error_message = "Settings reset to factory defaults"
     screen = "settings"
     _refresh_flight_hud()
@@ -1580,6 +2136,10 @@ func _build_flight_hud() -> void:
     arm_takeoff_button.name = "ArmTakeoff"
     arm_takeoff_button.pressed.connect(_handle_primary_action)
     rows.add_child(arm_takeoff_button)
+    acro_mode_button = Button.new()
+    acro_mode_button.name = "AcroMode"
+    acro_mode_button.pressed.connect(toggle_acro_mode)
+    rows.add_child(acro_mode_button)
     _build_pause_panel()
     _build_controller_safety_panel()
     _build_finish_panel()
@@ -1617,6 +2177,11 @@ func _build_pause_panel() -> void:
     change.text = "CHANGE MAP"
     change.pressed.connect(change_map)
     rows.add_child(change)
+    var rates := Button.new()
+    rates.name = "Rates"
+    rates.text = "RATES"
+    rates.pressed.connect(show_rates.bind("flight"))
+    rows.add_child(rates)
     var exit := Button.new()
     exit.name = "Exit"
     exit.text = "EXIT"
@@ -1700,6 +2265,8 @@ func _update_status_diagram() -> void:
         secondary_snapshot["vehicle_name"] = String(_airsim_vehicle_names[1])
         snapshots[String(_airsim_vehicle_names[1])] = secondary_snapshot
     status_diagram.call("set_vehicle_snapshots", snapshots, _dashboard_vehicle_name)
+    if environment_state != null and status_diagram.has_method("update_environment"):
+        status_diagram.update_environment(environment_state.snapshot())
 
 func _reset_drone_body() -> void:
     drone_body.reset_contact()
@@ -1716,7 +2283,7 @@ func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
         return
     if main_menu_layer != null:
-        main_menu_layer.visible = screen in ["main_menu", "settings", "controller_settings"]
+        main_menu_layer.visible = screen in ["main_menu", "settings", "controller_settings", "rates"]
     if main_menu_entries_container != null:
         main_menu_entries_container.visible = screen == "main_menu"
     if settings_panel != null:
@@ -1725,8 +2292,10 @@ func _refresh_flight_hud() -> void:
         settings_status_label.text = last_error_message if not last_error_message.is_empty() else "Settings ready"
     if controller_settings_panel != null:
         controller_settings_panel.visible = screen == "controller_settings"
+    if rates_panel != null:
+        rates_panel.visible = screen == "rates"
     if flight_hud_layer != null:
-        flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings"]
+        flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings", "rates"]
     if pause_panel != null:
         pause_panel.visible = paused and screen == "flight"
     if controller_safety_panel != null:
@@ -1736,7 +2305,11 @@ func _refresh_flight_hud() -> void:
     if finish_panel != null:
         finish_panel.visible = screen == "finish"
     key_hints_label.text = KEY_HINTS_TEXT
+    _refresh_rates_panel()
     arm_takeoff_button.disabled = screen == "main_menu" or (controller_safety_latched and screen != "fallback_prompt")
+    if acro_mode_button != null:
+        acro_mode_button.disabled = screen != "flight" or paused or controller_safety_latched
+        acro_mode_button.text = "ACRO MODE (C): %s" % ("ON" if flight_mode == "ACRO" else "OFF")
     if time_trial_status_label != null:
         time_trial_status_label.visible = time_trial != null and screen in ["preflight", "flight", "finish"]
         if time_trial != null:
@@ -2455,7 +3028,7 @@ func _airsim_yaw_rate_from_mode(yaw_mode: Variant, body = null) -> float:
 func _airsim_rate_stick(rate_degrees_per_second: float, target_native: Object = null) -> float:
     var rate_native: Object = target_native if target_native != null else native
     if rate_native != null and rate_native.has_method("betaflight_stick_for_rate"):
-        return float(rate_native.call("betaflight_stick_for_rate", rate_degrees_per_second, ACRO_RC_RATE, ACRO_SUPER_RATE, ACRO_EXPO))
+        return float(rate_native.call("betaflight_stick_for_rate", rate_degrees_per_second, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo")))
     return clampf(rate_degrees_per_second / 720.0, -1.0, 1.0)
 
 

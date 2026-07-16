@@ -160,6 +160,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("betaflight_stick_for_rate", "rate_degrees_per_second", "rc_rate", "super_rate", "expo"),
             &AeroSimNative::betaflight_stick_for_rate);
+    ClassDB::bind_method(
+            D_METHOD("betaflight_rate_for_stick", "stick", "rc_rate", "super_rate", "expo"),
+            &AeroSimNative::betaflight_rate_for_stick);
     ClassDB::bind_method(D_METHOD("reset_flight"), &AeroSimNative::reset_flight);
     ClassDB::bind_method(D_METHOD("capture_altitude_hold"), &AeroSimNative::capture_altitude_hold);
     ClassDB::bind_method(D_METHOD("configure_imu", "config"), &AeroSimNative::configure_imu);
@@ -560,6 +563,21 @@ double AeroSimNative::betaflight_stick_for_rate(
         double expo) const {
     return aerosim::betaflight_stick_for_rate_degrees_per_second(
             rate_degrees_per_second,
+            aerosim::RateProfile{rc_rate, super_rate, expo});
+}
+
+double AeroSimNative::betaflight_rate_for_stick(
+        double stick,
+        double rc_rate,
+        double super_rate,
+        double expo) const {
+    if (!std::isfinite(stick) || !std::isfinite(rc_rate) || rc_rate < 0.0 || rc_rate > 3.0 ||
+            !std::isfinite(super_rate) || super_rate < 0.0 || super_rate > 1.0 ||
+            !std::isfinite(expo) || expo < 0.0 || expo > 1.0) {
+        return 0.0;
+    }
+    return aerosim::betaflight_rate_degrees_per_second(
+            stick,
             aerosim::RateProfile{rc_rate, super_rate, expo});
 }
 

@@ -2,6 +2,7 @@ class_name SettingsStore
 extends RefCounted
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const RatesProfile = preload("res://common/flight/rates_profile.gd")
 
 const SCHEMA_VERSION := 1
 const FIELD_NAMES := [
@@ -53,6 +54,10 @@ func validate_document(candidate: Variant) -> Dictionary:
         var profile_result := InputProfiles.GamepadProfile.validate_persisted_dict(source["confirmed_gamepad"])
         if not profile_result.ok:
             return profile_result
+    if source["rates"] != null:
+        var rates_result := RatesProfile.validate_profile(source["rates"])
+        if not rates_result.ok:
+            return rates_result
     var normalized := source.duplicate(true)
     normalized["schema_version"] = SCHEMA_VERSION
     return {"ok": true, "error": "", "document": normalized}

@@ -75,6 +75,55 @@ func _run() -> void:
 		_click(settings_button)
 	await _settle(2)
 	_expect(runtime.screen == "settings", "Settings entry opens Settings")
+	var rates_button: Button = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Rates")
+	_expect(rates_button != null, "Settings exposes Rates")
+	if rates_button != null:
+		_click(rates_button)
+	await _settle(2)
+	_expect(runtime.screen == "rates", "Rates entry opens Rates")
+	_expect(runtime.rates_panel != null and runtime.rates_panel.is_visible_in_tree(), "Rates panel is visible")
+	_expect(runtime.rates_json_editor != null and runtime.rates_json_editor.text.contains("rc_rate"), "Rates panel exposes JSON editor")
+	var export_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/ExportJson")
+	var import_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/ImportJson")
+	var reset_rates_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/ResetDefaults")
+	_expect(export_button != null and import_button != null and reset_rates_button != null, "Rates panel exposes JSON export, import, and reset")
+	if runtime.rates_json_editor != null:
+		runtime.rates_json_editor.text = JSON.stringify({
+			"schema_version": 1,
+			"rc_rate": 1.15,
+			"super_rate": 0.72,
+			"expo": 0.25,
+		})
+	await _settle(1)
+	_expect(runtime.rates_diff_label.text.contains("CURRENT vs BETAFLIGHT IMPORTED"), "Rates panel shows current-vs-Betaflight diff")
+	if import_button != null:
+		var rates_scroll: ScrollContainer = runtime.get_node("MainMenu/RatesPanel/Scroll")
+		rates_scroll.scroll_vertical = rates_scroll.get_v_scroll_bar().max_value
+		await _settle(1)
+		import_button.pressed.emit()
+	await _settle(2)
+	_expect(absf(float(runtime.rates_profile.get("rc_rate", 0.0)) - 1.15) <= 0.000001, "Rates JSON import applies RC Rate")
+	_expect(absf(float(runtime.rates_profile.get("expo", 0.0)) - 0.25) <= 0.000001, "Rates JSON import applies Expo")
+	var persisted_rates: Dictionary = runtime.settings_store.load_document()
+	var persisted_rate_values = persisted_rates.document.get("rates") if persisted_rates.ok else null
+	_expect(persisted_rates.ok and typeof(persisted_rate_values) == TYPE_DICTIONARY and absf(float(persisted_rate_values.get("rc_rate", 0.0)) - 1.15) <= 0.000001, "Rates JSON import persists through SettingsStore")
+	if export_button != null:
+		export_button.pressed.emit()
+	_expect(runtime.rates_json_editor.text.contains("1.15"), "Rates panel exports the current JSON")
+	var retained_rc_rate := float(runtime.rates_profile.get("rc_rate", 0.0))
+	if runtime.rates_json_editor != null:
+		runtime.rates_json_editor.text = "{invalid-json"
+	if import_button != null:
+		import_button.pressed.emit()
+	_expect(runtime.rates_status_label.text.contains("Import rejected") and absf(float(runtime.rates_profile.get("rc_rate", 0.0)) - retained_rc_rate) <= 0.000001, "Invalid rates import is rejected without applying")
+	if reset_rates_button != null:
+		reset_rates_button.pressed.emit()
+	_expect(absf(float(runtime.rates_profile.get("rc_rate", 0.0)) - 1.0) <= 0.000001, "Rates reset restores defaults")
+	var rates_back_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/Back")
+	if rates_back_button != null:
+		runtime.show_settings()
+	await _settle(2)
+	_expect(runtime.screen == "settings", "Rates panel returns to Settings")
 	var settings_controller_button: Button = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Controller")
 	_expect(settings_controller_button != null, "Settings exposes Controller")
 	if settings_controller_button != null:
@@ -145,6 +194,31 @@ func _run() -> void:
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
+	runtime.set_paused(true)
+	await _settle(2)
+	var pause_rates_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Rates")
+	_expect(runtime.paused and pause_rates_button != null, "Pause Overlay exposes Rates")
+	var acro_key := InputEventKey.new()
+	acro_key.keycode = KEY_C
+	acro_key.physical_keycode = KEY_C
+	acro_key.pressed = true
+	runtime._unhandled_input(acro_key)
+	_expect(runtime.flight_mode == "ANGLE", "C cannot switch to ACRO while paused")
+	runtime.show_rates("flight")
+	await _settle(2)
+	_expect(runtime.screen == "rates" and runtime.paused, "Rates opened from Pause Overlay keeps pause state")
+	runtime._close_rates_panel()
+	_expect(runtime.screen == "flight" and runtime.paused, "Rates returns to paused flight")
+	runtime.set_paused(false)
+	runtime._unhandled_input(acro_key)
+	_expect(runtime.flight_mode == "ACRO", "C switches to ACRO during flight")
+	var curve_before: PackedVector2Array = runtime.rates_curve_line.points
+	var rc_slider: HSlider = runtime.rates_sliders["rc_rate"]
+	rc_slider.value = 1.25
+	await _settle(2)
+	_expect(absf(float(runtime.rates_profile.get("rc_rate", 0.0)) - 1.25) <= 0.000001, "Rates slider updates the live ACRO profile")
+	var curve_after: PackedVector2Array = runtime.rates_curve_line.points
+	_expect(curve_before.size() == curve_after.size() and curve_before.size() > 0 and absf(curve_before[curve_before.size() - 1].y - curve_after[curve_after.size() - 1].y) > 0.000001, "Rates slider updates the native curve preview")
 	_complete_time_trial(runtime)
 	await _settle(2)
 	_expect(runtime.screen == "finish" and runtime.paused, "reaching Finish stops flight and opens the Time Trial result state")
