@@ -94,6 +94,15 @@ func test_default_airframe_applies_configured_a5_model_to_runtime() -> void:
     assert_almost_eq(float(runtime.native.a5.coeff_1), 2267.18, 0.000001)
 
 
+func test_race_airframe_applies_configured_a5_model_to_runtime() -> void:
+    var runtime := FakeHardwareRuntime.new()
+
+    assert_true(loader.apply_to_runtime(runtime, "res://config/drones/5_inch_6s_race.json"))
+    assert_true(bool(runtime.native.a5.enabled))
+    assert_almost_eq(float(runtime.native.a5.prop_radius_m), 0.0231348, 0.0000001)
+    assert_almost_eq(float(runtime.native.a5.coeff_1), 2267.18, 0.000001)
+
+
 func test_schema_rejects_invalid_a3_values() -> void:
     var negative: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
     negative.aerodynamics.a3.coefficient_kg.x = -0.1

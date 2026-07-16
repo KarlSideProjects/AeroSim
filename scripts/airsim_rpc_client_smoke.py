@@ -116,6 +116,45 @@ def exercise(port: int, dual: bool = False) -> None:
         second_takeoff.join()
         assert first_takeoff.get() is True
         assert second_takeoff.get() is True
+        first_move = client.moveToPositionAsync(1.0, -2.0, -3.0, 2.0, vehicle_name="Drone1")
+        second_move = client.moveToPositionAsync(-2.0, 1.0, -2.0, 2.0, vehicle_name="Drone2")
+        first_move.join()
+        second_move.join()
+        assert first_move.get() is True
+        assert second_move.get() is True
+        client.simPause(True)
+        primary_pose = client.simGetVehiclePose("Drone1")
+        secondary_pose = client.simGetVehiclePose("Drone2")
+        assert primary_pose.position.distance_to(secondary_pose.position) > 1.0
+        moved_samples = {
+            vehicle_name: {
+                "imu": client.getImuData(vehicle_name=vehicle_name),
+                "gps": client.getGpsData(vehicle_name=vehicle_name),
+                "state": client.getMultirotorState(vehicle_name=vehicle_name),
+            }
+            for vehicle_name in vehicle_names
+        }
+        for vehicle_name, pose in [("Drone1", primary_pose), ("Drone2", secondary_pose)]:
+            state = moved_samples[vehicle_name]["state"]
+            position = state.kinematics_estimated.position
+            assert position.distance_to(pose.position) < 0.01, f"{vehicle_name} state {position} != pose {pose.position}"
+            assert state.ready is True
+            assert moved_samples[vehicle_name]["imu"].time_stamp >= samples[vehicle_name]["imu"].time_stamp
+        primary_gps = moved_samples["Drone1"]["gps"].gnss.geo_point
+        secondary_gps = moved_samples["Drone2"]["gps"].gnss.geo_point
+        assert abs(primary_gps.latitude - secondary_gps.latitude) > 1e-6
+        assert abs(primary_gps.longitude - secondary_gps.longitude) > 1e-6
+        primary_images = client.simGetImages([
+            airsim.ImageRequest("0", airsim.ImageType.Segmentation, False, False),
+        ], vehicle_name="Drone1")
+        secondary_images = client.simGetImages([
+            airsim.ImageRequest("0", airsim.ImageType.Segmentation, False, False),
+        ], vehicle_name="Drone2")
+        assert primary_images[0].camera_position.distance_to(secondary_images[0].camera_position) > 1.0
+        camera_delta = primary_images[0].camera_position - secondary_images[0].camera_position
+        pose_delta = primary_pose.position - secondary_pose.position
+        assert camera_delta.distance_to(pose_delta) < 0.01
+        assert primary_images[0].image_data_uint8 != secondary_images[0].image_data_uint8
         client.enableApiControl(False, vehicle_name="Drone1")
         assert client.isApiControlEnabled("Drone1") is False
         assert client.isApiControlEnabled("Drone2") is True
