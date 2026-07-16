@@ -707,29 +707,58 @@ func _step_secondary_airsim_vehicle(vehicle_name: String) -> void:
             drone_body.global_position.y,
             drone_body.global_position.z)
     var controls := _airsim_secondary_controls(context, body)
-    var row: PackedFloat64Array = _airsim_secondary_native.call(
-        "step_collision_angle_mode",
-        Engine.physics_ticks_per_second,
-        1000,
-        float(controls.get("throttle", 0.0)),
-        float(controls.get("roll", 0.0)),
-        float(controls.get("pitch", 0.0)),
-        float(controls.get("yaw_rate", 0.0)),
-        body.contact_seen,
-        body.contact_normal.x,
-        body.contact_normal.y,
-        body.contact_normal.z,
-        body.contact_impulse.x,
-        body.contact_impulse.y,
-        body.contact_impulse.z,
-        0.0,
-        body.linear_velocity.x,
-        body.linear_velocity.y,
-        body.linear_velocity.z,
-        body.angular_velocity.x,
-        body.angular_velocity.y,
-        body.angular_velocity.z,
-        _kinetic(body.linear_velocity, body.angular_velocity))
+    var row: PackedFloat64Array
+    if String(controls.get("mode", "ANGLE")) == "ACRO":
+        row = _airsim_secondary_native.call(
+            "step_collision_acro_mode",
+            Engine.physics_ticks_per_second,
+            1000,
+            float(controls.get("throttle", 0.0)),
+            float(controls.get("acro_roll", 0.0)),
+            float(controls.get("acro_pitch", 0.0)),
+            float(controls.get("acro_yaw", 0.0)),
+            ACRO_RC_RATE,
+            ACRO_SUPER_RATE,
+            ACRO_EXPO,
+            body.contact_seen,
+            body.contact_normal.x,
+            body.contact_normal.y,
+            body.contact_normal.z,
+            body.contact_impulse.x,
+            body.contact_impulse.y,
+            body.contact_impulse.z,
+            0.0,
+            body.linear_velocity.x,
+            body.linear_velocity.y,
+            body.linear_velocity.z,
+            body.angular_velocity.x,
+            body.angular_velocity.y,
+            body.angular_velocity.z,
+            _kinetic(body.linear_velocity, body.angular_velocity))
+    else:
+        row = _airsim_secondary_native.call(
+            "step_collision_angle_mode",
+            Engine.physics_ticks_per_second,
+            1000,
+            float(controls.get("throttle", 0.0)),
+            float(controls.get("roll", 0.0)),
+            float(controls.get("pitch", 0.0)),
+            float(controls.get("yaw_rate", 0.0)),
+            body.contact_seen,
+            body.contact_normal.x,
+            body.contact_normal.y,
+            body.contact_normal.z,
+            body.contact_impulse.x,
+            body.contact_impulse.y,
+            body.contact_impulse.z,
+            0.0,
+            body.linear_velocity.x,
+            body.linear_velocity.y,
+            body.linear_velocity.z,
+            body.angular_velocity.x,
+            body.angular_velocity.y,
+            body.angular_velocity.z,
+            _kinetic(body.linear_velocity, body.angular_velocity))
     if row.size() >= 11:
         body.apply_native_state(
             Vector3(row[1], row[2], row[3]),
@@ -779,8 +808,40 @@ func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
             return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), float(args[2]))), 0.0, args[5], body)
         "moveByVelocityZBodyFrame":
             return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - body.global_position.y) * 4.0, args[5], body)
+        "goHome":
+            var home_delta: Vector3 = _spawn_position() - body.global_position
+            var home_horizontal := Vector3(home_delta.x, 0.0, home_delta.z)
+            var home_velocity := home_horizontal.normalized() * minf(home_horizontal.length() * 1.5, 4.0)
+            home_velocity.y = clampf(home_delta.y * 4.0 - body.linear_velocity.y * 3.0, -8.0, 8.0)
+            return _airsim_velocity_controls(home_velocity, 0.0, null, body)
+        "moveToPosition", "moveOnPath":
+            var target_ned: Vector3
+            if method == "moveToPosition":
+                target_ned = Vector3(float(args[0]), float(args[1]), float(args[2]))
+            else:
+                var path: Array = args[0]
+                var waypoint_index := int(command_state.get("waypoint_index", 0))
+                if waypoint_index >= path.size():
+                    context["hold_controls"] = _airsim_neutral_controls()
+                    context["command_state"] = {}
+                    return context["hold_controls"].duplicate(true)
+                var waypoint: Dictionary = path[waypoint_index]
+                target_ned = Vector3(float(waypoint["x_val"]), float(waypoint["y_val"]), float(waypoint["z_val"]))
+            var delta_world: Vector3 = AirSimCoordinateContract.ned_to_godot_world(target_ned, _spawn_position()) - body.global_position
+            var command_speed := float(args[3]) if method == "moveToPosition" else float(args[1])
+            if method == "moveOnPath" and delta_world.length() < 0.25:
+                command_state["waypoint_index"] = int(command_state.get("waypoint_index", 0)) + 1
+                context["command_state"] = command_state
+            var yaw_mode: Variant = args[6] if method == "moveToPosition" else args[4]
+            return _airsim_velocity_controls(delta_world.normalized() * minf(delta_world.length() * 2.0, command_speed), delta_world.y * 4.0, yaw_mode, body)
+        "rotateToYaw":
+            var target_yaw := AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(float(args[0]))
+            var delta_yaw := wrapf(target_yaw - body.rotation.y, -PI, PI)
+            var rotate_to_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
+            rotate_to_controls["yaw_rate"] = clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            return rotate_to_controls
         "moveByAngleRatesThrottle":
-            return {"mode": "ANGLE", "throttle": float(args[3]), "roll": clampf(rad_to_deg(float(args[0])) * 0.1, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES), "pitch": clampf(rad_to_deg(float(args[1])) * 0.1, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES), "yaw_rate": rad_to_deg(float(args[2]))}
+            return {"mode": "ACRO", "throttle": float(args[3]), "acro_roll": _airsim_rate_stick(rad_to_deg(float(args[0]))), "acro_pitch": _airsim_rate_stick(rad_to_deg(float(args[1]))), "acro_yaw": _airsim_rate_stick(rad_to_deg(float(args[2])))}
     return _airsim_neutral_controls()
 
 
@@ -1973,12 +2034,53 @@ func _airsim_sensor(sensor_type: int, sensor_name: String, vehicle_name: String)
     return airsim_sensor_suite.sensor_result(vehicle_name, sensor_type, sensor_name)
 
 
+func _secondary_task_complete(context: Dictionary, body) -> bool:
+    var command_state: Dictionary = context.get("command_state", {})
+    if command_state.is_empty():
+        return true
+    if body == null:
+        return false
+    var method := String(command_state.get("method", ""))
+    var args: Array = command_state.get("args", [])
+    var position_ned := AirSimCoordinateContract.godot_world_to_ned(body.global_position, _spawn_position())
+    match method:
+        "takeoff":
+            return position_ned.z <= -2.75 and body.linear_velocity.length() < 1.0
+        "land":
+            var landed_on_ground: bool = body.global_position.y <= _spawn_position().y + 0.05 and body.linear_velocity.length() < 0.25
+            return position_ned.z >= -0.5 and (bool(context.get("contact_this_frame", false)) or landed_on_ground)
+        "hover":
+            return body.linear_velocity.length() < 2.0 and body.angular_velocity.length() < 1.0
+        "goHome":
+            return position_ned.length() < 1.0 and body.linear_velocity.length() < 3.0
+        "moveToPosition":
+            return position_ned.distance_to(Vector3(float(args[0]), float(args[1]), float(args[2]))) < 0.25 and body.linear_velocity.length() < 0.75
+        "moveOnPath":
+            var path: Array = args[0]
+            var index := int(command_state.get("waypoint_index", 0))
+            if index >= path.size():
+                return true
+            var point: Dictionary = path[index]
+            return position_ned.distance_to(Vector3(float(point["x_val"]), float(point["y_val"]), float(point["z_val"]))) < 0.25 and index == path.size() - 1 and body.linear_velocity.length() < 0.75
+        "rotateToYaw":
+            return absf(wrapf(AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(float(args[0])) - body.rotation.y, -PI, PI)) <= deg_to_rad(maxf(float(args[2]), 1.0)) and body.angular_velocity.length() < 0.75
+        "moveByVelocity", "moveByVelocityZ", "moveByVelocityBodyFrame", "moveByVelocityZBodyFrame", "rotateByYawRate", "moveByAngleRatesThrottle":
+            return int(context.get("command_remaining_frames", 0)) <= 0
+    return false
+
+
 func _airsim_task_complete(name: String) -> bool:
     if not _airsim_name_matches(name):
         return false
     if not _is_primary_airsim_vehicle(name):
         var secondary_context: Dictionary = _airsim_vehicle_contexts.get(name, {})
-        return int(secondary_context.get("command_remaining_frames", 0)) <= 0
+        var secondary_complete := _secondary_task_complete(secondary_context, _secondary_body(name))
+        if secondary_complete:
+            secondary_context["command_state"] = {}
+            secondary_context["hold_controls"] = _airsim_neutral_controls()
+            secondary_context["command_remaining_frames"] = 0
+            _airsim_vehicle_contexts[name] = secondary_context
+        return secondary_complete
     if _airsim_command_state.is_empty():
         return true
     if drone_body == null:
