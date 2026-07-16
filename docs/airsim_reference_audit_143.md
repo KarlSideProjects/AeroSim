@@ -43,4 +43,4 @@ AirSim v1.8.1 is MIT-licensed. This change copies no AirSim source, assets, or b
 
 ## Explicit partials
 
-The operations dashboard now selects between the available named telemetry snapshots. Runtime vehicle state and sensor samples expose an `aerosim_identity.vehicle_name` hook, and replay sequences retain escaped vehicle identity metadata. Full dataset export/session recording remains follow-up scope; no synthetic dashboard or dataset data was added.
+The operations dashboard now selects between the available named telemetry snapshots. Runtime vehicle state, sensor samples, and every camera image response header expose an `aerosim_identity.vehicle_name` metadata hook; replay sequences retain escaped vehicle identity metadata. These are dataset-facing metadata only, not a full dataset writer/export pipeline, which remains follow-up scope. No synthetic dashboard or dataset data was added.

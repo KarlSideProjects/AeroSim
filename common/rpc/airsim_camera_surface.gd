@@ -62,7 +62,7 @@ func capture(requests: Array, vehicle_name: String, _external: bool = false) -> 
             if not camera_result.ok:
                 return camera_result
             camera = camera_result.camera
-        var response := _capture_request(request, camera, image_cache, geometry_cache)
+        var response := _capture_request(request, camera, image_cache, geometry_cache, vehicle_name)
         if not response.ok:
             return response
         responses.append(response.response)
@@ -147,11 +147,11 @@ func _prepare_camera(request: Dictionary, vehicle_name: String) -> Dictionary:
     return {"ok": true, "camera": _render_camera}
 
 
-func _capture_request(request: Dictionary, camera: Camera3D, image_cache: Dictionary, geometry_cache: Dictionary) -> Dictionary:
+func _capture_request(request: Dictionary, camera: Camera3D, image_cache: Dictionary, geometry_cache: Dictionary, vehicle_name: String) -> Dictionary:
     var image_type := int(request["image_type"])
     var width := _render_viewport.size.x
     var height := _render_viewport.size.y
-    var response := _response_header(request, camera, width, height)
+    var response := _response_header(request, camera, width, height, vehicle_name)
     if image_type == IMAGE_DEPTH_PLANAR:
         var geometry := _geometry(camera, width, height, geometry_cache)
         response["image_data_float"] = _flip_float_rows(geometry.depth, width, height)
@@ -176,7 +176,7 @@ func _capture_request(request: Dictionary, camera: Camera3D, image_cache: Dictio
     return {"ok": true, "response": response}
 
 
-func _response_header(request: Dictionary, camera: Camera3D, width: int, height: int) -> Dictionary:
+func _response_header(request: Dictionary, camera: Camera3D, width: int, height: int, vehicle_name: String) -> Dictionary:
     var orientation := AirSimCoordinateContract.godot_orientation_to_ned(camera.global_transform.basis.get_rotation_quaternion())
     var origin: Vector3 = _world_origin_provider.call() if _world_origin_provider.is_valid() else Vector3.ZERO
     var position := AirSimCoordinateContract.godot_world_to_ned(camera.global_position, origin)
@@ -194,6 +194,7 @@ func _response_header(request: Dictionary, camera: Camera3D, width: int, height:
         "width": width,
         "height": height,
         "image_type": int(request["image_type"]),
+        "aerosim_identity": {"vehicle_name": vehicle_name},
     }
 
 

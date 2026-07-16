@@ -263,3 +263,22 @@ func test_secondary_angular_state_tracks_body_acceleration_and_publishes_it() ->
     assert_almost_eq(float(angular_acceleration.x_val), 1.1 * Engine.physics_ticks_per_second, 0.000001)
     assert_almost_eq(float(angular_acceleration.y_val), 3.3 * Engine.physics_ticks_per_second, 0.000001)
     assert_almost_eq(float(angular_acceleration.z_val), -2.2 * Engine.physics_ticks_per_second, 0.000001)
+
+
+func test_secondary_kinematic_context_resets_without_an_acceleration_spike() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime._airsim_vehicle_contexts["DroneB"] = {
+        "last_velocity": Vector3(4.0, 5.0, 6.0),
+        "linear_acceleration": Vector3(7.0, 8.0, 9.0),
+        "last_body_angular_velocity": Vector3(1.0, 2.0, 3.0),
+        "angular_acceleration": Vector3(4.0, 5.0, 6.0),
+    }
+
+    runtime._reset_airsim_flight_state()
+
+    var context: Dictionary = runtime._airsim_vehicle_contexts["DroneB"]
+    assert_eq(context.last_velocity, Vector3.ZERO)
+    assert_eq(context.linear_acceleration, Vector3.ZERO)
+    assert_eq(context.last_body_angular_velocity, Vector3.ZERO)
+    assert_eq(context.angular_acceleration, Vector3.ZERO)

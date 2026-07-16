@@ -1196,9 +1196,19 @@ func reset_to_spawn() -> bool:
         secondary_drone_body.apply_native_state(spawn.global_position + Vector3(1.0, 0.0, 0.0), spawn.global_transform.basis.get_rotation_quaternion(), Vector3.ZERO, Vector3.ZERO)
         secondary_drone_body.freeze = true
         _set_secondary_collision_enabled(_airsim_vehicle_names.size() > 1 and _airsim_secondary_native != null)
+    _reset_secondary_kinematic_contexts()
     if time_trial != null:
         time_trial.reset()
     return true
+
+func _reset_secondary_kinematic_contexts() -> void:
+    for name in _airsim_vehicle_contexts:
+        var context: Dictionary = _airsim_vehicle_contexts[name]
+        context["last_velocity"] = Vector3.ZERO
+        context["linear_acceleration"] = Vector3.ZERO
+        context["last_body_angular_velocity"] = Vector3.ZERO
+        context["angular_acceleration"] = Vector3.ZERO
+        _airsim_vehicle_contexts[name] = context
 
 func _spawn_position() -> Vector3:
     if loaded_map != null:
@@ -1271,6 +1281,7 @@ func _reset_airsim_flight_state() -> void:
         native.call("disarm_flight_control")
     if _airsim_secondary_native != null and _airsim_secondary_native.has_method("disarm_flight_control"):
         _airsim_secondary_native.call("disarm_flight_control")
+    _reset_secondary_kinematic_contexts()
     for name in _airsim_vehicle_contexts:
         var context: Dictionary = _airsim_vehicle_contexts[name]
         context["api_control"] = false
@@ -1283,8 +1294,6 @@ func _reset_airsim_flight_state() -> void:
         context["contact_this_frame"] = false
         context["collision_normal"] = Vector3.ZERO
         context["collision_point"] = Vector3.ZERO
-        context["last_body_angular_velocity"] = Vector3.ZERO
-        context["angular_acceleration"] = Vector3.ZERO
         _airsim_vehicle_contexts[name] = context
     if airsim_sensor_suite != null and airsim_rpc_server != null:
         airsim_sensor_suite.configure(airsim_rpc_server.settings, _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name])

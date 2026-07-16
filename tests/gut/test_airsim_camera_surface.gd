@@ -76,3 +76,20 @@ func test_camera_settings_and_source_identity_are_vehicle_scoped() -> void:
 
     assert_eq(surface._camera_settings("DroneA", "front_center")["X"], 1.0)
     assert_eq(surface._camera_settings("DroneB", "front_center")["X"], 9.0)
+
+
+func test_camera_response_header_carries_vehicle_dataset_identity() -> void:
+    var surface := AirSimCameraSurface.new()
+    autofree(surface)
+    var camera := Camera3D.new()
+    get_tree().root.add_child(camera)
+
+    var header: Dictionary = surface._response_header({
+        "camera_name": "front_center",
+        "image_type": AirSimCameraSurface.IMAGE_SCENE,
+        "pixels_as_float": false,
+        "compress": true,
+    }, camera, 32, 16, "DroneB")
+
+    assert_eq(header.aerosim_identity.vehicle_name, "DroneB")
+    camera.queue_free()
