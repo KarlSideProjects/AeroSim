@@ -109,6 +109,32 @@ bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
 } // namespace
 
 int main() {
+    aerosim::ReplayRecorder named_recorder("DroneA");
+    aerosim::FlightCommand named_command;
+    named_recorder.record(named_command);
+    if (named_recorder.vehicle_name() != "DroneA" || named_recorder.sequence().vehicle_name != "DroneA") {
+        return fail("replay recordings must retain their named vehicle identity");
+    }
+    aerosim::ReplayRecorder other_named_recorder("DroneB");
+    other_named_recorder.record(named_command);
+    if (named_recorder.serialized_identity() == other_named_recorder.serialized_identity() ||
+            named_recorder.serialized_identity().find("DroneA") == std::string::npos ||
+            other_named_recorder.serialized_identity().find("DroneB") == std::string::npos) {
+        return fail("serialized replay identity must keep two vehicle records distinct");
+    }
+    const std::string special_name = "Drone\"\\\x01\n";
+    aerosim::ReplayRecorder special_recorder(special_name);
+    special_recorder.record(named_command);
+    const std::string expected_special_identity =
+            "{\"vehicle_name\":\"Drone" +
+            std::string("\\\"") +
+            "\\\\" +
+            "\\u0001" +
+            "\\n\",\"frame_count\":1}";
+    if (special_recorder.serialized_identity() != expected_special_identity) {
+        return fail("serialized replay identity must escape JSON special characters");
+    }
+
     aerosim::SimulationConfig config;
     config.physics_hz = 240;
     config.substep_hz = 1000;

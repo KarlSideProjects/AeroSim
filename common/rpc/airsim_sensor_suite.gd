@@ -43,12 +43,14 @@ var _streams: Dictionary = {}
 var _stream_order: Array[Dictionary] = []
 var _origin: Dictionary = {}
 var _last_time_seconds := 0.0
+var _last_time_seconds_by_vehicle: Dictionary = {}
 
 
 func configure(settings: Dictionary, vehicle_names: Array) -> Dictionary:
     _streams.clear()
     _stream_order.clear()
     _last_time_seconds = 0.0
+    _last_time_seconds_by_vehicle.clear()
     _origin = settings.get("OriginGeopoint", {}).duplicate(true)
     var errors: Array[String] = []
     var configured_vehicles: Dictionary = settings.get("Vehicles", {})
@@ -106,11 +108,28 @@ func configure(settings: Dictionary, vehicle_names: Array) -> Dictionary:
     return {"ok": errors.is_empty(), "error": "; ".join(errors), "errors": errors}
 
 
-func advance(simulation_time_seconds: float, state: Dictionary) -> void:
-    if not is_finite(simulation_time_seconds) or simulation_time_seconds < _last_time_seconds:
+func advance(simulation_time_seconds: float, vehicle_or_state: Variant, state: Dictionary = {}) -> void:
+    if typeof(vehicle_or_state) == TYPE_DICTIONARY and state.is_empty():
+        if not is_finite(simulation_time_seconds) or simulation_time_seconds < _last_time_seconds:
+            return
+        _last_time_seconds = simulation_time_seconds
+        for vehicle_name in _vehicle_names():
+            _advance_vehicle(simulation_time_seconds, String(vehicle_name), vehicle_or_state)
         return
-    _last_time_seconds = simulation_time_seconds
+    if typeof(vehicle_or_state) != TYPE_STRING or typeof(state) != TYPE_DICTIONARY:
+        return
+    var vehicle_name := String(vehicle_or_state)
+    var last_time := float(_last_time_seconds_by_vehicle.get(vehicle_name, 0.0))
+    if not is_finite(simulation_time_seconds) or simulation_time_seconds < last_time:
+        return
+    _last_time_seconds_by_vehicle[vehicle_name] = simulation_time_seconds
+    _advance_vehicle(simulation_time_seconds, vehicle_name, state)
+
+
+func _advance_vehicle(simulation_time_seconds: float, vehicle_name: String, state: Dictionary) -> void:
     for stream in _stream_order:
+        if String(stream.vehicle_name) != vehicle_name:
+            continue
         var next_time := float(stream.next_sample_time)
         var produced := 0
         while next_time <= simulation_time_seconds + 1e-9 and produced < MAX_CATCHUP_SAMPLES:
@@ -130,6 +149,15 @@ func advance(simulation_time_seconds: float, state: Dictionary) -> void:
                 stream.latest = sample
         while stream.history.size() > 2 and float(stream.history[1]["time_stamp"]) / 1_000_000_000.0 <= ready_time:
             stream.history.pop_front()
+
+
+func _vehicle_names() -> Array:
+    var names := []
+    for stream in _stream_order:
+        var name := String(stream.vehicle_name)
+        if not names.has(name):
+            names.append(name)
+    return names
 
 
 func sensor_result(vehicle_name: String, sensor_type: int, sensor_name: String) -> Dictionary:
@@ -207,18 +235,22 @@ func _stream_key(vehicle_name: String, sensor_type: int, sensor_name: String) ->
 
 
 func _sample(stream: Dictionary, state: Dictionary, sample_time: float) -> Dictionary:
+    var sample: Dictionary
     match int(stream.sensor_type):
         SENSOR_IMU:
-            return _sample_imu(state, sample_time)
+            sample = _sample_imu(state, sample_time)
         SENSOR_GPS:
-            return _sample_gps(state, sample_time)
+            sample = _sample_gps(state, sample_time)
         SENSOR_MAGNETOMETER:
-            return _sample_magnetometer(state, sample_time)
+            sample = _sample_magnetometer(state, sample_time)
         SENSOR_BAROMETER:
-            return _sample_barometer(state, sample_time)
+            sample = _sample_barometer(state, sample_time)
         SENSOR_LIDAR:
-            return _sample_lidar(stream, state, sample_time)
-    return {"time_stamp": int(round(sample_time * 1_000_000_000.0))}
+            sample = _sample_lidar(stream, state, sample_time)
+        _:
+            sample = {"time_stamp": int(round(sample_time * 1_000_000_000.0))}
+    sample["aerosim_identity"] = {"vehicle_name": String(stream.vehicle_name)}
+    return sample
 
 
 func _sample_imu(state: Dictionary, sample_time: float) -> Dictionary:

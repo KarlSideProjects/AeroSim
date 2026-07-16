@@ -7,6 +7,7 @@ const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
+const AirSimSettings = preload("res://common/rpc/airsim_settings.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
 const AirSimCameraSurface = preload("res://common/rpc/airsim_camera_surface.gd")
@@ -22,6 +23,7 @@ const MAP_SCENE_PATHS := {
     "industrial_yard": "res://levels/free_flight/industrial_yard.tscn"
 }
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
+const AIRSIM_GROUND_BODY_CLEARANCE_M := 0.25
 const TAKEOFF_VELOCITY := Vector3(0.0, 6.0, 0.0)
 const KEYBOARD_FLIGHT_THROTTLE := 0.75
 const ANGLE_MAX_TILT_DEGREES := 30.0
@@ -36,6 +38,8 @@ const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 @onready var fallback_status_label: Label3D = %FallbackStatus
 @onready var drone_body = get_node_or_null("DroneBody")
 @onready var chase_camera := get_node_or_null("ChaseCamera") as Camera3D
+@onready var secondary_drone_body = get_node_or_null("DroneBodySecondary")
+@onready var secondary_chase_camera := get_node_or_null("ChaseCameraSecondary") as Camera3D
 
 var native: Object
 var airsim_session: AirSimSession
@@ -115,6 +119,15 @@ var controller_safety_latched := false
 var controller_reconnected := false
 var disconnected_gamepad_device_id := -1
 var _airsim_vehicle_name := ""
+var _airsim_vehicle_names: Array[String] = []
+var _dashboard_vehicle_name := ""
+var _airsim_secondary_native: Object
+var _airsim_vehicle_contexts: Dictionary = {}
+var _airsim_secondary_a5_configuration: Dictionary = {}
+var _secondary_collision_state_captured := false
+var _secondary_collision_layer := 1
+var _secondary_collision_mask := 1
+var _secondary_collision_shapes: Array[Dictionary] = []
 var _airsim_api_control := false
 var _airsim_disarm_requested := false
 var _airsim_command_state: Dictionary = {}
@@ -136,6 +149,9 @@ func _ready() -> void:
     Input.joy_connection_changed.connect(_on_joy_connection_changed)
     settings_store = SettingsStoreScript.new()
     _load_player_settings()
+    var startup_settings := _load_and_validate_airsim_settings()
+    if startup_settings.is_empty():
+        return
     _build_main_menu()
     _build_flight_hud()
     _build_status_diagram()
@@ -156,36 +172,16 @@ func _ready() -> void:
     airsim_rpc_server.set_session(airsim_session, Callable(self, "respawn"))
     add_child(airsim_rpc_server)
     airsim_stop_file = _cold_start_arg("--airsim-stop-file")
-    var airsim_port := int(_cold_start_arg("--airsim-rpc-port", str(AirSimRpcServer.DEFAULT_PORT)))
-    var startup_settings := {
-        "SettingsVersion": 1.2,
-        "SimMode": "Multirotor",
-        "ApiServerPort": airsim_port,
-        "RpcEnabled": true,
-    }
-    var settings_path := _cold_start_arg("--airsim-settings-file")
-    if not settings_path.is_empty():
-        var settings_file := FileAccess.open(settings_path, FileAccess.READ)
-        if settings_file == null:
-            push_error("AirSim settings file could not be opened: %s" % settings_path)
-            get_tree().quit(1)
-            return
-        else:
-            var parsed_settings = JSON.parse_string(settings_file.get_as_text())
-            settings_file.close()
-            if typeof(parsed_settings) != TYPE_DICTIONARY:
-                push_error("AirSim settings file must contain a JSON object")
-                get_tree().quit(1)
-                return
-            else:
-                startup_settings = parsed_settings
     var configured_vehicles = startup_settings.get("Vehicles", {})
-    if typeof(configured_vehicles) == TYPE_DICTIONARY and configured_vehicles.size() > 1:
-        push_error("AirSim RPC currently exposes exactly one physical vehicle")
-        get_tree().quit(1)
-        return
-    if typeof(configured_vehicles) == TYPE_DICTIONARY and configured_vehicles.size() == 1:
-        _airsim_vehicle_name = String(configured_vehicles.keys()[0])
+    if typeof(configured_vehicles) == TYPE_DICTIONARY:
+        for configured_name in configured_vehicles.keys():
+            _airsim_vehicle_names.append(String(configured_name))
+    if _airsim_vehicle_names.size() > 0:
+        _airsim_vehicle_name = _airsim_vehicle_names[0]
+    _dashboard_vehicle_name = _airsim_vehicle_name
+    if status_diagram != null:
+        status_diagram.call("set_vehicle_names", _airsim_vehicle_names)
+    _configure_airsim_vehicle_contexts()
     airsim_rpc_server.set_vehicle_backend(
         Callable(self, "_airsim_state"),
         Callable(self, "_airsim_command"),
@@ -200,15 +196,18 @@ func _ready() -> void:
     var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
     if not rpc_result.ok:
         push_error("AirSim RPC startup failed: %s" % rpc_result.error)
+        airsim_rpc_server.stop()
+        get_tree().quit(1)
+        return
     else:
         _configure_px4_sitl_bridge()
-        var sensor_result := airsim_sensor_suite.configure(airsim_rpc_server.settings, [_airsim_vehicle_name])
+        var sensor_result := airsim_sensor_suite.configure(airsim_rpc_server.settings, _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name])
         if not sensor_result.ok:
             push_error("AirSim sensor startup failed: %s" % sensor_result.error)
             airsim_rpc_server.stop()
             get_tree().quit(1)
             return
-        airsim_sensor_suite.advance(0.0, _airsim_state(_airsim_vehicle_name).get("state", {}))
+        _advance_airsim_sensors()
         airsim_camera_surface.configure(
             self,
             Callable(self, "_airsim_camera_source"),
@@ -217,15 +216,183 @@ func _ready() -> void:
             airsim_rpc_server.settings,
             Callable(self, "_airsim_camera_origin"))
         airsim_rpc_server.set_camera_backend(Callable(airsim_camera_surface, "capture"))
-        _write_airsim_ready_marker(_cold_start_arg("--airsim-ready-file"))
     var hardware_config := HardwareConfig.new()
     if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
         last_error_message = hardware_config.last_error
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
+    if not _configure_secondary_native(hardware_config):
+        push_error("Named vehicle runtime setup failed: %s" % last_error_message)
+        if airsim_rpc_server != null and airsim_rpc_server.is_running():
+            airsim_rpc_server.stop()
+        get_tree().quit(1)
+        return
+    var ready_file := _cold_start_arg("--airsim-ready-file")
+    if not ready_file.is_empty() and _airsim_vehicle_names.size() >= 2 and loaded_map == null:
+        if not load_map(DEFAULT_FREE_FLIGHT_MAP_ID):
+            push_error("AirSim default map setup failed: %s" % last_error_message)
+            if airsim_rpc_server != null and airsim_rpc_server.is_running():
+                airsim_rpc_server.stop()
+            get_tree().quit(1)
+            return
+        screen = "preflight"
+    _write_airsim_ready_marker(ready_file)
     update_fallback_status()
     _update_chase_camera()
     _refresh_flight_hud()
     call_deferred("_run_cold_start_probe")
+
+
+func _validate_airsim_startup_settings(raw_settings: Dictionary) -> Dictionary:
+    var validation: Dictionary = AirSimSettings.validate(raw_settings)
+    if not bool(validation.get("ok", false)):
+        return validation
+    var vehicles: Dictionary = validation.get("settings", {}).get("Vehicles", {})
+    if vehicles.size() == 2:
+        var vehicle_names: Array = vehicles.keys()
+        var secondary_name := String(vehicle_names[1])
+        var secondary_settings: Dictionary = vehicles.get(secondary_name, {})
+        if String(secondary_settings.get("VehicleType", "SimpleFlight")) == "PX4Multirotor":
+            var error := "secondary named PX4Multirotor requires a second Px4SitlBridge; unsupported in this slice"
+            validation["ok"] = false
+            validation["error"] = error
+            validation["errors"] = [error]
+    return validation
+
+
+func _load_and_validate_airsim_settings() -> Dictionary:
+    var startup_settings := {
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": int(_cold_start_arg("--airsim-rpc-port", str(AirSimRpcServer.DEFAULT_PORT))),
+        "RpcEnabled": true,
+    }
+    var settings_path := _cold_start_arg("--airsim-settings-file")
+    if not settings_path.is_empty():
+        var settings_file := FileAccess.open(settings_path, FileAccess.READ)
+        if settings_file == null:
+            push_error("AirSim settings file could not be opened: %s" % settings_path)
+            get_tree().quit(1)
+            return {}
+        var parsed_settings = JSON.parse_string(settings_file.get_as_text())
+        settings_file.close()
+        if typeof(parsed_settings) != TYPE_DICTIONARY:
+            push_error("AirSim settings file must contain a JSON object")
+            get_tree().quit(1)
+            return {}
+        startup_settings = parsed_settings
+
+    var validation: Dictionary = _validate_airsim_startup_settings(startup_settings)
+    if not validation.ok:
+        last_error_message = String(validation.error)
+        push_error("AirSim settings validation failed: %s" % last_error_message)
+        get_tree().quit(1)
+        return {}
+    return validation.settings
+
+
+func _configure_airsim_vehicle_contexts() -> void:
+    _airsim_vehicle_contexts.clear()
+    for name in _airsim_vehicle_names:
+        _airsim_vehicle_contexts[String(name)] = {
+            "api_control": false,
+            "armed": false,
+            "disarm_requested": true,
+            "command_state": {},
+            "hold_controls": {},
+            "command_remaining_frames": 0,
+            "last_velocity": Vector3.ZERO,
+            "linear_acceleration": Vector3.ZERO,
+            "last_body_angular_velocity": Vector3.ZERO,
+            "angular_acceleration": Vector3.ZERO,
+            "collision_seen": false,
+            "contact_this_frame": false,
+            "collision_normal": Vector3.ZERO,
+            "collision_point": Vector3.ZERO,
+        }
+
+
+func _set_secondary_collision_enabled(enabled: bool) -> void:
+    if secondary_drone_body == null:
+        return
+    if not _secondary_collision_state_captured:
+        _secondary_collision_layer = secondary_drone_body.collision_layer
+        _secondary_collision_mask = secondary_drone_body.collision_mask
+        _secondary_collision_shapes.clear()
+        for child in secondary_drone_body.get_children():
+            if child is CollisionShape3D:
+                _secondary_collision_shapes.append({"node": child, "disabled": child.disabled})
+        _secondary_collision_state_captured = true
+    secondary_drone_body.collision_layer = _secondary_collision_layer if enabled else 0
+    secondary_drone_body.collision_mask = _secondary_collision_mask if enabled else 0
+    for shape_state in _secondary_collision_shapes:
+        var collision_shape = shape_state.get("node")
+        if is_instance_valid(collision_shape):
+            collision_shape.disabled = bool(shape_state.get("disabled", false)) if enabled else true
+
+
+func _configure_secondary_native(hardware_config: RefCounted) -> bool:
+    _set_secondary_collision_enabled(false)
+    if _airsim_vehicle_names.size() < 2 or secondary_drone_body == null:
+        return _airsim_vehicle_names.size() < 2
+    _airsim_secondary_native = ClassDB.instantiate("AeroSimNative")
+    if _airsim_secondary_native == null:
+        last_error_message = "second named vehicle native runtime unavailable"
+        return false
+    var primary_native := native
+    native = _airsim_secondary_native
+    var applied_result: Variant = hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET)
+    var applied: bool = bool(applied_result)
+    native = primary_native
+    if not applied:
+        last_error_message = "second named vehicle hardware preset failed: %s" % hardware_config.last_error
+        return false
+    if not _sync_secondary_a5_model():
+        return false
+    _set_secondary_collision_enabled(true)
+    secondary_drone_body.visible = true
+    if secondary_chase_camera != null:
+        secondary_chase_camera.current = false
+    return true
+
+
+func _secondary_body(vehicle_name: String):
+    if _airsim_vehicle_names.size() > 1 and vehicle_name == String(_airsim_vehicle_names[1]):
+        return secondary_drone_body
+    return null
+
+
+func _sync_secondary_a5_model() -> bool:
+    if native == null or _airsim_secondary_native == null:
+        return false
+    if not native.has_method("a5_downwash_configuration") or not _airsim_secondary_native.has_method("set_a5_downwash_model"):
+        last_error_message = "A5 downwash runtime hooks are unavailable"
+        return false
+    var configuration_result: Variant = native.call("a5_downwash_configuration")
+    if typeof(configuration_result) != TYPE_DICTIONARY:
+        last_error_message = "A5 downwash configuration is not a dictionary"
+        return false
+    var configuration: Dictionary = configuration_result
+    if configuration == _airsim_secondary_a5_configuration:
+        return true
+    var enabled := bool(configuration.get("enabled", false))
+    var prop_radius := float(configuration.get("prop_radius_m", 0.0))
+    var coeff_1 := float(configuration.get("coeff_1", 0.0))
+    var coeff_2 := float(configuration.get("coeff_2", 0.0))
+    var coeff_3 := float(configuration.get("coeff_3", 0.0))
+    if not enabled and prop_radius <= 0.0:
+        _airsim_secondary_a5_configuration = configuration.duplicate(true)
+        return true
+    var apply_result: Variant = _airsim_secondary_native.call(
+        "set_a5_downwash_model", enabled, prop_radius, coeff_1, coeff_2, coeff_3)
+    if not bool(apply_result):
+        last_error_message = "secondary A5 downwash model rejected validated configuration"
+        return false
+    _airsim_secondary_a5_configuration = configuration.duplicate(true)
+    return true
+
+
+func _is_primary_airsim_vehicle(vehicle_name: String) -> bool:
+    return vehicle_name == _airsim_vehicle_name
 
 
 func _load_player_settings() -> void:
@@ -371,6 +538,8 @@ func _physics_process(delta: float) -> void:
             set_paused(false, false)
         if paused:
             return
+    if _airsim_secondary_native != null and secondary_drone_body != null and (airsim_session == null or not airsim_session.is_paused()):
+        _step_secondary_airsim_vehicle(String(_airsim_vehicle_names[1]))
     if px4_sitl_bridge != null:
         px4_sitl_bridge.poll(Time.get_ticks_usec() / 1000000.0)
         if px4_sitl_bridge.state == "failed":
@@ -613,9 +782,194 @@ func _physics_process(delta: float) -> void:
 func _advance_airsim_sensors() -> void:
     if airsim_sensor_suite == null or airsim_session == null:
         return
-    var sensor_state := _airsim_state(_airsim_vehicle_name)
-    if bool(sensor_state.get("ok", false)):
-        airsim_sensor_suite.advance(airsim_session.simulation_time_seconds, sensor_state.state)
+    var names: Array = _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name]
+    for name in names:
+        var sensor_state := _airsim_state(String(name))
+        if bool(sensor_state.get("ok", false)):
+            airsim_sensor_suite.advance(airsim_session.simulation_time_seconds, String(name), sensor_state.state)
+
+
+func _step_secondary_airsim_vehicle(vehicle_name: String) -> void:
+    var context: Dictionary = _airsim_vehicle_contexts.get(vehicle_name, {})
+    if context.is_empty() or not bool(context.get("api_control", false)) or not bool(context.get("armed", false)):
+        return
+    var body = _secondary_body(vehicle_name)
+    if body == null or _airsim_secondary_native == null:
+        return
+    body.freeze = false
+    body.sleeping = false
+    _sync_named_native(body, _airsim_secondary_native)
+    if not _sync_secondary_a5_model():
+        return
+    if _airsim_secondary_native.has_method("set_a5_downwash_source_position") and drone_body != null:
+        _airsim_secondary_native.call(
+            "set_a5_downwash_source_position",
+            drone_body.global_position.x,
+            drone_body.global_position.y,
+            drone_body.global_position.z)
+    var controls := _airsim_secondary_controls(context, body)
+    var row: PackedFloat64Array
+    if String(controls.get("mode", "ANGLE")) == "ACRO":
+        row = _airsim_secondary_native.call(
+            "step_collision_acro_mode",
+            Engine.physics_ticks_per_second,
+            1000,
+            float(controls.get("throttle", 0.0)),
+            float(controls.get("acro_roll", 0.0)),
+            float(controls.get("acro_pitch", 0.0)),
+            float(controls.get("acro_yaw", 0.0)),
+            _acro_rate("rc_rate"),
+            _acro_rate("super_rate"),
+            _acro_rate("expo"),
+            body.contact_seen,
+            body.contact_normal.x,
+            body.contact_normal.y,
+            body.contact_normal.z,
+            body.contact_impulse.x,
+            body.contact_impulse.y,
+            body.contact_impulse.z,
+            0.0,
+            body.linear_velocity.x,
+            body.linear_velocity.y,
+            body.linear_velocity.z,
+            body.angular_velocity.x,
+            body.angular_velocity.y,
+            body.angular_velocity.z,
+            _kinetic(body.linear_velocity, body.angular_velocity))
+    else:
+        row = _airsim_secondary_native.call(
+            "step_collision_angle_mode",
+            Engine.physics_ticks_per_second,
+            1000,
+            float(controls.get("throttle", 0.0)),
+            float(controls.get("roll", 0.0)),
+            float(controls.get("pitch", 0.0)),
+            float(controls.get("yaw_rate", 0.0)),
+            body.contact_seen,
+            body.contact_normal.x,
+            body.contact_normal.y,
+            body.contact_normal.z,
+            body.contact_impulse.x,
+            body.contact_impulse.y,
+            body.contact_impulse.z,
+            0.0,
+            body.linear_velocity.x,
+            body.linear_velocity.y,
+            body.linear_velocity.z,
+            body.angular_velocity.x,
+            body.angular_velocity.y,
+            body.angular_velocity.z,
+            _kinetic(body.linear_velocity, body.angular_velocity))
+    if row.size() >= 17:
+        body.apply_native_state(
+            Vector3(row[1], row[2], row[3]),
+            Quaternion(row[4], row[5], row[6], row[7]),
+            Vector3(row[8], row[9], row[10]),
+            Vector3(row[14], row[15], row[16]))
+    if body.contact_seen:
+        context["collision_seen"] = true
+        context["contact_this_frame"] = true
+        context["collision_normal"] = body.contact_normal
+        context["collision_point"] = body.global_position
+    else:
+        context["contact_this_frame"] = false
+    body.reset_contact()
+    if int(context.get("command_remaining_frames", 0)) > 0:
+        context["command_remaining_frames"] = int(context["command_remaining_frames"]) - 1
+    if int(context.get("command_remaining_frames", 0)) == 0:
+        var method := String(context.get("command_state", {}).get("method", ""))
+        if method in ["moveByVelocity", "moveByVelocityZ", "moveByVelocityBodyFrame", "moveByVelocityZBodyFrame", "rotateByYawRate", "moveByAngleRatesThrottle"]:
+            context["hold_controls"] = _airsim_neutral_controls()
+            context["command_state"] = {}
+    context["linear_acceleration"] = (body.linear_velocity - context.get("last_velocity", Vector3.ZERO)) * float(Engine.physics_ticks_per_second)
+    context["last_velocity"] = body.linear_velocity
+    var body_angular_velocity: Vector3 = body.global_transform.basis.inverse() * body.angular_velocity
+    context["angular_acceleration"] = (body_angular_velocity - context.get("last_body_angular_velocity", Vector3.ZERO)) * float(Engine.physics_ticks_per_second)
+    context["last_body_angular_velocity"] = body_angular_velocity
+    _airsim_vehicle_contexts[vehicle_name] = context
+    if _airsim_secondary_native.has_method("refresh_imu_sample"):
+        _airsim_secondary_native.call("refresh_imu_sample")
+
+
+func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
+    var command_state: Dictionary = context.get("command_state", {})
+    if command_state.is_empty():
+        return context.get("hold_controls", _airsim_neutral_controls()).duplicate(true)
+    var method := String(command_state.get("method", ""))
+    var args: Array = command_state.get("args", [])
+    match method:
+        "takeoff":
+            return _airsim_velocity_controls(Vector3(0.0, clampf((3.0 - body.global_position.y) * 1.5, -3.0, 3.0), 0.0), 0.0, null, body)
+        "land":
+            return _airsim_velocity_controls(Vector3(0.0, clampf(-body.global_position.y * 1.5, -3.0, 3.0), 0.0), 0.0, null, body)
+        "hover":
+            return _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
+        "moveByVelocity":
+            return _airsim_velocity_controls(AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), float(args[2]))), 0.0, args[5], body)
+        "moveByVelocityZ":
+            return _airsim_velocity_controls(AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - body.global_position.y) * 4.0, args[5], body)
+        "moveByVelocityBodyFrame":
+            return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), float(args[2]))), 0.0, args[5], body)
+        "moveByVelocityZBodyFrame":
+            return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - body.global_position.y) * 4.0, args[5], body)
+        "goHome":
+            var home_delta: Vector3 = _spawn_position() - body.global_position
+            var home_horizontal := Vector3(home_delta.x, 0.0, home_delta.z)
+            var home_velocity := home_horizontal.normalized() * minf(home_horizontal.length() * 1.5, 4.0)
+            home_velocity.y = clampf(home_delta.y * 4.0 - body.linear_velocity.y * 3.0, -8.0, 8.0)
+            return _airsim_velocity_controls(home_velocity, 0.0, null, body)
+        "moveToPosition", "moveOnPath":
+            var target_ned: Vector3
+            if method == "moveToPosition":
+                target_ned = Vector3(float(args[0]), float(args[1]), float(args[2]))
+            else:
+                var path: Array = args[0]
+                var waypoint_index := int(command_state.get("waypoint_index", 0))
+                if waypoint_index >= path.size():
+                    context["hold_controls"] = _airsim_neutral_controls()
+                    context["command_state"] = {}
+                    return context["hold_controls"].duplicate(true)
+                var waypoint: Dictionary = path[waypoint_index]
+                target_ned = Vector3(float(waypoint["x_val"]), float(waypoint["y_val"]), float(waypoint["z_val"]))
+            var delta_world: Vector3 = AirSimCoordinateContract.ned_to_godot_world(target_ned, _spawn_position()) - body.global_position
+            var command_speed := float(args[3]) if method == "moveToPosition" else float(args[1])
+            if method == "moveOnPath" and delta_world.length() < 0.25:
+                command_state["waypoint_index"] = int(command_state.get("waypoint_index", 0)) + 1
+                context["command_state"] = command_state
+            var yaw_mode: Variant = args[6] if method == "moveToPosition" else args[4]
+            return _airsim_velocity_controls(delta_world.normalized() * minf(delta_world.length() * 2.0, command_speed), delta_world.y * 4.0, yaw_mode, body)
+        "rotateToYaw":
+            var target_yaw := AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(float(args[0]))
+            var delta_yaw := wrapf(target_yaw - body.rotation.y, -PI, PI)
+            var rotate_to_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
+            rotate_to_controls["yaw_rate"] = clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            return rotate_to_controls
+        "rotateByYawRate":
+            var rotate_rate_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
+            rotate_rate_controls["yaw_rate"] = clampf(-float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            return rotate_rate_controls
+        "moveByAngleRatesThrottle":
+            return {"mode": "ACRO", "throttle": float(args[3]), "acro_roll": _airsim_rate_stick(rad_to_deg(float(args[0])), _airsim_secondary_native), "acro_pitch": _airsim_rate_stick(rad_to_deg(float(args[1])), _airsim_secondary_native), "acro_yaw": _airsim_rate_stick(rad_to_deg(float(args[2])), _airsim_secondary_native)}
+    return _airsim_neutral_controls()
+
+
+func _sync_named_native(body: Object, target_native: Object) -> void:
+    var q: Quaternion = body.global_transform.basis.get_rotation_quaternion()
+    target_native.call(
+        "sync_flight_state",
+        body.global_position.x,
+        body.global_position.y,
+        body.global_position.z,
+        q.x,
+        q.y,
+        q.z,
+        q.w,
+        body.linear_velocity.x,
+        body.linear_velocity.y,
+        body.linear_velocity.z,
+        body.angular_velocity.x,
+        body.angular_velocity.y,
+        body.angular_velocity.z)
 
 
 func _publish_px4_lockstep_sensor_if_needed() -> void:
@@ -932,12 +1286,23 @@ func reset_to_spawn() -> bool:
     var spawn := loaded_map.get_node_or_null("SpawnNorth") as Marker3D
     if spawn == null:
         return _set_map_error("Cannot reset Free Flight map %s: SpawnNorth is missing" % loaded_map_id)
+    _airsim_last_velocity = Vector3.ZERO
+    _airsim_linear_acceleration = Vector3.ZERO
+    _airsim_last_body_angular_velocity = Vector3.ZERO
+    _airsim_angular_acceleration = Vector3.ZERO
     if native != null:
         native.call("reset_flight")
     if drone_body != null:
         drone_body.reset_contact()
         drone_body.apply_native_state(spawn.global_position, spawn.global_transform.basis.get_rotation_quaternion(), Vector3.ZERO, Vector3.ZERO)
         drone_body.freeze = true
+    if _airsim_secondary_native != null and secondary_drone_body != null:
+        _airsim_secondary_native.call("reset_flight")
+        secondary_drone_body.reset_contact()
+        secondary_drone_body.apply_native_state(spawn.global_position + Vector3(1.0, 0.0, 0.0), spawn.global_transform.basis.get_rotation_quaternion(), Vector3.ZERO, Vector3.ZERO)
+        secondary_drone_body.freeze = true
+        _set_secondary_collision_enabled(_airsim_vehicle_names.size() > 1 and _airsim_secondary_native != null)
+    _reset_secondary_kinematic_contexts()
     if time_trial != null:
         time_trial.reset()
     if scene_object_catalog != null:
@@ -950,6 +1315,15 @@ func reset_to_spawn() -> bool:
             "steady_wind": scene_steady_wind_mps,
         }))
     return true
+
+func _reset_secondary_kinematic_contexts() -> void:
+    for name in _airsim_vehicle_contexts:
+        var context: Dictionary = _airsim_vehicle_contexts[name]
+        context["last_velocity"] = Vector3.ZERO
+        context["linear_acceleration"] = Vector3.ZERO
+        context["last_body_angular_velocity"] = Vector3.ZERO
+        context["angular_acceleration"] = Vector3.ZERO
+        _airsim_vehicle_contexts[name] = context
 
 func _spawn_position() -> Vector3:
     if loaded_map != null:
@@ -1228,8 +1602,24 @@ func _reset_airsim_flight_state() -> void:
         _px4_lockstep_sensor_pending = false
     if native != null and native.has_method("disarm_flight_control"):
         native.call("disarm_flight_control")
+    if _airsim_secondary_native != null and _airsim_secondary_native.has_method("disarm_flight_control"):
+        _airsim_secondary_native.call("disarm_flight_control")
+    _reset_secondary_kinematic_contexts()
+    for name in _airsim_vehicle_contexts:
+        var context: Dictionary = _airsim_vehicle_contexts[name]
+        context["api_control"] = false
+        context["armed"] = false
+        context["disarm_requested"] = true
+        context["command_state"] = {}
+        context["hold_controls"] = {}
+        context["command_remaining_frames"] = 0
+        context["collision_seen"] = false
+        context["contact_this_frame"] = false
+        context["collision_normal"] = Vector3.ZERO
+        context["collision_point"] = Vector3.ZERO
+        _airsim_vehicle_contexts[name] = context
     if airsim_sensor_suite != null and airsim_rpc_server != null:
-        airsim_sensor_suite.configure(airsim_rpc_server.settings, [_airsim_vehicle_name])
+        airsim_sensor_suite.configure(airsim_rpc_server.settings, _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name])
 
 func update_fallback_status() -> void:
     last_profile_status = InputProfiles.fallback_status(gamepad_device_state.connected_joypads())
@@ -1266,8 +1656,10 @@ func set_paused(value: bool, sync_session: bool = true) -> void:
         airsim_session.set_paused(value)
     if drone_body != null:
         drone_body.freeze = value
-        if not value:
-            drone_body.sleeping = false
+        drone_body.sleeping = value
+    if secondary_drone_body != null:
+        secondary_drone_body.freeze = value
+        secondary_drone_body.sleeping = value
 
 func _build_main_menu() -> void:
     var layer := CanvasLayer.new()
@@ -1854,12 +2246,26 @@ func _build_finish_panel() -> void:
 
 func _build_status_diagram() -> void:
     status_diagram = StatusDiagramDebug.new()
+    status_diagram.connect("vehicle_selected", Callable(self, "_on_dashboard_vehicle_selected"))
     add_child(status_diagram)
+
+
+func _on_dashboard_vehicle_selected(vehicle_name: String) -> void:
+    if _airsim_name_matches(vehicle_name):
+        _dashboard_vehicle_name = vehicle_name
 
 func _update_status_diagram() -> void:
     if status_diagram == null or native == null or not native.has_method("telemetry_snapshot"):
         return
-    status_diagram.update_from_snapshot(native.call("telemetry_snapshot"))
+    var snapshots: Dictionary = {}
+    var primary_snapshot: Dictionary = native.call("telemetry_snapshot")
+    primary_snapshot["vehicle_name"] = _airsim_vehicle_name
+    snapshots[_airsim_vehicle_name] = primary_snapshot
+    if _airsim_secondary_native != null and _airsim_vehicle_names.size() > 1 and _airsim_secondary_native.has_method("telemetry_snapshot"):
+        var secondary_snapshot: Dictionary = _airsim_secondary_native.call("telemetry_snapshot")
+        secondary_snapshot["vehicle_name"] = String(_airsim_vehicle_names[1])
+        snapshots[String(_airsim_vehicle_names[1])] = secondary_snapshot
+    status_diagram.call("set_vehicle_snapshots", snapshots, _dashboard_vehicle_name)
     if environment_state != null and status_diagram.has_method("update_environment"):
         status_diagram.update_environment(environment_state.snapshot())
 
@@ -1867,6 +2273,12 @@ func _reset_drone_body() -> void:
     drone_body.reset_contact()
     drone_body.apply_native_state(_spawn_position(), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
     drone_body.freeze = true
+    if secondary_drone_body != null:
+        secondary_drone_body.visible = false
+        secondary_drone_body.reset_contact()
+        secondary_drone_body.apply_native_state(_spawn_position() + Vector3(1.0, 0.0, 0.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+        secondary_drone_body.freeze = true
+        _set_secondary_collision_enabled(_airsim_vehicle_names.size() > 1 and _airsim_secondary_native != null)
 
 func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
@@ -2129,16 +2541,21 @@ func _update_chase_camera() -> void:
     chase_camera.current = true
     chase_camera.global_position = drone_body.global_position + CHASE_CAMERA_OFFSET
     chase_camera.look_at(drone_body.global_position, Vector3.UP)
+    if secondary_drone_body != null and secondary_chase_camera != null and secondary_drone_body.visible:
+        secondary_chase_camera.global_position = secondary_drone_body.global_position + CHASE_CAMERA_OFFSET
+        secondary_chase_camera.look_at(secondary_drone_body.global_position, Vector3.UP)
 
 
-func _airsim_camera_source() -> Camera3D:
+func _airsim_camera_source(vehicle_name: String = "") -> Camera3D:
+    if _airsim_vehicle_names.size() > 1 and vehicle_name == String(_airsim_vehicle_names[1]):
+        return secondary_chase_camera
     return chase_camera
 
 
 func _airsim_camera_vehicle(vehicle_name: String):
     if not _airsim_name_matches(vehicle_name):
         return null
-    return drone_body
+    return _secondary_body(vehicle_name) if not _is_primary_airsim_vehicle(vehicle_name) else drone_body
 
 
 func _airsim_camera_origin() -> Vector3:
@@ -2168,6 +2585,8 @@ func _mass_kg() -> float:
 
 
 func _airsim_name_matches(name: String) -> bool:
+    if _airsim_vehicle_names.size() > 1:
+        return name in _airsim_vehicle_names
     return name == _airsim_vehicle_name or (_airsim_vehicle_name.is_empty() and name.is_empty())
 
 
@@ -2181,7 +2600,20 @@ func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
     if _airsim_lifecycle_stopped():
         return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
-        return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
+        return {"ok": false, "error": "unknown vehicle: %s" % name}
+    if not _is_primary_airsim_vehicle(name):
+        var secondary_context: Dictionary = _airsim_vehicle_contexts.get(name, {})
+        secondary_context["api_control"] = enabled
+        secondary_context["disarm_requested"] = true
+        secondary_context["hold_controls"] = _airsim_neutral_controls() if enabled else {}
+        if not enabled:
+            secondary_context["command_state"] = {}
+            secondary_context["command_remaining_frames"] = 0
+            secondary_context["armed"] = false
+            if _airsim_secondary_native != null:
+                _airsim_secondary_native.call("disarm_flight_control")
+        _airsim_vehicle_contexts[name] = secondary_context
+        return {"ok": true}
     _airsim_api_control = enabled
     _airsim_disarm_requested = true
     _airsim_hold_controls = _airsim_neutral_controls() if enabled else {}
@@ -2201,7 +2633,25 @@ func _airsim_arm_disarm(armed: bool, name: String) -> Dictionary:
     if _airsim_lifecycle_stopped():
         return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
-        return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
+        return {"ok": false, "error": "unknown vehicle: %s" % name}
+    if not _is_primary_airsim_vehicle(name):
+        if _airsim_secondary_native == null:
+            return {"ok": false, "error": "vehicle native runtime unavailable"}
+        var secondary_context: Dictionary = _airsim_vehicle_contexts.get(name, {})
+        if armed:
+            var secondary_armed := bool(_airsim_secondary_native.call("arm_flight_control", 0.0))
+            secondary_context["armed"] = secondary_armed
+            secondary_context["disarm_requested"] = not secondary_armed
+            _airsim_vehicle_contexts[name] = secondary_context
+            return {"ok": true, "armed": secondary_armed}
+        _airsim_secondary_native.call("disarm_flight_control")
+        secondary_context["armed"] = false
+        secondary_context["disarm_requested"] = true
+        secondary_context["command_state"] = {}
+        secondary_context["hold_controls"] = _airsim_neutral_controls()
+        secondary_context["command_remaining_frames"] = 0
+        _airsim_vehicle_contexts[name] = secondary_context
+        return {"ok": true, "armed": false}
     if native == null:
         return {"ok": false, "error": "native runtime unavailable"}
     if px4_sitl_bridge != null:
@@ -2223,6 +2673,13 @@ func _airsim_arm_disarm(armed: bool, name: String) -> Dictionary:
 
 
 func _airsim_cancel_task(name: String) -> void:
+    if not _is_primary_airsim_vehicle(name):
+        var secondary_context: Dictionary = _airsim_vehicle_contexts.get(name, {})
+        secondary_context["command_state"] = {}
+        secondary_context["hold_controls"] = _airsim_neutral_controls()
+        secondary_context["command_remaining_frames"] = 0
+        _airsim_vehicle_contexts[name] = secondary_context
+        return
     if _airsim_name_matches(name):
         _airsim_command_state.clear()
         _airsim_hold_controls = _airsim_neutral_controls()
@@ -2235,9 +2692,53 @@ func _airsim_sensor(sensor_type: int, sensor_name: String, vehicle_name: String)
     return airsim_sensor_suite.sensor_result(vehicle_name, sensor_type, sensor_name)
 
 
+func _secondary_task_complete(context: Dictionary, body) -> bool:
+    var command_state: Dictionary = context.get("command_state", {})
+    if command_state.is_empty():
+        return true
+    if body == null:
+        return false
+    var method := String(command_state.get("method", ""))
+    var args: Array = command_state.get("args", [])
+    var position_ned := AirSimCoordinateContract.godot_world_to_ned(body.global_position, _spawn_position())
+    match method:
+        "takeoff":
+            return position_ned.z <= -2.75 and body.linear_velocity.length() < 1.0
+        "land":
+            var landed_on_ground: bool = body.global_position.y <= _spawn_position().y + AIRSIM_GROUND_BODY_CLEARANCE_M and body.linear_velocity.length() < 0.25
+            return position_ned.z >= -0.5 and (bool(context.get("contact_this_frame", false)) or landed_on_ground)
+        "hover":
+            return body.linear_velocity.length() < 2.0 and body.angular_velocity.length() < 1.0
+        "goHome":
+            return position_ned.length() < 1.0 and body.linear_velocity.length() < 3.0
+        "moveToPosition":
+            return position_ned.distance_to(Vector3(float(args[0]), float(args[1]), float(args[2]))) < 0.25 and body.linear_velocity.length() < 0.75
+        "moveOnPath":
+            var path: Array = args[0]
+            var index := int(command_state.get("waypoint_index", 0))
+            if index >= path.size():
+                return true
+            var point: Dictionary = path[index]
+            return position_ned.distance_to(Vector3(float(point["x_val"]), float(point["y_val"]), float(point["z_val"]))) < 0.25 and index == path.size() - 1 and body.linear_velocity.length() < 0.75
+        "rotateToYaw":
+            return absf(wrapf(AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(float(args[0])) - body.rotation.y, -PI, PI)) <= deg_to_rad(maxf(float(args[2]), 1.0)) and body.angular_velocity.length() < 0.75
+        "moveByVelocity", "moveByVelocityZ", "moveByVelocityBodyFrame", "moveByVelocityZBodyFrame", "rotateByYawRate", "moveByAngleRatesThrottle":
+            return int(context.get("command_remaining_frames", 0)) <= 0
+    return false
+
+
 func _airsim_task_complete(name: String) -> bool:
     if not _airsim_name_matches(name):
         return false
+    if not _is_primary_airsim_vehicle(name):
+        var secondary_context: Dictionary = _airsim_vehicle_contexts.get(name, {})
+        var secondary_complete := _secondary_task_complete(secondary_context, _secondary_body(name))
+        if secondary_complete:
+            secondary_context["command_state"] = {}
+            secondary_context["hold_controls"] = _airsim_neutral_controls()
+            secondary_context["command_remaining_frames"] = 0
+            _airsim_vehicle_contexts[name] = secondary_context
+        return secondary_complete
     if _airsim_command_state.is_empty():
         return true
     if drone_body == null:
@@ -2249,7 +2750,7 @@ func _airsim_task_complete(name: String) -> bool:
         "takeoff":
             return position_ned.z <= -2.75 and drone_body.linear_velocity.length() < 1.0
         "land":
-            var landed_on_ground: bool = drone_body.global_position.y <= _spawn_position().y + 0.05 and drone_body.linear_velocity.length() < 0.25
+            var landed_on_ground: bool = drone_body.global_position.y <= _spawn_position().y + AIRSIM_GROUND_BODY_CLEARANCE_M and drone_body.linear_velocity.length() < 0.25
             return position_ned.z >= -0.5 and (_airsim_contact_this_frame or landed_on_ground)
         "hover":
             return drone_body.linear_velocity.length() < 2.0 and drone_body.angular_velocity.length() < 1.0
@@ -2277,8 +2778,32 @@ func _airsim_command(method: String, params: Array, name: String) -> Dictionary:
     if _airsim_lifecycle_stopped() or (screen == "main_menu" and method != "takeoff"):
         return {"ok": false, "error": "flight session is not active"}
     if not _airsim_name_matches(name):
-        return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
+        return {"ok": false, "error": "unknown vehicle: %s" % name}
     var args: Array = params.slice(0, params.size() - 1)
+    if not _is_primary_airsim_vehicle(name):
+        var secondary_context: Dictionary = _airsim_vehicle_contexts.get(name, {})
+        var duration_frames := 1
+        match method:
+            "moveByVelocity", "moveByVelocityZ", "moveByVelocityBodyFrame", "moveByVelocityZBodyFrame":
+                duration_frames = maxi(1, ceili(float(args[3]) * float(Engine.physics_ticks_per_second)))
+            "rotateByYawRate":
+                duration_frames = maxi(1, ceili(float(args[1]) * float(Engine.physics_ticks_per_second)))
+            "moveByAngleRatesThrottle":
+                duration_frames = maxi(1, ceili(float(args[4]) * float(Engine.physics_ticks_per_second)))
+            _:
+                duration_frames = maxi(1, int(30.0 * float(Engine.physics_ticks_per_second)))
+        secondary_context["command_state"] = {"method": method, "args": args}
+        secondary_context["hold_controls"] = _airsim_neutral_controls()
+        secondary_context["command_remaining_frames"] = duration_frames
+        _airsim_vehicle_contexts[name] = secondary_context
+        if method == "takeoff":
+            var secondary_body = _secondary_body(name)
+            if secondary_body != null:
+                secondary_body.reset_contact()
+                secondary_body.freeze = false
+                secondary_body.sleeping = false
+                secondary_body.apply_native_state(secondary_body.global_position, secondary_body.global_transform.basis.get_rotation_quaternion(), Vector3(0.0, 0.5, 0.0), Vector3.ZERO)
+        return {"ok": true, "duration_frames": duration_frames}
     if px4_sitl_bridge != null:
         return _airsim_px4_command(method, args)
     var duration_frames := 1
@@ -2471,11 +2996,12 @@ func _airsim_controls_for_frame() -> Dictionary:
     return {}
 
 
-func _airsim_velocity_controls(velocity_world: Vector3, vertical_correction: float, yaw_mode: Variant = null) -> Dictionary:
+func _airsim_velocity_controls(velocity_world: Vector3, vertical_correction: float, yaw_mode: Variant = null, body = null) -> Dictionary:
     var desired := velocity_world
-    var measured_velocity: Vector3 = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
+    var measured_body = body if body != null else drone_body
+    var measured_velocity: Vector3 = measured_body.linear_velocity if measured_body != null else Vector3.ZERO
     var horizontal_velocity_error := Vector3(desired.x - measured_velocity.x, 0.0, desired.z - measured_velocity.z)
-    var measured_vertical_velocity: float = drone_body.linear_velocity.y if drone_body != null else 0.0
+    var measured_vertical_velocity: float = measured_velocity.y
     var vertical_velocity_error: float = desired.y - measured_vertical_velocity
     var throttle := clampf(0.50 + vertical_velocity_error * 0.15 + clampf(vertical_correction, -0.5, 0.5), 0.0, 1.0)
     return {
@@ -2483,25 +3009,27 @@ func _airsim_velocity_controls(velocity_world: Vector3, vertical_correction: flo
         "throttle": throttle,
         "roll": clampf(-horizontal_velocity_error.x * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
         "pitch": clampf(horizontal_velocity_error.z * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
-        "yaw_rate": _airsim_yaw_rate_from_mode(yaw_mode),
+        "yaw_rate": _airsim_yaw_rate_from_mode(yaw_mode, measured_body),
     }
 
 
-func _airsim_yaw_rate_from_mode(yaw_mode: Variant) -> float:
+func _airsim_yaw_rate_from_mode(yaw_mode: Variant, body = null) -> float:
     if typeof(yaw_mode) != TYPE_DICTIONARY:
         return 0.0
     var requested := float(yaw_mode.get("yaw_or_rate", 0.0))
     if bool(yaw_mode.get("is_rate", true)):
         return clampf(-requested, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
-    if drone_body == null:
+    var yaw_body = body if body != null else drone_body
+    if yaw_body == null:
         return 0.0
-    var delta_yaw := wrapf(AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(requested) - drone_body.rotation.y, -PI, PI)
+    var delta_yaw := wrapf(AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(requested) - yaw_body.rotation.y, -PI, PI)
     return clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
 
 
-func _airsim_rate_stick(rate_degrees_per_second: float) -> float:
-    if native != null and native.has_method("betaflight_stick_for_rate"):
-        return float(native.call("betaflight_stick_for_rate", rate_degrees_per_second, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo")))
+func _airsim_rate_stick(rate_degrees_per_second: float, target_native: Object = null) -> float:
+    var rate_native: Object = target_native if target_native != null else native
+    if rate_native != null and rate_native.has_method("betaflight_stick_for_rate"):
+        return float(rate_native.call("betaflight_stick_for_rate", rate_degrees_per_second, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo")))
     return clampf(rate_degrees_per_second / 720.0, -1.0, 1.0)
 
 
@@ -2511,7 +3039,9 @@ func _airsim_neutral_controls() -> Dictionary:
 
 func _airsim_state(name: String) -> Dictionary:
     if not _airsim_name_matches(name):
-        return {"ok": false, "error": "vehicle backend only exposes the configured single vehicle"}
+        return {"ok": false, "error": "unknown vehicle: %s" % name}
+    if not _is_primary_airsim_vehicle(name):
+        return _airsim_secondary_state(name)
     var position: Vector3 = drone_body.global_position if drone_body != null else _spawn_position()
     var orientation: Quaternion = drone_body.global_transform.basis.get_rotation_quaternion() if drone_body != null else Quaternion.IDENTITY
     var linear_velocity: Vector3 = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
@@ -2579,6 +3109,75 @@ func _airsim_state(name: String) -> Dictionary:
         "ready": native != null,
         "ready_message": "" if native != null else "native runtime unavailable",
         "can_arm": native != null,
+        "aerosim_identity": {"vehicle_name": _airsim_vehicle_name},
+    }
+    return {"ok": true, "state": state}
+
+
+func _airsim_secondary_state(name: String) -> Dictionary:
+    var body = _secondary_body(name)
+    var context: Dictionary = _airsim_vehicle_contexts.get(name, {})
+    if body == null:
+        return {"ok": false, "error": "vehicle body is unavailable: %s" % name}
+    var position: Vector3 = body.global_position
+    var orientation: Quaternion = body.global_transform.basis.get_rotation_quaternion()
+    var linear_velocity: Vector3 = body.linear_velocity
+    var angular_velocity: Vector3 = body.angular_velocity
+    var origin: Dictionary = airsim_rpc_server.settings.get("OriginGeopoint", {}) if airsim_rpc_server != null else {}
+    var position_ned := AirSimCoordinateContract.godot_world_to_ned(position, _spawn_position())
+    const earth_radius_m := 6378137.0
+    var origin_latitude := float(origin.get("Latitude", 0.0))
+    var origin_longitude := float(origin.get("Longitude", 0.0))
+    var origin_altitude := float(origin.get("Altitude", 0.0))
+    var latitude_scale := maxf(cos(deg_to_rad(origin_latitude)), 0.01)
+    var gps_location := {
+        "latitude": origin_latitude + rad_to_deg(position_ned.x / earth_radius_m),
+        "longitude": origin_longitude + rad_to_deg(position_ned.y / (earth_radius_m * latitude_scale)),
+        "altitude": origin_altitude - position_ned.z,
+    }
+    var native_imu_sample := {}
+    if _airsim_secondary_native != null and _airsim_secondary_native.has_method("imu_sample"):
+        var raw_imu: Dictionary = _airsim_secondary_native.call("imu_sample")
+        if bool(raw_imu.get("valid", false)):
+            native_imu_sample = {
+                "gyro": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(Vector3(raw_imu.get("gyro_x", 0.0), raw_imu.get("gyro_y", 0.0), raw_imu.get("gyro_z", 0.0)))),
+                "accel": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(Vector3(raw_imu.get("accel_x", 0.0), raw_imu.get("accel_y", 0.0), raw_imu.get("accel_z", 0.0)))),
+                "orientation": _airsim_quaternion(AirSimCoordinateContract.godot_orientation_to_ned(Quaternion(
+                    float(raw_imu.get("measurement_orientation_x", 0.0)),
+                    float(raw_imu.get("measurement_orientation_y", 0.0)),
+                    float(raw_imu.get("measurement_orientation_z", 0.0)),
+                    float(raw_imu.get("measurement_orientation_w", 1.0))).normalized())),
+                "barometer_altitude_m": float(raw_imu.get("barometer_altitude_m", -position.y)),
+            }
+    var collision := {
+        "has_collided": bool(context.get("collision_seen", false)),
+        "normal": _airsim_vector3(AirSimCoordinateContract.godot_direction_to_ned(context.get("collision_normal", Vector3.ZERO))),
+        "impact_point": _airsim_vector3(AirSimCoordinateContract.godot_world_to_ned(context.get("collision_point", Vector3.ZERO), _spawn_position())),
+        "position": _airsim_vector3(AirSimCoordinateContract.godot_world_to_ned(position, _spawn_position())),
+        "penetration_depth": 0.0,
+        "time_stamp": int(round(airsim_session.simulation_time_seconds * 1_000_000_000.0)),
+        "object_name": "",
+        "object_id": -1,
+    }
+    var state := {
+        "collision": collision,
+        "kinematics_estimated": {
+            "position": _airsim_vector3(AirSimCoordinateContract.godot_world_to_ned(position, _spawn_position())),
+            "orientation": _airsim_quaternion(AirSimCoordinateContract.godot_orientation_to_ned(orientation)),
+            "linear_velocity": _airsim_vector3(AirSimCoordinateContract.godot_direction_to_ned(linear_velocity)),
+            "angular_velocity": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(body.global_transform.basis.inverse() * angular_velocity)),
+            "linear_acceleration": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(body.global_transform.basis.inverse() * context.get("linear_acceleration", Vector3.ZERO))),
+            "angular_acceleration": _airsim_vector3(AirSimCoordinateContract.godot_body_to_frd(context.get("angular_acceleration", Vector3.ZERO))),
+        },
+        "gps_location": gps_location,
+        "imu_sample": native_imu_sample,
+        "timestamp": int(round(airsim_session.simulation_time_seconds * 1_000_000_000.0)),
+        "landed_state": 0 if position.y <= _spawn_position().y + 0.05 and linear_velocity.length() < 0.25 else 1,
+        "rc_data": {"timestamp": 0, "pitch": 0.0, "roll": 0.0, "throttle": 0.0, "yaw": 0.0, "is_initialized": false, "is_valid": false},
+        "ready": _airsim_secondary_native != null,
+        "ready_message": "" if _airsim_secondary_native != null else "native runtime unavailable",
+        "can_arm": _airsim_secondary_native != null,
+        "aerosim_identity": {"vehicle_name": name},
     }
     return {"ok": true, "state": state}
 

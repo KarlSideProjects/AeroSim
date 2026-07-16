@@ -772,7 +772,7 @@ func _verify_a3_drag_public_path(native: Object) -> bool:
     return true
 
 func _verify_a4_a5_public_path(native: Object) -> bool:
-    for method in ["set_a4_ground_effect_model", "a4_ground_effect_configuration", "set_a5_downwash_model", "a5_downwash_configuration", "a5_downwash_force_y", "set_a6_propwash_model", "a6_propwash_configuration", "set_dual_aircraft_positions", "step_dual_aircraft_simulation", "sync_flight_state"]:
+    for method in ["set_a4_ground_effect_model", "a4_ground_effect_configuration", "set_a5_downwash_model", "a5_downwash_configuration", "a5_downwash_force_y", "set_a5_downwash_source_position", "set_a6_propwash_model", "a6_propwash_configuration", "set_dual_aircraft_positions", "step_dual_aircraft_simulation", "sync_flight_state"]:
         if not native.has_method(method):
             push_error("AeroSimNative.%s must exist for A4/A5 public configuration" % method)
             return false
@@ -843,6 +843,9 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     if float(native.call("a5_downwash_force_y", 0.1, 2.0, 0.0, 0.0, 0.0, 0.0)) >= 0.0:
         push_error("A5 enabled public path must reduce the lower aircraft lift")
         return false
+
+    if not _verify_named_a5_runtime_path(native, prop_radius):
+        return false
     if not native.call("set_a6_propwash_model", false, 12.0, 2.0, 0.5):
         push_error("A6 public path must accept a disabled valid configuration")
         return false
@@ -886,6 +889,51 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
         push_error("A5 public path must reject a negative force magnitude coefficient")
         return false
     native.call("set_a6_propwash_model", false, 0.0, 0.0, 0.0)
+    native.call("set_a5_downwash_model", false, prop_radius, 2267.18, 0.16, -0.11)
+    native.call("set_a5_downwash_source_position", NAN, NAN, NAN)
+    native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012)
+    native.call("set_a4_ground_effect_model", true, 3.16e-10, 11.36859, prop_radius, prop_radius, 12000.0, 12000.0, 12000.0, 12000.0)
+    return true
+
+
+func _verify_named_a5_runtime_path(native: Object, prop_radius: float) -> bool:
+    if not native.call("set_a4_ground_effect_model", false, 3.16e-10, 11.36859, prop_radius, prop_radius, 12000.0, 12000.0, 12000.0, 12000.0):
+        push_error("named A5 runtime path could not disable A4")
+        return false
+    if not native.call("set_a6_propwash_model", false, 0.0, 0.0, 0.0):
+        push_error("named A5 runtime path could not disable A6")
+        return false
+
+    native.call("set_a5_downwash_model", false, prop_radius, 2267.18, 0.16, -0.11)
+    native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("named A5 effects-off path could not arm")
+        return false
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var effects_off_y := 0.0
+    for frame in range(20):
+        native.call("set_a5_downwash_source_position", -4.0 + float(frame) * 0.4, 2.0, 0.0)
+        var row: PackedFloat64Array = native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.0, 0.0, 0.0)
+        effects_off_y = float(row[2])
+    if absf(float(native.call("a5_downwash_force_y", 0.0, 2.0, 0.0, 0.0, 0.0, 0.0))) > 1e-12:
+        push_error("named A5 effects-off runtime path must produce exact zero")
+        return false
+
+    native.call("set_a5_downwash_model", true, prop_radius, 2267.18, 0.16, -0.11)
+    native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("named A5 effects-on path could not arm")
+        return false
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    var effects_on_y := 0.0
+    for frame in range(20):
+        native.call("set_a5_downwash_source_position", -4.0 + float(frame) * 0.4, 2.0, 0.0)
+        var row: PackedFloat64Array = native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.0, 0.0, 0.0)
+        effects_on_y = float(row[2])
+    if effects_on_y >= effects_off_y:
+        push_error("named A5 effects-on crossing runtime path must reduce lower trajectory")
+        return false
+    native.call("set_a5_downwash_model", true, prop_radius, 2267.18, 0.16, -0.11)
     return true
 
 func _verify_collision_public_path(native: Object) -> bool:
@@ -1814,6 +1862,7 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     scene.queue_free()
+    await process_frame
     scene = SmokeScene.instantiate()
     var replacement_device_state := MutableGamepadDeviceState.new()
     replacement_device_state.replace_snapshot([known_device_id], [known_device_id])

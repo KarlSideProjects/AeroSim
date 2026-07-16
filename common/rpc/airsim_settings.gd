@@ -162,6 +162,32 @@ static func validate(raw: Dictionary) -> Dictionary:
     return result
 
 
+static func validate_vehicle_names(vehicle_names: Array) -> Dictionary:
+    var errors: Array[String] = []
+    var seen := {}
+    for value in vehicle_names:
+        if typeof(value) != TYPE_STRING or String(value).is_empty():
+            errors.append("vehicle names must be non-empty strings")
+            continue
+        var name := String(value)
+        if seen.has(name):
+            errors.append("duplicate vehicle name: %s" % name)
+        seen[name] = true
+    return {"ok": errors.is_empty(), "error": "; ".join(errors), "errors": errors}
+
+
+static func validate_vehicle_name(requested_name: Variant, vehicle_names: Array) -> Dictionary:
+    if typeof(requested_name) != TYPE_STRING or String(requested_name).is_empty():
+        return {"ok": false, "error": "vehicle_name is required and must be non-empty"}
+    var names_result := validate_vehicle_names(vehicle_names)
+    if not names_result.ok:
+        return names_result
+    var name := String(requested_name)
+    if not vehicle_names.has(name):
+        return {"ok": false, "error": "unknown vehicle: %s" % name}
+    return {"ok": true, "name": name}
+
+
 static func _reject_unknown_keys(value: Dictionary, allowed: Dictionary, scope: String, errors: Array[String]) -> void:
     for key in value.keys():
         var key_name := String(key)
@@ -293,6 +319,11 @@ static func _validate_vehicles(raw: Dictionary, errors: Array[String], manifest:
     var supported_vehicle_types := _manifest_enum(manifest["schema"], "VehicleType")
     if vehicles.is_empty() or vehicles.size() > 2:
         errors.append("Vehicles must contain one or two named vehicles")
+    var vehicle_names: Array = []
+    for vehicle_name in vehicles.keys():
+        vehicle_names.append(vehicle_name)
+    var vehicle_name_result := validate_vehicle_names(vehicle_names)
+    errors.append_array(vehicle_name_result.errors)
     for vehicle_name in vehicles:
         var vehicle = vehicles[vehicle_name]
         if typeof(vehicle) != TYPE_DICTIONARY:

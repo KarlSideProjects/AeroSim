@@ -551,8 +551,11 @@ func _resolve_vehicle(message_id, requested_name: Variant) -> Dictionary:
     var name := String(requested_name)
     if name.is_empty() and _vehicle_names.size() == 1:
         name = String(_vehicle_names[0])
-    if not _vehicle_names.has(name):
-        return {"ok": false, "response": _error_response(message_id, "unknown vehicle: %s" % requested_name)}
+        if name.is_empty():
+            return {"ok": true, "name": name}
+    var validation := AirSimSettings.validate_vehicle_name(name, _vehicle_names)
+    if not validation.ok:
+        return {"ok": false, "response": _error_response(message_id, validation.error)}
     return {"ok": true, "name": name}
 
 
@@ -623,6 +626,7 @@ func _dispatch_multirotor_state(message_id, params: Array) -> Array:
         return _error_response(message_id, String(state_result.get("error", "vehicle state backend rejected the request")) if typeof(state_result) == TYPE_DICTIONARY else "vehicle state backend returned an invalid snapshot")
     var state: Dictionary = state_result["state"].duplicate(true)
     state.erase("imu_sample")
+    state.erase("aerosim_identity")
     state["timestamp"] = int(round(session.simulation_time_seconds * 1_000_000_000.0))
     return _success_response(message_id, state)
 
@@ -680,7 +684,9 @@ func _dispatch_sensor(message_id, params: Array, sensor_type: int, method: Strin
     var result = _sensor_handler.call(sensor_type, String(params[0]), String(vehicle.name))
     if typeof(result) != TYPE_DICTIONARY or not bool(result.get("ok", false)):
         return _error_response(message_id, String(result.get("error", "sensor backend rejected the request")) if typeof(result) == TYPE_DICTIONARY else "sensor backend returned an invalid result")
-    return _success_response(message_id, result["sensor"].duplicate(true))
+    var public_sensor: Dictionary = result["sensor"].duplicate(true)
+    public_sensor.erase("aerosim_identity")
+    return _success_response(message_id, public_sensor)
 
 
 func _dispatch_images(message_id, params: Array) -> Array:
@@ -701,7 +707,12 @@ func _dispatch_images(message_id, params: Array) -> Array:
     var responses = result.get("responses", [])
     if typeof(responses) != TYPE_ARRAY:
         return _error_response(message_id, "camera backend returned invalid image responses")
-    return _success_response(message_id, responses)
+    var public_responses: Array = []
+    for response in responses:
+        var public_response: Dictionary = response.duplicate(true)
+        public_response.erase("aerosim_identity")
+        public_responses.append(public_response)
+    return _success_response(message_id, public_responses)
 
 
 func _state_for_vehicle(name: String) -> Dictionary:

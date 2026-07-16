@@ -5,6 +5,25 @@ const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 var loader := HardwareConfig.new()
 
 
+class FakeHardwareNative extends RefCounted:
+    var a5 := {}
+
+    func set_hardware_mass_kg(_value: float) -> bool: return true
+    func set_hardware_power_model(_a: float, _b: float, _c: float, _d: float, _e: float, _f: float, _g: float) -> bool: return true
+    func set_hardware_per_motor_model(_value: Dictionary) -> bool: return true
+    func set_hardware_telemetry_model(_a: float, _b: float) -> bool: return true
+    func set_a3_drag_model(_enabled: bool, _x: float, _y: float, _z: float) -> bool: return true
+    func set_a6_propwash_model(_enabled: bool, _a: float, _b: float, _c: float) -> bool: return true
+    func a6_propwash_configuration() -> Dictionary: return {}
+    func set_a5_downwash_model(enabled: bool, radius: float, coeff_1: float, coeff_2: float, coeff_3: float) -> bool:
+        a5 = {"enabled": enabled, "prop_radius_m": radius, "coeff_1": coeff_1, "coeff_2": coeff_2, "coeff_3": coeff_3}
+        return true
+
+
+class FakeHardwareRuntime extends RefCounted:
+    var native := FakeHardwareNative.new()
+
+
 func test_prop_sample_linearly_interpolates_inside_measured_range() -> void:
     var sample := loader.prop_sample_at_rpm(HardwareConfig.FACTORY_DEFAULT, 7000.0)
 
@@ -64,6 +83,24 @@ func test_schema_requires_static_a6_propwash_calibration() -> void:
 
     config.aerodynamics.a6.minimum_transverse_rate_rad_s = -0.1
     assert_true(loader.validate_config(config).contains("minimum_transverse_rate_rad_s"))
+
+
+func test_default_airframe_applies_configured_a5_model_to_runtime() -> void:
+    var runtime := FakeHardwareRuntime.new()
+
+    assert_true(loader.apply_to_runtime(runtime, "res://config/drones/5_inch_6s.json"))
+    assert_true(bool(runtime.native.a5.enabled))
+    assert_almost_eq(float(runtime.native.a5.prop_radius_m), 0.0231348, 0.0000001)
+    assert_almost_eq(float(runtime.native.a5.coeff_1), 2267.18, 0.000001)
+
+
+func test_race_airframe_applies_configured_a5_model_to_runtime() -> void:
+    var runtime := FakeHardwareRuntime.new()
+
+    assert_true(loader.apply_to_runtime(runtime, "res://config/drones/5_inch_6s_race.json"))
+    assert_true(bool(runtime.native.a5.enabled))
+    assert_almost_eq(float(runtime.native.a5.prop_radius_m), 0.0231348, 0.0000001)
+    assert_almost_eq(float(runtime.native.a5.coeff_1), 2267.18, 0.000001)
 
 
 func test_schema_rejects_invalid_a3_values() -> void:

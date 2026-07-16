@@ -2,6 +2,7 @@ extends GutTest
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
+const CollisionProbeBody = preload("res://common/flight/collision_probe_body.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
 
 
@@ -53,6 +54,108 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
     var runtime_script := load("res://common/flight/flight_runtime.gd")
 
     assert_not_null(runtime_script)
+
+
+func test_runtime_rejects_more_than_two_named_vehicles_before_dashboard_setup() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var validation: Dictionary = runtime._validate_airsim_startup_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {
+            "DroneA": {"VehicleType": "SimpleFlight"},
+            "DroneB": {"VehicleType": "SimpleFlight"},
+            "DroneC": {"VehicleType": "SimpleFlight"},
+        },
+    })
+
+    assert_false(validation.ok)
+    assert_string_contains(validation.error, "one or two")
+    runtime.free()
+
+
+func test_runtime_rejects_secondary_px4_without_a_second_bridge() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var validation: Dictionary = runtime._validate_airsim_startup_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {
+            "DroneA": {"VehicleType": "SimpleFlight"},
+            "DroneB": {"VehicleType": "PX4Multirotor"},
+        },
+    })
+
+    assert_false(validation.ok)
+    assert_string_contains(validation.error, "secondary")
+    assert_string_contains(validation.error, "PX4Multirotor")
+    runtime.free()
+
+
+func test_single_vehicle_disables_secondary_collision_shape_and_restores_scene_ownership() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var body := RigidBody3D.new()
+    body.collision_layer = 4
+    body.collision_mask = 8
+    var shape := CollisionShape3D.new()
+    body.add_child(shape)
+    runtime.add_child(body)
+    runtime.secondary_drone_body = body
+
+    runtime._set_secondary_collision_enabled(false)
+    assert_eq(body.collision_layer, 0)
+    assert_eq(body.collision_mask, 0)
+    assert_true(shape.disabled)
+
+    runtime._set_secondary_collision_enabled(true)
+    assert_eq(body.collision_layer, 4)
+    assert_eq(body.collision_mask, 8)
+    assert_false(shape.disabled)
+    runtime.free()
+
+
+func test_set_paused_freezes_and_sleeps_secondary_until_resume() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var secondary_body := RigidBody3D.new()
+    runtime.add_child(secondary_body)
+    runtime.secondary_drone_body = secondary_body
+
+    runtime.set_paused(true, false)
+    assert_true(secondary_body.freeze)
+    assert_true(secondary_body.sleeping)
+
+    runtime.set_paused(false, false)
+    assert_false(secondary_body.freeze)
+    assert_false(secondary_body.sleeping)
+    runtime.free()
+
+
+func test_direct_spawn_reset_clears_primary_acceleration_sampling_state() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    runtime._airsim_last_velocity = Vector3(4.0, 5.0, 6.0)
+    runtime._airsim_linear_acceleration = Vector3(7.0, 8.0, 9.0)
+    runtime._airsim_last_body_angular_velocity = Vector3(1.0, 2.0, 3.0)
+    runtime._airsim_angular_acceleration = Vector3(4.0, 5.0, 6.0)
+
+    assert_true(runtime.reset_to_spawn())
+
+    assert_eq(runtime._airsim_last_velocity, Vector3.ZERO)
+    assert_eq(runtime._airsim_linear_acceleration, Vector3.ZERO)
+    assert_eq(runtime._airsim_last_body_angular_velocity, Vector3.ZERO)
+    assert_eq(runtime._airsim_angular_acceleration, Vector3.ZERO)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
 
 
 func test_rates_save_does_not_overwrite_settings_when_load_recovers() -> void:

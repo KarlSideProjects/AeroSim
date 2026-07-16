@@ -57,3 +57,39 @@ func test_segmentation_catalog_ids_are_stable_and_unique() -> void:
             blue_found = true
             assert_eq(String(item["path"]), "CargoContainers/ContainerBlue")
     assert_true(blue_found)
+
+
+func test_camera_settings_and_source_identity_are_vehicle_scoped() -> void:
+    var surface := AirSimCameraSurface.new()
+    autofree(surface)
+    var world := Node3D.new()
+    autofree(world)
+    surface.configure(
+        world,
+        Callable(),
+        Callable(),
+        null,
+        {"Vehicles": {
+            "DroneA": {"Cameras": {"front_center": {"X": 1.0}}},
+            "DroneB": {"Cameras": {"front_center": {"X": 9.0}}},
+        }})
+
+    assert_eq(surface._camera_settings("DroneA", "front_center")["X"], 1.0)
+    assert_eq(surface._camera_settings("DroneB", "front_center")["X"], 9.0)
+
+
+func test_camera_response_header_carries_vehicle_dataset_identity() -> void:
+    var surface := AirSimCameraSurface.new()
+    autofree(surface)
+    var camera := Camera3D.new()
+    get_tree().root.add_child(camera)
+
+    var header: Dictionary = surface._response_header({
+        "camera_name": "front_center",
+        "image_type": AirSimCameraSurface.IMAGE_SCENE,
+        "pixels_as_float": false,
+        "compress": true,
+    }, camera, 32, 16, "DroneB")
+
+    assert_eq(header.aerosim_identity.vehicle_name, "DroneB")
+    camera.queue_free()

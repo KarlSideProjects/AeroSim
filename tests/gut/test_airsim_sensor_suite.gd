@@ -52,6 +52,22 @@ func test_sampling_uses_simulation_time_and_configured_frequency() -> void:
     assert_eq(suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_IMU, "").time_stamp, 100000000)
 
 
+func test_two_vehicle_sensor_streams_sample_their_own_state() -> void:
+    var suite := AirSimSensorSuite.new()
+    autofree(suite)
+    var settings := _settings()
+    settings["Vehicles"]["Drone2"] = {"VehicleType": "SimpleFlight", "Sensors": {}}
+    assert_true(suite.configure(settings, ["Drone1", "Drone2"]).ok)
+
+    suite.advance(1.2, "Drone1", _state(Vector3(0.0, 1.0, 0.0)))
+    suite.advance(1.2, "Drone2", _state(Vector3(0.0, 9.0, 0.0)))
+
+    var drone_a_longitude: float = float(suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_GPS, "").gnss.geo_point.longitude)
+    var drone_b_longitude: float = float(suite.get_sensor("Drone2", AirSimSensorSuite.SENSOR_GPS, "").gnss.geo_point.longitude)
+    assert_ne(drone_a_longitude, drone_b_longitude)
+    assert_gt(drone_b_longitude, drone_a_longitude)
+
+
 func test_paused_reads_do_not_change_timestamp_or_sample_count() -> void:
     var suite := AirSimSensorSuite.new()
     autofree(suite)
@@ -100,6 +116,7 @@ func test_sensor_drop_metadata_is_observable_after_a_large_simulation_gap() -> v
     assert_true(result.ok)
     assert_gt(result.sensor.dropped_count, 0)
     assert_eq(result.sensor.dropped_count, suite.stats("Drone1", AirSimSensorSuite.SENSOR_IMU, "").dropped_count)
+    assert_eq(result.sensor.aerosim_identity.vehicle_name, "Drone1")
 
 
 func test_sensor_names_and_invalid_requests_fail_loudly() -> void:
