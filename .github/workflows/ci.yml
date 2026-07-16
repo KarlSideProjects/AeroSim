@@ -98,6 +98,13 @@ jobs:
           echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
           echo "GODOT_CPP_DIR=$tool_root/godot-cpp" >> "$GITHUB_ENV"
 
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: license_server/requirements.lock
+
       - name: Install build tools
         run: |
           python3 -m venv build/scons-venv
@@ -138,6 +145,9 @@ jobs:
       - name: License scan
         run: scripts/test_license_scan.sh
 
+      - name: License server locked runtime closure
+        run: scripts/test_license_dependencies.sh
+
       - name: Ubuntu release artifact audit unit test
         run: python3 -m unittest tests.test_release_notice_artifacts.UbuntuReleaseArtifactAuditTest
 
@@ -145,7 +155,7 @@ jobs:
         run: scripts/test_delivery_drill.sh
 
       - name: License server API test
-        run: python3 -m unittest license_server.test_license_server
+        run: build/license-venv/bin/python -m unittest license_server.test_license_server
 
       - name: Performance report unit test
         run: python3 tests/test_performance_report.py
@@ -194,7 +204,7 @@ jobs:
         run: xvfb-run -a python3 tests/test_performance_runner.py
 
       - name: Store headed screenshots locally
-        if: always()
+        if: ${{ always() && hashFiles('build/headed/**') != '' }}
         run: |
           install -d "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux"
           cp -a build/headed/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux/"

@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "issue_endpoint": "https://license.aerosim.example/issue",
+  "verify_endpoint": "https://license.aerosim.example/verify",
+  "public_key_path": "res://config/license_public_key.pem",
+  "allowed_kids": ["ubuntu-2026"],
+  "state_path": "user://aerosim-license.json"
+}

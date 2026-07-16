@@ -22,6 +22,38 @@
       "notice": "The MIT License (MIT)\n=====================\n\nCopyright (c) 2018 Tom \"Butch\" Wesley\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
     },
     {
+      "name": "PyJWT",
+      "python_package": "PyJWT",
+      "version": "2.13.0",
+      "license": "MIT",
+      "homepage": "https://github.com/jpadilla/pyjwt",
+      "notice": "The MIT License (MIT)\n\nCopyright (c) 2015-2022 José Padilla\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+    },
+    {
+      "name": "cryptography",
+      "python_package": "cryptography",
+      "version": "49.0.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/pyca/cryptography",
+      "notice": "cryptography 49.0.0 is used under the Apache License, Version 2.0 path. The installed distribution carries LICENSE.APACHE; the license text is also available at https://www.apache.org/licenses/LICENSE-2.0."
+    },
+    {
+      "name": "cffi",
+      "python_package": "cffi",
+      "version": "2.0.0",
+      "license": "MIT",
+      "homepage": "https://foss.heptapod.net/pypy/cffi",
+      "notice": "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+    },
+    {
+      "name": "pycparser",
+      "python_package": "pycparser",
+      "version": "3.0",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/eliben/pycparser",
+      "notice": "Copyright (c) 2008-2022, Eli Bendersky. All rights reserved. Redistribution and use in source and binary forms, with or without modification, are permitted under the BSD 3-Clause license included with the installed distribution."
+    },
+    {
       "name": "gym-pybullet-drones",
       "version": "9bc12bc583fa3b28807b2f90a8cadf09fb06e1ff",
       "license": "MIT",
