@@ -192,12 +192,17 @@ func _ready() -> void:
             airsim_rpc_server.settings,
             Callable(self, "_airsim_camera_origin"))
         airsim_rpc_server.set_camera_backend(Callable(airsim_camera_surface, "capture"))
-        _write_airsim_ready_marker(_cold_start_arg("--airsim-ready-file"))
     var hardware_config := HardwareConfig.new()
     if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
         last_error_message = hardware_config.last_error
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
-    _configure_secondary_native(hardware_config)
+    if not _configure_secondary_native(hardware_config):
+        push_error("Named vehicle runtime setup failed: %s" % last_error_message)
+        if airsim_rpc_server != null and airsim_rpc_server.is_running():
+            airsim_rpc_server.stop()
+        get_tree().quit(1)
+        return
+    _write_airsim_ready_marker(_cold_start_arg("--airsim-ready-file"))
     update_fallback_status()
     _update_chase_camera()
     _refresh_flight_hud()
@@ -292,14 +297,14 @@ func _set_secondary_collision_enabled(enabled: bool) -> void:
             collision_shape.disabled = bool(shape_state.get("disabled", false)) if enabled else true
 
 
-func _configure_secondary_native(hardware_config: RefCounted) -> void:
+func _configure_secondary_native(hardware_config: RefCounted) -> bool:
     _set_secondary_collision_enabled(false)
     if _airsim_vehicle_names.size() < 2 or secondary_drone_body == null:
-        return
+        return _airsim_vehicle_names.size() < 2
     _airsim_secondary_native = ClassDB.instantiate("AeroSimNative")
     if _airsim_secondary_native == null:
         last_error_message = "second named vehicle native runtime unavailable"
-        return
+        return false
     var primary_native := native
     native = _airsim_secondary_native
     var applied_result: Variant = hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET)
@@ -307,13 +312,14 @@ func _configure_secondary_native(hardware_config: RefCounted) -> void:
     native = primary_native
     if not applied:
         last_error_message = "second named vehicle hardware preset failed: %s" % hardware_config.last_error
-        return
+        return false
     if not _sync_secondary_a5_model():
-        return
+        return false
     _set_secondary_collision_enabled(true)
     secondary_drone_body.visible = true
     if secondary_chase_camera != null:
         secondary_chase_camera.current = false
+    return true
 
 
 func _secondary_body(vehicle_name: String):

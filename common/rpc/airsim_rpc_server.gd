@@ -546,6 +546,7 @@ func _dispatch_multirotor_state(message_id, params: Array) -> Array:
         return _error_response(message_id, String(state_result.get("error", "vehicle state backend rejected the request")) if typeof(state_result) == TYPE_DICTIONARY else "vehicle state backend returned an invalid snapshot")
     var state: Dictionary = state_result["state"].duplicate(true)
     state.erase("imu_sample")
+    state.erase("aerosim_identity")
     state["timestamp"] = int(round(session.simulation_time_seconds * 1_000_000_000.0))
     return _success_response(message_id, state)
 

@@ -45,6 +45,7 @@ def exercise(port: int) -> None:
     barometer = client.getBarometerData(vehicle_name="Drone1")
     lidar = client.getLidarData(vehicle_name="Drone1")
     raw_imu = client.client.call("getImuData", "", "Drone1")
+    state = client.getMultirotorState(vehicle_name="Drone1")
     for sensor in [imu, gps, magnetometer, barometer, lidar]:
         assert sensor.time_stamp >= 0
     assert imu.orientation is not None
@@ -55,6 +56,8 @@ def exercise(port: int) -> None:
     assert barometer.qnh > 0.0
     assert len(lidar.point_cloud) % 3 == 0
     assert len(lidar.segmentation) == len(lidar.point_cloud) // 3
+    assert state.kinematics_estimated is not None
+    assert state.ready is True
     assert raw_imu["sample_count"] >= 1
     assert raw_imu["dropped_count"] == 0
     images = client.simGetImages([

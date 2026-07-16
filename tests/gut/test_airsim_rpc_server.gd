@@ -42,7 +42,7 @@ func _test_state(_name: String) -> Dictionary:
     return {"ok": true, "state": {
         "collision": {"has_collided": false, "normal": {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0}, "impact_point": {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0}, "position": {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0}, "penetration_depth": 0.0, "time_stamp": 0, "object_name": "", "object_id": -1},
         "kinematics_estimated": {"position": {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0}, "orientation": {"w_val": 1.0, "x_val": 0.0, "y_val": 0.0, "z_val": 0.0}, "linear_velocity": {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0}, "angular_velocity": {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0}, "linear_acceleration": {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0}, "angular_acceleration": {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0}},
-        "gps_location": {"latitude": 0.0, "longitude": 0.0, "altitude": 0.0}, "timestamp": 0, "landed_state": 0, "rc_data": {}, "ready": true, "ready_message": "", "can_arm": true,
+        "gps_location": {"latitude": 0.0, "longitude": 0.0, "altitude": 0.0}, "timestamp": 0, "landed_state": 0, "rc_data": {}, "ready": true, "ready_message": "", "can_arm": true, "aerosim_identity": {"vehicle_name": _name},
     }}
 
 
@@ -318,6 +318,7 @@ func test_single_vehicle_control_and_state_use_the_frozen_airsim_payload() -> vo
     assert_eq(state_response[3]["landed_state"], 0)
     assert_true(state_response[3]["ready"])
     assert_true(state_response[3]["can_arm"])
+    assert_false(state_response[3].has("aerosim_identity"))
     assert_eq(state_response[3]["kinematics_estimated"]["position"], {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0})
 
     var pwm_response: Array = server.dispatch([0, 25, "moveByMotorPWMs", [0.5, 0.5, 0.5, 0.5, 1.0, "Drone1"]])
