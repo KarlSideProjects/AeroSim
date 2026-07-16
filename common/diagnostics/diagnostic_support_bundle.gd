@@ -29,6 +29,12 @@ func record_event(code: Variant, time_seconds: Variant) -> Dictionary:
     if not _is_code(code) or not _is_finite_number(time_seconds):
         return {"ok": false, "error": "event code/time is invalid"}
     _events.append({"code": String(code), "time_seconds": float(time_seconds)})
+    if _events.size() > MAX_EVENTS:
+        var cutoff := float(time_seconds) - MAX_EVENT_AGE_SECONDS
+        while not _events.is_empty() and float(_events[0].time_seconds) < cutoff:
+            _events.pop_front()
+        if _events.size() > MAX_EVENTS:
+            _events = _events.slice(_events.size() - MAX_EVENTS)
     return {"ok": true}
 
 
@@ -41,6 +47,12 @@ func record_raw_sample(time_seconds: Variant, sample: Variant) -> Dictionary:
     var recorded: Dictionary = sample.duplicate(true)
     recorded["time_seconds"] = float(time_seconds)
     _raw_samples.append(recorded)
+    if _raw_samples.size() > MAX_RAW_SAMPLES:
+        var cutoff := float(time_seconds) - MAX_RAW_SAMPLE_AGE_SECONDS
+        while not _raw_samples.is_empty() and float(_raw_samples[0].time_seconds) < cutoff:
+            _raw_samples.pop_front()
+        if _raw_samples.size() > MAX_RAW_SAMPLES:
+            _raw_samples = _raw_samples.slice(_raw_samples.size() - MAX_RAW_SAMPLES)
     return {"ok": true}
 
 
