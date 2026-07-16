@@ -452,6 +452,9 @@ func _verify_flight_control_public_path(native: Object) -> bool:
     if absf(preview_rate - 360.0) > 0.5:
         push_error("Betaflight public forward/inverse rates bindings must round-trip")
         return false
+    if float(native.call("betaflight_rate_for_stick", 0.5, 1.0, 1.1, 0.0)) != 0.0:
+        push_error("Betaflight public forward rates binding must reject out-of-range profiles")
+        return false
 
     native.call("reset_flight")
     var disarmed_row: PackedFloat64Array = native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, 0.75, 0.0, 0.0, 0.0)

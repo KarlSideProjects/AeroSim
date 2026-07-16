@@ -258,6 +258,8 @@ func _save_rates_profile(profile: Dictionary) -> Dictionary:
     if not validation.ok:
         return validation
     var loaded: Dictionary = settings_store.load_document()
+    if not loaded.ok:
+        return {"ok": false, "error": "cannot save rates while settings are unavailable: %s" % loaded.error}
     var document: Dictionary = loaded.document
     document["rates"] = validation.profile
     var result: Dictionary = settings_store.save_document(document)
@@ -1246,7 +1248,7 @@ func toggle_altitude_hold() -> void:
 
 
 func toggle_acro_mode() -> void:
-    if native == null or not takeoff_requested:
+    if native == null or not takeoff_requested or screen != "flight" or paused:
         return
     flight_mode = "ANGLE" if flight_mode == "ACRO" else "ACRO"
     update_fallback_status()
@@ -1548,7 +1550,7 @@ func _refresh_rates_curve() -> void:
         rates_curve_line.points = PackedVector2Array()
         return
     var rates := PackedFloat64Array()
-    var maximum := 1.0
+    var maximum := 1000.0
     for index in range(17):
         var stick := -1.0 + float(index) / 8.0
         var rate := float(native.call("betaflight_rate_for_stick", stick, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo")))

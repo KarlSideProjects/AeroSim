@@ -2,6 +2,15 @@ extends GutTest
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
+const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
+const RatesProfile = preload("res://common/flight/rates_profile.gd")
+
+var rates_test_path := "user://aerosim-rates-runtime-test.json"
+
+
+func after_each() -> void:
+    DirAccess.remove_absolute(rates_test_path)
+    DirAccess.remove_absolute("%s.tmp" % rates_test_path)
 
 
 class FakeNative:
@@ -30,6 +39,22 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
     var runtime_script := load("res://common/flight/flight_runtime.gd")
 
     assert_not_null(runtime_script)
+
+
+func test_rates_save_does_not_overwrite_settings_when_load_recovers() -> void:
+    var malformed := FileAccess.open(rates_test_path, FileAccess.WRITE)
+    malformed.store_string("{not-json")
+    malformed.close()
+
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    runtime.settings_store = SettingsStoreScript.new(rates_test_path)
+
+    var result: Dictionary = runtime._save_rates_profile(RatesProfile.default_profile())
+
+    assert_false(result.ok)
+    assert_string_contains(result.error, "unavailable")
+    runtime.free()
 
 
 func test_controller_disconnect_latches_disarm_freeze_and_blocks_keyboard_resume() -> void:

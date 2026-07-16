@@ -93,10 +93,16 @@ func _run() -> void:
 			"expo": 0.25,
 		})
 	if import_button != null:
-		runtime._import_rates_json()
+		var rates_scroll: ScrollContainer = runtime.get_node("MainMenu/RatesPanel/Scroll")
+		rates_scroll.scroll_vertical = rates_scroll.get_v_scroll_bar().max_value
+		await _settle(1)
+		import_button.pressed.emit()
 	await _settle(2)
 	_expect(absf(float(runtime.rates_profile.get("rc_rate", 0.0)) - 1.15) <= 0.000001, "Rates JSON import applies RC Rate")
 	_expect(absf(float(runtime.rates_profile.get("expo", 0.0)) - 0.25) <= 0.000001, "Rates JSON import applies Expo")
+	var persisted_rates: Dictionary = runtime.settings_store.load_document()
+	var persisted_rate_values = persisted_rates.document.get("rates") if persisted_rates.ok else null
+	_expect(persisted_rates.ok and typeof(persisted_rate_values) == TYPE_DICTIONARY and absf(float(persisted_rate_values.get("rc_rate", 0.0)) - 1.15) <= 0.000001, "Rates JSON import persists through SettingsStore")
 	var rates_back_button: Button = runtime.get_node_or_null("MainMenu/RatesPanel/Scroll/Rows/Actions/Back")
 	if rates_back_button != null:
 		runtime.show_settings()
@@ -176,12 +182,27 @@ func _run() -> void:
 	await _settle(2)
 	var pause_rates_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Rates")
 	_expect(runtime.paused and pause_rates_button != null, "Pause Overlay exposes Rates")
+	var acro_key := InputEventKey.new()
+	acro_key.keycode = KEY_C
+	acro_key.physical_keycode = KEY_C
+	acro_key.pressed = true
+	runtime._unhandled_input(acro_key)
+	_expect(runtime.flight_mode == "ANGLE", "C cannot switch to ACRO while paused")
 	runtime.show_rates("flight")
 	await _settle(2)
 	_expect(runtime.screen == "rates" and runtime.paused, "Rates opened from Pause Overlay keeps pause state")
 	runtime._close_rates_panel()
 	_expect(runtime.screen == "flight" and runtime.paused, "Rates returns to paused flight")
 	runtime.set_paused(false)
+	runtime._unhandled_input(acro_key)
+	_expect(runtime.flight_mode == "ACRO", "C switches to ACRO during flight")
+	var curve_before: PackedVector2Array = runtime.rates_curve_line.points
+	var rc_slider: HSlider = runtime.rates_sliders["rc_rate"]
+	rc_slider.value = 1.25
+	await _settle(2)
+	_expect(absf(float(runtime.rates_profile.get("rc_rate", 0.0)) - 1.25) <= 0.000001, "Rates slider updates the live ACRO profile")
+	var curve_after: PackedVector2Array = runtime.rates_curve_line.points
+	_expect(curve_before.size() == curve_after.size() and curve_before.size() > 0 and absf(curve_before[curve_before.size() - 1].y - curve_after[curve_after.size() - 1].y) > 0.000001, "Rates slider updates the native curve preview")
 	_complete_time_trial(runtime)
 	await _settle(2)
 	_expect(runtime.screen == "finish" and runtime.paused, "reaching Finish stops flight and opens the Time Trial result state")

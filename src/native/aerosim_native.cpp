@@ -531,6 +531,11 @@ double AeroSimNative::betaflight_rate_for_stick(
         double rc_rate,
         double super_rate,
         double expo) const {
+    if (!std::isfinite(stick) || !std::isfinite(rc_rate) || rc_rate < 0.0 || rc_rate > 3.0 ||
+            !std::isfinite(super_rate) || super_rate < 0.0 || super_rate > 1.0 ||
+            !std::isfinite(expo) || expo < 0.0 || expo > 1.0) {
+        return 0.0;
+    }
     return aerosim::betaflight_rate_degrees_per_second(
             stick,
             aerosim::RateProfile{rc_rate, super_rate, expo});
