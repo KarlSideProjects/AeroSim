@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 usage() {
     echo "usage: $0 [--output-dir DIR] [--customer-id ID] [--kid ID] [--port PORT]" >&2
