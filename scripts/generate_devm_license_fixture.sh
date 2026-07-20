@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 usage() {
-    echo "usage: $0 [--output-dir DIR] [--customer-id ID] [--kid ID] [--port PORT]" >&2
+    echo "usage: $0 [--customer-id ID] [--kid ID] [--port PORT]" >&2
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -15,10 +15,6 @@ license_python="${AEROSIM_LICENSE_PYTHON:-$repo_root/build/license-venv/bin/pyth
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --output-dir)
-            output_dir="${2:-}"
-            shift 2
-            ;;
         --customer-id)
             customer_id="${2:-}"
             shift 2
