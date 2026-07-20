@@ -149,6 +149,13 @@ func _graphics_runtime_with_store(render_scale: Variant) -> FlightRuntime:
     return runtime
 
 
+func _native_runtime_available() -> bool:
+    if ClassDB.class_exists("AeroSimNative"):
+        return true
+    pending("native extension is intentionally unavailable in GUT recovery mode")
+    return false
+
+
 func _send_ui_action(action: String, device: int = -1) -> void:
     for pressed in [true, false]:
         var event := InputEventAction.new()
@@ -193,6 +200,8 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
 
 
 func test_graphics_startup_applies_persisted_viewport_scale() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(0.75)
 
     assert_eq(runtime.render_scale, 0.75)
@@ -200,6 +209,8 @@ func test_graphics_startup_applies_persisted_viewport_scale() -> void:
 
 
 func test_graphics_null_quality_uses_default_viewport_scale() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(null)
 
     assert_eq(runtime.render_scale, 1.0)
@@ -207,6 +218,8 @@ func test_graphics_null_quality_uses_default_viewport_scale() -> void:
 
 
 func test_graphics_focus_moves_to_slider_on_open_and_settings_graphics_on_close() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(1.0)
     var graphics_button := runtime.get_node("MainMenu/SettingsPanel/Rows/Graphics") as Button
     graphics_button.pressed.emit()
@@ -218,6 +231,8 @@ func test_graphics_focus_moves_to_slider_on_open_and_settings_graphics_on_close(
 
 
 func test_keyboard_ui_actions_reach_graphics_apply_and_return() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(1.0)
     var quick_fly := runtime.get_node("MainMenu/Entries/QuickFly") as Button
     assert_eq(runtime.get_viewport().gui_get_focus_owner(), quick_fly)
@@ -244,6 +259,8 @@ func test_keyboard_ui_actions_reach_graphics_apply_and_return() -> void:
 
 
 func test_joypad_ui_actions_reach_graphics_apply_and_return() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(1.0)
     var quick_fly := runtime.get_node("MainMenu/Entries/QuickFly") as Button
     assert_eq(runtime.get_viewport().gui_get_focus_owner(), quick_fly)
@@ -269,6 +286,8 @@ func test_joypad_ui_actions_reach_graphics_apply_and_return() -> void:
 
 
 func test_graphics_preview_back_restores_the_committed_viewport_scale() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(1.0)
     runtime.show_graphics()
     runtime._on_render_scale_changed(0.75)
@@ -280,6 +299,8 @@ func test_graphics_preview_back_restores_the_committed_viewport_scale() -> void:
 
 
 func test_graphics_slider_and_reset_preview_without_persisting_and_button_signal_applies() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(1.0)
     runtime.show_graphics()
     var slider := runtime.get_node("MainMenu/GraphicsPanel/Rows/RenderScale") as HSlider
@@ -298,6 +319,8 @@ func test_graphics_slider_and_reset_preview_without_persisting_and_button_signal
 
 
 func test_graphics_apply_persists_once_and_failed_apply_restores_preview() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(1.0)
     runtime.show_graphics()
     runtime._on_render_scale_changed(0.75)
@@ -313,6 +336,8 @@ func test_graphics_apply_persists_once_and_failed_apply_restores_preview() -> vo
 
 
 func test_graphics_value_label_uses_integer_percent() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(0.75)
     runtime.show_graphics()
 
@@ -320,6 +345,8 @@ func test_graphics_value_label_uses_integer_percent() -> void:
 
 
 func test_factory_reset_changes_viewport_only_after_successful_persistence() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(0.75)
     var store := runtime.settings_store as QualitySettingsStore
     runtime.factory_reset_player_settings()
