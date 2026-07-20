@@ -303,13 +303,30 @@ func test_controller_monitor_renders_active_session_channels_and_unavailable_wit
     assert_string_contains(monitor.text, "pitch:    [------------|----] raw -0.500 | normalized +0.457")
     assert_string_contains(monitor.text, "yaw:      [---------|-------] raw +0.250 | normalized +0.185")
     assert_string_contains(monitor.text, "throttle: [--|--------------] raw -0.750 | normalized -0.728 | LOW")
+    assert_string_contains(monitor.text, "DEADZONE: 0.080 (fixed)")
     assert_string_contains(monitor.text, "ARM: RELEASED | flight control: DISARMED")
     assert_string_contains(monitor.text, "MODE: RELEASED | flight mode: ANGLE")
+
+    var high_throttle := InputEventJoypadMotion.new()
+    high_throttle.device = 0
+    high_throttle.axis = JOY_AXIS_RIGHT_Y
+    high_throttle.axis_value = 0.75
+    Input.parse_input_event(high_throttle)
+    await get_tree().process_frame
+    runtime._refresh_controller_settings()
+    assert_string_contains(monitor.text, "throttle: [--------------|--] raw +0.750 | normalized +0.728 | HIGH")
 
     runtime.session_gamepad_profile = null
     runtime.session_gamepad_device_id = -1
     runtime._refresh_controller_settings()
-    assert_eq(monitor.text, "CHANNEL MONITOR: UNAVAILABLE")
+    assert_eq(runtime.controller_settings_mapping_label.text, "FIXED XBOX MAPPING: UNAVAILABLE")
+    assert_string_contains(monitor.text, "CHANNEL MONITOR (30 Hz)")
+    assert_string_contains(monitor.text, "roll:     UNAVAILABLE")
+    assert_string_contains(monitor.text, "pitch:    UNAVAILABLE")
+    assert_string_contains(monitor.text, "yaw:      UNAVAILABLE")
+    assert_string_contains(monitor.text, "throttle: UNAVAILABLE")
+    assert_string_contains(monitor.text, "ARM: UNAVAILABLE")
+    assert_string_contains(monitor.text, "MODE: UNAVAILABLE")
 
 
 func test_high_throttle_arm_button_stays_pressed_without_arming_native_control() -> void:

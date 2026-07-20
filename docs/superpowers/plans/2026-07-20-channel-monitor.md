@@ -44,7 +44,11 @@ assert_string_contains(monitor.text, "MODE: RELEASED | flight mode: ANGLE")
 runtime.session_gamepad_profile = null
 runtime.session_gamepad_device_id = -1
 runtime._refresh_controller_settings()
-assert_eq(monitor.text, "CHANNEL MONITOR: UNAVAILABLE")
+assert_eq(runtime.controller_settings_mapping_label.text, "FIXED XBOX MAPPING: UNAVAILABLE")
+assert_string_contains(monitor.text, "roll:     UNAVAILABLE")
+assert_string_contains(monitor.text, "pitch:    UNAVAILABLE")
+assert_string_contains(monitor.text, "yaw:      UNAVAILABLE")
+assert_string_contains(monitor.text, "throttle: UNAVAILABLE")
 ```
 
 Also add a preflight high-throttle A-button test that invokes `_handle_gamepad_button()` and proves the physical flag is pressed while the actual native arm state stays disarmed.
@@ -72,7 +76,7 @@ func _controller_monitor_bar(value: float) -> String:
     return "[%s|%s]" % ["-".repeat(marker), "-".repeat(16 - marker)]
 ```
 
-Create the `ChannelMonitor` label below the existing button-status label. In `_refresh_controller_settings()`, preserve the existing device label, render exactly `CHANNEL MONITOR: UNAVAILABLE` when `_has_active_gamepad_profile()` is false, and return before reading axes or constructing a profile. With a valid session, use `Input.get_joy_axis()` for raw values and `_profile_axis(role)` for normalized values; render four rows, 0.080 deadzone, LOW/HIGH from `_profile_throttle_is_low()`, physical Arm/Mode flags, `_flight_control_armed()`, and `flight_mode`. Increment `controller_monitor_refresh_count` on each visible refresh. Reset that counter in `show_controller_settings()`.
+Replace the redundant standalone deadzone and button-status rows with one `ChannelMonitor` label below the fixed mapping. In `_refresh_controller_settings()`, preserve the existing device label, render `FIXED XBOX MAPPING: UNAVAILABLE` plus a monitor header and four `UNAVAILABLE` channel rows when `_has_active_gamepad_profile()` is false, and return before reading axes or constructing a profile. With a valid session, use `Input.get_joy_axis()` for raw values and `_profile_axis(role)` for normalized values; render four rows, `DEADZONE: 0.080 (fixed)`, LOW/HIGH from `_profile_throttle_is_low()`, physical Arm/Mode flags, `_flight_control_armed()`, and `flight_mode`. Increment `controller_monitor_refresh_count` on each visible refresh. Reset that counter in `show_controller_settings()`.
 
 - [ ] **Step 4: Run the narrow GUT suite and verify GREEN**
 
