@@ -12,6 +12,17 @@ class FakeNative:
     extends RefCounted
 
     var disarmed := false
+    var armed := false
+
+    func flight_control_armed() -> bool:
+        return armed
+
+    func arm_flight_control(_timestamp: float) -> bool:
+        armed = true
+        return true
+
+    func flight_control_arm_reject_code() -> String:
+        return ""
 
     func disarm_flight_control() -> void:
         disarmed = true
@@ -50,6 +61,28 @@ class RecoverySettingsStore:
     func save_document(_candidate: Dictionary) -> Dictionary:
         save_called = true
         return {"ok": true, "error": "", "document": retained_document}
+
+
+func _controller_monitor_runtime() -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    runtime.main_menu_layer = CanvasLayer.new()
+    runtime.add_child(runtime.main_menu_layer)
+    runtime._build_controller_settings_panel()
+    runtime.controller_settings_panel.show()
+    runtime.session_gamepad_device_id = 0
+    runtime.session_gamepad_profile = InputProfiles.GamepadProfile.new()
+    for axis_value in [
+        {"axis": JOY_AXIS_LEFT_X, "value": 0.5},
+        {"axis": JOY_AXIS_LEFT_Y, "value": -0.5},
+        {"axis": JOY_AXIS_RIGHT_X, "value": 0.25},
+        {"axis": JOY_AXIS_RIGHT_Y, "value": -0.75},
+    ]:
+        var event := InputEventJoypadMotion.new()
+        event.device = 0
+        event.axis = axis_value.axis
+        event.axis_value = axis_value.value
+        Input.parse_input_event(event)
+    return runtime
 
 
 func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() -> void:
@@ -254,6 +287,55 @@ func test_rates_save_does_not_overwrite_settings_when_load_recovers() -> void:
     assert_eq(recovery_store.retained_document.language.locale, "en")
     assert_null(recovery_store.retained_document.rates)
     runtime.free()
+
+
+func test_controller_monitor_renders_active_session_channels_and_unavailable_without_one() -> void:
+    var runtime := _controller_monitor_runtime()
+    autofree(runtime)
+    runtime.native = FakeNative.new()
+    await get_tree().process_frame
+
+    runtime.show_controller_settings()
+
+    var monitor: Label = runtime.controller_settings_monitor_label
+    assert_string_contains(monitor.text, "CHANNEL MONITOR (30 Hz)")
+    assert_string_contains(monitor.text, "roll:     [------------|----] raw +0.500 | normalized +0.457")
+    assert_string_contains(monitor.text, "pitch:    [------------|----] raw -0.500 | normalized +0.457")
+    assert_string_contains(monitor.text, "yaw:      [---------|-------] raw +0.250 | normalized +0.185")
+    assert_string_contains(monitor.text, "throttle: [--|--------------] raw -0.750 | normalized -0.728 | LOW")
+    assert_string_contains(monitor.text, "ARM: RELEASED | flight control: DISARMED")
+    assert_string_contains(monitor.text, "MODE: RELEASED | flight mode: ANGLE")
+
+    runtime.session_gamepad_profile = null
+    runtime.session_gamepad_device_id = -1
+    runtime._refresh_controller_settings()
+    assert_eq(monitor.text, "CHANNEL MONITOR: UNAVAILABLE")
+
+
+func test_high_throttle_arm_button_stays_pressed_without_arming_native_control() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var fake_native := FakeNative.new()
+    runtime.native = fake_native
+    runtime.screen = "preflight"
+    runtime.session_gamepad_device_id = 0
+    runtime.session_gamepad_profile = InputProfiles.GamepadProfile.new()
+
+    var throttle := InputEventJoypadMotion.new()
+    throttle.device = 0
+    throttle.axis = JOY_AXIS_RIGHT_Y
+    throttle.axis_value = 0.75
+    Input.parse_input_event(throttle)
+    await get_tree().process_frame
+    var arm := InputEventJoypadButton.new()
+    arm.device = 0
+    arm.button_index = JOY_BUTTON_A
+    arm.pressed = true
+
+    assert_true(runtime._handle_gamepad_button(arm))
+    assert_true(runtime.session_gamepad_profile.arm_pressed)
+    assert_false(fake_native.armed)
+    assert_false(runtime._flight_control_armed())
 
 
 func test_controller_disconnect_latches_disarm_freeze_and_blocks_keyboard_resume() -> void:

@@ -109,6 +109,8 @@ var controller_settings_device_label: Label
 var controller_settings_mapping_label: Label
 var controller_settings_deadzone_label: Label
 var controller_settings_button_status_label: Label
+var controller_settings_monitor_label: Label
+var controller_monitor_refresh_count := 0
 var controller_safety_panel: Control
 var controller_safety_label: Label
 var last_arm_button_press_ms := -1000000
@@ -2469,6 +2471,10 @@ func _build_controller_settings_panel() -> void:
     controller_settings_button_status_label.name = "ButtonStatus"
     rows.add_child(controller_settings_button_status_label)
 
+    controller_settings_monitor_label = Label.new()
+    controller_settings_monitor_label.name = "ChannelMonitor"
+    rows.add_child(controller_settings_monitor_label)
+
     var reset_button := Button.new()
     reset_button.name = "ResetXboxDefault"
     reset_button.text = "RESET TO XBOX DEFAULT"
@@ -2491,6 +2497,7 @@ func show_settings() -> void:
 
 func show_controller_settings() -> void:
     screen = "controller_settings"
+    controller_monitor_refresh_count = 0
     _refresh_controller_settings()
     _refresh_flight_hud()
 
@@ -2923,13 +2930,17 @@ func _refresh_controller_confirmation() -> void:
 func _refresh_controller_settings() -> void:
     if controller_settings_panel == null or not controller_settings_panel.visible:
         return
+    controller_monitor_refresh_count += 1
     var device_id := _first_connected_device()
-    var profile := session_gamepad_profile if _has_active_gamepad_profile() and session_gamepad_device_id == device_id else InputProfiles.GamepadProfile.new()
     if device_id < 0:
         controller_settings_device_label.text = "CURRENT DEVICE: none"
     else:
         var support := "SDL mapped" if InputProfiles.GamepadProfile.is_supported_device(device_id, gamepad_device_state) else "unknown"
         controller_settings_device_label.text = "CURRENT DEVICE: %d %s (%s)" % [device_id, gamepad_device_state.joy_name(device_id), support]
+    if not _has_active_gamepad_profile():
+        controller_settings_monitor_label.text = "CHANNEL MONITOR: UNAVAILABLE"
+        return
+    var profile := session_gamepad_profile
     var mapping_lines := ["FIXED XBOX MAPPING"]
     for role in ["roll", "pitch", "yaw", "throttle"]:
         var axis := int(profile.axis_for_role[role])
@@ -2937,6 +2948,22 @@ func _refresh_controller_settings() -> void:
     controller_settings_mapping_label.text = "\n".join(mapping_lines)
     controller_settings_deadzone_label.text = "DEADZONE: %.3f" % profile.deadzone
     controller_settings_button_status_label.text = "Arm %s | Mode %s" % ["PRESSED" if profile.arm_pressed else "RELEASED", "PRESSED" if profile.mode_pressed else "RELEASED"]
+    var monitor_lines := ["CHANNEL MONITOR (30 Hz)"]
+    for role in ["roll", "pitch", "yaw", "throttle"]:
+        var raw := Input.get_joy_axis(session_gamepad_device_id, int(profile.axis_for_role[role]))
+        var normalized := _profile_axis(role)
+        var role_label := "%s:" % role
+        var line: String = role_label + " ".repeat(10 - role_label.length()) + "%s raw %+.3f | normalized %+.3f" % [_controller_monitor_bar(normalized), raw, normalized]
+        if role == "throttle":
+            line += " | %s" % ("LOW" if _profile_throttle_is_low() else "HIGH")
+        monitor_lines.append(line)
+    monitor_lines.append("ARM: %s | flight control: %s" % ["PRESSED" if profile.arm_pressed else "RELEASED", "ARMED" if _flight_control_armed() else "DISARMED"])
+    monitor_lines.append("MODE: %s | flight mode: %s" % ["PRESSED" if profile.mode_pressed else "RELEASED", flight_mode])
+    controller_settings_monitor_label.text = "\n".join(monitor_lines)
+
+func _controller_monitor_bar(value: float) -> String:
+    var marker := clampi(roundi((clampf(value, -1.0, 1.0) + 1.0) * 8.0), 0, 16)
+    return "[%s|%s]" % ["-".repeat(marker), "-".repeat(16 - marker)]
 
 func _normalize_gamepad_axis(raw: float, deadzone: float) -> float:
     if absf(raw) <= deadzone:
