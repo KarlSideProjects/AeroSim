@@ -45,10 +45,16 @@ runtime.session_gamepad_profile = null
 runtime.session_gamepad_device_id = -1
 runtime._refresh_controller_settings()
 assert_eq(runtime.controller_settings_mapping_label.text, "FIXED XBOX MAPPING: UNAVAILABLE")
-assert_string_contains(monitor.text, "roll:     UNAVAILABLE")
-assert_string_contains(monitor.text, "pitch:    UNAVAILABLE")
-assert_string_contains(monitor.text, "yaw:      UNAVAILABLE")
-assert_string_contains(monitor.text, "throttle: UNAVAILABLE")
+assert_eq(monitor.text, "\n".join([
+    "CHANNEL MONITOR (30 Hz)",
+    "roll:     UNAVAILABLE",
+    "pitch:    UNAVAILABLE",
+    "yaw:      UNAVAILABLE",
+    "throttle: UNAVAILABLE",
+    "DEADZONE: 0.080 (fixed)",
+    "ARM: UNAVAILABLE",
+    "MODE: UNAVAILABLE",
+]))
 ```
 
 Also add a preflight high-throttle A-button test that invokes `_handle_gamepad_button()` and proves the physical flag is pressed while the actual native arm state stays disarmed.

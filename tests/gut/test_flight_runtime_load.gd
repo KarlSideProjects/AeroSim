@@ -320,13 +320,16 @@ func test_controller_monitor_renders_active_session_channels_and_unavailable_wit
     runtime.session_gamepad_device_id = -1
     runtime._refresh_controller_settings()
     assert_eq(runtime.controller_settings_mapping_label.text, "FIXED XBOX MAPPING: UNAVAILABLE")
-    assert_string_contains(monitor.text, "CHANNEL MONITOR (30 Hz)")
-    assert_string_contains(monitor.text, "roll:     UNAVAILABLE")
-    assert_string_contains(monitor.text, "pitch:    UNAVAILABLE")
-    assert_string_contains(monitor.text, "yaw:      UNAVAILABLE")
-    assert_string_contains(monitor.text, "throttle: UNAVAILABLE")
-    assert_string_contains(monitor.text, "ARM: UNAVAILABLE")
-    assert_string_contains(monitor.text, "MODE: UNAVAILABLE")
+    assert_eq(monitor.text, "\n".join([
+        "CHANNEL MONITOR (30 Hz)",
+        "roll:     UNAVAILABLE",
+        "pitch:    UNAVAILABLE",
+        "yaw:      UNAVAILABLE",
+        "throttle: UNAVAILABLE",
+        "DEADZONE: 0.080 (fixed)",
+        "ARM: UNAVAILABLE",
+        "MODE: UNAVAILABLE",
+    ]))
 
 
 func test_high_throttle_arm_button_stays_pressed_without_arming_native_control() -> void:
