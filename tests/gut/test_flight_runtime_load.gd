@@ -316,6 +316,35 @@ func test_controller_monitor_renders_active_session_channels_and_unavailable_wit
     runtime._refresh_controller_settings()
     assert_string_contains(monitor.text, "throttle: [--------------|--] raw +0.750 | normalized +0.728 | HIGH")
 
+    var roll_deadzone := InputEventJoypadMotion.new()
+    roll_deadzone.device = 0
+    roll_deadzone.axis = JOY_AXIS_LEFT_X
+    roll_deadzone.axis_value = 0.08
+    Input.parse_input_event(roll_deadzone)
+    var yaw_deadzone := InputEventJoypadMotion.new()
+    yaw_deadzone.device = 0
+    yaw_deadzone.axis = JOY_AXIS_RIGHT_X
+    yaw_deadzone.axis_value = -0.08
+    Input.parse_input_event(yaw_deadzone)
+    await get_tree().process_frame
+    runtime._refresh_controller_settings()
+    assert_string_contains(monitor.text, "roll:     [--------|--------] raw +0.080 | normalized +0.000")
+    assert_string_contains(monitor.text, "yaw:      [--------|--------] raw -0.080 | normalized +0.000")
+
+    var throttle_boundary := InputEventJoypadMotion.new()
+    throttle_boundary.device = 0
+    throttle_boundary.axis = JOY_AXIS_RIGHT_Y
+    throttle_boundary.axis_value = 0.08
+    Input.parse_input_event(throttle_boundary)
+    await get_tree().process_frame
+    runtime._refresh_controller_settings()
+    assert_string_contains(monitor.text, "throttle: [--------|--------] raw +0.080 | normalized +0.000 | LOW")
+    throttle_boundary.axis_value = 0.081
+    Input.parse_input_event(throttle_boundary)
+    await get_tree().process_frame
+    runtime._refresh_controller_settings()
+    assert_string_contains(monitor.text, "throttle: [--------|--------] raw +0.081 | normalized +0.001 | HIGH")
+
     runtime.session_gamepad_profile = null
     runtime.session_gamepad_device_id = -1
     runtime._refresh_controller_settings()
