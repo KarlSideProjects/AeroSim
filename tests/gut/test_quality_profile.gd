@@ -24,3 +24,12 @@ func test_quality_profile_rejects_off_step_values() -> void:
     var result: Dictionary = load(path).validate_profile({"schema_version": 1, "render_scale": 0.51})
     assert_false(result.ok)
     assert_string_contains(result.error, "0.05")
+
+
+func test_quality_profile_requires_an_exact_schema_version() -> void:
+    const path := "res://common/flight/quality_profile.gd"
+    var quality = load(path)
+    var near_version: Dictionary = quality.validate_profile({"schema_version": 1.000001, "render_scale": 0.75})
+    assert_false(near_version.ok)
+    var exact_float: Dictionary = quality.validate_profile({"schema_version": 1.0, "render_scale": 0.75})
+    assert_true(exact_float.ok, exact_float.error)

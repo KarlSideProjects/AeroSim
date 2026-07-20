@@ -95,6 +95,8 @@ class QualitySettingsStore:
     var document: Dictionary
     var save_calls := 0
     var fail_save := false
+    var factory_reset_calls := 0
+    var fail_factory_reset := false
 
     var save_called: bool:
         get:
@@ -122,6 +124,21 @@ class QualitySettingsStore:
         document = candidate.duplicate(true)
         return {"ok": true, "error": "", "document": document, "recovered": false}
 
+    func factory_reset() -> Dictionary:
+        factory_reset_calls += 1
+        if fail_factory_reset:
+            return {"ok": false, "error": "test factory reset failure", "document": document}
+        document = {
+            "schema_version": 1,
+            "confirmed_gamepad": null,
+            "rates": null,
+            "osd": null,
+            "camera": null,
+            "language": null,
+            "quality": null,
+        }
+        return {"ok": true, "error": "", "document": document, "recovered": false}
+
 
 func _graphics_runtime_with_store(render_scale: Variant) -> FlightRuntime:
     var runtime := SmokeScene.instantiate() as FlightRuntime
@@ -130,6 +147,21 @@ func _graphics_runtime_with_store(render_scale: Variant) -> FlightRuntime:
     runtime.settings_store = QualitySettingsStore.new(render_scale)
     runtime._load_player_settings()
     return runtime
+
+
+func _send_ui_action(action: String, device: int = -1) -> void:
+    for pressed in [true, false]:
+        var event := InputEventAction.new()
+        event.action = action
+        event.device = device
+        event.pressed = pressed
+        event.strength = 1.0
+        Input.parse_input_event(event)
+
+
+func _send_ui_action_and_wait(action: String, device: int = -1) -> void:
+    _send_ui_action(action, device)
+    await get_tree().process_frame
 
 
 func _controller_monitor_runtime() -> FlightRuntime:
@@ -185,6 +217,57 @@ func test_graphics_focus_moves_to_slider_on_open_and_settings_graphics_on_close(
     assert_eq(runtime.get_viewport().gui_get_focus_owner(), graphics_button)
 
 
+func test_keyboard_ui_actions_reach_graphics_apply_and_return() -> void:
+    var runtime := _graphics_runtime_with_store(1.0)
+    var quick_fly := runtime.get_node("MainMenu/Entries/QuickFly") as Button
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), quick_fly)
+    for _step in range(4):
+        await _send_ui_action_and_wait("ui_down")
+    await _send_ui_action_and_wait("ui_accept")
+    assert_eq(runtime.screen, "settings")
+    var graphics_button := runtime.get_node("MainMenu/SettingsPanel/Rows/Graphics") as Button
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), graphics_button)
+    await _send_ui_action_and_wait("ui_accept")
+    assert_eq(runtime.screen, "graphics")
+    for _step in range(5):
+        await _send_ui_action_and_wait("ui_left")
+    assert_eq(runtime.render_scale, 0.75)
+    assert_eq((runtime.get_node("MainMenu/GraphicsPanel/Rows/RenderScaleValue") as Label).text, "RENDER SCALE: 75%")
+    await _send_ui_action_and_wait("ui_down")
+    await _send_ui_action_and_wait("ui_accept")
+    var store := runtime.settings_store as QualitySettingsStore
+    assert_eq(store.document.quality.render_scale, 0.75)
+    for _step in range(2):
+        await _send_ui_action_and_wait("ui_down")
+    await _send_ui_action_and_wait("ui_accept")
+    assert_eq(runtime.screen, "settings")
+
+
+func test_joypad_ui_actions_reach_graphics_apply_and_return() -> void:
+    var runtime := _graphics_runtime_with_store(1.0)
+    var quick_fly := runtime.get_node("MainMenu/Entries/QuickFly") as Button
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), quick_fly)
+    for _step in range(4):
+        await _send_ui_action_and_wait("ui_down", 7)
+    await _send_ui_action_and_wait("ui_accept", 7)
+    assert_eq(runtime.screen, "settings")
+    var graphics_button := runtime.get_node("MainMenu/SettingsPanel/Rows/Graphics") as Button
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), graphics_button)
+    await _send_ui_action_and_wait("ui_accept", 7)
+    assert_eq(runtime.screen, "graphics")
+    for _step in range(5):
+        await _send_ui_action_and_wait("ui_left", 7)
+    assert_eq(runtime.render_scale, 0.75)
+    await _send_ui_action_and_wait("ui_down", 7)
+    await _send_ui_action_and_wait("ui_accept", 7)
+    var store := runtime.settings_store as QualitySettingsStore
+    assert_eq(store.document.quality.render_scale, 0.75)
+    for _step in range(2):
+        await _send_ui_action_and_wait("ui_down", 7)
+    await _send_ui_action_and_wait("ui_accept", 7)
+    assert_eq(runtime.screen, "settings")
+
+
 func test_graphics_preview_back_restores_the_committed_viewport_scale() -> void:
     var runtime := _graphics_runtime_with_store(1.0)
     runtime.show_graphics()
@@ -227,6 +310,32 @@ func test_graphics_apply_persists_once_and_failed_apply_restores_preview() -> vo
     runtime._on_render_scale_changed(0.50)
     runtime._apply_graphics_settings()
     assert_eq(runtime.render_scale, 0.75)
+
+
+func test_graphics_value_label_uses_integer_percent() -> void:
+    var runtime := _graphics_runtime_with_store(0.75)
+    runtime.show_graphics()
+
+    assert_eq((runtime.get_node("MainMenu/GraphicsPanel/Rows/RenderScaleValue") as Label).text, "RENDER SCALE: 75%")
+
+
+func test_factory_reset_changes_viewport_only_after_successful_persistence() -> void:
+    var runtime := _graphics_runtime_with_store(0.75)
+    var store := runtime.settings_store as QualitySettingsStore
+    runtime.factory_reset_player_settings()
+    assert_eq(store.factory_reset_calls, 1)
+    assert_eq(runtime.render_scale, 1.0)
+    assert_eq(runtime.get_viewport().scaling_3d_scale, 1.0)
+    assert_null(store.document.quality)
+
+    runtime._preview_render_scale(0.75)
+    store.document.quality = {"schema_version": 1, "render_scale": 0.75}
+    store.fail_factory_reset = true
+    runtime.factory_reset_player_settings()
+    assert_eq(store.factory_reset_calls, 2)
+    assert_eq(runtime.render_scale, 0.75)
+    assert_eq(runtime.get_viewport().scaling_3d_scale, 0.75)
+    assert_eq(store.document.quality.render_scale, 0.75)
 
 
 func test_exported_replay_runner_is_available_to_the_main_scene() -> void:

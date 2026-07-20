@@ -44,6 +44,8 @@ func _run() -> void:
 	_expect(runtime.native != null, "native runtime is registered")
 	_expect(root.get_camera_3d() != null, "cold start has an active Camera3D")
 	_expect(runtime.screen == "main_menu", "cold start opens the main menu")
+	await _navigate_graphics_with_ui_actions(runtime, -1)
+	await _navigate_graphics_with_ui_actions(runtime, 7)
 	var dashboard: CanvasLayer = runtime.status_diagram
 	_expect(dashboard != null, "cold start attaches the Operations Dashboard")
 	if dashboard != null:
@@ -503,6 +505,59 @@ func _tap(keycode: Key) -> void:
 		event.physical_keycode = keycode
 		event.pressed = pressed
 		Input.parse_input_event(event)
+
+func _send_ui_action(action: String, device: int) -> void:
+	for pressed in [true, false]:
+		var event := InputEventAction.new()
+		event.action = action
+		event.device = device
+		event.pressed = pressed
+		event.strength = 1.0
+		Input.parse_input_event(event)
+
+func _navigate_graphics_with_ui_actions(runtime: Node, device: int) -> void:
+	var quick_fly := runtime.get_node_or_null("MainMenu/Entries/QuickFly") as Button
+	_expect(runtime.get_viewport().gui_get_focus_owner() == quick_fly, "UI action flow starts on Quick Fly")
+	for _step in range(4):
+		_send_ui_action("ui_down", device)
+		await _settle(1)
+	_send_ui_action("ui_accept", device)
+	await _settle(2)
+	_expect(runtime.screen == "settings", "UI actions open Settings")
+	var graphics_button := runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Graphics") as Button
+	_expect(runtime.get_viewport().gui_get_focus_owner() == graphics_button, "Settings hands focus to Graphics")
+	_send_ui_action("ui_accept", device)
+	await _settle(2)
+	_expect(runtime.screen == "graphics", "UI actions open Graphics")
+	var slider := runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/RenderScale") as HSlider
+	_expect(runtime.get_viewport().gui_get_focus_owner() == slider, "Graphics UI actions focus RenderScale")
+	for _step in range(10):
+		_send_ui_action("ui_right", device)
+		await _settle(1)
+	for _step in range(5):
+		_send_ui_action("ui_left", device)
+		await _settle(1)
+	_expect(absf(runtime.get_viewport().scaling_3d_scale - 0.75) <= 0.000001, "UI actions change Graphics scale")
+	_expect((runtime.get_node("MainMenu/GraphicsPanel/Rows/RenderScaleValue") as Label).text == "RENDER SCALE: 75%", "Graphics shows integer percent")
+	_send_ui_action("ui_down", device)
+	await _settle(1)
+	_send_ui_action("ui_accept", device)
+	await _settle(2)
+	var persisted_quality: Dictionary = runtime.settings_store.load_document().document.quality
+	_expect(absf(float(persisted_quality.get("render_scale", 0.0)) - 0.75) <= 0.000001, "UI actions Apply Graphics")
+	for _step in range(2):
+		_send_ui_action("ui_down", device)
+		await _settle(1)
+	_send_ui_action("ui_accept", device)
+	await _settle(2)
+	_expect(runtime.screen == "settings", "UI actions return from Graphics")
+	_expect(runtime.get_viewport().gui_get_focus_owner() == graphics_button, "UI actions return Settings focus")
+	for _step in range(2):
+		_send_ui_action("ui_down", device)
+		await _settle(1)
+	_send_ui_action("ui_accept", device)
+	await _settle(2)
+	_expect(runtime.screen == "main_menu", "UI actions return to main menu")
 
 func _click(control: Control) -> void:
 	var position := control.get_global_rect().get_center()

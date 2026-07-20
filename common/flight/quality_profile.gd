@@ -23,7 +23,7 @@ static func validate_profile(candidate: Variant) -> Dictionary:
     for key in FIELD_NAMES:
         if not source.has(key):
             return {"ok": false, "error": "missing quality field: %s" % key}
-    if typeof(source["schema_version"]) not in [TYPE_INT, TYPE_FLOAT] or not is_equal_approx(float(source["schema_version"]), float(SCHEMA_VERSION)):
+    if typeof(source["schema_version"]) not in [TYPE_INT, TYPE_FLOAT] or float(source["schema_version"]) != float(SCHEMA_VERSION):
         return {"ok": false, "error": "unsupported quality schema_version"}
     if typeof(source["render_scale"]) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(source["render_scale"])):
         return {"ok": false, "error": "render_scale must be a finite number"}

@@ -2209,6 +2209,9 @@ func _build_main_menu() -> void:
     _build_controller_settings_panel()
     _build_rates_panel()
     _build_graphics_panel()
+    var initial_button := entries.get_child(0) as Button
+    if initial_button != null:
+        initial_button.grab_focus()
 
 func _build_settings_panel() -> void:
     var panel := PanelContainer.new()
@@ -2520,7 +2523,7 @@ func _refresh_rates_panel() -> void:
 func _refresh_graphics_panel() -> void:
     if graphics_value_label == null:
         return
-    graphics_value_label.text = "RENDER SCALE: %.2f" % render_scale
+    graphics_value_label.text = "RENDER SCALE: %d%%" % roundi(render_scale * 100.0)
     var slider := get_node_or_null("MainMenu/GraphicsPanel/Rows/RenderScale") as HSlider
     if slider != null and not is_equal_approx(slider.value, render_scale):
         slider.set_value_no_signal(render_scale)
@@ -2591,10 +2594,16 @@ func _build_controller_settings_panel() -> void:
 func show_main_menu() -> void:
     screen = "main_menu"
     _refresh_flight_hud()
+    var initial_button := get_node_or_null("MainMenu/Entries/QuickFly") as Button
+    if initial_button != null:
+        initial_button.grab_focus()
 
 func show_settings() -> void:
     screen = "settings"
     _refresh_flight_hud()
+    var graphics_button := get_node_or_null("MainMenu/SettingsPanel/Rows/Graphics") as Button
+    if graphics_button != null:
+        graphics_button.grab_focus()
 
 func show_controller_settings() -> void:
     screen = "controller_settings"
@@ -2662,9 +2671,6 @@ func _close_graphics_panel() -> void:
         _refresh_flight_hud()
     else:
         show_settings()
-        var graphics_button := get_node_or_null("MainMenu/SettingsPanel/Rows/Graphics") as Button
-        if graphics_button != null:
-            graphics_button.grab_focus()
 
 
 func _close_rates_panel() -> void:
