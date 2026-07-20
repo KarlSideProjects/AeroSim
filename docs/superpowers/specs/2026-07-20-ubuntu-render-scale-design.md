@@ -19,8 +19,10 @@ The `quality` settings domain owns exactly this schema:
 
 `render_scale` is a finite number from 0.50 through 1.00 inclusive in 0.05
 steps. Unknown, missing, non-finite, out-of-range, and off-step values fail
-loudly through the existing `SettingsStore` recovery contract. A missing
-`quality` domain uses the factory default 1.00.
+loudly through the existing `SettingsStore` recovery contract. `quality: null`
+means that this domain is unconfigured and selects the factory default 1.00;
+an absent top-level `quality` field remains an invalid settings envelope and
+uses the existing whole-document recovery behavior.
 
 ## Runtime and UI
 
@@ -34,8 +36,12 @@ one `3D RENDER SCALE` HSlider (50% to 100%, 5% steps), a current-percent label,
 `APPLY`, `RESET DEFAULTS`, and `BACK`. Slider changes update the root viewport
 immediately without reloading a scene. `APPLY` is the only persistence action;
 this supports mouse, keyboard, and gamepad focus navigation without writing on
-every slider frame. The 2D UI stays at native resolution because only the
-viewport 3D scale changes.
+every slider frame. Opening Graphics records the committed scale. Slider
+changes and `RESET DEFAULTS` (1.00) are previews only; `APPLY` saves once and
+updates the committed scale only after a successful save. `BACK`, or a failed
+save, restores the recorded committed scale. Mouse, keyboard, and gamepad use
+the same controls and callbacks. The 2D UI stays at native resolution because
+only the viewport 3D scale changes.
 
 ## Boundaries
 
@@ -45,6 +51,11 @@ shadow, fog, or platform-specific settings.
 
 ## Verification
 
-GUT covers the exact quality schema, all accepted endpoints, invalid values,
-startup restoration, immediate viewport application, explicit save, and factory
-reset. Existing full GUT, native, headless, and headed checks remain required.
+GUT covers the exact quality schema, all eleven accepted ticks, canonical
+normalization, off-step and invalid values, `quality: null` versus an absent
+top-level field, startup restoration, immediate viewport application, and the
+preview transaction: slider/reset do not save, mouse/keyboard/gamepad invoke
+the same apply path exactly once, and Back or failed Apply restores the prior
+committed scale. Global factory reset applies 1.00 only after its complete
+document save succeeds. Existing full GUT, native, headless, and headed checks
+remain required.
