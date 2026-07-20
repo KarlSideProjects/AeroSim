@@ -64,25 +64,14 @@ unchanged; existing Y handling changes the mode only for an active flight. The
 displayed action result must always be the actual post-event state, while pause
 remains active.
 
-The Monitor's availability precedence is:
-
-| Active input state | Channel rows | Device / prompt state |
-| --- | --- | --- |
-| Safety-latched disconnect | Monitor closes | Existing `controller_disconnected` safety screen owns the disarm/freeze and reconnect explanation |
-| Canonical `GamepadProfile` session | raw, normalized, bar, deadzone, and button/result rows | throttle LOW/HIGH, Arm, and Mode shown live |
-| Accepted `KeyboardProfile` fallback | `UNAVAILABLE` | `KeyboardProfile: discrete inputs only` |
-| No connected controller | `UNAVAILABLE` | `No controller detected; KeyboardProfile fallback active` |
-| Unknown or unsupported device | `UNAVAILABLE` | `Unknown controller; KeyboardProfile fallback active` |
-| SDL-mapped but unconfirmed controller | `UNAVAILABLE` | `Controller setup required; Channel Monitor unavailable` |
-
-Safety-latched disconnect wins over every Monitor row. A canonical session wins
-over the no-session rows. Among no-session rows, an accepted KeyboardProfile
-fallback wins over connected-device diagnostics, then no-controller, unknown,
-and SDL-mapped-unconfirmed are used in that order. The existing device and
-fallback diagnostics may select this explanatory text, but never provide a
-channel sample or mapping. No unavailable state is represented as a zero-valued
-channel. The explicit unknown-device state is the fourth G5.6 prompt; it does
-not introduce a mapping or calibration flow.
+On a safety-latched disconnect, the existing `controller_disconnected` safety
+screen closes the Monitor and owns the disarm/freeze and reconnect explanation.
+With a valid canonical `GamepadProfile` session, the Monitor displays its live
+rows. In every other case—KeyboardProfile, no controller, unknown device, or
+unconfirmed controller—every channel row is `UNAVAILABLE` and the existing
+device/fallback diagnostic is shown unchanged. That diagnostic may describe
+the unknown-device prompt, but never provides a channel sample or mapping. No
+unavailable state is represented as a zero-valued channel.
 
 ## Constraints
 
@@ -116,8 +105,8 @@ not introduce a mapping or calibration flow.
   flight mode while `paused` remains true. A separate GUT preflight test uses
   high throttle to prove a rejected A press remains `PRESSED | DISARMED`; it
   does not depend on the Monitor screen gate. GUT also covers every
-  availability row, its precedence, the exact unknown-device prompt, and the
-  throttle-low threshold.
+  no-session `UNAVAILABLE` path, the existing unknown-device diagnostic, and
+  the throttle-low threshold.
 - Run the required headless smoke after the GDScript change, plus existing
   native, GUT, and headed checks.
 - The headed screenshot and report are provisional automated evidence for
