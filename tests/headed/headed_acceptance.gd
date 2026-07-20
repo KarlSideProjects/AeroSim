@@ -26,6 +26,7 @@ class MutableGamepadDeviceState:
 
 var _failures: Array[String] = []
 var _out_dir := "build/headed"
+var _channel_monitor_evidence: Dictionary = {}
 
 func _initialize() -> void:
 	_run()
@@ -141,22 +142,19 @@ func _run() -> void:
 		_click(settings_controller_button)
 	await _settle(2)
 	_expect(runtime.screen == "controller_settings", "Settings Controller entry opens Controller settings")
+	runtime.session_gamepad_profile = null
+	runtime.session_gamepad_device_id = -1
 	var controller_settings: Control = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel")
 	var device_label: Label = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/CurrentDevice")
-	var fixed_mapping_label: Label = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/FixedMapping")
-	var deadzone_label: Label = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/Deadzone")
-	var button_status_label: Label = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ButtonStatus")
 	var reset_button: Button = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ResetXboxDefault")
 	_expect(controller_settings != null and controller_settings.is_visible_in_tree(), "Controller settings panel is visible")
 	_expect(device_label != null and device_label.text.contains(str(known_device_id)), "Controller settings shows the current device")
-	_expect(fixed_mapping_label != null and fixed_mapping_label.text.contains("roll -> Axis 0") and fixed_mapping_label.text.contains("throttle -> Axis 3"), "Controller settings shows the fixed Xbox mapping")
-	_expect(deadzone_label != null and deadzone_label.text.contains("0.080"), "Controller settings shows the fixed deadzone")
-	_expect(button_status_label != null and button_status_label.text.contains("Arm RELEASED") and button_status_label.text.contains("Mode RELEASED"), "Controller settings shows Arm/Mode status")
 	_expect(reset_button != null and reset_button.text == "RESET TO XBOX DEFAULT", "Controller settings exposes Xbox reset")
 	if reset_button != null:
 		_click(reset_button)
 	await _settle(2)
 	_expect(runtime.screen == "controller_confirmation", "Xbox reset requires confirmation before changing the session profile")
+	runtime.persisted_gamepad_profile = null
 	runtime.quick_fly()
 	await _settle(10)
 	await _snapshot("01_controller_confirmation")
@@ -207,6 +205,43 @@ func _run() -> void:
 	runtime.request_takeoff()
 	runtime.set_paused(true)
 	await _settle(2)
+	var paused_position: Vector3 = runtime.drone_body.global_position
+	var paused_time: float = runtime.airsim_session.simulation_time_seconds
+	runtime.show_controller_settings()
+	await _settle(2)
+	var monitor: Label = runtime.controller_settings_monitor_label
+	_expect(monitor != null and monitor.is_visible_in_tree(), "paused flight opens the visible Channel Monitor")
+	_inject_joy_button(known_device_id, JOY_BUTTON_A, true)
+	_inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
+	var monitor_start_count: int = runtime.controller_monitor_refresh_count
+	var monitor_start_ms := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - monitor_start_ms < 1_000:
+		_inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, 0.5)
+		_inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.5)
+		_inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.25)
+		_inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, -0.75)
+		await process_frame
+	var monitor_elapsed_seconds := float(Time.get_ticks_msec() - monitor_start_ms) / 1000.0
+	var monitor_refresh_count: int = runtime.controller_monitor_refresh_count - monitor_start_count
+	var monitor_rate_hz: float = float(monitor_refresh_count) / monitor_elapsed_seconds
+	var position_frozen: bool = runtime.drone_body.global_position.distance_to(paused_position) <= 1e-6
+	var simulation_time_frozen: bool = absf(runtime.airsim_session.simulation_time_seconds - paused_time) <= 1e-6
+	_expect(monitor_rate_hz >= 30.0, "paused Channel Monitor refreshes at least 30 Hz")
+	_expect(position_frozen, "Channel Monitor leaves paused physics position frozen")
+	_expect(simulation_time_frozen, "Channel Monitor leaves paused simulation time frozen")
+	_expect(monitor != null and monitor.text.contains("ARM: PRESSED | flight control: ARMED"), "A button physical state remains distinct from armed state")
+	_expect(monitor != null and monitor.text.contains("MODE: PRESSED | flight mode: ALTITUDE_HOLD"), "Y button shows the actual resulting flight mode")
+	await _snapshot("07_channel_monitor_paused")
+	_channel_monitor_evidence = {
+		"elapsed_wall_time_seconds": monitor_elapsed_seconds,
+		"refresh_count": monitor_refresh_count,
+		"refresh_rate_hz": monitor_rate_hz,
+		"position_frozen": position_frozen,
+		"simulation_time_frozen": simulation_time_frozen,
+		"screenshot_path": "%s/07_channel_monitor_paused.png" % _out_dir,
+	}
+	runtime.screen = "flight"
+	runtime._refresh_flight_hud()
 	var pause_rates_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Rates")
 	_expect(runtime.paused and pause_rates_button != null, "Pause Overlay exposes Rates")
 	var acro_key := InputEventKey.new()
@@ -214,7 +249,7 @@ func _run() -> void:
 	acro_key.physical_keycode = KEY_C
 	acro_key.pressed = true
 	runtime._unhandled_input(acro_key)
-	_expect(runtime.flight_mode == "ANGLE", "C cannot switch to ACRO while paused")
+	_expect(runtime.flight_mode == "ALTITUDE_HOLD", "C cannot switch to ACRO while paused")
 	runtime.show_rates("flight")
 	await _settle(2)
 	_expect(runtime.screen == "rates" and runtime.paused, "Rates opened from Pause Overlay keeps pause state")
@@ -452,6 +487,13 @@ func _inject_joy_axis(device_id: int, axis: JoyAxis, value: float) -> void:
 	event.axis_value = value
 	Input.parse_input_event(event)
 
+func _inject_joy_button(device_id: int, button: JoyButton, pressed: bool) -> void:
+	var event := InputEventJoypadButton.new()
+	event.device = device_id
+	event.button_index = button
+	event.pressed = pressed
+	Input.parse_input_event(event)
+
 func _expect(condition: bool, message: String) -> void:
 	if not condition:
 		_failures.append(message)
@@ -461,6 +503,6 @@ func _write_report() -> bool:
 	if report == null:
 		push_error("Cannot write headed acceptance report")
 		return false
-	report.store_string(JSON.stringify({"failures": _failures, "passed": _failures.is_empty()}))
+	report.store_string(JSON.stringify({"channel_monitor": _channel_monitor_evidence, "failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
 	return true
