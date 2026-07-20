@@ -16,15 +16,17 @@ mapping store, or calibration flow.
 Keep the current `ControllerSettingsPanel` as the one Monitor panel in
 `common/flight/flight_runtime.gd`. Its content is refreshed from the process
 path while visible, including while the simulation is paused; no production
-timer or second polling loop is introduced. Settings opens the panel now. The
-panel exposes one reusable show/back path so #42 can later open and return from
-the same instance without duplicating the UI.
+timer or second polling loop is introduced. Settings opens the panel now.
+Issue #41 changes no return routing or Pause Overlay control: #42 will call
+this existing panel path when it adds its own entry.
 
 The active `session_gamepad_device_id` and `session_gamepad_profile` are the
-only source of a valid monitor sample. They must describe the same connected,
-SDL-known Xbox device. A missing, disconnected, mismatched, or unsupported
-device is `UNAVAILABLE`; the monitor never calls a first-device scan or
-constructs a fallback profile to fabricate valid-looking values.
+only source of a valid monitor sample. A non-null session profile with its
+active session device ID is valid because the existing connection flow creates
+that pair only for the supported canonical Xbox profile and clears it on
+disconnect. A missing, disconnected, or unsupported device is `UNAVAILABLE`;
+the monitor never calls a first-device scan, invents a profile, or tries to
+compare a profile with device identity it does not contain.
 
 The panel is not a flight HUD overlay. It remains readable in Settings and is
 available through its reusable entry path while paused, preserving the frozen
@@ -55,9 +57,24 @@ derived through the existing throttle-low rule without mutating sticky throttle
 state.
 
 Arm and Mode show both their current physical button state and their resulting
-flight-control state; a press must never be displayed as an already successful
-arm or mode change. With no valid session controller, every monitor row reads
-`UNAVAILABLE`; no zero-valued substitute is shown.
+flight-control state; a press is not itself evidence that its action succeeded.
+The panel observes but does not consume flight inputs: existing A handling may
+be rejected (for example, throttle not LOW), and existing Y handling changes
+the mode immediately. The displayed action result must always be the actual
+post-event state, while pause remains active.
+
+The monitor has these availability states:
+
+| Active input state | Channel rows | Device / prompt state |
+| --- | --- | --- |
+| Canonical `GamepadProfile` session | raw, normalized, bar, deadzone, and button/result rows | throttle LOW/HIGH, Arm, and Mode shown live |
+| Keyboard fallback | `UNAVAILABLE` | `KeyboardProfile: discrete inputs only` |
+| Unknown or unsupported device | `UNAVAILABLE` | `Unknown controller; KeyboardProfile fallback active` |
+| Disconnected controller | `UNAVAILABLE` | `Controller disconnected; reconnect required` |
+
+No unavailable state is represented as a zero-valued channel. The explicit
+unknown-device state is the fourth G5.6 prompt; it does not introduce a mapping
+or calibration flow.
 
 ## Constraints
 
@@ -66,8 +83,9 @@ arm or mode change. With no valid session controller, every monitor row reads
   `InputProfiles`.
 - At least 30 Hz while the Monitor is visible, including while paused; no
   monitor refresh work while it is hidden.
-- The single panel must be callable by Settings now and by #42 later, without
-  adding the #42 Pause Overlay button in this issue.
+- Settings is the only user-facing entry in #41. #42 may reuse the existing
+  panel when it adds its own Pause Overlay button; #41 adds no future-facing
+  entry or return API.
 - No persistence, calibration wizard, arbitrary mapping editor, reconnect
   logic, second controller truth, or flight-HUD overlay.
 - Keyboard and gamepad remain usable for navigating the existing Settings UI.
@@ -77,20 +95,27 @@ arm or mode change. With no valid session controller, every monitor row reads
 - GUT tests first prove canonical axis selection, 0.08 deadzone boundaries,
   raw-to-diagnostic-normalized rows, live-bar direction, throttle `LOW/HIGH`,
   button press/release, Arm/Mode result rows, and `UNAVAILABLE` state.
-- A headed acceptance extension pauses the simulation, injects canonical axis
-  plus Xbox A/Y press/release input for at least one monotonic wall-clock
-  second, and writes a report proving refreshes per elapsed wall second are at
-  least 30. It also proves the monitor values change while the body transform
-  and simulation timestamp remain frozen, saves a screenshot, and rejects
-  `ERROR` or `SCRIPT ERROR` output.
+- A headed acceptance extension pauses the simulation and directly invokes the
+  existing Settings Monitor path; it does not claim the #42 Pause Overlay entry
+  exists. It injects canonical axis plus Xbox A/Y press/release input for at
+  least one monotonic wall-clock second and writes a report proving refreshes
+  per elapsed wall second are at least 30. It proves monitor values change while
+  the body transform and simulation timestamp remain frozen, saves a
+  screenshot, and rejects `ERROR` or `SCRIPT ERROR` output.
+- The paused input check uses an A press while the Monitor is open to prove
+  `PRESSED` can remain `DISARMED`, then verifies a Y press/release reports the
+  actual changed flight mode while `paused` remains true. GUT separately covers
+  the four availability states, the exact unknown-device prompt, and the
+  throttle-low threshold.
 - Run the required headless smoke after the GDScript change, plus existing
   native, GUT, and headed checks.
-- After merge, Ubuntu physical Xbox-compatible-controller DEV-M validates the
-  live bars, prompts, and paused Monitor path before #41 closes.
+- The headed screenshot and report are provisional automated evidence. No human
+  visual or usability review is requested for #41 before CAP-006 passes; any
+  later DEV-M gate is scheduled with that milestone, not used to close #41.
 
 ## Out of Scope
 
 - Endpoint, centre, RMS, repeatability, or controller calibration.
 - Any new settings domain or change to `SettingsStore`.
-- The Pause Overlay's `Controller Monitor` button; #42 will connect that
-  button to this panel.
+- The Pause Overlay's `Controller Monitor` button and its return behavior; #42
+  will connect that button to this panel.
