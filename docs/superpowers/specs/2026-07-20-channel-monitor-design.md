@@ -58,23 +58,31 @@ state.
 
 Arm and Mode show both their current physical button state and their resulting
 flight-control state; a press is not itself evidence that its action succeeded.
-The panel observes but does not consume flight inputs: existing A handling may
-be rejected (for example, throttle not LOW), and existing Y handling changes
-the mode immediately. The displayed action result must always be the actual
-post-event state, while pause remains active.
+The panel observes but does not consume flight inputs. While Settings Monitor
+is open, existing A handling is screen-gated and leaves the actual arm state
+unchanged; existing Y handling changes the mode only for an active flight. The
+displayed action result must always be the actual post-event state, while pause
+remains active.
 
-The monitor has these availability states:
+The Monitor's availability precedence is:
 
 | Active input state | Channel rows | Device / prompt state |
 | --- | --- | --- |
+| Safety-latched disconnect | Monitor closes | Existing `controller_disconnected` safety screen owns the disarm/freeze and reconnect explanation |
 | Canonical `GamepadProfile` session | raw, normalized, bar, deadzone, and button/result rows | throttle LOW/HIGH, Arm, and Mode shown live |
-| Keyboard fallback | `UNAVAILABLE` | `KeyboardProfile: discrete inputs only` |
+| Accepted `KeyboardProfile` fallback | `UNAVAILABLE` | `KeyboardProfile: discrete inputs only` |
+| No connected controller | `UNAVAILABLE` | `No controller detected; KeyboardProfile fallback active` |
 | Unknown or unsupported device | `UNAVAILABLE` | `Unknown controller; KeyboardProfile fallback active` |
-| Disconnected controller | `UNAVAILABLE` | `Controller disconnected; reconnect required` |
+| SDL-mapped but unconfirmed controller | `UNAVAILABLE` | `Controller setup required; Channel Monitor unavailable` |
 
-No unavailable state is represented as a zero-valued channel. The explicit
-unknown-device state is the fourth G5.6 prompt; it does not introduce a mapping
-or calibration flow.
+Safety-latched disconnect wins over every Monitor row. A canonical session wins
+over the no-session rows. Among no-session rows, an accepted KeyboardProfile
+fallback wins over connected-device diagnostics, then no-controller, unknown,
+and SDL-mapped-unconfirmed are used in that order. The existing device and
+fallback diagnostics may select this explanatory text, but never provide a
+channel sample or mapping. No unavailable state is represented as a zero-valued
+channel. The explicit unknown-device state is the fourth G5.6 prompt; it does
+not introduce a mapping or calibration flow.
 
 ## Constraints
 
@@ -102,16 +110,20 @@ or calibration flow.
   per elapsed wall second are at least 30. It proves monitor values change while
   the body transform and simulation timestamp remain frozen, saves a
   screenshot, and rejects `ERROR` or `SCRIPT ERROR` output.
-- The paused input check uses an A press while the Monitor is open to prove
-  `PRESSED` can remain `DISARMED`, then verifies a Y press/release reports the
-  actual changed flight mode while `paused` remains true. GUT separately covers
-  the four availability states, the exact unknown-device prompt, and the
+- The headed paused-flight check starts armed, opens the Monitor, and verifies
+  A press/release displays `PRESSED`/`RELEASED` with the unchanged actual
+  `ARMED` result. It then verifies Y press/release displays the actual changed
+  flight mode while `paused` remains true. A separate GUT preflight test uses
+  high throttle to prove a rejected A press remains `PRESSED | DISARMED`; it
+  does not depend on the Monitor screen gate. GUT also covers every
+  availability row, its precedence, the exact unknown-device prompt, and the
   throttle-low threshold.
 - Run the required headless smoke after the GDScript change, plus existing
   native, GUT, and headed checks.
-- The headed screenshot and report are provisional automated evidence. No human
-  visual or usability review is requested for #41 before CAP-006 passes; any
-  later DEV-M gate is scheduled with that milestone, not used to close #41.
+- The headed screenshot and report are provisional automated evidence for
+  merge. `AGENTS.md` supersedes the older #41 comment's timing: no human visual
+  or usability review is requested before CAP-006 passes. After CAP-006 passes,
+  the G5.6 physical DEV-M validates the live bars and prompts before #41 closes.
 
 ## Out of Scope
 
