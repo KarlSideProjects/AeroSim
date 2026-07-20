@@ -1575,24 +1575,27 @@ func _verify_runtime_actions() -> bool:
     var controller_settings := scene.get_node_or_null("MainMenu/ControllerSettingsPanel") as Control
     var device_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/CurrentDevice") as Label
     var fixed_mapping_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/FixedMapping") as Label
-    var deadzone_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/Deadzone") as Label
-    var button_status_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ButtonStatus") as Label
+    var channel_monitor_label := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ChannelMonitor") as Label
     var reset_button := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ResetXboxDefault") as Button
-    if controller_settings == null or device_label == null or fixed_mapping_label == null or deadzone_label == null or button_status_label == null or reset_button == null:
-        push_error("Controller settings must show device, fixed mapping, deadzone, Arm/Mode state, and Xbox reset action")
+    if controller_settings == null or device_label == null or fixed_mapping_label == null or channel_monitor_label == null or reset_button == null:
+        push_error("Controller settings must show device, fixed mapping, Channel Monitor, and Xbox reset action")
         scene.queue_free()
         return false
     if not controller_settings.is_visible_in_tree() or not device_label.text.contains(str(known_device_id)):
         push_error("Controller settings must show the currently connected device")
         scene.queue_free()
         return false
-    for expected_mapping in ["roll -> Axis 0", "pitch -> Axis 1", "yaw -> Axis 2", "throttle -> Axis 3"]:
-        if not fixed_mapping_label.text.contains(expected_mapping):
-            push_error("Controller settings must show the fixed Xbox mapping: %s" % expected_mapping)
-            scene.queue_free()
-            return false
-    if not deadzone_label.text.contains("0.080") or not button_status_label.text.contains("Arm RELEASED") or not button_status_label.text.contains("Mode RELEASED"):
-        push_error("Controller settings must show the fixed deadzone and live Arm/Mode state")
+    if fixed_mapping_label.text != "FIXED XBOX MAPPING: UNAVAILABLE" or channel_monitor_label.text != "\n".join([
+        "CHANNEL MONITOR (30 Hz)",
+        "roll:     UNAVAILABLE",
+        "pitch:    UNAVAILABLE",
+        "yaw:      UNAVAILABLE",
+        "throttle: UNAVAILABLE",
+        "DEADZONE: 0.080 (fixed)",
+        "ARM: UNAVAILABLE",
+        "MODE: UNAVAILABLE",
+    ]):
+        push_error("Controller settings must show the unavailable Channel Monitor before Xbox profile confirmation")
         scene.queue_free()
         return false
     reset_button.pressed.emit()

@@ -211,8 +211,15 @@ func _run() -> void:
 	await _settle(2)
 	var monitor: Label = runtime.controller_settings_monitor_label
 	_expect(monitor != null and monitor.is_visible_in_tree(), "paused flight opens the visible Channel Monitor")
+	_expect(monitor != null and monitor.text.contains("ARM: RELEASED | flight control: ARMED"), "Channel Monitor starts with physical A released and flight control armed")
+	_expect(monitor != null and monitor.text.contains("MODE: RELEASED | flight mode: ANGLE"), "Channel Monitor starts with physical Y released and Angle mode")
+	var monitor_before_axes := monitor.text if monitor != null else ""
 	_inject_joy_button(known_device_id, JOY_BUTTON_A, true)
+	await _settle(2)
+	_expect(monitor != null and monitor.text.contains("ARM: PRESSED | flight control: ARMED"), "A button physical state remains distinct from already armed control")
 	_inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
+	await _settle(2)
+	_expect(monitor != null and monitor.text.contains("MODE: PRESSED | flight mode: ALTITUDE_HOLD"), "Y button physical state shows the actual resulting flight mode")
 	var monitor_start_count: int = runtime.controller_monitor_refresh_count
 	var monitor_start_ms := Time.get_ticks_msec()
 	while Time.get_ticks_msec() - monitor_start_ms < 1_000:
@@ -229,9 +236,20 @@ func _run() -> void:
 	_expect(monitor_rate_hz >= 30.0, "paused Channel Monitor refreshes at least 30 Hz")
 	_expect(position_frozen, "Channel Monitor leaves paused physics position frozen")
 	_expect(simulation_time_frozen, "Channel Monitor leaves paused simulation time frozen")
-	_expect(monitor != null and monitor.text.contains("ARM: PRESSED | flight control: ARMED"), "A button physical state remains distinct from armed state")
-	_expect(monitor != null and monitor.text.contains("MODE: PRESSED | flight mode: ALTITUDE_HOLD"), "Y button shows the actual resulting flight mode")
+	_expect(monitor != null and monitor.text != monitor_before_axes, "Channel Monitor renders injected axes while paused")
+	for expected_axis_row in [
+		"roll:     [------------|----] raw +0.500 | normalized +0.457",
+		"pitch:    [------------|----] raw -0.500 | normalized +0.457",
+		"yaw:      [---------|-------] raw +0.250 | normalized +0.185",
+		"throttle: [--|--------------] raw -0.750 | normalized -0.728 | LOW",
+	]:
+		_expect(monitor != null and monitor.text.contains(expected_axis_row), "Channel Monitor renders canonical axis row %s" % expected_axis_row)
 	await _snapshot("07_channel_monitor_paused")
+	_inject_joy_button(known_device_id, JOY_BUTTON_A, false)
+	_inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
+	await _settle(2)
+	_expect(monitor != null and monitor.text.contains("ARM: RELEASED | flight control: ARMED"), "A release keeps flight control armed")
+	_expect(monitor != null and monitor.text.contains("MODE: RELEASED | flight mode: ALTITUDE_HOLD"), "Y release keeps the actual flight mode")
 	_channel_monitor_evidence = {
 		"elapsed_wall_time_seconds": monitor_elapsed_seconds,
 		"refresh_count": monitor_refresh_count,

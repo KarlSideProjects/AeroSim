@@ -115,9 +115,11 @@ _expect(runtime.drone_body.global_position.distance_to(paused_position) <= 1e-6,
 _expect(absf(runtime.airsim_session.simulation_time_seconds - paused_time) <= 1e-6, "Channel Monitor leaves paused simulation time frozen")
 _expect(monitor.text.contains("ARM: PRESSED | flight control: ARMED"), "A button physical state remains distinct from armed state")
 _expect(monitor.text.contains("MODE: PRESSED | flight mode: ALTITUDE_HOLD"), "Y button shows the actual resulting flight mode")
+_expect(monitor.text.contains("ARM: RELEASED | flight control: ARMED"), "A release preserves the actual armed state")
+_expect(monitor.text.contains("MODE: RELEASED | flight mode: ALTITUDE_HOLD"), "Y release preserves the actual flight mode")
 ```
 
-For at least one monotonic wall-clock second, inject canonical axes while awaiting `process_frame`; use the delta in `controller_monitor_refresh_count` to calculate `monitor_rate_hz`. Save `07_channel_monitor_paused.png` and include evidence in `report.json`. Require that PNG in `scripts/run_headed_acceptance.sh`.
+First assert the paused Monitor starts with `RELEASED | ARMED` and `RELEASED | ANGLE`; then assert pressed A/Y states and actual results, inject canonical axes for at least one monotonic wall-clock second while awaiting `process_frame`, and assert the monitor text changes and contains all four expected raw/normalized rows. Release A/Y after the screenshot and assert their `RELEASED` states retain `ARMED` and `ALTITUDE_HOLD`. Use the delta in `controller_monitor_refresh_count` to calculate `monitor_rate_hz`. Save `07_channel_monitor_paused.png` and include evidence in `report.json`. Require that PNG in `scripts/run_headed_acceptance.sh`.
 
 - [ ] **Step 2: Run headed acceptance and verify RED**
 
