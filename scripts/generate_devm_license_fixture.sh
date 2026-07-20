@@ -7,7 +7,9 @@ usage() {
 }
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-output_dir="$repo_root/build/devm-license-fixture"
+build_dir="$repo_root/build"
+output_dir="$build_dir/devm-license-fixture"
+gdignore="$build_dir/.gdignore"
 customer_id="devm-customer"
 kid="ubuntu-devm-2026"
 port=""
@@ -55,6 +57,38 @@ if ! command -v openssl >/dev/null 2>&1; then
     exit 1
 fi
 
+if [ -L "$build_dir" ] || { [ -e "$build_dir" ] && [ ! -d "$build_dir" ]; }; then
+    echo "build path must be a directory, not a symlink or other file: $build_dir" >&2
+    exit 1
+fi
+if [ ! -e "$build_dir" ] && ! mkdir "$build_dir"; then
+    echo "could not create build directory: $build_dir" >&2
+    exit 1
+fi
+if [ -L "$build_dir" ] || [ ! -d "$build_dir" ]; then
+    echo "build path is not a directory: $build_dir" >&2
+    exit 1
+fi
+
+if [ -L "$output_dir" ] || [ -e "$output_dir" ]; then
+    echo "output directory already exists: $output_dir" >&2
+    echo "remove it explicitly before generating a new fixture" >&2
+    exit 1
+fi
+
+if [ -L "$gdignore" ] || { [ -e "$gdignore" ] && [ ! -f "$gdignore" ]; }; then
+    echo "build/.gdignore must be a regular file, not a symlink or other file" >&2
+    exit 1
+fi
+if [ ! -e "$gdignore" ] && ! (set -C; : > "$gdignore"); then
+    echo "could not create build/.gdignore safely" >&2
+    exit 1
+fi
+if [ -L "$gdignore" ] || [ ! -f "$gdignore" ]; then
+    echo "build/.gdignore is not a regular file" >&2
+    exit 1
+fi
+
 if [ -z "$port" ]; then
     port="$(python3 - <<'PY'
 import socket
@@ -70,11 +104,12 @@ if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; th
     exit 2
 fi
 
-mkdir -p "$output_dir"
-output_dir="$(cd "$output_dir" && pwd -P)"
-if find "$output_dir" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
-    echo "output directory is not empty: $output_dir" >&2
-    echo "remove it explicitly before generating a new fixture" >&2
+if ! mkdir "$output_dir"; then
+    echo "could not create output directory: $output_dir" >&2
+    exit 1
+fi
+if [ -L "$output_dir" ] || [ ! -d "$output_dir" ]; then
+    echo "output path is not a directory: $output_dir" >&2
     exit 1
 fi
 chmod 700 "$output_dir"
