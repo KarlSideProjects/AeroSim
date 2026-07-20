@@ -60,7 +60,8 @@ for required_file in \
     "$out_dir/03_takeoff.png" \
     "$out_dir/04_paused.png" \
     "$out_dir/05_reset.png" \
-    "$out_dir/06_exit.png"; do
+    "$out_dir/06_exit.png" \
+    "$out_dir/07_channel_monitor_paused.png"; do
     if [ ! -s "$required_file" ]; then
         echo "required headed acceptance artifact is missing or empty: $required_file" >&2
         exit 1
