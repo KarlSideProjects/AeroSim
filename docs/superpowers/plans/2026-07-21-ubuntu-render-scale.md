@@ -62,7 +62,7 @@ Add `test_settings_store_validates_the_versioned_quality_slot` that rejects `ren
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut.sh -gtest=test_quality_profile.gd,test_settings_store.gd`
+Run: `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh`
 
 Expected: FAIL because `quality_profile.gd` does not exist and SettingsStore accepts an off-step `quality` object.
 
@@ -94,7 +94,7 @@ In `SettingsStore.validate_document`, directly after the existing rates block, v
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut.sh -gtest=test_quality_profile.gd,test_settings_store.gd`
+Run: `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh`
 
 Expected: PASS; all eleven ticks are canonical and invalid/absent values are rejected.
 
@@ -165,8 +165,8 @@ Continue the flow by setting 0.75, asserting immediate `root.scaling_3d_scale`, 
 Run:
 
 ```bash
-GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut.sh -gtest=test_flight_runtime_load.gd
-GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headed_acceptance.sh --output build/headed-135
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headed_acceptance.sh --out-dir build/headed-135
 ```
 
 Expected: FAIL because Graphics methods/nodes/runtime `render_scale` do not exist and the headed Settings flow cannot find `Graphics`.
@@ -192,8 +192,8 @@ Load `quality` during `_load_player_settings`, default to 1.00, and apply it thr
 Run:
 
 ```bash
-GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut.sh -gtest=test_flight_runtime_load.gd
-GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headed_acceptance.sh --output build/headed-135
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headed_acceptance.sh --out-dir build/headed-135
 ```
 
 Expected: PASS; one explicit Apply persists, preview rollback works, and the root viewport has the active scale.
@@ -218,13 +218,12 @@ git commit -m "feat: add #135 render scale controls"
 Run:
 
 ```bash
-GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut.sh
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh
 scripts/test_native.sh
 scripts/check_hardcoded_airframe_constants.sh
 scripts/test_license_scan.sh
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5
-GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headed_acceptance.sh --output build/headed-135
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headed_acceptance.sh --out-dir build/headed-135
 ```
 
 Expected: every command exits 0 and the smoke JSON reports `completed: true`.
-
