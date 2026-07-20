@@ -6,6 +6,7 @@ const CollisionProbeBody = preload("res://common/flight/collision_probe_body.gd"
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
+const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 
 
 class FakeNative:
@@ -88,6 +89,88 @@ class PersistedGamepadSettingsStore:
         return {"ok": true, "error": "", "document": document, "recovered": false}
 
 
+class QualitySettingsStore:
+    extends RefCounted
+
+    var document: Dictionary
+    var save_calls := 0
+    var fail_save := false
+    var factory_reset_calls := 0
+    var fail_factory_reset := false
+
+    var save_called: bool:
+        get:
+            return save_calls > 0
+
+    func _init(render_scale: Variant) -> void:
+        var quality = null if render_scale == null else {"schema_version": 1, "render_scale": render_scale}
+        document = {
+            "schema_version": 1,
+            "confirmed_gamepad": null,
+            "rates": null,
+            "osd": null,
+            "camera": null,
+            "language": null,
+            "quality": quality,
+        }
+
+    func load_document() -> Dictionary:
+        return {"ok": true, "error": "", "document": document.duplicate(true), "recovered": false}
+
+    func save_document(candidate: Dictionary) -> Dictionary:
+        save_calls += 1
+        if fail_save:
+            return {"ok": false, "error": "test save failure", "document": document}
+        document = candidate.duplicate(true)
+        return {"ok": true, "error": "", "document": document, "recovered": false}
+
+    func factory_reset() -> Dictionary:
+        factory_reset_calls += 1
+        if fail_factory_reset:
+            return {"ok": false, "error": "test factory reset failure", "document": document}
+        document = {
+            "schema_version": 1,
+            "confirmed_gamepad": null,
+            "rates": null,
+            "osd": null,
+            "camera": null,
+            "language": null,
+            "quality": null,
+        }
+        return {"ok": true, "error": "", "document": document, "recovered": false}
+
+
+func _graphics_runtime_with_store(render_scale: Variant) -> FlightRuntime:
+    var runtime := SmokeScene.instantiate() as FlightRuntime
+    get_tree().root.add_child(runtime)
+    autofree(runtime)
+    runtime.settings_store = QualitySettingsStore.new(render_scale)
+    runtime._load_player_settings()
+    return runtime
+
+
+func _native_runtime_available() -> bool:
+    if ClassDB.class_exists("AeroSimNative"):
+        return true
+    pending("native extension is intentionally unavailable in GUT recovery mode")
+    return false
+
+
+func _send_ui_action(action: String, device: int = -1) -> void:
+    for pressed in [true, false]:
+        var event := InputEventAction.new()
+        event.action = action
+        event.device = device
+        event.pressed = pressed
+        event.strength = 1.0
+        Input.parse_input_event(event)
+
+
+func _send_ui_action_and_wait(action: String, device: int = -1) -> void:
+    _send_ui_action(action, device)
+    await get_tree().process_frame
+
+
 func _controller_monitor_runtime() -> FlightRuntime:
     var runtime := FlightRuntime.new()
     runtime.main_menu_layer = CanvasLayer.new()
@@ -114,6 +197,172 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
     var runtime_script := load("res://common/flight/flight_runtime.gd")
 
     assert_not_null(runtime_script)
+
+
+func test_graphics_startup_applies_persisted_viewport_scale() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(0.75)
+
+    assert_eq(runtime.render_scale, 0.75)
+    assert_eq(runtime.get_viewport().scaling_3d_scale, 0.75)
+
+
+func test_graphics_null_quality_uses_default_viewport_scale() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(null)
+
+    assert_eq(runtime.render_scale, 1.0)
+    assert_eq(runtime.get_viewport().scaling_3d_scale, 1.0)
+
+
+func test_graphics_focus_moves_to_slider_on_open_and_settings_graphics_on_close() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(1.0)
+    var graphics_button := runtime.get_node("MainMenu/SettingsPanel/Rows/Graphics") as Button
+    graphics_button.pressed.emit()
+    var slider := runtime.get_node("MainMenu/GraphicsPanel/Rows/RenderScale") as HSlider
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), slider)
+    var back_button := runtime.get_node("MainMenu/GraphicsPanel/Rows/Back") as Button
+    back_button.pressed.emit()
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), graphics_button)
+
+
+func test_keyboard_ui_actions_reach_graphics_apply_and_return() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(1.0)
+    var quick_fly := runtime.get_node("MainMenu/Entries/QuickFly") as Button
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), quick_fly)
+    for _step in range(4):
+        await _send_ui_action_and_wait("ui_down")
+    await _send_ui_action_and_wait("ui_accept")
+    assert_eq(runtime.screen, "settings")
+    var graphics_button := runtime.get_node("MainMenu/SettingsPanel/Rows/Graphics") as Button
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), graphics_button)
+    await _send_ui_action_and_wait("ui_accept")
+    assert_eq(runtime.screen, "graphics")
+    for _step in range(5):
+        await _send_ui_action_and_wait("ui_left")
+    assert_eq(runtime.render_scale, 0.75)
+    assert_eq((runtime.get_node("MainMenu/GraphicsPanel/Rows/RenderScaleValue") as Label).text, "RENDER SCALE: 75%")
+    await _send_ui_action_and_wait("ui_down")
+    await _send_ui_action_and_wait("ui_accept")
+    var store := runtime.settings_store as QualitySettingsStore
+    assert_eq(store.document.quality.render_scale, 0.75)
+    for _step in range(2):
+        await _send_ui_action_and_wait("ui_down")
+    await _send_ui_action_and_wait("ui_accept")
+    assert_eq(runtime.screen, "settings")
+
+
+func test_joypad_ui_actions_reach_graphics_apply_and_return() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(1.0)
+    var quick_fly := runtime.get_node("MainMenu/Entries/QuickFly") as Button
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), quick_fly)
+    for _step in range(4):
+        await _send_ui_action_and_wait("ui_down", 7)
+    await _send_ui_action_and_wait("ui_accept", 7)
+    assert_eq(runtime.screen, "settings")
+    var graphics_button := runtime.get_node("MainMenu/SettingsPanel/Rows/Graphics") as Button
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), graphics_button)
+    await _send_ui_action_and_wait("ui_accept", 7)
+    assert_eq(runtime.screen, "graphics")
+    for _step in range(5):
+        await _send_ui_action_and_wait("ui_left", 7)
+    assert_eq(runtime.render_scale, 0.75)
+    await _send_ui_action_and_wait("ui_down", 7)
+    await _send_ui_action_and_wait("ui_accept", 7)
+    var store := runtime.settings_store as QualitySettingsStore
+    assert_eq(store.document.quality.render_scale, 0.75)
+    for _step in range(2):
+        await _send_ui_action_and_wait("ui_down", 7)
+    await _send_ui_action_and_wait("ui_accept", 7)
+    assert_eq(runtime.screen, "settings")
+
+
+func test_graphics_preview_back_restores_the_committed_viewport_scale() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(1.0)
+    runtime.show_graphics()
+    runtime._on_render_scale_changed(0.75)
+    assert_eq(runtime.render_scale, 0.75)
+    var store := runtime.settings_store as QualitySettingsStore
+    assert_false(store.save_called)
+    runtime._close_graphics_panel()
+    assert_eq(runtime.render_scale, 1.0)
+
+
+func test_graphics_slider_and_reset_preview_without_persisting_and_button_signal_applies() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(1.0)
+    runtime.show_graphics()
+    var slider := runtime.get_node("MainMenu/GraphicsPanel/Rows/RenderScale") as HSlider
+    var reset_button := runtime.get_node("MainMenu/GraphicsPanel/Rows/ResetDefaults") as Button
+    var apply_button := runtime.get_node("MainMenu/GraphicsPanel/Rows/Apply") as Button
+    slider.value = 0.75
+    assert_eq(runtime.render_scale, 0.75)
+    reset_button.pressed.emit()
+    assert_eq(runtime.render_scale, 1.0)
+    var store := runtime.settings_store as QualitySettingsStore
+    assert_false(store.save_called)
+    slider.value = 0.75
+    apply_button.pressed.emit()
+    assert_eq(store.save_calls, 1)
+    assert_eq(store.document.quality.render_scale, 0.75)
+
+
+func test_graphics_apply_persists_once_and_failed_apply_restores_preview() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(1.0)
+    runtime.show_graphics()
+    runtime._on_render_scale_changed(0.75)
+    runtime._apply_graphics_settings()
+    var store := runtime.settings_store as QualitySettingsStore
+    assert_eq(store.save_calls, 1)
+    assert_eq(store.document.quality.render_scale, 0.75)
+    store.fail_save = true
+    runtime.show_graphics()
+    runtime._on_render_scale_changed(0.50)
+    runtime._apply_graphics_settings()
+    assert_eq(runtime.render_scale, 0.75)
+
+
+func test_graphics_value_label_uses_integer_percent() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(0.75)
+    runtime.show_graphics()
+
+    assert_eq((runtime.get_node("MainMenu/GraphicsPanel/Rows/RenderScaleValue") as Label).text, "RENDER SCALE: 75%")
+
+
+func test_factory_reset_changes_viewport_only_after_successful_persistence() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(0.75)
+    var store := runtime.settings_store as QualitySettingsStore
+    runtime.factory_reset_player_settings()
+    assert_eq(store.factory_reset_calls, 1)
+    assert_eq(runtime.render_scale, 1.0)
+    assert_eq(runtime.get_viewport().scaling_3d_scale, 1.0)
+    assert_null(store.document.quality)
+
+    runtime._preview_render_scale(0.75)
+    store.document.quality = {"schema_version": 1, "render_scale": 0.75}
+    store.fail_factory_reset = true
+    runtime.factory_reset_player_settings()
+    assert_eq(store.factory_reset_calls, 2)
+    assert_eq(runtime.render_scale, 0.75)
+    assert_eq(runtime.get_viewport().scaling_3d_scale, 0.75)
+    assert_eq(store.document.quality.render_scale, 0.75)
 
 
 func test_exported_replay_runner_is_available_to_the_main_scene() -> void:

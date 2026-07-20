@@ -76,6 +76,32 @@ func test_settings_store_validates_the_versioned_rates_slot() -> void:
     assert_true(accepted.ok, accepted.error)
 
 
+func test_settings_store_validates_the_versioned_quality_slot() -> void:
+    var store = SettingsStoreScript.new("user://aerosim-test-settings.json")
+    var invalid := store.default_document()
+    invalid["quality"] = {"schema_version": 1, "render_scale": 0.51}
+
+    var rejected: Dictionary = store.validate_document(invalid)
+
+    assert_false(rejected.ok)
+    assert_string_contains(rejected.error, "0.05")
+
+    var valid := store.default_document()
+    valid["quality"] = {"schema_version": 1, "render_scale": 1.0}
+    var accepted: Dictionary = store.validate_document(valid)
+    assert_true(accepted.ok, accepted.error)
+    assert_eq(accepted.document["quality"], {"schema_version": 1, "render_scale": 1.0})
+
+    var unconfigured: Dictionary = store.validate_document(store.default_document())
+    assert_true(unconfigured.ok, unconfigured.error)
+
+    var missing := store.default_document()
+    missing.erase("quality")
+    var missing_result: Dictionary = store.validate_document(missing)
+    assert_false(missing_result.ok)
+    assert_string_contains(missing_result.error, "quality")
+
+
 func test_settings_store_rejects_nonintegral_json_schema_version() -> void:
     var store = SettingsStoreScript.new(test_path)
     var malformed := FileAccess.open(test_path, FileAccess.WRITE)
