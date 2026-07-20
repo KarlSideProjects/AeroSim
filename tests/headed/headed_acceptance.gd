@@ -87,6 +87,30 @@ func _run() -> void:
 		_click(settings_button)
 	await _settle(2)
 	_expect(runtime.screen == "settings", "Settings entry opens Settings")
+	var graphics_button: Button = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Graphics")
+	_expect(graphics_button != null, "Settings exposes Graphics")
+	if graphics_button != null:
+		_click(graphics_button)
+	await _settle(2)
+	_expect(runtime.screen == "graphics", "Graphics entry opens Graphics")
+	var scale_slider: HSlider = runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/RenderScale")
+	var apply_button: Button = runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/Apply")
+	_expect(scale_slider != null and apply_button != null, "Graphics exposes scale and Apply")
+	var back_button: Button = runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/Back")
+	if scale_slider != null and apply_button != null:
+		scale_slider.value = 0.75
+		await _settle(1)
+		_expect(absf(runtime.get_viewport().scaling_3d_scale - 0.75) <= 0.000001, "Graphics slider previews the viewport scale")
+		apply_button.pressed.emit()
+		await _settle(2)
+		var persisted_quality: Dictionary = runtime.settings_store.load_document().document.quality
+		_expect(absf(float(persisted_quality.get("render_scale", 0.0)) - 0.75) <= 0.000001, "Graphics Apply persists the render scale")
+		scale_slider.value = 0.50
+		await _settle(1)
+	if back_button != null:
+		_click(back_button)
+	await _settle(2)
+	_expect(absf(runtime.get_viewport().scaling_3d_scale - 0.75) <= 0.000001, "Graphics Back restores the committed scale")
 	var rates_button: Button = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Rates")
 	_expect(rates_button != null, "Settings exposes Rates")
 	if rates_button != null:

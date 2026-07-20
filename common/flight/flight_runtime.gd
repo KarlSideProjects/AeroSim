@@ -4,6 +4,7 @@ const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
+const QualityProfile = preload("res://common/flight/quality_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
@@ -36,7 +37,7 @@ const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
 
-@onready var fallback_status_label: Label3D = %FallbackStatus
+@onready var fallback_status_label: Label3D = get_node_or_null("%FallbackStatus") as Label3D
 @onready var drone_body = get_node_or_null("DroneBody")
 @onready var chase_camera := get_node_or_null("ChaseCamera") as Camera3D
 @onready var secondary_drone_body = get_node_or_null("DroneBodySecondary")
@@ -87,6 +88,11 @@ var rates_curve_plot: Control
 var rates_sliders: Dictionary = {}
 var rates_slider_labels: Dictionary = {}
 var rates_return_screen := "settings"
+var render_scale := QualityProfile.DEFAULT_RENDER_SCALE
+var graphics_committed_scale := QualityProfile.DEFAULT_RENDER_SCALE
+var graphics_return_screen := "settings"
+var graphics_panel: Control
+var graphics_value_label: Label
 var controller_settings_panel: Control
 var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
@@ -807,6 +813,13 @@ func _is_primary_airsim_vehicle(vehicle_name: String) -> bool:
 
 func _load_player_settings() -> void:
     var result: Dictionary = settings_store.load_document()
+    var saved_quality = result.document.get("quality")
+    if saved_quality == null:
+        _preview_render_scale(QualityProfile.DEFAULT_RENDER_SCALE)
+    else:
+        var quality_result: Dictionary = QualityProfile.validate_profile(saved_quality)
+        if quality_result.ok:
+            _preview_render_scale(float(quality_result.profile.render_scale))
     var saved = result.document.get("confirmed_gamepad")
     if saved != null:
         persisted_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(saved)
@@ -855,6 +868,21 @@ func _save_rates_profile(profile: Dictionary) -> Dictionary:
     var result: Dictionary = settings_store.save_document(document)
     if result.ok:
         rates_profile = validation.profile
+    return result
+
+
+func _save_quality_profile(profile: Dictionary) -> Dictionary:
+    var validation: Dictionary = QualityProfile.validate_profile(profile)
+    if not validation.ok:
+        return validation
+    var loaded: Dictionary = settings_store.load_document()
+    if not loaded.ok:
+        return {"ok": false, "error": "cannot save quality while settings are unavailable: %s" % loaded.error}
+    var document: Dictionary = loaded.document
+    document["quality"] = validation.profile
+    var result: Dictionary = settings_store.save_document(document)
+    if result.ok:
+        graphics_committed_scale = float(validation.profile.render_scale)
     return result
 
 func _run_cold_start_probe() -> void:
@@ -2180,6 +2208,7 @@ func _build_main_menu() -> void:
     _build_settings_panel()
     _build_controller_settings_panel()
     _build_rates_panel()
+    _build_graphics_panel()
 
 func _build_settings_panel() -> void:
     var panel := PanelContainer.new()
@@ -2213,6 +2242,12 @@ func _build_settings_panel() -> void:
     rates_button.pressed.connect(show_rates)
     rows.add_child(rates_button)
 
+    var graphics_button := Button.new()
+    graphics_button.name = "Graphics"
+    graphics_button.text = "GRAPHICS"
+    graphics_button.pressed.connect(show_graphics)
+    rows.add_child(graphics_button)
+
     var factory_reset_button := Button.new()
     factory_reset_button.name = "FactoryReset"
     factory_reset_button.text = "FACTORY RESET SETTINGS"
@@ -2229,6 +2264,59 @@ func _build_settings_panel() -> void:
     back_button.text = "BACK"
     back_button.pressed.connect(show_main_menu)
     rows.add_child(back_button)
+
+
+func _build_graphics_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "GraphicsPanel"
+    panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    panel.offset_left = 20.0
+    panel.offset_top = 20.0
+    panel.offset_right = 460.0
+    panel.offset_bottom = 300.0
+    graphics_panel = panel
+    main_menu_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+
+    var title := Label.new()
+    title.text = "GRAPHICS"
+    rows.add_child(title)
+
+    graphics_value_label = Label.new()
+    graphics_value_label.name = "RenderScaleValue"
+    rows.add_child(graphics_value_label)
+
+    var slider := HSlider.new()
+    slider.name = "RenderScale"
+    slider.min_value = QualityProfile.MIN_RENDER_SCALE
+    slider.max_value = QualityProfile.MAX_RENDER_SCALE
+    slider.step = QualityProfile.RENDER_SCALE_STEP
+    slider.value = render_scale
+    slider.value_changed.connect(_on_render_scale_changed)
+    rows.add_child(slider)
+
+    var apply_button := Button.new()
+    apply_button.name = "Apply"
+    apply_button.text = "APPLY"
+    apply_button.pressed.connect(_apply_graphics_settings)
+    rows.add_child(apply_button)
+
+    var reset_button := Button.new()
+    reset_button.name = "ResetDefaults"
+    reset_button.text = "RESET DEFAULTS"
+    reset_button.pressed.connect(_reset_graphics_defaults)
+    rows.add_child(reset_button)
+
+    var back_button := Button.new()
+    back_button.name = "Back"
+    back_button.text = "BACK"
+    back_button.pressed.connect(_close_graphics_panel)
+    rows.add_child(back_button)
+    _refresh_graphics_panel()
 
 
 func _build_rates_panel() -> void:
@@ -2429,6 +2517,15 @@ func _refresh_rates_panel() -> void:
     _refresh_rates_import_diff()
 
 
+func _refresh_graphics_panel() -> void:
+    if graphics_value_label == null:
+        return
+    graphics_value_label.text = "RENDER SCALE: %.2f" % render_scale
+    var slider := get_node_or_null("MainMenu/GraphicsPanel/Rows/RenderScale") as HSlider
+    if slider != null and not is_equal_approx(slider.value, render_scale):
+        slider.set_value_no_signal(render_scale)
+
+
 func _refresh_rates_curve() -> void:
     if native == null or not native.has_method("betaflight_rate_for_stick"):
         rates_curve_line.points = PackedVector2Array()
@@ -2515,6 +2612,56 @@ func show_rates(return_screen: String = "settings") -> void:
     _refresh_flight_hud()
 
 
+func show_graphics(return_screen: String = "settings") -> void:
+    graphics_return_screen = return_screen
+    graphics_committed_scale = render_scale
+    var slider := get_node_or_null("MainMenu/GraphicsPanel/Rows/RenderScale") as HSlider
+    if slider != null:
+        slider.value = render_scale
+    screen = "graphics"
+    _refresh_graphics_panel()
+    _refresh_flight_hud()
+
+
+func _preview_render_scale(value: float) -> void:
+    render_scale = value
+    var viewport := get_viewport()
+    if viewport != null:
+        viewport.scaling_3d_scale = render_scale
+    _refresh_graphics_panel()
+
+
+func _on_render_scale_changed(value: float) -> void:
+    _preview_render_scale(value)
+
+
+func _reset_graphics_defaults() -> void:
+    _preview_render_scale(QualityProfile.DEFAULT_RENDER_SCALE)
+
+
+func _apply_graphics_settings() -> Dictionary:
+    var result := _save_quality_profile({
+        "schema_version": QualityProfile.SCHEMA_VERSION,
+        "render_scale": render_scale,
+    })
+    if result.ok:
+        last_error_message = "Graphics settings applied"
+    else:
+        _preview_render_scale(graphics_committed_scale)
+        last_error_message = "Graphics settings save failed: %s" % result.error
+    _refresh_flight_hud()
+    return result
+
+
+func _close_graphics_panel() -> void:
+    _preview_render_scale(graphics_committed_scale)
+    if graphics_return_screen == "flight":
+        screen = "flight"
+        _refresh_flight_hud()
+    else:
+        show_settings()
+
+
 func _close_rates_panel() -> void:
     if rates_return_screen == "flight":
         screen = "flight"
@@ -2535,6 +2682,8 @@ func factory_reset_player_settings() -> void:
         return
     persisted_gamepad_profile = null
     rates_profile = RatesProfile.default_profile()
+    _preview_render_scale(QualityProfile.DEFAULT_RENDER_SCALE)
+    graphics_committed_scale = QualityProfile.DEFAULT_RENDER_SCALE
     if rates_json_editor != null:
         rates_json_editor.text = RatesProfile.to_json(rates_profile)
     last_error_message = "Settings reset to factory defaults"
@@ -2793,7 +2942,7 @@ func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
         return
     if main_menu_layer != null:
-        main_menu_layer.visible = screen in ["main_menu", "settings", "controller_settings", "rates"]
+        main_menu_layer.visible = screen in ["main_menu", "settings", "controller_settings", "rates", "graphics"]
     if main_menu_entries_container != null:
         main_menu_entries_container.visible = screen == "main_menu"
     if settings_panel != null:
@@ -2804,8 +2953,10 @@ func _refresh_flight_hud() -> void:
         controller_settings_panel.visible = screen == "controller_settings"
     if rates_panel != null:
         rates_panel.visible = screen == "rates"
+    if graphics_panel != null:
+        graphics_panel.visible = screen == "graphics"
     if flight_hud_layer != null:
-        flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings", "rates"]
+        flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings", "rates", "graphics"]
     if pause_panel != null:
         pause_panel.visible = paused and screen == "flight"
     if controller_safety_panel != null:
@@ -2816,6 +2967,7 @@ func _refresh_flight_hud() -> void:
         finish_panel.visible = screen == "finish"
     key_hints_label.text = KEY_HINTS_TEXT
     _refresh_rates_panel()
+    _refresh_graphics_panel()
     arm_takeoff_button.disabled = screen == "main_menu" or (controller_safety_latched and screen != "fallback_prompt")
     if acro_mode_button != null:
         acro_mode_button.disabled = screen != "flight" or paused or controller_safety_latched
