@@ -6,6 +6,7 @@ const CollisionProbeBody = preload("res://common/flight/collision_probe_body.gd"
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
+const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 
 
 class FakeNative:
@@ -99,7 +100,8 @@ class QualitySettingsStore:
         get:
             return save_calls > 0
 
-    func _init(render_scale: float) -> void:
+    func _init(render_scale: Variant) -> void:
+        var quality = null if render_scale == null else {"schema_version": 1, "render_scale": render_scale}
         document = {
             "schema_version": 1,
             "confirmed_gamepad": null,
@@ -107,7 +109,7 @@ class QualitySettingsStore:
             "osd": null,
             "camera": null,
             "language": null,
-            "quality": {"schema_version": 1, "render_scale": render_scale},
+            "quality": quality,
         }
 
     func load_document() -> Dictionary:
@@ -121,19 +123,12 @@ class QualitySettingsStore:
         return {"ok": true, "error": "", "document": document, "recovered": false}
 
 
-func _graphics_runtime_with_store(render_scale: float) -> FlightRuntime:
-    var runtime := FlightRuntime.new()
-    var fallback_status := Label3D.new()
-    fallback_status.name = "FallbackStatus"
-    fallback_status.unique_name_in_owner = true
-    runtime.add_child(fallback_status)
+func _graphics_runtime_with_store(render_scale: Variant) -> FlightRuntime:
+    var runtime := SmokeScene.instantiate() as FlightRuntime
     get_tree().root.add_child(runtime)
     autofree(runtime)
     runtime.settings_store = QualitySettingsStore.new(render_scale)
     runtime._load_player_settings()
-    runtime.main_menu_layer = CanvasLayer.new()
-    runtime.add_child(runtime.main_menu_layer)
-    runtime._build_main_menu()
     return runtime
 
 
@@ -170,6 +165,24 @@ func test_graphics_startup_applies_persisted_viewport_scale() -> void:
 
     assert_eq(runtime.render_scale, 0.75)
     assert_eq(runtime.get_viewport().scaling_3d_scale, 0.75)
+
+
+func test_graphics_null_quality_uses_default_viewport_scale() -> void:
+    var runtime := _graphics_runtime_with_store(null)
+
+    assert_eq(runtime.render_scale, 1.0)
+    assert_eq(runtime.get_viewport().scaling_3d_scale, 1.0)
+
+
+func test_graphics_focus_moves_to_slider_on_open_and_settings_graphics_on_close() -> void:
+    var runtime := _graphics_runtime_with_store(1.0)
+    var graphics_button := runtime.get_node("MainMenu/SettingsPanel/Rows/Graphics") as Button
+    graphics_button.pressed.emit()
+    var slider := runtime.get_node("MainMenu/GraphicsPanel/Rows/RenderScale") as HSlider
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), slider)
+    var back_button := runtime.get_node("MainMenu/GraphicsPanel/Rows/Back") as Button
+    back_button.pressed.emit()
+    assert_eq(runtime.get_viewport().gui_get_focus_owner(), graphics_button)
 
 
 func test_graphics_preview_back_restores_the_committed_viewport_scale() -> void:

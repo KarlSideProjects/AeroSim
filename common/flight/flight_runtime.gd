@@ -37,7 +37,7 @@ const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
 
-@onready var fallback_status_label: Label3D = get_node_or_null("%FallbackStatus") as Label3D
+@onready var fallback_status_label: Label3D = %FallbackStatus
 @onready var drone_body = get_node_or_null("DroneBody")
 @onready var chase_camera := get_node_or_null("ChaseCamera") as Camera3D
 @onready var secondary_drone_body = get_node_or_null("DroneBodySecondary")
@@ -2621,6 +2621,8 @@ func show_graphics(return_screen: String = "settings") -> void:
     screen = "graphics"
     _refresh_graphics_panel()
     _refresh_flight_hud()
+    if slider != null:
+        slider.grab_focus()
 
 
 func _preview_render_scale(value: float) -> void:
@@ -2660,6 +2662,9 @@ func _close_graphics_panel() -> void:
         _refresh_flight_hud()
     else:
         show_settings()
+        var graphics_button := get_node_or_null("MainMenu/SettingsPanel/Rows/Graphics") as Button
+        if graphics_button != null:
+            graphics_button.grab_focus()
 
 
 func _close_rates_panel() -> void:

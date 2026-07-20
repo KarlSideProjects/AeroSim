@@ -96,6 +96,7 @@ func _run() -> void:
 	var scale_slider: HSlider = runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/RenderScale")
 	var apply_button: Button = runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/Apply")
 	_expect(scale_slider != null and apply_button != null, "Graphics exposes scale and Apply")
+	_expect(runtime.get_viewport().gui_get_focus_owner() == scale_slider, "Graphics opens with RenderScale focused")
 	var back_button: Button = runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/Back")
 	if scale_slider != null and apply_button != null:
 		scale_slider.value = 0.75
@@ -111,6 +112,7 @@ func _run() -> void:
 		_click(back_button)
 	await _settle(2)
 	_expect(absf(runtime.get_viewport().scaling_3d_scale - 0.75) <= 0.000001, "Graphics Back restores the committed scale")
+	_expect(runtime.get_viewport().gui_get_focus_owner() == graphics_button, "Graphics Back returns focus to the Settings Graphics entry")
 	var rates_button: Button = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Rates")
 	_expect(rates_button != null, "Settings exposes Rates")
 	if rates_button != null:
