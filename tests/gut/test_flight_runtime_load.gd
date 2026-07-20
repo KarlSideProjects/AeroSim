@@ -31,14 +31,19 @@ class FakeNative:
 class FakeDeviceState:
     extends GamepadDeviceState.DeviceState
 
+    var supported := true
+
+    func _init(is_supported: bool = true) -> void:
+        supported = is_supported
+
     func is_joy_known(device_id: int) -> bool:
-        return device_id == 7
+        return supported and device_id == 7
 
     func connected_joypads() -> Array[int]:
         return [7]
 
     func joy_name(_device_id: int) -> String:
-        return "Xbox Controller"
+        return "Xbox Controller" if supported else "Unknown Controller"
 
 
 class RecoverySettingsStore:
@@ -61,6 +66,26 @@ class RecoverySettingsStore:
     func save_document(_candidate: Dictionary) -> Dictionary:
         save_called = true
         return {"ok": true, "error": "", "document": retained_document}
+
+
+class PersistedGamepadSettingsStore:
+    extends RefCounted
+
+    var document: Dictionary
+
+    func _init(profile: Dictionary) -> void:
+        document = {
+            "schema_version": 1,
+            "confirmed_gamepad": profile,
+            "rates": null,
+            "osd": null,
+            "camera": null,
+            "language": {"locale": "en"},
+            "quality": null,
+        }
+
+    func load_document() -> Dictionary:
+        return {"ok": true, "error": "", "document": document, "recovered": false}
 
 
 func _controller_monitor_runtime() -> FlightRuntime:
@@ -359,6 +384,68 @@ func test_controller_monitor_renders_active_session_channels_and_unavailable_wit
         "ARM: UNAVAILABLE",
         "MODE: UNAVAILABLE",
     ]))
+
+
+func test_startup_restores_persisted_profile_for_connected_channel_monitor() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime.native = FakeNative.new()
+    runtime.gamepad_device_state = FakeDeviceState.new()
+    var profile := InputProfiles.GamepadProfile.xbox_default(7, runtime.gamepad_device_state)
+    runtime.settings_store = PersistedGamepadSettingsStore.new(profile.to_persisted_dict())
+    runtime.main_menu_layer = CanvasLayer.new()
+    runtime.add_child(runtime.main_menu_layer)
+    runtime._build_controller_settings_panel()
+    runtime.controller_settings_panel.show()
+    runtime._load_player_settings()
+    runtime._restore_startup_gamepad_session()
+
+    assert_eq(runtime.screen, "main_menu")
+    assert_eq(runtime.session_gamepad_device_id, 7)
+    assert_not_null(runtime.session_gamepad_profile)
+
+    var roll := InputEventJoypadMotion.new()
+    roll.device = 7
+    roll.axis = JOY_AXIS_LEFT_X
+    roll.axis_value = 0.5
+    Input.parse_input_event(roll)
+    await get_tree().process_frame
+    runtime.show_controller_settings()
+
+    assert_string_contains(runtime.controller_settings_monitor_label.text, "roll:     [------------|----] raw +0.500 | normalized +0.457")
+    assert_false(runtime.takeoff_requested)
+    assert_false(runtime.controller_safety_latched)
+    if runtime.session_gamepad_profile != null:
+        runtime.session_gamepad_profile.throttle = 0.8
+        assert_eq(runtime.persisted_gamepad_profile.throttle, 0.0)
+
+
+func test_startup_restore_requires_unlatched_supported_device() -> void:
+    var profile := InputProfiles.GamepadProfile.xbox_default(7, FakeDeviceState.new())
+
+    var latched := FlightRuntime.new()
+    autofree(latched)
+    latched.gamepad_device_state = FakeDeviceState.new()
+    latched.persisted_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(profile.to_persisted_dict())
+    latched.controller_safety_latched = true
+    latched.paused = true
+    latched.screen = "controller_disconnected"
+    latched._restore_startup_gamepad_session()
+
+    assert_null(latched.session_gamepad_profile)
+    assert_eq(latched.session_gamepad_device_id, -1)
+    assert_true(latched.controller_safety_latched)
+    assert_true(latched.paused)
+    assert_eq(latched.screen, "controller_disconnected")
+
+    var unsupported := FlightRuntime.new()
+    autofree(unsupported)
+    unsupported.gamepad_device_state = FakeDeviceState.new(false)
+    unsupported.persisted_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(profile.to_persisted_dict())
+    unsupported._restore_startup_gamepad_session()
+
+    assert_null(unsupported.session_gamepad_profile)
+    assert_eq(unsupported.session_gamepad_device_id, -1)
 
 
 func test_high_throttle_arm_button_stays_pressed_without_arming_native_control() -> void:
