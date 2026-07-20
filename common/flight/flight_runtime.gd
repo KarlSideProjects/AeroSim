@@ -164,6 +164,7 @@ func _ready() -> void:
     Input.joy_connection_changed.connect(_on_joy_connection_changed)
     settings_store = SettingsStoreScript.new()
     _load_player_settings()
+    _restore_startup_gamepad_session()
     var startup_settings := _load_and_validate_airsim_settings()
     if startup_settings.is_empty():
         return
@@ -816,6 +817,19 @@ func _load_player_settings() -> void:
             rates_profile = rates_result.profile
     if not result.ok and result.recovered:
         last_error_message = "Settings recovered to factory defaults: %s" % result.error
+
+
+func _restore_startup_gamepad_session() -> void:
+    if controller_safety_latched or persisted_gamepad_profile == null:
+        return
+    var device_id := _first_connected_device()
+    if not InputProfiles.GamepadProfile.is_supported_device(device_id, gamepad_device_state):
+        return
+    var profile := InputProfiles.GamepadProfile.from_persisted_dict(persisted_gamepad_profile.to_persisted_dict())
+    if profile == null:
+        return
+    session_gamepad_profile = profile
+    session_gamepad_device_id = device_id
 
 
 func _save_gamepad_profile(profile: InputProfiles.GamepadProfile) -> Dictionary:
