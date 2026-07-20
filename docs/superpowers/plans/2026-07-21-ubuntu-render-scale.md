@@ -110,6 +110,7 @@ git commit -m "feat: validate #135 quality settings"
 **Files:**
 - Modify: `common/flight/flight_runtime.gd`
 - Modify: `tests/gut/test_flight_runtime_load.gd`
+- Modify: `tests/headed/headed_acceptance.gd`
 
 **Interfaces:**
 - Produces `show_graphics(return_screen: String = "settings")`, `_preview_render_scale(scale: float)`, `_apply_graphics_settings()`, and `_close_graphics_panel()`.
@@ -144,11 +145,31 @@ func test_graphics_apply_persists_once_and_failed_apply_restores_preview() -> vo
 
 Use a small in-test `QualitySettingsStore` that implements only `load_document` and `save_document`, tracks calls, and returns the complete SettingsStore envelope. Add assertions that startup applies persisted 0.75 to `get_viewport().scaling_3d_scale`, slider/reset do not write, and button `pressed.emit()` reaches the same Apply callback.
 
+Add this headed acceptance flow before production code exists, so it proves the real Controls are missing rather than merely re-testing an already-built UI:
+
+```gdscript
+var graphics_button: Button = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Graphics")
+_expect(graphics_button != null, "Settings exposes Graphics")
+_click(graphics_button)
+await _settle(2)
+_expect(runtime.screen == "graphics", "Graphics entry opens Graphics")
+var scale_slider: HSlider = runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/RenderScale")
+var apply_button: Button = runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/Apply")
+_expect(scale_slider != null and apply_button != null, "Graphics exposes scale and Apply")
+```
+
+Continue the flow by setting 0.75, asserting immediate `root.scaling_3d_scale`, emitting Apply, reading `settings_store.load_document().document.quality.render_scale`, selecting 0.50, pressing Back, and asserting it restores 0.75.
+
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut.sh -gtest=test_flight_runtime_load.gd`
+Run:
 
-Expected: FAIL because Graphics methods, nodes, and runtime `render_scale` do not exist.
+```bash
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut.sh -gtest=test_flight_runtime_load.gd
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headed_acceptance.sh --output build/headed-135
+```
+
+Expected: FAIL because Graphics methods/nodes/runtime `render_scale` do not exist and the headed Settings flow cannot find `Graphics`.
 
 - [ ] **Step 3: Implement only the runtime state and Controls required by the tests**
 
@@ -168,51 +189,31 @@ Load `quality` during `_load_player_settings`, default to 1.00, and apply it thr
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut.sh -gtest=test_flight_runtime_load.gd`
+Run:
+
+```bash
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut.sh -gtest=test_flight_runtime_load.gd
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headed_acceptance.sh --output build/headed-135
+```
 
 Expected: PASS; one explicit Apply persists, preview rollback works, and the root viewport has the active scale.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add common/flight/flight_runtime.gd tests/gut/test_flight_runtime_load.gd
+git add common/flight/flight_runtime.gd tests/gut/test_flight_runtime_load.gd tests/headed/headed_acceptance.gd
 git commit -m "feat: add #135 render scale controls"
 ```
 
 ### Task 3: Exercise the headed settings flow and run the repository gates
 
 **Files:**
-- Modify: `tests/headed/headed_acceptance.gd`
+- No source-file changes; the headed Graphics flow was added in Task 2 before implementation.
 
 **Interfaces:**
-- Extends the existing Settings acceptance section; it uses the actual `Button` signals and `HSlider`, rather than a parallel UI harness.
+- The existing headed Settings flow uses actual `Button` signals and an `HSlider`, rather than a parallel UI harness. It must now pass as part of the repository gates.
 
-- [ ] **Step 1: Write the failing headed Graphics flow assertions**
-
-```gdscript
-var graphics_button: Button = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Graphics")
-_expect(graphics_button != null, "Settings exposes Graphics")
-_click(graphics_button)
-await _settle(2)
-_expect(runtime.screen == "graphics", "Graphics entry opens Graphics")
-var scale_slider: HSlider = runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/RenderScale")
-var apply_button: Button = runtime.get_node_or_null("MainMenu/GraphicsPanel/Rows/Apply")
-_expect(scale_slider != null and apply_button != null, "Graphics exposes scale and Apply")
-```
-
-Continue the flow by setting 0.75, asserting immediate `root.scaling_3d_scale`, emitting Apply, reading `settings_store.load_document().document.quality.render_scale`, selecting 0.50, pressing Back, and asserting it restores 0.75.
-
-- [ ] **Step 2: Run headed acceptance to verify it fails**
-
-Run: `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headed_acceptance.sh --output build/headed-135`
-
-Expected: FAIL before the Graphics controls exist or before rollback is implemented.
-
-- [ ] **Step 3: Keep the headed test minimal and make no production change unless it identifies a real gap**
-
-The production implementation is complete in Task 2. Add only the assertions above to the existing settings path; do not add screenshots, a scene, a test-only API, or synthetic renderer behaviour.
-
-- [ ] **Step 4: Run all required checks**
+- [ ] **Step 1: Run all required checks**
 
 Run:
 
@@ -226,11 +227,4 @@ GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts
 ```
 
 Expected: every command exits 0 and the smoke JSON reports `completed: true`.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add tests/headed/headed_acceptance.gd
-git commit -m "test: cover #135 graphics settings flow"
-```
 
