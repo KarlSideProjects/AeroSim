@@ -230,7 +230,7 @@ func _run() -> void:
 	_expect(device_label != null and device_label.text.contains(str(known_device_id)), "Controller settings shows the current device")
 	_expect(reset_button != null and reset_button.text == "RESET TO XBOX DEFAULT", "Controller settings exposes Xbox reset")
 	if reset_button != null:
-		_click(reset_button)
+		reset_button.pressed.emit()
 	await _settle(2)
 	_expect(runtime.screen == "controller_confirmation", "Xbox reset requires confirmation before changing the session profile")
 	var reset_confirmation: Button = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile")
