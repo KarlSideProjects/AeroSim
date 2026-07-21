@@ -226,6 +226,16 @@ func _request_token(endpoint: String, body: Dictionary) -> Dictionary:
     var http_status := int(response[1])
     var response_body: PackedByteArray = response[3]
 
+    if http_status == 401:
+        _state.jwt = ""
+        _online_valid = false
+        _status_override = "invalid_token"
+        _last_online_result = "rejected"
+        var rejected_persisted := _persist_state()
+        if not rejected_persisted.ok:
+            return _set_fatal("storage", rejected_persisted.error_code)
+        return {"ok": false, "error_type": "license", "error_code": "invalid_token"}
+
     if request_result != HTTPRequest.RESULT_SUCCESS:
         _last_online_result = "unreachable"
         return {"ok": false, "error_type": "network", "error_code": "request_failed"}
@@ -241,15 +251,6 @@ func _request_token(endpoint: String, body: Dictionary) -> Dictionary:
             return _set_fatal("storage", revoked_persisted.error_code)
         _last_online_result = "rejected"
         return {"ok": false, "error_type": "license", "error_code": "revoked"}
-    if http_status == 401:
-        _state.jwt = ""
-        _online_valid = false
-        _status_override = "invalid_token"
-        _last_online_result = "rejected"
-        var rejected_persisted := _persist_state()
-        if not rejected_persisted.ok:
-            return _set_fatal("storage", rejected_persisted.error_code)
-        return {"ok": false, "error_type": "license", "error_code": "invalid_token"}
     if http_status < 200 or http_status >= 300 or typeof(parsed) != TYPE_DICTIONARY:
         _last_online_result = "unreachable"
         return {"ok": false, "error_type": "network", "error_code": "unexpected_response"}
