@@ -249,6 +249,17 @@ func _licensed_runtime() -> FlightRuntime:
     return runtime
 
 
+func _menu_runtime() -> FlightRuntime:
+    var runtime := _licensed_runtime()
+    autofree(runtime)
+    runtime._build_main_menu()
+    var menu_layer := runtime.main_menu_layer
+    runtime.remove_child(menu_layer)
+    get_tree().root.add_child(menu_layer)
+    autofree(menu_layer)
+    return runtime
+
+
 func _runtime_with_startup_license_path(path: String) -> FlightRuntime:
     var runtime := FlightRuntime.new()
     autofree(runtime)
@@ -293,6 +304,18 @@ func test_quick_fly_fails_loudly_when_license_provider_configuration_fails() -> 
     assert_false(runtime.takeoff_requested)
 
 
+func test_flight_setup_fly_requires_current_license_before_preflight() -> void:
+    var runtimes: Array[FlightRuntime] = [
+        _runtime_with_license_snapshot("revoked"),
+        _runtime_with_missing_license_config(),
+    ]
+    for runtime in runtimes:
+        runtime.flight_setup = runtime.default_flight_setup()
+        runtime._fly_from_flight_setup()
+        assert_eq(runtime.screen, "license_blocked")
+        assert_null(runtime.loaded_map)
+
+
 func test_drone_and_map_open_the_same_flight_setup_with_different_focus() -> void:
     var runtime := _licensed_runtime()
     runtime.open_flight_setup("drone")
@@ -302,10 +325,28 @@ func test_drone_and_map_open_the_same_flight_setup_with_different_focus() -> voi
     assert_eq(runtime.flight_setup_focus, "map")
 
 
+func test_drone_and_map_buttons_share_panel_and_move_actual_focus() -> void:
+    var runtime := _menu_runtime()
+    var panel := runtime.flight_setup_panel
+    var drone_entry := runtime.main_menu_layer.get_node("Entries/Drone") as Button
+    var map_entry := runtime.main_menu_layer.get_node("Entries/Map") as Button
+    var drone_button := runtime.flight_setup_panel.get_node("Rows/Drone") as Button
+    var map_button := runtime.flight_setup_panel.get_node("Rows/Map") as Button
+
+    drone_entry.pressed.emit()
+    assert_eq(runtime.flight_setup_panel, panel)
+    assert_eq(runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), drone_button)
+    map_entry.pressed.emit()
+    assert_eq(runtime.flight_setup_panel, panel)
+    assert_eq(runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), map_button)
+
+
 func test_quick_fly_reapplies_default_setup_after_a_prior_setup_choice() -> void:
     var runtime := _licensed_runtime()
     runtime.apply_flight_setup({"wind_preset": "severe"})
+    runtime.flight_setup["stale"] = "invalid"
     runtime.quick_fly()
+    assert_eq(runtime.flight_setup, runtime.default_flight_setup())
     assert_eq(runtime.selected_wind_preset, "calm")
 
 

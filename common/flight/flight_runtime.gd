@@ -1684,7 +1684,6 @@ func default_flight_setup() -> Dictionary:
 
 func apply_flight_setup(raw_setup: Dictionary) -> bool:
     var candidate := default_flight_setup()
-    candidate.merge(flight_setup, true)
     for key in raw_setup:
         if not candidate.has(key):
             return false
@@ -1719,8 +1718,10 @@ func open_flight_setup(focus: String) -> void:
     if flight_setup_panel == null and main_menu_layer != null:
         _build_flight_setup_panel()
     _refresh_flight_hud()
-    var focus_button := get_node_or_null("MainMenu/FlightSetupPanel/Rows/%s" % focus) as Button
-    if focus_button != null and is_inside_tree():
+    var focus_button: Button = null
+    if flight_setup_panel != null:
+        focus_button = flight_setup_panel.get_node_or_null("Rows/%s" % focus.capitalize()) as Button
+    if focus_button != null and focus_button.is_inside_tree():
         focus_button.grab_focus()
 
 
@@ -1734,6 +1735,9 @@ func _set_flight_setup_wind(preset: String) -> void:
 
 
 func _fly_from_flight_setup() -> void:
+    if not can_start_quick_fly():
+        _show_license_blocked("Flight Setup unavailable: license %s" % String(get_license_snapshot().get("status", "invalid_token")))
+        return
     if not apply_flight_setup(flight_setup):
         last_error_message = "Flight Setup contains an unsupported selection"
         screen = "error"
