@@ -26,6 +26,13 @@ class PhysicsFrameProfiler:
             samples_ms.append(physics_time * 1000.0)
 
 
+class BenchmarkLicenseProvider:
+    extends Node
+
+    func get_snapshot() -> Dictionary:
+        return {"ok": true, "status": "online_valid", "last_online_result": "physics_benchmark"}
+
+
 class EffectWorkload:
     extends Node
 
@@ -187,6 +194,7 @@ func _run() -> void:
     if root.get_camera_3d() == null:
         _fail("headed benchmark requires an active Camera3D")
         return
+    _install_deterministic_valid_license(runtime)
     if not _configure_effects(runtime.native):
         return
     var known_device_id := await _inject_known_gamepad()
@@ -297,6 +305,16 @@ func _configure_effects(native: Object) -> bool:
         _fail("cannot configure A6 propwash")
         return false
     return true
+
+
+func _install_deterministic_valid_license(runtime: Node) -> void:
+    if runtime.license_provider != null:
+        runtime.remove_child(runtime.license_provider)
+        runtime.license_provider.queue_free()
+    var provider := BenchmarkLicenseProvider.new()
+    runtime.license_provider = provider
+    runtime.add_child(provider)
+    runtime.show_main_menu()
 
 
 func _parse_args() -> void:

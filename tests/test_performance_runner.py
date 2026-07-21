@@ -90,6 +90,15 @@ class PerformanceRunnerTest(unittest.TestCase):
         self.assertGreater(reset_index, warmup_index)
         self.assertLess(reset_index, measurement_index)
 
+    def test_benchmark_installs_a_valid_license_before_quick_fly(self):
+        self.assertIn('class BenchmarkLicenseProvider:', BENCHMARK_SOURCE)
+        self.assertIn('"status": "online_valid"', BENCHMARK_SOURCE)
+        self.assertIn('func _install_deterministic_valid_license(runtime: Node) -> void:', BENCHMARK_SOURCE)
+        self.assertLess(
+            BENCHMARK_SOURCE.index('_install_deterministic_valid_license(runtime)'),
+            BENCHMARK_SOURCE.index('runtime.quick_fly()'),
+        )
+
     def test_short_headed_run_records_jolt_samples_with_vsync_disabled(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "raw.json"
