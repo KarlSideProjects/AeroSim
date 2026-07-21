@@ -158,3 +158,4 @@ ui.fallback.no_controller,No controller detected; KeyboardProfile fallback activ
 ui.fallback.gamepad,GamepadProfile active (non-sim control),遊戲手把設定檔啟用（非模擬控制）
 ui.fallback.selected,KeyboardProfile fallback selected (non-sim control),已選擇鍵盤設定檔備援（非模擬控制）
 ui.error.unsupported_controller,Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control),不支援的控制器；XBOX 預設設定檔無法使用。鍵盤設定檔備援啟用（非模擬控制）
+ui.error.generic,%s,錯誤：%s

@@ -2436,7 +2436,7 @@ func _localize_fallback_message(message: String) -> String:
         return _t("ui.fallback.selected")
     if message == "Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)":
         return _t("ui.error.unsupported_controller")
-    return message
+    return _format("ui.error.generic", [message])
 
 
 func _localized_flight_mode(mode: String) -> String:
