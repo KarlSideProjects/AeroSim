@@ -7,6 +7,8 @@ const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
 const IndustrialYardScene = preload("res://levels/free_flight/industrial_yard.tscn")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
+const LicenseProviderScript = preload("res://common/license/license_provider.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 
 class InputProbe:
@@ -47,6 +49,12 @@ class MutableGamepadDeviceState:
 
     func joy_name(device_id: int) -> String:
         return "Xbox Test Controller %d" % device_id
+
+class SmokeLicenseProvider:
+    extends Node
+
+    func get_snapshot() -> Dictionary:
+        return {"ok": true, "status": "online_valid", "last_online_result": "smoke"}
 
 var verified_jolt_collision_trials := 0
 var production_gamepad_device_state := GamepadDeviceState.DeviceState.new()
@@ -1428,6 +1436,12 @@ func _verify_runtime_actions() -> bool:
         push_error("Smoke runtime must instantiate AeroSimNative")
         scene.queue_free()
         return false
+    if scene.license_provider != null:
+        scene.license_provider.queue_free()
+    var smoke_license_provider := SmokeLicenseProvider.new()
+    scene.license_provider = smoke_license_provider
+    scene.add_child(smoke_license_provider)
+    scene.show_main_menu()
     if scene.get_viewport().get_camera_3d() == null or scene.get_viewport().get_camera_3d().name != "ChaseCamera":
         push_error("Playable GUI smoke scene must have a current ChaseCamera Camera3D")
         scene.queue_free()
@@ -1452,10 +1466,123 @@ func _verify_runtime_actions() -> bool:
         push_error("Smoke runtime must expose Quick Fly from the cold-start main menu")
         scene.queue_free()
         return false
-    if scene.main_menu_entries != ["Quick Fly", "Controller", "Drone", "Map", "Settings"]:
-        push_error("Cold-start main menu must expose the fixed 3.5.4 first-layer entries")
+    if scene.main_menu_entries != ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]:
+        push_error("Cold-start main menu must expose the exact seven CAP-006 first-layer entries")
         scene.queue_free()
         return false
+    var setup_panel = scene.flight_setup_panel
+    var drone_entry := scene.get_node_or_null("MainMenu/Entries/Drone") as Button
+    var map_entry := scene.get_node_or_null("MainMenu/Entries/Map") as Button
+    var drone_button := scene.get_node_or_null("MainMenu/FlightSetupPanel/Rows/Drone") as Button
+    var map_button := scene.get_node_or_null("MainMenu/FlightSetupPanel/Rows/Map") as Button
+    if drone_entry == null or map_entry == null or drone_button == null or map_button == null:
+        push_error("Drone and Map must expose the shared Flight Setup panel")
+        scene.queue_free()
+        return false
+    drone_entry.pressed.emit()
+    if scene.flight_setup_panel != setup_panel or scene.get_viewport().gui_get_focus_owner() != drone_button:
+        push_error("Drone must open the shared Flight Setup panel with Drone focused")
+        scene.queue_free()
+        return false
+    scene.show_main_menu()
+    map_entry.pressed.emit()
+    if scene.flight_setup_panel != setup_panel or scene.get_viewport().gui_get_focus_owner() != map_button:
+        push_error("Map must open the shared Flight Setup panel with Map focused")
+        scene.queue_free()
+        return false
+    scene.show_main_menu()
+    if not scene.apply_flight_setup({"wind_preset": "severe"}):
+        push_error("Quick Fly default reset setup must accept the existing wind choice")
+        scene.queue_free()
+        return false
+    scene.flight_setup["stale"] = "invalid"
+    scene.quick_fly()
+    if scene.flight_setup != scene.default_flight_setup() or scene.selected_wind_preset != "calm":
+        push_error("Quick Fly must reset the shared setup to its canonical defaults")
+        scene.queue_free()
+        return false
+    scene.show_main_menu()
+    var native_before: Object = scene.native
+    var lab_entry := scene.get_node_or_null("MainMenu/Entries/LabMode") as Button
+    if lab_entry == null:
+        push_error("Main menu must expose an interactive Lab Mode entry")
+        scene.queue_free()
+        return false
+    lab_entry.pressed.emit()
+    await process_frame
+    var full_dashboard: Dictionary = scene.status_diagram.get_render_evidence() if scene.status_diagram != null else {}
+    if scene.screen != "lab_mode" or scene.dashboard_layout_mode != "full" or scene.native != native_before or \
+            full_dashboard.get("layout_mode", "") != "full" or not bool(full_dashboard.get("visible", false)) or \
+            not bool(full_dashboard.get("selector_visible", false)):
+        push_error("Lab Mode entry must reuse native and show the full existing dashboard layout")
+        scene.queue_free()
+        return false
+    await _press_key(KEY_ESCAPE)
+    var compact_dashboard: Dictionary = scene.status_diagram.get_render_evidence() if scene.status_diagram != null else {}
+    if scene.screen != "main_menu" or scene.dashboard_layout_mode != "compact" or \
+            compact_dashboard.get("layout_mode", "") != "compact" or not bool(compact_dashboard.get("visible", false)) or \
+            not bool(compact_dashboard.get("selector_visible", false)):
+        push_error("Returning from Lab Mode must restore the compact dashboard and main menu")
+        scene.queue_free()
+        return false
+    scene.quit_on_exit = false
+    var quit_button := scene.get_node_or_null("MainMenu/Entries/Quit") as Button
+    if quit_button == null:
+        push_error("Main menu must expose an interactive Quit entry")
+        scene.queue_free()
+        return false
+    quit_button.pressed.emit()
+    if not scene.exit_requested or scene.screen != "main_menu":
+        push_error("Quit must use the cleanup-safe request_exit route")
+        scene.queue_free()
+        return false
+    scene.exit_requested = false
+    var missing_config_provider := FlightRuntime.new()
+    missing_config_provider._build_main_menu()
+    missing_config_provider._build_flight_hud()
+    if missing_config_provider._configure_license_provider({}) or missing_config_provider.screen != "license_blocked" or not missing_config_provider.last_error_message.contains("configuration failed"):
+        push_error("Missing license provider configuration must fail loudly")
+        missing_config_provider.free()
+        scene.queue_free()
+        return false
+    missing_config_provider.free()
+
+    var canary_provider_runtime := FlightRuntime.new()
+    canary_provider_runtime._build_main_menu()
+    canary_provider_runtime._build_flight_hud()
+    var canary_config := {
+        "schema_version": 1,
+        "issue_endpoint": "https://license.example.test/issue",
+        "verify_endpoint": "https://license.example.test/verify",
+        "public_key_path": "res://config/SMOKE_KEY_CANARY_19C4.pem",
+        "allowed_kids": ["SMOKE_CLAIM_CANARY_83B1"],
+        "state_path": "user://aerosim-smoke-canary-state.json",
+        "token": "SMOKE_TOKEN_CANARY_7F2A",
+        "key": "SMOKE_KEY_CANARY_19C4",
+        "customer": "SMOKE_CUSTOMER_CANARY_52D8",
+        "claim": "SMOKE_CLAIM_CANARY_83B1",
+    }
+    if canary_provider_runtime._configure_license_provider(canary_config) or canary_provider_runtime.screen != "license_blocked" or \
+            not canary_provider_runtime.last_error_message.contains("configuration failed") or \
+            canary_provider_runtime.license_provider == null or canary_provider_runtime.license_provider.get_script() != LicenseProviderScript:
+        push_error("Real license provider must fail loudly on the invalid canary-bearing configuration")
+        canary_provider_runtime.free()
+        scene.queue_free()
+        return false
+    var blocked_output := JSON.stringify({
+        "screen": canary_provider_runtime.screen,
+        "error": canary_provider_runtime.last_error_message,
+        "license_status": canary_provider_runtime.license_status_label.text,
+        "arm_status": canary_provider_runtime.arm_status_label.text,
+        "snapshot": canary_provider_runtime.get_license_snapshot(),
+    })
+    for canary in [canary_config.token, canary_config.key, canary_config.customer, canary_config.claim]:
+        if blocked_output.contains(String(canary)):
+            push_error("Blocked license UI/status/error output must not expose controlled credential canaries")
+            canary_provider_runtime.free()
+            scene.queue_free()
+            return false
+    canary_provider_runtime.free()
     if not scene.has_method("open_map_menu") or not scene.has_method("select_map"):
         push_error("Smoke runtime must expose Map wind preset selection")
         scene.queue_free()
@@ -1542,6 +1669,18 @@ func _verify_runtime_actions() -> bool:
         push_error("Main menu must expose an interactive Controller entry")
         scene.queue_free()
         return false
+    controller_button.pressed.emit()
+    await process_frame
+    if scene.screen != "fallback_prompt":
+        push_error("Controller opened from the menu must use the fallback route without a controller")
+        scene.queue_free()
+        return false
+    scene.arm_takeoff_button.pressed.emit()
+    await process_frame
+    if scene.screen != "main_menu" or scene.takeoff_requested:
+        push_error("Controller fallback from the menu must return to the main menu")
+        scene.queue_free()
+        return false
     var known_device_id := await _inject_known_gamepad()
     if known_device_id < 0:
         push_error("Virtual SDL gamepad must register as a known controller for confirmation coverage")
@@ -1604,10 +1743,8 @@ func _verify_runtime_actions() -> bool:
         push_error("Reset Xbox default must require confirmation before replacing the session profile")
         scene.queue_free()
         return false
-    controller_button.pressed.emit()
-    await process_frame
-    if scene.screen != "controller_confirmation" or scene.controller_confirmation_panel == null:
-        push_error("A known unconfirmed controller must open Xbox default profile confirmation")
+    if scene.controller_confirmation_panel == null:
+        push_error("Reset Xbox default must open the real controller confirmation panel")
         scene.queue_free()
         return false
     var confirmation: Control = scene.controller_confirmation_panel
@@ -1648,8 +1785,43 @@ func _verify_runtime_actions() -> bool:
             return false
     confirm_button.pressed.emit()
     await process_frame
-    if scene.screen != "preflight" or scene.session_gamepad_profile == null or scene.takeoff_requested or scene.native.call("flight_control_armed"):
-        push_error("Xbox default profile confirmation must create the session profile then enter low-throttle preflight")
+    if scene.screen != "controller_settings" or scene.session_gamepad_profile == null or scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("Settings Xbox default profile confirmation must save the session profile and return to Controller Settings")
+        scene.queue_free()
+        return false
+    var controller_settings_back := scene.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/Back") as Button
+    var settings_back := scene.get_node_or_null("MainMenu/SettingsPanel/Rows/Back") as Button
+    if controller_settings_back == null or settings_back == null:
+        push_error("Controller Settings smoke must expose the real Settings return path")
+        scene.queue_free()
+        return false
+    controller_settings_back.pressed.emit()
+    await process_frame
+    settings_back.pressed.emit()
+    await process_frame
+    if scene.screen != "main_menu":
+        push_error("Settings return path must restore the main menu after Controller Settings")
+        scene.queue_free()
+        return false
+    scene.persisted_gamepad_profile = null
+    scene.session_gamepad_profile = null
+    scene.session_gamepad_device_id = -1
+    quick_fly_button.pressed.emit()
+    await process_frame
+    if scene.screen != "controller_confirmation" or scene.controller_return_screen != "preflight":
+        push_error("Quick Fly must exercise a fresh controller confirmation route before preflight")
+        scene.queue_free()
+        return false
+    confirmation = scene.controller_confirmation_panel
+    confirm_button = confirmation.get_node_or_null("Rows/UseXboxDefaultProfile") as Button
+    if confirm_button == null:
+        push_error("Quick Fly confirmation must expose the real Xbox profile completion action")
+        scene.queue_free()
+        return false
+    confirm_button.pressed.emit()
+    await process_frame
+    if scene.screen != "preflight" or scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("Quick Fly confirmation completion must enter low-throttle preflight, not the menu")
         scene.queue_free()
         return false
     if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null:
@@ -1872,10 +2044,31 @@ func _verify_runtime_actions() -> bool:
     scene.gamepad_device_state = replacement_device_state
     root.add_child(scene)
     await process_frame
+    if scene.license_provider != null:
+        scene.license_provider.queue_free()
+    var replacement_license_provider := SmokeLicenseProvider.new()
+    scene.license_provider = replacement_license_provider
+    scene.add_child(replacement_license_provider)
+    scene.show_main_menu()
+    scene.persisted_gamepad_profile = null
+    scene.session_gamepad_profile = null
+    scene.session_gamepad_device_id = -1
     scene.quick_fly()
     await process_frame
-    if scene.screen != "preflight" or scene.takeoff_requested:
-        push_error("Quick Fly must restore the persisted canonical profile into low-throttle preflight")
+    if scene.screen != "controller_confirmation" or scene.controller_return_screen != "preflight":
+        push_error("Quick Fly must open a fresh controller confirmation route without reusing a profile")
+        scene.queue_free()
+        return false
+    var replacement_confirmation: Control = scene.controller_confirmation_panel
+    var replacement_confirm_button := replacement_confirmation.get_node_or_null("Rows/UseXboxDefaultProfile") as Button
+    if replacement_confirm_button == null:
+        push_error("Quick Fly confirmation must expose its completion action")
+        scene.queue_free()
+        return false
+    replacement_confirm_button.pressed.emit()
+    await process_frame
+    if scene.screen != "preflight" or scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("Quick Fly confirmation completion must enter preflight, not the menu")
         scene.queue_free()
         return false
     var unknown_device_id := known_device_id + 1

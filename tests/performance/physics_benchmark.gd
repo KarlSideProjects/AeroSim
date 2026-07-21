@@ -26,6 +26,13 @@ class PhysicsFrameProfiler:
             samples_ms.append(physics_time * 1000.0)
 
 
+class BenchmarkLicenseProvider:
+    extends Node
+
+    func get_snapshot() -> Dictionary:
+        return {"ok": true, "status": "online_valid", "last_online_result": "physics_benchmark"}
+
+
 class EffectWorkload:
     extends Node
 
@@ -64,6 +71,8 @@ class EffectWorkload:
         if steady_wind.length() > 0.0 or turbulence_sigma.length() > 0.0:
             return false
         native.call("reset_flight")
+        if not native.call("set_a3_drag_model", enabled, 0.0001, 0.0001, 0.00012):
+            return false
         if not native.call("set_a5_downwash_model", enabled, 0.0231348, 2267.18, 0.16, -0.11):
             return false
         if not native.call("set_dual_aircraft_positions", 0.0, 2.0, 0.0, 0.0, 0.0, 0.0):
@@ -187,6 +196,7 @@ func _run() -> void:
     if root.get_camera_3d() == null:
         _fail("headed benchmark requires an active Camera3D")
         return
+    _install_deterministic_valid_license(runtime)
     if not _configure_effects(runtime.native):
         return
     var known_device_id := await _inject_known_gamepad()
@@ -297,6 +307,16 @@ func _configure_effects(native: Object) -> bool:
         _fail("cannot configure A6 propwash")
         return false
     return true
+
+
+func _install_deterministic_valid_license(runtime: Node) -> void:
+    if runtime.license_provider != null:
+        runtime.remove_child(runtime.license_provider)
+        runtime.license_provider.queue_free()
+    var provider := BenchmarkLicenseProvider.new()
+    runtime.license_provider = provider
+    runtime.add_child(provider)
+    runtime.show_main_menu()
 
 
 func _parse_args() -> void:

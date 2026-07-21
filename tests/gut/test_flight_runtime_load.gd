@@ -47,6 +47,40 @@ class FakeDeviceState:
         return "Xbox Controller" if supported else "Unknown Controller"
 
 
+class FakeLicenseProvider extends Node:
+    var snapshot: Dictionary
+    var activation_result: Dictionary = {"ok": true}
+    var refresh_result: Dictionary = {"ok": true}
+    var activation_snapshot: Dictionary = {}
+    var refresh_snapshot: Dictionary = {}
+    var activation_calls := 0
+    var refresh_calls := 0
+
+    func _init(status: String, last_online_result := "never", fatal: Dictionary = {}) -> void:
+        snapshot = {
+            "ok": status in ["online_valid", "offline_grace_valid", "not_activated"],
+            "status": status,
+            "last_online_result": last_online_result,
+        }
+        if not fatal.is_empty():
+            snapshot["fatal"] = fatal
+
+    func get_snapshot() -> Dictionary:
+        return snapshot.duplicate(true)
+
+    func activate(_license_key: String) -> Dictionary:
+        activation_calls += 1
+        if not activation_snapshot.is_empty():
+            snapshot = activation_snapshot.duplicate(true)
+        return activation_result.duplicate(true)
+
+    func refresh_online() -> Dictionary:
+        refresh_calls += 1
+        if not refresh_snapshot.is_empty():
+            snapshot = refresh_snapshot.duplicate(true)
+        return refresh_result.duplicate(true)
+
+
 class RecoverySettingsStore:
     extends RefCounted
 
@@ -171,6 +205,19 @@ func _send_ui_action_and_wait(action: String, device: int = -1) -> void:
     await get_tree().process_frame
 
 
+func _flight_exit_event(use_gamepad: bool) -> InputEvent:
+    if use_gamepad:
+        var gamepad_event := InputEventJoypadButton.new()
+        gamepad_event.button_index = JOY_BUTTON_B
+        gamepad_event.pressed = true
+        return gamepad_event
+    var key_event := InputEventKey.new()
+    key_event.keycode = KEY_ESCAPE
+    key_event.physical_keycode = KEY_ESCAPE
+    key_event.pressed = true
+    return key_event
+
+
 func _controller_monitor_runtime() -> FlightRuntime:
     var runtime := FlightRuntime.new()
     runtime.main_menu_layer = CanvasLayer.new()
@@ -193,10 +240,498 @@ func _controller_monitor_runtime() -> FlightRuntime:
     return runtime
 
 
+func _runtime_with_missing_license_config() -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime._configure_license_provider({})
+    return runtime
+
+
+func _runtime_with_license_snapshot(status: String, last_online_result := "never", fatal: Dictionary = {}) -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var provider := FakeLicenseProvider.new(status, last_online_result, fatal)
+    runtime.license_provider = provider
+    runtime.add_child(provider)
+    return runtime
+
+
+func _licensed_runtime() -> FlightRuntime:
+    var runtime := _runtime_with_license_snapshot("online_valid")
+    runtime.gamepad_device_state = FakeDeviceState.new(false)
+    return runtime
+
+
+func _attach_runtime_ui(runtime: FlightRuntime) -> FlightRuntime:
+    runtime._build_main_menu()
+    runtime._build_flight_hud()
+    for layer in [runtime.main_menu_layer, runtime.flight_hud_layer]:
+        runtime.remove_child(layer)
+        get_tree().root.add_child(layer)
+        autofree(layer)
+    return runtime
+
+
+func _interactive_runtime() -> FlightRuntime:
+    return _attach_runtime_ui(_licensed_runtime())
+
+
+func _menu_runtime() -> FlightRuntime:
+    var runtime := _licensed_runtime()
+    autofree(runtime)
+    runtime._build_main_menu()
+    var menu_layer := runtime.main_menu_layer
+    runtime.remove_child(menu_layer)
+    get_tree().root.add_child(menu_layer)
+    autofree(menu_layer)
+    return runtime
+
+
+func _runtime_with_startup_license_path(path: String) -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime._build_main_menu()
+    runtime._build_flight_hud()
+    runtime._configure_license_provider_from_path(path)
+    return runtime
+
+
+func _write_license_config(path: String, public_key_path: String) -> void:
+    var file := FileAccess.open(path, FileAccess.WRITE)
+    file.store_string(JSON.stringify({
+        "schema_version": 1,
+        "issue_endpoint": "https://license.example.test/issue",
+        "verify_endpoint": "https://license.example.test/verify",
+        "public_key_path": public_key_path,
+        "allowed_kids": ["ubuntu-2026"],
+        "state_path": "user://aerosim-task-1-fix-state.json",
+    }))
+    file.close()
+
+
+func after_each() -> void:
+    for path in [
+        "user://aerosim-task-1-fix-missing-key.json",
+        "user://aerosim-task-1-fix-state.json",
+    ]:
+        DirAccess.remove_absolute(path)
+        DirAccess.remove_absolute("%s.tmp" % path)
+
+
 func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() -> void:
     var runtime_script := load("res://common/flight/flight_runtime.gd")
 
     assert_not_null(runtime_script)
+
+
+func test_quick_fly_fails_loudly_when_license_provider_configuration_fails() -> void:
+    var runtime := _runtime_with_missing_license_config()
+    assert_eq(runtime.screen, "license_blocked")
+    runtime.quick_fly()
+    assert_false(runtime.takeoff_requested)
+
+
+func test_flight_setup_fly_requires_current_license_before_preflight() -> void:
+    var runtimes: Array[FlightRuntime] = [
+        _runtime_with_license_snapshot("revoked"),
+        _runtime_with_missing_license_config(),
+    ]
+    for runtime in runtimes:
+        runtime.flight_setup = runtime.default_flight_setup()
+        runtime._fly_from_flight_setup()
+        assert_eq(runtime.screen, "license_blocked")
+        assert_null(runtime.loaded_map)
+
+
+func test_drone_and_map_open_the_same_flight_setup_with_different_focus() -> void:
+    var runtime := _licensed_runtime()
+    runtime.open_flight_setup("drone")
+    assert_eq(runtime.screen, "flight_setup")
+    assert_eq(runtime.flight_setup_focus, "drone")
+    runtime.open_flight_setup("map")
+    assert_eq(runtime.flight_setup_focus, "map")
+
+
+func test_drone_and_map_buttons_share_panel_and_move_actual_focus() -> void:
+    var runtime := _menu_runtime()
+    var panel := runtime.flight_setup_panel
+    var drone_entry := runtime.main_menu_layer.get_node("Entries/Drone") as Button
+    var map_entry := runtime.main_menu_layer.get_node("Entries/Map") as Button
+    var drone_button := runtime.flight_setup_panel.get_node("Rows/Drone") as Button
+    var map_button := runtime.flight_setup_panel.get_node("Rows/Map") as Button
+
+    drone_entry.pressed.emit()
+    assert_eq(runtime.flight_setup_panel, panel)
+    assert_eq(runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), drone_button)
+    map_entry.pressed.emit()
+    assert_eq(runtime.flight_setup_panel, panel)
+    assert_eq(runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), map_button)
+
+
+func test_quick_fly_reapplies_default_setup_after_a_prior_setup_choice() -> void:
+    var runtime := _licensed_runtime()
+    runtime.apply_flight_setup({"wind_preset": "severe"})
+    runtime.flight_setup["stale"] = "invalid"
+    runtime.quick_fly()
+    assert_eq(runtime.flight_setup, runtime.default_flight_setup())
+    assert_eq(runtime.selected_wind_preset, "calm")
+
+
+func test_controller_confirmation_from_menu_returns_to_menu() -> void:
+    var runtime := _licensed_runtime()
+    runtime.gamepad_device_state = FakeDeviceState.new()
+    runtime.settings_store = QualitySettingsStore.new(null)
+    runtime._build_flight_hud()
+    runtime.open_controller_from_menu()
+    assert_eq(runtime.screen, "controller_confirmation")
+    runtime.accept_controller_confirmation()
+    assert_eq(runtime.screen, "main_menu")
+    assert_false(runtime.takeoff_requested)
+
+
+func test_controller_fallback_and_cancel_from_menu_return_to_menu() -> void:
+    var runtime := _licensed_runtime()
+    runtime.gamepad_device_state = FakeDeviceState.new(false)
+    runtime._build_flight_hud()
+    runtime.open_controller_from_menu()
+    assert_eq(runtime.screen, "fallback_prompt")
+    runtime.accept_fallback()
+    assert_eq(runtime.screen, "main_menu")
+
+    runtime.gamepad_device_state = FakeDeviceState.new()
+    runtime.open_controller_from_menu()
+    assert_eq(runtime.screen, "controller_confirmation")
+    runtime._handle_primary_action()
+    assert_eq(runtime.screen, "main_menu")
+
+
+func test_controller_route_exit_input_cancels_each_caller_without_requesting_exit() -> void:
+    for use_gamepad in [false, true]:
+        for route in ["main_menu", "controller_settings", "preflight"]:
+            for fallback in [false, true]:
+                var runtime := _interactive_runtime()
+                runtime.settings_store = QualitySettingsStore.new(null)
+                runtime.gamepad_device_state = FakeDeviceState.new(not fallback)
+                if route == "main_menu":
+                    (runtime.main_menu_layer.get_node("Entries/Controller") as Button).pressed.emit()
+                elif route == "controller_settings":
+                    runtime.show_controller_settings()
+                    (runtime.main_menu_layer.get_node("ControllerSettingsPanel/Rows/ResetXboxDefault") as Button).pressed.emit()
+                else:
+                    (runtime.main_menu_layer.get_node("Entries/QuickFly") as Button).pressed.emit()
+                assert_eq(runtime.screen, "fallback_prompt" if fallback else "controller_confirmation", "%s/%s starts the expected route" % [route, "B" if use_gamepad else "Escape"])
+                runtime._unhandled_input(_flight_exit_event(use_gamepad))
+                assert_eq(runtime.screen, "controller_settings" if route == "controller_settings" else "main_menu", "%s/%s cancels to its caller" % [route, "B" if use_gamepad else "Escape"])
+                assert_false(runtime.exit_requested, "%s/%s does not request cleanup exit" % [route, "B" if use_gamepad else "Escape"])
+                if route == "controller_settings":
+                    var reset_button := runtime.main_menu_layer.get_node("ControllerSettingsPanel/Rows/ResetXboxDefault") as Button
+                    assert_eq(runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), reset_button, "%s/%s returns focus to Controller Settings reset" % ["fallback" if fallback else "confirmation", "B" if use_gamepad else "Escape"])
+
+
+func test_controller_route_completion_rechecks_current_license_before_preflight() -> void:
+    var confirmation_runtime := _interactive_runtime()
+    confirmation_runtime.settings_store = QualitySettingsStore.new(null)
+    confirmation_runtime.gamepad_device_state = FakeDeviceState.new()
+    (confirmation_runtime.main_menu_layer.get_node("Entries/QuickFly") as Button).pressed.emit()
+    assert_eq(confirmation_runtime.screen, "controller_confirmation")
+    (confirmation_runtime.license_provider as FakeLicenseProvider).snapshot = {"ok": false, "status": "revoked"}
+    confirmation_runtime.accept_controller_confirmation()
+    assert_eq(confirmation_runtime.screen, "license_blocked")
+    assert_null(confirmation_runtime.loaded_map)
+
+    var fallback_runtime := _interactive_runtime()
+    fallback_runtime.gamepad_device_state = FakeDeviceState.new(false)
+    (fallback_runtime.main_menu_layer.get_node("Entries/QuickFly") as Button).pressed.emit()
+    assert_eq(fallback_runtime.screen, "fallback_prompt")
+    (fallback_runtime.license_provider as FakeLicenseProvider).snapshot = {"ok": false, "status": "offline_grace_expired"}
+    fallback_runtime.accept_fallback()
+    assert_eq(fallback_runtime.screen, "license_blocked")
+    assert_null(fallback_runtime.loaded_map)
+
+
+func test_controller_route_focuses_its_visible_primary_action() -> void:
+    var confirmation_runtime := _interactive_runtime()
+    confirmation_runtime.gamepad_device_state = FakeDeviceState.new()
+    (confirmation_runtime.main_menu_layer.get_node("Entries/Controller") as Button).pressed.emit()
+    var confirm_button := confirmation_runtime.flight_hud_layer.get_node("ControllerConfirmation/Rows/UseXboxDefaultProfile") as Button
+    assert_eq(confirmation_runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), confirm_button)
+
+    var fallback_runtime := _interactive_runtime()
+    fallback_runtime.gamepad_device_state = FakeDeviceState.new(false)
+    (fallback_runtime.main_menu_layer.get_node("Entries/Controller") as Button).pressed.emit()
+    assert_eq(fallback_runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), fallback_runtime.arm_takeoff_button)
+
+
+func test_lab_mode_button_reuses_runtime_and_visible_back_control_returns_to_menu() -> void:
+    var runtime := _interactive_runtime()
+    var native_before := FakeNative.new()
+    runtime.native = native_before
+    var lab_button := runtime.main_menu_layer.get_node("Entries/LabMode") as Button
+    lab_button.pressed.emit()
+    assert_eq(runtime.screen, "lab_mode")
+    assert_eq(runtime.dashboard_layout_mode, "full")
+    assert_same(runtime.native, native_before)
+    var back_button := runtime.flight_hud_layer.get_node_or_null("StatusMargin/StatusPanel/StatusRows/LabBack") as Button
+    assert_not_null(back_button)
+    assert_true(back_button.visible)
+    assert_eq(runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), back_button)
+    back_button.pressed.emit()
+    assert_eq(runtime.screen, "main_menu")
+    assert_eq(runtime.dashboard_layout_mode, "compact")
+
+
+func test_main_menu_exposes_the_ordered_cap006_entries_and_defaults() -> void:
+    var runtime := _licensed_runtime()
+    assert_eq(runtime.main_menu_entries, ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"])
+    assert_eq(runtime.default_flight_setup(), {
+        "hardware_preset": "res://config/drones/5_inch_6s.json",
+        "map_id": "industrial_yard",
+        "mode": "ANGLE",
+        "wind_preset": "calm",
+    })
+
+
+func test_only_online_and_offline_grace_license_snapshots_can_start_quick_fly() -> void:
+    var runtime := _runtime_with_license_snapshot("offline_grace_valid")
+    assert_true(runtime.can_start_quick_fly())
+    runtime = _runtime_with_license_snapshot("revoked")
+    assert_false(runtime.can_start_quick_fly())
+
+
+func test_license_routes_expose_status_actions_and_only_retry_provider_states() -> void:
+    var runtime := _runtime_with_license_snapshot("not_activated")
+    assert_eq(runtime.license_actions(), ["activate_license", "diagnostics", "exit"])
+    var provider := runtime.license_provider as FakeLicenseProvider
+    runtime._build_flight_hud()
+    runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+    var activation: Dictionary = await runtime.activate_license("")
+    assert_true(activation.ok)
+    assert_eq(provider.activation_calls, 1)
+    var retry_before_activation: Dictionary = await runtime.retry_license()
+    assert_false(retry_before_activation.ok)
+    assert_eq(provider.refresh_calls, 0)
+
+    runtime = _runtime_with_license_snapshot("revoked")
+    provider = runtime.license_provider as FakeLicenseProvider
+    assert_eq(runtime.license_actions(), ["retry_license", "diagnostics", "exit"])
+    await runtime.retry_license()
+    assert_eq(provider.refresh_calls, 1)
+
+
+func test_activation_clears_the_real_nonpersistent_input_field_after_request() -> void:
+    var runtime := _runtime_with_license_snapshot("not_activated")
+    runtime._build_flight_hud()
+    runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+    assert_false(runtime.license_key_input.text.is_empty())
+    await runtime.activate_license("")
+    assert_true(runtime.license_key_input.text.is_empty())
+
+
+func test_missing_license_config_builds_observable_blocked_ui() -> void:
+    var runtime := _runtime_with_startup_license_path("user://aerosim-task-1-fix-no-config.json")
+    assert_eq(runtime.screen, "license_blocked")
+    assert_not_null(runtime.get_node_or_null("MainMenu"))
+    assert_true(runtime.license_panel.visible)
+    assert_string_contains(runtime.license_status_label.text, "LICENSE BLOCKED")
+    assert_eq(runtime.license_actions(), ["exit"])
+    assert_false(runtime.license_status_label.text.contains("jwt"))
+
+
+func test_missing_license_public_key_builds_observable_blocked_ui() -> void:
+    var config_path := "user://aerosim-task-1-fix-missing-key.json"
+    _write_license_config(config_path, "res://config/license-public-key-does-not-exist.pem")
+    var runtime := _runtime_with_startup_license_path(config_path)
+    assert_eq(runtime.screen, "license_blocked")
+    assert_true(runtime.license_panel.visible)
+    assert_eq(runtime.license_actions(), ["exit"])
+    assert_false(runtime.license_status_label.text.contains("jwt"))
+
+
+func test_license_status_table_exposes_exact_actions_and_dispatches_retry_safely() -> void:
+    var cases := [
+        {"status": "online_valid", "actions": [], "activation": 0, "refresh": 0},
+        {"status": "offline_grace_valid", "actions": [], "activation": 0, "refresh": 0},
+        {"status": "offline_grace_expired", "actions": ["retry_license", "diagnostics", "exit"], "activation": 1, "refresh": 0},
+        {"status": "invalid_token", "actions": ["retry_license", "diagnostics", "exit"], "activation": 1, "refresh": 0},
+        {"status": "revoked", "actions": ["retry_license", "diagnostics", "exit"], "activation": 0, "refresh": 1},
+        {"status": "not_activated", "actions": ["activate_license", "diagnostics", "exit"], "activation": 0, "refresh": 0},
+    ]
+    for case in cases:
+        var runtime := _runtime_with_license_snapshot(String(case.status))
+        runtime._build_flight_hud()
+        if String(case.status) in ["offline_grace_expired", "invalid_token"]:
+            runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+        var provider := runtime.license_provider as FakeLicenseProvider
+        assert_eq(runtime.license_actions(), case.actions, case.status)
+        await runtime.retry_license()
+        assert_eq(provider.activation_calls, int(case.activation), case.status)
+        assert_eq(provider.refresh_calls, int(case.refresh), case.status)
+
+    var fatal := _runtime_with_license_snapshot("invalid_token", "rejected", {"kind": "config", "code": "public_key_missing"})
+    fatal._build_flight_hud()
+    assert_eq(fatal.license_actions(), ["exit"])
+    await fatal.retry_license()
+    assert_eq((fatal.license_provider as FakeLicenseProvider).activation_calls, 0)
+    assert_eq((fatal.license_provider as FakeLicenseProvider).refresh_calls, 0)
+
+    var absent := FlightRuntime.new()
+    autofree(absent)
+    assert_eq(absent.license_actions(), ["exit"])
+    await absent.retry_license()
+
+
+func test_license_actions_reconcile_snapshot_after_activation_and_refresh() -> void:
+    var runtime := _runtime_with_license_snapshot("not_activated")
+    runtime._build_flight_hud()
+    runtime.screen = "license_blocked"
+    runtime.last_error_message = "activation pending"
+    runtime._refresh_flight_hud()
+    var provider := runtime.license_provider as FakeLicenseProvider
+    provider.activation_snapshot = {"ok": true, "status": "online_valid", "last_online_result": "accepted"}
+    runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+    await runtime.activate_license("")
+    assert_eq(runtime.screen, "main_menu")
+    assert_true(runtime.last_error_message.is_empty())
+
+    runtime = _runtime_with_license_snapshot("revoked")
+    runtime._build_flight_hud()
+    runtime.screen = "license_blocked"
+    runtime.last_error_message = "refresh pending"
+    runtime._refresh_flight_hud()
+    provider = runtime.license_provider as FakeLicenseProvider
+    provider.refresh_snapshot = {"ok": false, "status": "revoked", "last_online_result": "rejected"}
+    await runtime.retry_license()
+    assert_eq(runtime.screen, "license_blocked")
+    assert_true(runtime.license_panel.visible)
+    assert_string_contains(runtime.license_status_label.text, "revoked")
+
+
+func test_failed_license_actions_publish_only_typed_sanitized_reason_to_diagnostics() -> void:
+    var activation_runtime := _attach_runtime_ui(_runtime_with_license_snapshot("not_activated"))
+    activation_runtime.screen = "license_blocked"
+    var activation_provider := activation_runtime.license_provider as FakeLicenseProvider
+    activation_provider.activation_result = {
+        "ok": false,
+        "error_type": "request",
+        "error_code": "activation_rejected",
+        "error": "untyped-secret-canary",
+    }
+    activation_provider.activation_snapshot = {"ok": false, "status": "invalid_token"}
+    activation_runtime.license_key_input.text = "test-license-key"
+    await activation_runtime.activate_license("")
+    assert_eq(activation_runtime.last_error_message, "License request failed: activation_rejected")
+    var activation_diagnostics := activation_runtime.flight_hud_layer.get_node("LicensePanel/Rows/Diagnostics") as Button
+    activation_diagnostics.pressed.emit()
+    assert_eq(activation_runtime.screen, "settings")
+    assert_eq(activation_runtime.settings_status_label.text, "License request failed: activation_rejected")
+    assert_false(activation_runtime.settings_status_label.text.contains("untyped-secret-canary"))
+
+    var retry_runtime := _attach_runtime_ui(_runtime_with_license_snapshot("revoked"))
+    retry_runtime.screen = "license_blocked"
+    var retry_provider := retry_runtime.license_provider as FakeLicenseProvider
+    retry_provider.refresh_result = {
+        "ok": false,
+        "error_type": "network",
+        "error_code": "refresh_unavailable",
+        "error": "untyped-refresh-canary",
+    }
+    retry_provider.refresh_snapshot = {"ok": false, "status": "revoked"}
+    await retry_runtime.retry_license()
+    assert_eq(retry_runtime.last_error_message, "License network failed: refresh_unavailable")
+    var retry_diagnostics := retry_runtime.flight_hud_layer.get_node("LicensePanel/Rows/Diagnostics") as Button
+    retry_diagnostics.pressed.emit()
+    assert_eq(retry_runtime.settings_status_label.text, "License network failed: refresh_unavailable")
+    assert_false(retry_runtime.settings_status_label.text.contains("untyped-refresh-canary"))
+
+
+func test_license_key_visibility_and_clearing_follow_activation_backed_statuses() -> void:
+    var cases := [
+        {"status": "not_activated", "key": true, "diagnostics": true},
+        {"status": "offline_grace_expired", "key": true, "diagnostics": true},
+        {"status": "invalid_token", "key": true, "diagnostics": true},
+        {"status": "revoked", "key": false, "diagnostics": true},
+        {"status": "online_valid", "key": false, "diagnostics": false},
+        {"status": "offline_grace_valid", "key": false, "diagnostics": false},
+        {"status": "unknown", "key": false, "diagnostics": false},
+    ]
+    for case in cases:
+        var runtime := _runtime_with_license_snapshot(String(case.status))
+        runtime._build_flight_hud()
+        runtime.screen = "license_blocked"
+        runtime._refresh_flight_hud()
+        assert_eq(runtime.license_key_input.visible, bool(case.key), case.status)
+        var diagnostics := runtime.get_node_or_null("FlightHud/LicensePanel/Rows/Diagnostics") as Button
+        assert_not_null(diagnostics)
+        assert_eq(diagnostics.visible, bool(case.diagnostics), case.status)
+        if bool(case.key):
+            runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+            (runtime.license_provider as FakeLicenseProvider).snapshot = {"ok": false, "status": "revoked"}
+            runtime._refresh_flight_hud()
+            assert_true(runtime.license_key_input.text.is_empty(), case.status)
+            assert_false(runtime.license_key_input.visible, case.status)
+
+    var fatal := _runtime_with_license_snapshot("invalid_token", "rejected", {"kind": "config", "code": "public_key_missing"})
+    fatal._build_flight_hud()
+    fatal.screen = "license_blocked"
+    fatal._refresh_flight_hud()
+    assert_false(fatal.license_key_input.visible)
+    var fatal_diagnostics := fatal.get_node_or_null("FlightHud/LicensePanel/Rows/Diagnostics") as Button
+    assert_not_null(fatal_diagnostics)
+    assert_false(fatal_diagnostics.visible)
+
+
+func test_license_diagnostics_clears_key_and_reuses_settings_screen() -> void:
+    var runtime := _runtime_with_license_snapshot("not_activated")
+    runtime._build_main_menu()
+    runtime._build_flight_hud()
+    runtime.screen = "license_blocked"
+    runtime.last_error_message = "license diagnostics requested"
+    runtime._refresh_flight_hud()
+    runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+    var diagnostics := runtime.get_node_or_null("FlightHud/LicensePanel/Rows/Diagnostics") as Button
+    assert_not_null(diagnostics)
+    diagnostics.pressed.emit()
+    assert_true(runtime.license_key_input.text.is_empty())
+    assert_eq(runtime.screen, "settings")
+    assert_true(runtime.settings_panel.visible)
+    assert_eq(runtime.settings_status_label.text, runtime.last_error_message)
+
+
+func test_activate_license_guards_sanitized_status_before_reading_key_or_calling_provider() -> void:
+    var cases := [
+        {"status": "not_activated", "allowed": true},
+        {"status": "offline_grace_expired", "allowed": true},
+        {"status": "invalid_token", "allowed": true},
+        {"status": "online_valid", "allowed": false},
+        {"status": "offline_grace_valid", "allowed": false},
+        {"status": "revoked", "allowed": false},
+        {"status": "unknown", "allowed": false},
+    ]
+    for case in cases:
+        var runtime := _runtime_with_license_snapshot(String(case.status))
+        runtime._build_flight_hud()
+        runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+        var provider := runtime.license_provider as FakeLicenseProvider
+        var result: Dictionary = await runtime.activate_license("")
+        if bool(case.allowed):
+            assert_true(result.ok, case.status)
+            assert_eq(provider.activation_calls, 1, case.status)
+        else:
+            assert_false(result.ok, case.status)
+            assert_eq(result.error_code, "activation_unavailable", case.status)
+            assert_eq(provider.activation_calls, 0, case.status)
+
+    var fatal := _runtime_with_license_snapshot("invalid_token", "rejected", {"kind": "config", "code": "public_key_missing"})
+    var fatal_result: Dictionary = await fatal.activate_license("")
+    assert_false(fatal_result.ok)
+    assert_eq(fatal_result.error_type, "fatal")
+    assert_eq((fatal.license_provider as FakeLicenseProvider).activation_calls, 0)
+
+    var absent := FlightRuntime.new()
+    autofree(absent)
+    var absent_result: Dictionary = await absent.activate_license("")
+    assert_false(absent_result.ok)
+    assert_eq(absent_result.error_type, "fatal")
 
 
 func test_graphics_startup_applies_persisted_viewport_scale() -> void:
@@ -236,7 +771,7 @@ func test_keyboard_ui_actions_reach_graphics_apply_and_return() -> void:
     var runtime := _graphics_runtime_with_store(1.0)
     var quick_fly := runtime.get_node("MainMenu/Entries/QuickFly") as Button
     assert_eq(runtime.get_viewport().gui_get_focus_owner(), quick_fly)
-    for _step in range(4):
+    for _step in range(5):
         await _send_ui_action_and_wait("ui_down")
     await _send_ui_action_and_wait("ui_accept")
     assert_eq(runtime.screen, "settings")
@@ -264,7 +799,7 @@ func test_joypad_ui_actions_reach_graphics_apply_and_return() -> void:
     var runtime := _graphics_runtime_with_store(1.0)
     var quick_fly := runtime.get_node("MainMenu/Entries/QuickFly") as Button
     assert_eq(runtime.get_viewport().gui_get_focus_owner(), quick_fly)
-    for _step in range(4):
+    for _step in range(5):
         await _send_ui_action_and_wait("ui_down", 7)
     await _send_ui_action_and_wait("ui_accept", 7)
     assert_eq(runtime.screen, "settings")

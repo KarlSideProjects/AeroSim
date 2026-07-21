@@ -75,6 +75,16 @@ class PerformanceRunnerTest(unittest.TestCase):
             final_gate.index('effect_workload.active_effects().size() != 4'),
         )
 
+    def test_effect_workload_reconfigures_a3_drag_before_arming(self):
+        configure_start = BENCHMARK_SOURCE.index('func configure(native_runtime: Object, effects_enabled: bool) -> bool:')
+        configure_end = BENCHMARK_SOURCE.index('    func _activate_a6() -> bool:', configure_start)
+        configure_source = BENCHMARK_SOURCE[configure_start:configure_end]
+        self.assertIn('native.call("set_a3_drag_model", enabled, 0.0001, 0.0001, 0.00012)', configure_source)
+        self.assertLess(
+            configure_source.index('native.call("set_a3_drag_model", enabled, 0.0001, 0.0001, 0.00012)'),
+            configure_source.index('native.call("arm_flight_control", 0.0)'),
+        )
+
     def test_disabled_workload_keeps_control_path_for_apples_to_apples_timing(self):
         physics_index = BENCHMARK_SOURCE.index('func _physics_process(_delta: float) -> void:')
         activation_index = BENCHMARK_SOURCE.index('if not _activate_a6():', physics_index)
@@ -89,6 +99,15 @@ class PerformanceRunnerTest(unittest.TestCase):
         measurement_index = BENCHMARK_SOURCE.index('var first_measured_frame :=')
         self.assertGreater(reset_index, warmup_index)
         self.assertLess(reset_index, measurement_index)
+
+    def test_benchmark_installs_a_valid_license_before_quick_fly(self):
+        self.assertIn('class BenchmarkLicenseProvider:', BENCHMARK_SOURCE)
+        self.assertIn('"status": "online_valid"', BENCHMARK_SOURCE)
+        self.assertIn('func _install_deterministic_valid_license(runtime: Node) -> void:', BENCHMARK_SOURCE)
+        self.assertLess(
+            BENCHMARK_SOURCE.index('_install_deterministic_valid_license(runtime)'),
+            BENCHMARK_SOURCE.index('runtime.quick_fly()'),
+        )
 
     def test_short_headed_run_records_jolt_samples_with_vsync_disabled(self):
         with tempfile.TemporaryDirectory() as directory:

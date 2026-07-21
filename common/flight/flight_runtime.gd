@@ -19,8 +19,12 @@ const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
 const TimeTrialController = preload("res://common/flight/time_trial.gd")
 const ReplayIntegrationRunner = preload("res://common/flight/replay_integration_runner.gd")
+const LicenseProviderScript = preload("res://common/license/license_provider.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
+const LICENSE_PROVIDER_CONFIG_PATH := "res://config/license_provider.json"
 const DEFAULT_FREE_FLIGHT_MAP_ID := "industrial_yard"
+const DEFAULT_FLIGHT_MODE := "ANGLE"
+const DEFAULT_WIND_PRESET := "calm"
 const MAP_SCENE_PATHS := {
     "industrial_yard": "res://levels/free_flight/industrial_yard.tscn"
 }
@@ -44,6 +48,7 @@ const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 @onready var secondary_chase_camera := get_node_or_null("ChaseCameraSecondary") as Camera3D
 
 var native: Object
+var license_provider: Node
 var airsim_session: AirSimSession
 var airsim_rpc_server: AirSimRpcServer
 var airsim_sensor_suite: AirSimSensorSuite
@@ -63,8 +68,10 @@ var quit_on_exit := true
 var takeoff_requested := false
 var reset_count := 0
 var last_profile_status := ""
-var main_menu_entries := ["Quick Fly", "Controller", "Drone", "Map", "Settings"]
+var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]
 var screen := "main_menu"
+var flight_setup: Dictionary = {}
+var flight_setup_focus := "drone"
 var last_error_message := ""
 var last_collision_authority := -1
 var collision_handoff_count := 0
@@ -98,6 +105,14 @@ var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
+var lab_back_button: Button
+var license_panel: Control
+var license_status_label: Label
+var license_key_input: LineEdit
+var license_activate_button: Button
+var license_retry_button: Button
+var license_diagnostics_button: Button
+var license_exit_button: Button
 var acro_mode_button: Button
 var time_trial_status_label: Label
 var pause_panel: Control
@@ -109,12 +124,14 @@ var gamepad_device_state: GamepadDeviceState.DeviceState = GamepadDeviceState.De
 var controller_confirmation_panel: Control
 var controller_confirmation_profile: InputProfiles.GamepadProfile
 var controller_confirmation_device_id := -1
+var controller_return_screen := "preflight"
 var confirmation_mapping_label: Label
 var confirmation_axes_label: Label
 var controller_settings_device_label: Label
 var controller_settings_mapping_label: Label
 var controller_settings_monitor_label: Label
 var controller_monitor_refresh_count := 0
+var flight_setup_panel: Control
 var controller_safety_panel: Control
 var controller_safety_label: Label
 var last_arm_button_press_ms := -1000000
@@ -177,6 +194,8 @@ func _ready() -> void:
     _build_main_menu()
     _build_flight_hud()
     _build_status_diagram()
+    if not _configure_license_provider_from_path(LICENSE_PROVIDER_CONFIG_PATH):
+        return
     native = ClassDB.instantiate("AeroSimNative")
     if native == null:
         push_error("AeroSimNative is not registered")
@@ -274,6 +293,136 @@ func _run_replay_integration() -> void:
     else:
         push_error(String(result.get("error", "unknown")))
         get_tree().quit(1)
+
+
+func _configure_license_provider_from_path(path: String) -> bool:
+    if license_provider == null:
+        license_provider = LicenseProviderScript.new()
+        add_child(license_provider)
+    var result: Dictionary = license_provider.configure_from_path(path)
+    if not bool(result.get("ok", false)):
+        _show_license_blocked("License provider configuration failed: %s" % String(result.get("error_code", "unknown")))
+        return false
+    return true
+
+
+func _configure_license_provider(config: Dictionary) -> bool:
+    if license_provider == null:
+        license_provider = LicenseProviderScript.new()
+        add_child(license_provider)
+    var result: Dictionary = license_provider.configure(config)
+    if not bool(result.get("ok", false)):
+        _show_license_blocked("License provider configuration failed: %s" % String(result.get("error_code", "unknown")))
+        return false
+    return true
+
+
+func get_license_snapshot() -> Dictionary:
+    if license_provider == null:
+        return {"ok": false, "status": "invalid_token", "fatal": {"kind": "config", "code": "not_configured"}}
+    return license_provider.get_snapshot()
+
+
+func can_start_quick_fly() -> bool:
+    var status := String(get_license_snapshot().get("status", "invalid_token"))
+    return status in ["online_valid", "offline_grace_valid"]
+
+
+func license_actions() -> Array[String]:
+    var snapshot := get_license_snapshot()
+    if snapshot.has("fatal"):
+        return ["exit"]
+    var status := String(snapshot.get("status", "invalid_token"))
+    if status == "not_activated":
+        return ["activate_license", "diagnostics", "exit"]
+    if status in ["offline_grace_expired", "revoked", "invalid_token"]:
+        return ["retry_license", "diagnostics", "exit"]
+    return []
+
+
+func activate_license(license_key: String = "") -> Dictionary:
+    var snapshot := get_license_snapshot()
+    if snapshot.has("fatal"):
+        var fatal_result := {"ok": false, "error_type": "fatal", "error_code": String(snapshot.fatal.code)}
+        _record_license_action_failure(fatal_result)
+        _refresh_flight_hud()
+        return fatal_result
+    var status := String(snapshot.get("status", "invalid_token"))
+    if status not in ["not_activated", "offline_grace_expired", "invalid_token"]:
+        var unavailable_result := {"ok": false, "error_type": "request", "error_code": "activation_unavailable"}
+        _record_license_action_failure(unavailable_result)
+        _refresh_flight_hud()
+        return unavailable_result
+    var entered_key := license_key
+    if entered_key.is_empty() and license_key_input != null:
+        entered_key = license_key_input.text
+    if entered_key.is_empty():
+        var missing_key_result := {"ok": false, "error_type": "request", "error_code": "license_key_required"}
+        _record_license_action_failure(missing_key_result)
+        _refresh_flight_hud()
+        return missing_key_result
+    if license_provider == null:
+        var missing_provider_result := {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
+        _record_license_action_failure(missing_provider_result)
+        _refresh_flight_hud()
+        return missing_provider_result
+    var result: Dictionary = await license_provider.activate(entered_key)
+    if license_key_input != null:
+        license_key_input.clear()
+    _record_license_action_failure(result)
+    _reconcile_license_after_provider_action()
+    return result
+
+
+func retry_license() -> Dictionary:
+    var snapshot := get_license_snapshot()
+    if snapshot.has("fatal"):
+        var fatal_result := {"ok": false, "error_type": "fatal", "error_code": String(snapshot.fatal.code)}
+        _record_license_action_failure(fatal_result)
+        _refresh_flight_hud()
+        return fatal_result
+    var status := String(snapshot.get("status", "invalid_token"))
+    if status in ["offline_grace_expired", "invalid_token"]:
+        return await activate_license("")
+    if status != "revoked":
+        var unavailable_result := {"ok": false, "error_type": "request", "error_code": "retry_unavailable"}
+        _record_license_action_failure(unavailable_result)
+        _refresh_flight_hud()
+        return unavailable_result
+    if license_provider == null:
+        var missing_provider_result := {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
+        _record_license_action_failure(missing_provider_result)
+        _refresh_flight_hud()
+        return missing_provider_result
+    var result: Dictionary = await license_provider.refresh_online()
+    _record_license_action_failure(result)
+    _reconcile_license_after_provider_action()
+    return result
+
+
+func _record_license_action_failure(result: Dictionary) -> void:
+    if bool(result.get("ok", false)):
+        return
+    last_error_message = "License %s failed: %s" % [
+        String(result.get("error_type", "unknown")),
+        String(result.get("error_code", "unknown")),
+    ]
+
+
+func _reconcile_license_after_provider_action() -> void:
+    if can_start_quick_fly():
+        last_error_message = ""
+        show_main_menu()
+    else:
+        screen = "license_blocked"
+        _refresh_flight_hud()
+
+
+func _show_license_blocked(message: String) -> void:
+    last_error_message = message
+    screen = "license_blocked"
+    takeoff_requested = false
+    _refresh_flight_hud()
 
 
 func _validate_airsim_startup_settings(raw_settings: Dictionary) -> Dictionary:
@@ -964,7 +1113,14 @@ func _unhandled_input(event: InputEvent) -> void:
     elif event.is_action_pressed("flight_altitude_hold"):
         toggle_altitude_hold()
     elif event.is_action_pressed("flight_exit"):
-        request_exit()
+        if screen == "lab_mode":
+            return_from_lab_mode()
+        elif screen in ["controller_confirmation", "fallback_prompt"]:
+            if controller_confirmation_panel != null:
+                controller_confirmation_panel.hide()
+            _cancel_controller_route()
+        else:
+            request_exit()
 
 func _process(_delta: float) -> void:
     if not airsim_stop_file.is_empty() and FileAccess.file_exists(airsim_stop_file):
@@ -1555,7 +1711,89 @@ func request_exit() -> void:
     if quit_on_exit:
         get_tree().quit()
 
+
+func default_flight_setup() -> Dictionary:
+    return {
+        "hardware_preset": DEFAULT_HARDWARE_PRESET,
+        "map_id": DEFAULT_FREE_FLIGHT_MAP_ID,
+        "mode": DEFAULT_FLIGHT_MODE,
+        "wind_preset": DEFAULT_WIND_PRESET,
+    }
+
+
+func apply_flight_setup(raw_setup: Dictionary) -> bool:
+    var candidate := default_flight_setup()
+    for key in raw_setup:
+        if not candidate.has(key):
+            return false
+    candidate.merge(raw_setup, true)
+    if String(candidate.get("hardware_preset", "")) != DEFAULT_HARDWARE_PRESET:
+        return false
+    if String(candidate.get("map_id", "")) != DEFAULT_FREE_FLIGHT_MAP_ID:
+        return false
+    if String(candidate.get("mode", "")) != DEFAULT_FLIGHT_MODE:
+        return false
+    var wind_preset := String(candidate.get("wind_preset", ""))
+    if not WIND_PRESETS.has(wind_preset):
+        return false
+    if native != null:
+        var hardware_config := HardwareConfig.new()
+        if not hardware_config.apply_to_runtime(self, String(candidate.hardware_preset)):
+            last_error_message = hardware_config.last_error
+            return false
+    flight_setup = candidate
+    flight_mode = String(candidate.mode)
+    select_map(String(candidate.map_id), wind_preset)
+    return true
+
+
+func open_flight_setup(focus: String) -> void:
+    if focus not in ["drone", "map"]:
+        return
+    flight_setup_focus = focus
+    if flight_setup.is_empty():
+        flight_setup = default_flight_setup()
+    screen = "flight_setup"
+    if flight_setup_panel == null and main_menu_layer != null:
+        _build_flight_setup_panel()
+    _refresh_flight_hud()
+    var focus_button: Button = null
+    if flight_setup_panel != null:
+        focus_button = flight_setup_panel.get_node_or_null("Rows/%s" % focus.capitalize()) as Button
+    if focus_button != null and focus_button.is_inside_tree():
+        focus_button.grab_focus()
+
+
+func _set_flight_setup_wind(preset: String) -> void:
+    if not WIND_PRESETS.has(preset):
+        return
+    if flight_setup.is_empty():
+        flight_setup = default_flight_setup()
+    flight_setup["wind_preset"] = preset
+    _refresh_flight_setup_panel()
+
+
+func _fly_from_flight_setup() -> void:
+    if not can_start_quick_fly():
+        _show_license_blocked("Flight Setup unavailable: license %s" % String(get_license_snapshot().get("status", "invalid_token")))
+        return
+    if not apply_flight_setup(flight_setup):
+        last_error_message = "Flight Setup contains an unsupported selection"
+        screen = "error"
+        _refresh_flight_hud()
+        return
+    enter_preflight()
+
+
 func quick_fly() -> void:
+    if not can_start_quick_fly():
+        if screen != "license_blocked":
+            _show_license_blocked("Quick Fly unavailable: license %s" % String(get_license_snapshot().get("status", "invalid_token")))
+        return
+    if not apply_flight_setup(default_flight_setup()):
+        screen = "error"
+        _refresh_flight_hud()
+        return
     var device_id := _first_connected_device()
     var current_profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)
     if current_profile == null:
@@ -1572,6 +1810,7 @@ func quick_fly() -> void:
             session_gamepad_device_id = device_id
             enter_preflight()
             return
+        controller_return_screen = "preflight"
         begin_controller_confirmation(device_id)
         return
     enter_preflight()
@@ -1591,6 +1830,37 @@ func begin_controller_confirmation(device_id: int = _first_connected_device()) -
     controller_confirmation_panel.show()
     _refresh_controller_confirmation()
     _refresh_flight_hud()
+    var confirm_button := controller_confirmation_panel.get_node_or_null("Rows/UseXboxDefaultProfile") as Button
+    if confirm_button != null and confirm_button.is_inside_tree():
+        confirm_button.grab_focus()
+
+
+func open_controller_from_menu() -> void:
+    controller_return_screen = "main_menu"
+    begin_controller_confirmation()
+
+
+func _complete_controller_route() -> void:
+    var target := controller_return_screen
+    controller_return_screen = "preflight"
+    if target == "preflight":
+        if not can_start_quick_fly():
+            _show_license_blocked("Quick Fly unavailable: license %s" % String(get_license_snapshot().get("status", "invalid_token")))
+            return
+        enter_preflight()
+    elif target == "controller_settings":
+        show_controller_settings()
+    else:
+        show_main_menu()
+
+
+func _cancel_controller_route() -> void:
+    var target := controller_return_screen
+    controller_return_screen = "preflight"
+    if target == "controller_settings":
+        show_controller_settings()
+    else:
+        show_main_menu()
 
 func accept_controller_confirmation() -> void:
     var profile := InputProfiles.GamepadProfile.xbox_default(controller_confirmation_device_id, gamepad_device_state)
@@ -1608,7 +1878,7 @@ func accept_controller_confirmation() -> void:
     session_gamepad_profile = profile
     session_gamepad_device_id = controller_confirmation_device_id
     controller_confirmation_panel.hide()
-    enter_preflight()
+    _complete_controller_route()
 
 func use_keyboard_fallback() -> void:
     session_gamepad_profile = null
@@ -1623,6 +1893,8 @@ func _show_keyboard_fallback(message: String) -> void:
     last_error_message = message
     screen = "fallback_prompt"
     _refresh_flight_hud()
+    if arm_takeoff_button != null and arm_takeoff_button.is_inside_tree():
+        arm_takeoff_button.grab_focus()
 
 func accept_fallback() -> void:
     if screen == "fallback_prompt":
@@ -1630,14 +1902,15 @@ func accept_fallback() -> void:
         controller_safety_latched = false
         controller_reconnected = false
         disconnected_gamepad_device_id = -1
-        enter_preflight()
+        _complete_controller_route()
         return
     last_error_message = "No fallback prompt is active"
     screen = "error"
     _refresh_flight_hud()
 
 func enter_preflight() -> void:
-    if not load_map(DEFAULT_FREE_FLIGHT_MAP_ID):
+    var map_id := String(flight_setup.get("map_id", DEFAULT_FREE_FLIGHT_MAP_ID))
+    if not load_map(map_id):
         screen = "error"
         _refresh_flight_hud()
         return
@@ -2199,19 +2472,101 @@ func _build_main_menu() -> void:
         entries.add_child(button)
         if entry == "Quick Fly":
             button.pressed.connect(quick_fly)
+        elif entry == "Lab Mode":
+            button.pressed.connect(open_lab_mode)
+        elif entry == "Drone":
+            button.pressed.connect(open_flight_setup.bind("drone"))
         elif entry == "Map":
-            button.pressed.connect(open_map_menu)
+            button.pressed.connect(open_flight_setup.bind("map"))
         elif entry == "Controller":
-            button.pressed.connect(begin_controller_confirmation)
+            button.pressed.connect(open_controller_from_menu)
         elif entry == "Settings":
             button.pressed.connect(show_settings)
+        elif entry == "Quit":
+            button.pressed.connect(request_exit)
     _build_settings_panel()
     _build_controller_settings_panel()
     _build_rates_panel()
     _build_graphics_panel()
+    _build_flight_setup_panel()
     var initial_button := entries.get_child(0) as Button
-    if initial_button != null:
+    if initial_button != null and is_inside_tree():
         initial_button.grab_focus()
+
+
+func _build_flight_setup_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "FlightSetupPanel"
+    panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    panel.offset_left = 20.0
+    panel.offset_top = 20.0
+    panel.offset_right = 460.0
+    panel.offset_bottom = 360.0
+    flight_setup_panel = panel
+    main_menu_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+
+    var title := Label.new()
+    title.text = "FLIGHT SETUP"
+    rows.add_child(title)
+
+    var drone_button := Button.new()
+    drone_button.name = "Drone"
+    drone_button.text = "DRONE: 5-INCH 6S"
+    rows.add_child(drone_button)
+
+    var map_button := Button.new()
+    map_button.name = "Map"
+    map_button.text = "MAP: Industrial Test Range"
+    rows.add_child(map_button)
+
+    var mode_label := Label.new()
+    mode_label.name = "Mode"
+    rows.add_child(mode_label)
+
+    var wind_title := Label.new()
+    wind_title.text = "WIND PRESET"
+    rows.add_child(wind_title)
+    var wind_presets := HBoxContainer.new()
+    wind_presets.name = "WindPresets"
+    rows.add_child(wind_presets)
+    for preset in WIND_PRESETS:
+        var wind_button := Button.new()
+        wind_button.name = preset.capitalize()
+        wind_button.text = preset.capitalize()
+        wind_button.pressed.connect(_set_flight_setup_wind.bind(preset))
+        wind_presets.add_child(wind_button)
+
+    var fly_button := Button.new()
+    fly_button.name = "Fly"
+    fly_button.text = "FLY"
+    fly_button.pressed.connect(_fly_from_flight_setup)
+    rows.add_child(fly_button)
+
+    var back_button := Button.new()
+    back_button.name = "Back"
+    back_button.text = "BACK"
+    back_button.pressed.connect(show_main_menu)
+    rows.add_child(back_button)
+    _refresh_flight_setup_panel()
+
+
+func _refresh_flight_setup_panel() -> void:
+    if flight_setup_panel == null:
+        return
+    if flight_setup.is_empty():
+        flight_setup = default_flight_setup()
+    var mode_label := get_node_or_null("MainMenu/FlightSetupPanel/Rows/Mode") as Label
+    if mode_label != null:
+        mode_label.text = "MODE: %s" % String(flight_setup.get("mode", DEFAULT_FLIGHT_MODE))
+    for preset in WIND_PRESETS:
+        var wind_button := get_node_or_null("MainMenu/FlightSetupPanel/Rows/WindPresets/%s" % preset.capitalize()) as Button
+        if wind_button != null:
+            wind_button.button_pressed = String(flight_setup.get("wind_preset", DEFAULT_WIND_PRESET)) == preset
 
 func _build_settings_panel() -> void:
     var panel := PanelContainer.new()
@@ -2592,17 +2947,32 @@ func _build_controller_settings_panel() -> void:
     rows.add_child(back_button)
 
 func show_main_menu() -> void:
+    if screen == "lab_mode":
+        set_dashboard_layout_mode("compact")
     screen = "main_menu"
     _refresh_flight_hud()
     var initial_button := get_node_or_null("MainMenu/Entries/QuickFly") as Button
-    if initial_button != null:
+    if initial_button != null and is_inside_tree():
         initial_button.grab_focus()
+
+
+func open_lab_mode() -> void:
+    set_dashboard_layout_mode("full")
+    screen = "lab_mode"
+    _refresh_flight_hud()
+    if lab_back_button != null and lab_back_button.is_inside_tree():
+        lab_back_button.grab_focus()
+
+
+func return_from_lab_mode() -> void:
+    set_dashboard_layout_mode("compact")
+    show_main_menu()
 
 func show_settings() -> void:
     screen = "settings"
     _refresh_flight_hud()
     var graphics_button := get_node_or_null("MainMenu/SettingsPanel/Rows/Graphics") as Button
-    if graphics_button != null:
+    if graphics_button != null and is_inside_tree():
         graphics_button.grab_focus()
 
 func show_controller_settings() -> void:
@@ -2610,6 +2980,9 @@ func show_controller_settings() -> void:
     controller_monitor_refresh_count = 0
     _refresh_controller_settings()
     _refresh_flight_hud()
+    var reset_button := controller_settings_panel.get_node_or_null("Rows/ResetXboxDefault") as Button if controller_settings_panel != null else null
+    if reset_button != null and reset_button.is_visible_in_tree():
+        reset_button.grab_focus()
 
 
 func show_rates(return_screen: String = "settings") -> void:
@@ -2681,6 +3054,7 @@ func _close_rates_panel() -> void:
         show_settings()
 
 func reset_to_xbox_default() -> void:
+    controller_return_screen = "controller_settings"
     begin_controller_confirmation(_first_connected_device())
 
 
@@ -2786,6 +3160,11 @@ func _build_flight_hud() -> void:
     arm_takeoff_button.name = "ArmTakeoff"
     arm_takeoff_button.pressed.connect(_handle_primary_action)
     rows.add_child(arm_takeoff_button)
+    lab_back_button = Button.new()
+    lab_back_button.name = "LabBack"
+    lab_back_button.text = "BACK TO MENU"
+    lab_back_button.pressed.connect(return_from_lab_mode)
+    rows.add_child(lab_back_button)
     acro_mode_button = Button.new()
     acro_mode_button.name = "AcroMode"
     acro_mode_button.pressed.connect(toggle_acro_mode)
@@ -2793,6 +3172,66 @@ func _build_flight_hud() -> void:
     _build_pause_panel()
     _build_controller_safety_panel()
     _build_finish_panel()
+    _build_license_panel()
+
+
+func _build_license_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "LicensePanel"
+    panel.set_anchors_preset(Control.PRESET_CENTER)
+    panel.offset_left = -220.0
+    panel.offset_top = -120.0
+    panel.offset_right = 220.0
+    panel.offset_bottom = 120.0
+    license_panel = panel
+    flight_hud_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+
+    var title := Label.new()
+    title.text = "LICENSE REQUIRED"
+    rows.add_child(title)
+    license_status_label = Label.new()
+    license_status_label.name = "Status"
+    rows.add_child(license_status_label)
+    license_key_input = LineEdit.new()
+    license_key_input.name = "LicenseKey"
+    license_key_input.secret = true
+    license_key_input.placeholder_text = "Enter license key"
+    rows.add_child(license_key_input)
+
+    license_activate_button = Button.new()
+    license_activate_button.name = "Activate"
+    license_activate_button.text = "ACTIVATE LICENSE"
+    license_activate_button.pressed.connect(activate_license)
+    rows.add_child(license_activate_button)
+
+    license_retry_button = Button.new()
+    license_retry_button.name = "Retry"
+    license_retry_button.text = "RETRY"
+    license_retry_button.pressed.connect(retry_license)
+    rows.add_child(license_retry_button)
+
+    license_diagnostics_button = Button.new()
+    license_diagnostics_button.name = "Diagnostics"
+    license_diagnostics_button.text = "DIAGNOSTICS"
+    license_diagnostics_button.pressed.connect(_open_license_diagnostics)
+    rows.add_child(license_diagnostics_button)
+
+    license_exit_button = Button.new()
+    license_exit_button.name = "Exit"
+    license_exit_button.text = "EXIT"
+    license_exit_button.pressed.connect(request_exit)
+    rows.add_child(license_exit_button)
+
+
+func _open_license_diagnostics() -> void:
+    if license_key_input != null:
+        license_key_input.clear()
+    show_settings()
 
 func _build_pause_panel() -> void:
     var panel := PanelContainer.new()
@@ -2953,9 +3392,11 @@ func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
         return
     if main_menu_layer != null:
-        main_menu_layer.visible = screen in ["main_menu", "settings", "controller_settings", "rates", "graphics"]
+        main_menu_layer.visible = screen in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
     if main_menu_entries_container != null:
         main_menu_entries_container.visible = screen == "main_menu"
+    if flight_setup_panel != null:
+        flight_setup_panel.visible = screen == "flight_setup"
     if settings_panel != null:
         settings_panel.visible = screen == "settings"
     if settings_status_label != null:
@@ -2967,7 +3408,7 @@ func _refresh_flight_hud() -> void:
     if graphics_panel != null:
         graphics_panel.visible = screen == "graphics"
     if flight_hud_layer != null:
-        flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings", "rates", "graphics"]
+        flight_hud_layer.visible = screen not in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
     if pause_panel != null:
         pause_panel.visible = paused and screen == "flight"
     if controller_safety_panel != null:
@@ -2976,10 +3417,27 @@ func _refresh_flight_hud() -> void:
         controller_safety_label.text = last_error_message
     if finish_panel != null:
         finish_panel.visible = screen == "finish"
+    if license_panel != null:
+        var license_snapshot := get_license_snapshot()
+        var license_status := String(license_snapshot.get("status", "invalid_token"))
+        license_panel.visible = screen == "license_blocked"
+        license_status_label.text = "LICENSE BLOCKED: %s" % license_status
+        var actions := license_actions()
+        var key_status := license_status in ["not_activated", "offline_grace_expired", "invalid_token"] and not license_snapshot.has("fatal")
+        license_key_input.visible = screen == "license_blocked" and key_status
+        if not license_key_input.visible:
+            license_key_input.clear()
+        license_activate_button.visible = actions.has("activate_license")
+        license_retry_button.visible = actions.has("retry_license")
+        license_diagnostics_button.visible = screen == "license_blocked" and actions.has("diagnostics")
+        license_exit_button.visible = actions.has("exit")
     key_hints_label.text = KEY_HINTS_TEXT
     _refresh_rates_panel()
     _refresh_graphics_panel()
-    arm_takeoff_button.disabled = screen == "main_menu" or (controller_safety_latched and screen != "fallback_prompt")
+    arm_takeoff_button.disabled = screen in ["main_menu", "license_blocked"] or (controller_safety_latched and screen != "fallback_prompt")
+    if lab_back_button != null:
+        lab_back_button.visible = screen == "lab_mode"
+        lab_back_button.disabled = false
     if acro_mode_button != null:
         acro_mode_button.disabled = screen != "flight" or paused or controller_safety_latched
         acro_mode_button.text = "ACRO MODE (C): %s" % ("ON" if flight_mode == "ACRO" else "OFF")
@@ -3014,6 +3472,9 @@ func _refresh_flight_hud() -> void:
     elif screen == "controller_disconnected":
         arm_status_label.text = last_error_message
         arm_takeoff_button.text = "WAIT FOR CONTROLLER"
+    elif screen == "license_blocked":
+        arm_status_label.text = last_error_message
+        arm_takeoff_button.text = "LICENSE BLOCKED"
     else:
         arm_status_label.text = "Quick Fly: choose Quick Fly, then arm at low throttle"
         arm_takeoff_button.text = "ARM / TAKEOFF (T)"
@@ -3026,9 +3487,11 @@ func _handle_primary_action() -> void:
     elif screen in ["controller_confirmation", "error"]:
         if controller_confirmation_panel != null:
             controller_confirmation_panel.hide()
-        screen = "main_menu"
         last_error_message = ""
-        _refresh_flight_hud()
+        if screen == "controller_confirmation":
+            _cancel_controller_route()
+        else:
+            show_main_menu()
     elif screen == "finish":
         retry_time_trial()
 

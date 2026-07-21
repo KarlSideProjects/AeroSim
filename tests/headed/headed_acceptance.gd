@@ -24,6 +24,14 @@ class MutableGamepadDeviceState:
 	func joy_name(device_id: int) -> String:
 		return "Xbox Test Controller %d" % device_id
 
+
+class HeadedLicenseProvider:
+	extends Node
+
+	func get_snapshot() -> Dictionary:
+		return {"ok": true, "status": "online_valid", "last_online_result": "headed_acceptance"}
+
+
 var _failures: Array[String] = []
 var _out_dir := "build/headed"
 var _channel_monitor_evidence: Dictionary = {}
@@ -39,14 +47,67 @@ func _run() -> void:
 	runtime.gamepad_device_state = device_state
 	root.add_child(runtime)
 	await _settle(30)
+	_install_deterministic_valid_license(runtime)
 
 	await _snapshot("00_cold_start")
 	_expect(runtime.native != null, "native runtime is registered")
 	_expect(root.get_camera_3d() != null, "cold start has an active Camera3D")
 	_expect(runtime.screen == "main_menu", "cold start opens the main menu")
+	var entries: Array[String] = []
+	var entry_rows: Node = runtime.get_node_or_null("MainMenu/Entries")
+	if entry_rows != null:
+		for entry in entry_rows.get_children():
+			entries.append(entry.text)
+	_expect(entries == ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"], "main menu exposes the exact seven CAP-006 entries in order")
+	var drone_entry: Button = runtime.get_node_or_null("MainMenu/Entries/Drone")
+	var map_entry: Button = runtime.get_node_or_null("MainMenu/Entries/Map")
+	_expect(drone_entry != null and map_entry != null, "main menu exposes Drone and Map setup paths")
+	if drone_entry != null:
+		_click(drone_entry)
+	await _settle(2)
+	var flight_setup: Control = runtime.flight_setup_panel
+	_expect(runtime.screen == "flight_setup" and flight_setup != null and flight_setup.is_visible_in_tree() and runtime.flight_setup_focus == "drone", "Drone opens shared Flight Setup with Drone focused")
+	runtime.show_main_menu()
+	await _settle(2)
+	if map_entry != null:
+		_click(map_entry)
+	await _settle(2)
+	_expect(runtime.screen == "flight_setup" and runtime.flight_setup_panel == flight_setup and runtime.flight_setup_focus == "map", "Map reuses shared Flight Setup with Map focused")
+	runtime.show_main_menu()
+	await _settle(2)
+	var native_before_lab: Object = runtime.native
+	var lab_entry: Button = runtime.get_node_or_null("MainMenu/Entries/LabMode")
+	_expect(lab_entry != null, "main menu exposes Lab Mode")
+	if lab_entry != null:
+		_click(lab_entry)
+	await _settle(2)
+	var dashboard: CanvasLayer = runtime.status_diagram
+	_expect(runtime.screen == "lab_mode" and runtime.native == native_before_lab, "Lab Mode keeps the same native runtime")
+	_expect(dashboard != null and dashboard.call("get_layout_mode") == "full" and bool(dashboard.call("get_render_evidence").get("visible", false)), "Lab Mode shows the full Operations Dashboard")
+	var lab_back: Button = runtime.get_node_or_null("FlightHud/StatusMargin/StatusPanel/StatusRows/LabBack")
+	_expect(lab_back != null and lab_back.is_visible_in_tree(), "Lab Mode exposes a visible Back control")
+	if lab_back != null:
+		_click(lab_back)
+	await _settle(2)
+	_expect(runtime.screen == "main_menu" and dashboard != null and dashboard.call("get_layout_mode") == "compact", "Lab Back returns to compact main menu")
+	if lab_entry != null:
+		_click(lab_entry)
+	await _settle(2)
+	_expect(runtime.screen == "lab_mode" and dashboard != null and dashboard.call("get_layout_mode") == "full", "Lab Mode reopens for Escape coverage")
+	_tap(KEY_ESCAPE)
+	await _settle(2)
+	_expect(runtime.screen == "main_menu" and dashboard != null and dashboard.call("get_layout_mode") == "compact", "Escape also returns Lab Mode to compact main menu")
+	runtime.quit_on_exit = false
+	runtime.exit_requested = false
+	var quit_entry: Button = runtime.get_node_or_null("MainMenu/Entries/Quit")
+	_expect(quit_entry != null, "main menu exposes Quit")
+	if quit_entry != null:
+		_click(quit_entry)
+	await _settle(2)
+	_expect(runtime.exit_requested and runtime.screen == "main_menu", "Quit uses cleanup-safe request_exit")
+	runtime.exit_requested = false
 	await _navigate_graphics_with_ui_actions(runtime, -1)
 	await _navigate_graphics_with_ui_actions(runtime, 7)
-	var dashboard: CanvasLayer = runtime.status_diagram
 	_expect(dashboard != null, "cold start attaches the Operations Dashboard")
 	if dashboard != null:
 		var dashboard_panel := dashboard.get_node_or_null("DashboardMargin/DashboardPanel") as PanelContainer
@@ -57,32 +118,23 @@ func _run() -> void:
 		runtime.set_dashboard_layout_mode("full")
 		_expect(dashboard.call("get_layout_mode") == "full", "Operations Dashboard supports full Lab Mode layout")
 		runtime.set_dashboard_layout_mode("compact")
-	var map_button: Button = runtime.get_node_or_null("MainMenu/Entries/Map")
-	_expect(map_button != null, "main menu exposes Map button")
-	if map_button != null:
-		_click(map_button)
-	await _settle(10)
-	var severe_wind_button: Button = runtime.get_node_or_null("MapMenu/WindPresets/Severe")
-	_expect(severe_wind_button != null, "Map exposes Severe wind preset")
-	if severe_wind_button != null:
-		_click(severe_wind_button)
-	await _settle(10)
-	await _snapshot("00_map_severe")
-	var wind_config: Dictionary = runtime.native.call("wind_configuration") if runtime.native != null else {}
-	_expect(
-		wind_config.get("preset", "") == "severe" and wind_config.get("steady_wind", Vector3.ZERO).distance_to(runtime.scene_steady_wind_mps) <= 1e-9,
-		"Map selection applies the scene steady wind vector to native runtime"
-	)
-	var map_menu := runtime.get_node_or_null("MapMenu")
-	if map_menu != null:
-		map_menu.queue_free()
-		await process_frame
-
 	var known_device_id := await _inject_known_gamepad()
 	_expect(known_device_id >= 0, "virtual SDL gamepad registers as a known controller")
 	device_state.replace_snapshot([known_device_id], [known_device_id])
 	Input.joy_connection_changed.emit(known_device_id, true)
 	await _settle(2)
+	var menu_controller_button: Button = runtime.get_node_or_null("MainMenu/Entries/Controller")
+	_expect(menu_controller_button != null, "main menu exposes Controller")
+	if menu_controller_button != null:
+		_click(menu_controller_button)
+	await _settle(2)
+	_expect(runtime.screen == "controller_confirmation", "top-level Controller opens confirmation")
+	var menu_controller_confirmation: Button = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile")
+	_expect(menu_controller_confirmation != null, "top-level Controller exposes confirmation")
+	if menu_controller_confirmation != null:
+		_click(menu_controller_confirmation)
+	await _settle(2)
+	_expect(runtime.screen == "main_menu", "top-level Controller confirmation returns to main menu")
 	var settings_button: Button = runtime.get_node_or_null("MainMenu/Entries/Settings")
 	_expect(settings_button != null, "main menu exposes Settings")
 	if settings_button != null:
@@ -106,8 +158,7 @@ func _run() -> void:
 		_expect(absf(runtime.get_viewport().scaling_3d_scale - 0.75) <= 0.000001, "Graphics slider previews the viewport scale")
 		apply_button.pressed.emit()
 		await _settle(2)
-		var persisted_quality: Dictionary = runtime.settings_store.load_document().document.quality
-		_expect(absf(float(persisted_quality.get("render_scale", 0.0)) - 0.75) <= 0.000001, "Graphics Apply persists the render scale")
+		_expect_persisted_render_scale(runtime, 0.75, "Graphics Apply persists the render scale")
 		scale_slider.value = 0.50
 		await _settle(1)
 	if back_button != null:
@@ -170,8 +221,6 @@ func _run() -> void:
 		_click(settings_controller_button)
 	await _settle(2)
 	_expect(runtime.screen == "controller_settings", "Settings Controller entry opens Controller settings")
-	runtime.session_gamepad_profile = null
-	runtime.session_gamepad_device_id = -1
 	var controller_settings: Control = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel")
 	var device_label: Label = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/CurrentDevice")
 	var reset_button: Button = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ResetXboxDefault")
@@ -182,8 +231,19 @@ func _run() -> void:
 		_click(reset_button)
 	await _settle(2)
 	_expect(runtime.screen == "controller_confirmation", "Xbox reset requires confirmation before changing the session profile")
+	var reset_confirmation: Button = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile")
+	_expect(reset_confirmation != null, "Xbox reset exposes the confirmation action")
+	if reset_confirmation != null:
+		_click(reset_confirmation)
+	await _settle(2)
+	_expect(runtime.screen == "controller_settings", "Xbox reset confirmation returns to Controller settings")
 	runtime.persisted_gamepad_profile = null
-	runtime.quick_fly()
+	runtime.session_gamepad_profile = null
+	runtime.session_gamepad_device_id = -1
+	runtime.show_main_menu()
+	var quick_fly_entry: Button = runtime.get_node_or_null("MainMenu/Entries/QuickFly")
+	if quick_fly_entry != null:
+		_click(quick_fly_entry)
 	await _settle(10)
 	await _snapshot("01_controller_confirmation")
 	_expect(runtime.screen == "controller_confirmation", "known unconfirmed gamepad enters visible Xbox profile confirmation")
@@ -467,6 +527,17 @@ func _parse_args() -> void:
 		if args[index] == "--out-dir":
 			_out_dir = args[index + 1].trim_suffix("/")
 
+
+func _install_deterministic_valid_license(runtime: Node) -> void:
+	if runtime.license_provider != null:
+		runtime.remove_child(runtime.license_provider)
+		runtime.license_provider.queue_free()
+	var provider := HeadedLicenseProvider.new()
+	runtime.license_provider = provider
+	runtime.add_child(provider)
+	runtime.show_main_menu()
+
+
 func _settle(frames: int) -> void:
 	for _frame in frames:
 		await process_frame
@@ -516,9 +587,16 @@ func _send_ui_action(action: String, device: int) -> void:
 		Input.parse_input_event(event)
 
 func _navigate_graphics_with_ui_actions(runtime: Node, device: int) -> void:
+	var reset_result: Dictionary = runtime.settings_store.factory_reset()
+	_expect(reset_result.ok, "UI action flow resets SettingsStore")
+	runtime.render_scale = 1.0
+	runtime.graphics_committed_scale = 1.0
+	runtime.get_viewport().scaling_3d_scale = 1.0
+	runtime.show_main_menu()
+	await _settle(1)
 	var quick_fly := runtime.get_node_or_null("MainMenu/Entries/QuickFly") as Button
 	_expect(runtime.get_viewport().gui_get_focus_owner() == quick_fly, "UI action flow starts on Quick Fly")
-	for _step in range(4):
+	for _step in range(5):
 		_send_ui_action("ui_down", device)
 		await _settle(1)
 	_send_ui_action("ui_accept", device)
@@ -543,8 +621,7 @@ func _navigate_graphics_with_ui_actions(runtime: Node, device: int) -> void:
 	await _settle(1)
 	_send_ui_action("ui_accept", device)
 	await _settle(2)
-	var persisted_quality: Dictionary = runtime.settings_store.load_document().document.quality
-	_expect(absf(float(persisted_quality.get("render_scale", 0.0)) - 0.75) <= 0.000001, "UI actions Apply Graphics")
+	_expect_persisted_render_scale(runtime, 0.75, "UI actions Apply Graphics")
 	for _step in range(2):
 		_send_ui_action("ui_down", device)
 		await _settle(1)
@@ -592,6 +669,12 @@ func _inject_joy_button(device_id: int, button: JoyButton, pressed: bool) -> voi
 	event.button_index = button
 	event.pressed = pressed
 	Input.parse_input_event(event)
+
+func _expect_persisted_render_scale(runtime: Node, expected_scale: float, message: String) -> void:
+	var persisted: Dictionary = runtime.settings_store.load_document()
+	var quality: Variant = persisted.document.get("quality") if persisted.ok else null
+	var persisted_quality: Dictionary = quality if quality is Dictionary else {}
+	_expect(persisted.ok and quality is Dictionary and absf(float(persisted_quality.get("render_scale", 0.0)) - expected_scale) <= 0.000001, message)
 
 func _expect(condition: bool, message: String) -> void:
 	if not condition:
