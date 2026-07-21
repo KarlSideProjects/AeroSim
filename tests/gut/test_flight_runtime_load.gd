@@ -243,6 +243,12 @@ func _runtime_with_license_snapshot(status: String, last_online_result := "never
     return runtime
 
 
+func _licensed_runtime() -> FlightRuntime:
+    var runtime := _runtime_with_license_snapshot("online_valid")
+    runtime.gamepad_device_state = FakeDeviceState.new(false)
+    return runtime
+
+
 func _runtime_with_startup_license_path(path: String) -> FlightRuntime:
     var runtime := FlightRuntime.new()
     autofree(runtime)
@@ -285,6 +291,33 @@ func test_quick_fly_fails_loudly_when_license_provider_configuration_fails() -> 
     assert_eq(runtime.screen, "license_blocked")
     runtime.quick_fly()
     assert_false(runtime.takeoff_requested)
+
+
+func test_drone_and_map_open_the_same_flight_setup_with_different_focus() -> void:
+    var runtime := _licensed_runtime()
+    runtime.open_flight_setup("drone")
+    assert_eq(runtime.screen, "flight_setup")
+    assert_eq(runtime.flight_setup_focus, "drone")
+    runtime.open_flight_setup("map")
+    assert_eq(runtime.flight_setup_focus, "map")
+
+
+func test_quick_fly_reapplies_default_setup_after_a_prior_setup_choice() -> void:
+    var runtime := _licensed_runtime()
+    runtime.apply_flight_setup({"wind_preset": "severe"})
+    runtime.quick_fly()
+    assert_eq(runtime.selected_wind_preset, "calm")
+
+
+func test_main_menu_exposes_the_ordered_cap006_entries_and_defaults() -> void:
+    var runtime := _licensed_runtime()
+    assert_eq(runtime.main_menu_entries, ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"])
+    assert_eq(runtime.default_flight_setup(), {
+        "hardware_preset": "res://config/drones/5_inch_6s.json",
+        "map_id": "industrial_yard",
+        "mode": "ANGLE",
+        "wind_preset": "calm",
+    })
 
 
 func test_only_online_and_offline_grace_license_snapshots_can_start_quick_fly() -> void:

@@ -23,6 +23,8 @@ const LicenseProviderScript = preload("res://common/license/license_provider.gd"
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const LICENSE_PROVIDER_CONFIG_PATH := "res://config/license_provider.json"
 const DEFAULT_FREE_FLIGHT_MAP_ID := "industrial_yard"
+const DEFAULT_FLIGHT_MODE := "ANGLE"
+const DEFAULT_WIND_PRESET := "calm"
 const MAP_SCENE_PATHS := {
     "industrial_yard": "res://levels/free_flight/industrial_yard.tscn"
 }
@@ -66,8 +68,10 @@ var quit_on_exit := true
 var takeoff_requested := false
 var reset_count := 0
 var last_profile_status := ""
-var main_menu_entries := ["Quick Fly", "Controller", "Drone", "Map", "Settings"]
+var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]
 var screen := "main_menu"
+var flight_setup: Dictionary = {}
+var flight_setup_focus := "drone"
 var last_error_message := ""
 var last_collision_authority := -1
 var collision_handoff_count := 0
@@ -125,6 +129,7 @@ var controller_settings_device_label: Label
 var controller_settings_mapping_label: Label
 var controller_settings_monitor_label: Label
 var controller_monitor_refresh_count := 0
+var flight_setup_panel: Control
 var controller_safety_panel: Control
 var controller_safety_label: Label
 var last_arm_button_press_ms := -1000000
@@ -1667,10 +1672,84 @@ func request_exit() -> void:
     if quit_on_exit:
         get_tree().quit()
 
+
+func default_flight_setup() -> Dictionary:
+    return {
+        "hardware_preset": DEFAULT_HARDWARE_PRESET,
+        "map_id": DEFAULT_FREE_FLIGHT_MAP_ID,
+        "mode": DEFAULT_FLIGHT_MODE,
+        "wind_preset": DEFAULT_WIND_PRESET,
+    }
+
+
+func apply_flight_setup(raw_setup: Dictionary) -> bool:
+    var candidate := default_flight_setup()
+    candidate.merge(flight_setup, true)
+    for key in raw_setup:
+        if not candidate.has(key):
+            return false
+    candidate.merge(raw_setup, true)
+    if String(candidate.get("hardware_preset", "")) != DEFAULT_HARDWARE_PRESET:
+        return false
+    if String(candidate.get("map_id", "")) != DEFAULT_FREE_FLIGHT_MAP_ID:
+        return false
+    if String(candidate.get("mode", "")) != DEFAULT_FLIGHT_MODE:
+        return false
+    var wind_preset := String(candidate.get("wind_preset", ""))
+    if not WIND_PRESETS.has(wind_preset):
+        return false
+    if native != null:
+        var hardware_config := HardwareConfig.new()
+        if not hardware_config.apply_to_runtime(self, String(candidate.hardware_preset)):
+            last_error_message = hardware_config.last_error
+            return false
+    flight_setup = candidate
+    flight_mode = String(candidate.mode)
+    select_map(String(candidate.map_id), wind_preset)
+    return true
+
+
+func open_flight_setup(focus: String) -> void:
+    if focus not in ["drone", "map"]:
+        return
+    flight_setup_focus = focus
+    if flight_setup.is_empty():
+        flight_setup = default_flight_setup()
+    screen = "flight_setup"
+    if flight_setup_panel == null and main_menu_layer != null:
+        _build_flight_setup_panel()
+    _refresh_flight_hud()
+    var focus_button := get_node_or_null("MainMenu/FlightSetupPanel/Rows/%s" % focus) as Button
+    if focus_button != null and is_inside_tree():
+        focus_button.grab_focus()
+
+
+func _set_flight_setup_wind(preset: String) -> void:
+    if not WIND_PRESETS.has(preset):
+        return
+    if flight_setup.is_empty():
+        flight_setup = default_flight_setup()
+    flight_setup["wind_preset"] = preset
+    _refresh_flight_setup_panel()
+
+
+func _fly_from_flight_setup() -> void:
+    if not apply_flight_setup(flight_setup):
+        last_error_message = "Flight Setup contains an unsupported selection"
+        screen = "error"
+        _refresh_flight_hud()
+        return
+    enter_preflight()
+
+
 func quick_fly() -> void:
     if not can_start_quick_fly():
         if screen != "license_blocked":
             _show_license_blocked("Quick Fly unavailable: license %s" % String(get_license_snapshot().get("status", "invalid_token")))
+        return
+    if not apply_flight_setup(default_flight_setup()):
+        screen = "error"
+        _refresh_flight_hud()
         return
     var device_id := _first_connected_device()
     var current_profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)
@@ -1753,7 +1832,8 @@ func accept_fallback() -> void:
     _refresh_flight_hud()
 
 func enter_preflight() -> void:
-    if not load_map(DEFAULT_FREE_FLIGHT_MAP_ID):
+    var map_id := String(flight_setup.get("map_id", DEFAULT_FREE_FLIGHT_MAP_ID))
+    if not load_map(map_id):
         screen = "error"
         _refresh_flight_hud()
         return
@@ -2315,8 +2395,10 @@ func _build_main_menu() -> void:
         entries.add_child(button)
         if entry == "Quick Fly":
             button.pressed.connect(quick_fly)
+        elif entry == "Drone":
+            button.pressed.connect(open_flight_setup.bind("drone"))
         elif entry == "Map":
-            button.pressed.connect(open_map_menu)
+            button.pressed.connect(open_flight_setup.bind("map"))
         elif entry == "Controller":
             button.pressed.connect(begin_controller_confirmation)
         elif entry == "Settings":
@@ -2325,9 +2407,85 @@ func _build_main_menu() -> void:
     _build_controller_settings_panel()
     _build_rates_panel()
     _build_graphics_panel()
+    _build_flight_setup_panel()
     var initial_button := entries.get_child(0) as Button
     if initial_button != null and is_inside_tree():
         initial_button.grab_focus()
+
+
+func _build_flight_setup_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "FlightSetupPanel"
+    panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    panel.offset_left = 20.0
+    panel.offset_top = 20.0
+    panel.offset_right = 460.0
+    panel.offset_bottom = 360.0
+    flight_setup_panel = panel
+    main_menu_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+
+    var title := Label.new()
+    title.text = "FLIGHT SETUP"
+    rows.add_child(title)
+
+    var drone_button := Button.new()
+    drone_button.name = "Drone"
+    drone_button.text = "DRONE: 5-INCH 6S"
+    rows.add_child(drone_button)
+
+    var map_button := Button.new()
+    map_button.name = "Map"
+    map_button.text = "MAP: Industrial Test Range"
+    rows.add_child(map_button)
+
+    var mode_label := Label.new()
+    mode_label.name = "Mode"
+    rows.add_child(mode_label)
+
+    var wind_title := Label.new()
+    wind_title.text = "WIND PRESET"
+    rows.add_child(wind_title)
+    var wind_presets := HBoxContainer.new()
+    wind_presets.name = "WindPresets"
+    rows.add_child(wind_presets)
+    for preset in WIND_PRESETS:
+        var wind_button := Button.new()
+        wind_button.name = preset.capitalize()
+        wind_button.text = preset.capitalize()
+        wind_button.pressed.connect(_set_flight_setup_wind.bind(preset))
+        wind_presets.add_child(wind_button)
+
+    var fly_button := Button.new()
+    fly_button.name = "Fly"
+    fly_button.text = "FLY"
+    fly_button.pressed.connect(_fly_from_flight_setup)
+    rows.add_child(fly_button)
+
+    var back_button := Button.new()
+    back_button.name = "Back"
+    back_button.text = "BACK"
+    back_button.pressed.connect(show_main_menu)
+    rows.add_child(back_button)
+    _refresh_flight_setup_panel()
+
+
+func _refresh_flight_setup_panel() -> void:
+    if flight_setup_panel == null:
+        return
+    if flight_setup.is_empty():
+        flight_setup = default_flight_setup()
+    var mode_label := get_node_or_null("MainMenu/FlightSetupPanel/Rows/Mode") as Label
+    if mode_label != null:
+        mode_label.text = "MODE: %s" % String(flight_setup.get("mode", DEFAULT_FLIGHT_MODE))
+    for preset in WIND_PRESETS:
+        var wind_button := get_node_or_null("MainMenu/FlightSetupPanel/Rows/WindPresets/%s" % preset.capitalize()) as Button
+        if wind_button != null:
+            wind_button.button_pressed = String(flight_setup.get("wind_preset", DEFAULT_WIND_PRESET)) == preset
 
 func _build_settings_panel() -> void:
     var panel := PanelContainer.new()
@@ -3129,9 +3287,11 @@ func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
         return
     if main_menu_layer != null:
-        main_menu_layer.visible = screen in ["main_menu", "settings", "controller_settings", "rates", "graphics"]
+        main_menu_layer.visible = screen in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
     if main_menu_entries_container != null:
         main_menu_entries_container.visible = screen == "main_menu"
+    if flight_setup_panel != null:
+        flight_setup_panel.visible = screen == "flight_setup"
     if settings_panel != null:
         settings_panel.visible = screen == "settings"
     if settings_status_label != null:
@@ -3143,7 +3303,7 @@ func _refresh_flight_hud() -> void:
     if graphics_panel != null:
         graphics_panel.visible = screen == "graphics"
     if flight_hud_layer != null:
-        flight_hud_layer.visible = screen not in ["main_menu", "settings", "controller_settings", "rates", "graphics"]
+        flight_hud_layer.visible = screen not in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
     if pause_panel != null:
         pause_panel.visible = paused and screen == "flight"
     if controller_safety_panel != null:
