@@ -158,8 +158,7 @@ func _run() -> void:
 		_expect(absf(runtime.get_viewport().scaling_3d_scale - 0.75) <= 0.000001, "Graphics slider previews the viewport scale")
 		apply_button.pressed.emit()
 		await _settle(2)
-		var persisted_quality: Dictionary = runtime.settings_store.load_document().document.quality
-		_expect(absf(float(persisted_quality.get("render_scale", 0.0)) - 0.75) <= 0.000001, "Graphics Apply persists the render scale")
+		_expect_persisted_render_scale(runtime, 0.75, "Graphics Apply persists the render scale")
 		scale_slider.value = 0.50
 		await _settle(1)
 	if back_button != null:
@@ -590,6 +589,8 @@ func _send_ui_action(action: String, device: int) -> void:
 		Input.parse_input_event(event)
 
 func _navigate_graphics_with_ui_actions(runtime: Node, device: int) -> void:
+	runtime.show_main_menu()
+	await _settle(1)
 	var quick_fly := runtime.get_node_or_null("MainMenu/Entries/QuickFly") as Button
 	_expect(runtime.get_viewport().gui_get_focus_owner() == quick_fly, "UI action flow starts on Quick Fly")
 	for _step in range(5):
@@ -617,8 +618,7 @@ func _navigate_graphics_with_ui_actions(runtime: Node, device: int) -> void:
 	await _settle(1)
 	_send_ui_action("ui_accept", device)
 	await _settle(2)
-	var persisted_quality: Dictionary = runtime.settings_store.load_document().document.quality
-	_expect(absf(float(persisted_quality.get("render_scale", 0.0)) - 0.75) <= 0.000001, "UI actions Apply Graphics")
+	_expect_persisted_render_scale(runtime, 0.75, "UI actions Apply Graphics")
 	for _step in range(2):
 		_send_ui_action("ui_down", device)
 		await _settle(1)
@@ -666,6 +666,12 @@ func _inject_joy_button(device_id: int, button: JoyButton, pressed: bool) -> voi
 	event.button_index = button
 	event.pressed = pressed
 	Input.parse_input_event(event)
+
+func _expect_persisted_render_scale(runtime: Node, expected_scale: float, message: String) -> void:
+	var persisted: Dictionary = runtime.settings_store.load_document()
+	var quality: Variant = persisted.document.get("quality") if persisted.ok else null
+	var persisted_quality: Dictionary = quality if quality is Dictionary else {}
+	_expect(persisted.ok and quality is Dictionary and absf(float(persisted_quality.get("render_scale", 0.0)) - expected_scale) <= 0.000001, message)
 
 func _expect(condition: bool, message: String) -> void:
 	if not condition:
