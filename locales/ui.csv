@@ -32,6 +32,7 @@ ui.settings.controller,CONTROLLER,控制器
 ui.settings.rates,RATES,速率
 ui.settings.graphics,GRAPHICS,圖形
 ui.settings.factory_reset,FACTORY RESET SETTINGS,將設定恢復原廠
+ui.settings.ready,Settings ready,設定就緒
 ui.rates.title,BETAFLIGHT RATES,BETAFLIGHT 速率
 ui.rates.disclaimer,SIM PROFILE: RC Rate / Super Rate / Expo affect ACRO mode only.,模擬設定檔：RC Rate／Super Rate／Expo 僅影響 ACRO 模式。
 ui.rates.curve_preview,RATE CURVE PREVIEW (degrees/second),速率曲線預覽（度／秒）
@@ -67,6 +68,22 @@ ui.license.blocked,LICENSE BLOCKED: %s,授權遭封鎖：%s
 ui.license.blocked_button,LICENSE BLOCKED,授權遭封鎖
 ui.hud.acro,ACRO MODE (C): %s,ACRO 模式（C）：%s
 ui.hud.time_trial,TIME TRIAL | %s | %0.2f s,計時挑戰｜%s｜%0.2f 秒
+ui.hud.on,ON,開啟
+ui.hud.off,OFF,關閉
+ui.hud.time_trial_finished,FINISHED,完成
+ui.hud.time_trial_next,NEXT %d/%d,下一個 %d/%d
+ui.hud.armed,ARMED,已解鎖
+ui.hud.disarmed,DISARMED,未解鎖
+ui.hud.paused,PAUSED,已暫停
+ui.hud.takeoff,TAKEOFF,起飛
+ui.hud.low,LOW,低
+ui.hud.high,HIGH,高
+ui.hud.pressed,PRESSED,按下
+ui.hud.released,RELEASED,放開
+ui.hud.local,LOCAL,本機
+ui.hud.input_keyboard,Throttle LOW | KeyboardProfile,油門低｜鍵盤設定檔
+ui.hud.input_profile,Throttle %d%% %s | Arm %s | Mode %s,油門 %d%% %s｜解鎖 %s｜模式 %s
+ui.hud.px4,PX4 %s%s,PX4 %s%s
 ui.hud.preflight,%s | %s -> %s -> press T or ARM,%s｜%s → %s → 按 T 或 ARM
 ui.hud.flight,%s | %s | %s | %s,%s｜%s｜%s｜%s
 ui.hud.arm_takeoff,ARM / TAKEOFF (T),解鎖／起飛（T）
@@ -91,10 +108,29 @@ ui.controller.monitor_line,%s%s%s raw %+.3f | normalized %+.3f,%s%s%s 原始 %+.
 ui.controller.throttle_state, | %s,｜%s
 ui.controller.arm_state,ARM: %s | flight control: %s,ARM：%s｜飛行控制：%s
 ui.controller.mode_state,MODE: %s | flight mode: %s,模式：%s｜飛行模式：%s
+ui.controller.role.roll,roll,滾轉
+ui.controller.role.pitch,pitch,俯仰
+ui.controller.role.yaw,yaw,偏航
+ui.controller.role.throttle,throttle,油門
+ui.controller.reversed, (reversed),（反向）
+ui.controller.support_sdl,SDL mapped,SDL 對應
+ui.controller.support_unknown,unknown,未知
 ui.dashboard.title,OPERATIONS DASHBOARD,操作儀表板
 ui.dashboard.vehicle_tooltip,Select the vehicle shown by the operations dashboard,選擇操作儀表板顯示的載具
+ui.dashboard.live,LIVE,即時
+ui.dashboard.stale,STALE,過期
+ui.dashboard.disconnected,DISCONNECTED,未連線
+ui.dashboard.ready,READY,就緒
+ui.dashboard.armed,ON,開啟
+ui.dashboard.disarmed,OFF,關閉
+ui.dashboard.mode_angle,ANGLE,角度
+ui.dashboard.mode_acro,ACRO,特技
+ui.dashboard.mode_altitude_hold,ALTITUDE_HOLD,定高
+ui.dashboard.saturated_suffix, SAT, 飽和
+ui.dashboard.fresh,FRESH,最新
+ui.dashboard.not_fresh,NOT FRESH,非最新
 ui.dashboard.status,%s  UPDATE %.1f Hz  LATENCY %.0f ms,%s  更新 %.1f Hz  延遲 %.0f ms
-ui.dashboard.mode,%s  ARM %s  MODE %s,%s  ARM %s  模式 %s
+ui.dashboard.mode,%s  ARM %s  MODE %s,%s  解鎖 %s  模式 %s
 ui.dashboard.motor,%s  %.2f N  %.1f rad/s%s,%s  %.2f N  %.1f rad/s%s
 ui.dashboard.battery,BAT %.2f V  sag %.2f V,電池 %.2f V  壓降 %.2f V
 ui.dashboard.wind,WIND body %.2f %.2f %.2f m/s,機體風 %.2f %.2f %.2f m/s
@@ -105,6 +141,9 @@ ui.dashboard.timestamp,SAMPLE %d us,樣本 %d us
 ui.dashboard.environment,ENV r%d %s R%.2f F%.2f T%.1fh S%.1f/%.1f/%.1f,環境 r%d %s R%.2f F%.2f T%.1fh S%.1f/%.1f/%.1f
 ui.dashboard.empty,-,-
 ui.dashboard.none,none,無
+ui.dashboard.pitch,PITCH,俯仰
+ui.dashboard.yaw,YAW,偏航
+ui.dashboard.roll,ROLL,滾轉
 ui.map.north_spawn,NORTH SPAWN,北側起飛點
 ui.map.turn_90,TURN 90 DEG,轉彎 90 度
 ui.map.checkpoint_1,▼ CHECKPOINT 1,▼ 檢查點 1
@@ -112,3 +151,7 @@ ui.map.checkpoint_2,▼ CHECKPOINT 2,▼ 檢查點 2
 ui.map.checkpoint_3,→ CHECKPOINT 3,→ 檢查點 3
 ui.map.finish,★ FINISH ★,★ 終點 ★
 ui.fallback.unavailable,Input fallback unavailable,輸入備援無法使用
+ui.fallback.no_controller,No controller detected; KeyboardProfile fallback active (non-sim control),未偵測到控制器；鍵盤設定檔備援啟用（非模擬控制）
+ui.fallback.gamepad,GamepadProfile active (non-sim control),遊戲手把設定檔啟用（非模擬控制）
+ui.fallback.selected,KeyboardProfile fallback selected (non-sim control),已選擇鍵盤設定檔備援（非模擬控制）
+ui.error.unsupported_controller,Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control),不支援的控制器；XBOX 預設設定檔無法使用。鍵盤設定檔備援啟用（非模擬控制）

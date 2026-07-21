@@ -2420,9 +2420,37 @@ func _reset_airsim_flight_state() -> void:
         airsim_sensor_suite.configure(airsim_rpc_server.settings, _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name])
 
 func update_fallback_status() -> void:
-    last_profile_status = InputProfiles.fallback_status(gamepad_device_state.connected_joypads())
+    var connected_joypads := gamepad_device_state.connected_joypads()
+    last_profile_status = InputProfiles.fallback_status(connected_joypads)
     if fallback_status_label != null:
-        fallback_status_label.text = _format("ui.fallback.status", [last_profile_status, flight_mode])
+        var profile_key := "ui.fallback.no_controller" if connected_joypads.is_empty() else "ui.fallback.gamepad"
+        fallback_status_label.text = _format("ui.fallback.status", [_t(profile_key), _localized_flight_mode(flight_mode)])
+
+
+func _localize_fallback_message(message: String) -> String:
+    if message == InputProfiles.fallback_status([]):
+        return _t("ui.fallback.no_controller")
+    if message == InputProfiles.fallback_status([0]):
+        return _t("ui.fallback.gamepad")
+    if message == "KeyboardProfile fallback selected (non-sim control)":
+        return _t("ui.fallback.selected")
+    if message == "Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)":
+        return _t("ui.error.unsupported_controller")
+    return message
+
+
+func _localized_flight_mode(mode: String) -> String:
+    match mode:
+        "ANGLE":
+            return _t("ui.dashboard.mode_angle")
+        "ACRO":
+            return _t("ui.dashboard.mode_acro")
+        "ALTITUDE_HOLD":
+            return _t("ui.dashboard.mode_altitude_hold")
+        "", "-":
+            return _t("ui.dashboard.none")
+        _:
+            return mode
 
 func toggle_altitude_hold() -> void:
     if native == null or not takeoff_requested:
@@ -3555,6 +3583,7 @@ func _reset_drone_body() -> void:
 func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
         return
+    var visible_error_message := _localize_fallback_message(last_error_message)
     if main_menu_layer != null:
         main_menu_layer.visible = screen in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
     if main_menu_entries_container != null:
@@ -3564,7 +3593,7 @@ func _refresh_flight_hud() -> void:
     if settings_panel != null:
         settings_panel.visible = screen == "settings"
     if settings_status_label != null:
-        settings_status_label.text = last_error_message if not last_error_message.is_empty() else "Settings ready"
+        settings_status_label.text = visible_error_message if not last_error_message.is_empty() else _t("ui.settings.ready")
     if controller_settings_panel != null:
         controller_settings_panel.visible = screen == "controller_settings"
     if rates_panel != null:
@@ -3578,7 +3607,7 @@ func _refresh_flight_hud() -> void:
     if controller_safety_panel != null:
         controller_safety_panel.visible = controller_safety_latched
     if controller_safety_label != null:
-        controller_safety_label.text = last_error_message
+        controller_safety_label.text = visible_error_message
     if finish_panel != null:
         finish_panel.visible = screen == "finish"
     if license_panel != null:
@@ -3604,28 +3633,28 @@ func _refresh_flight_hud() -> void:
         lab_back_button.disabled = false
     if acro_mode_button != null:
         acro_mode_button.disabled = screen != "flight" or paused or controller_safety_latched
-        acro_mode_button.text = _format("ui.hud.acro", ["ON" if flight_mode == "ACRO" else "OFF"])
+        acro_mode_button.text = _format("ui.hud.acro", [_t("ui.hud.on") if flight_mode == "ACRO" else _t("ui.hud.off")])
     if time_trial_status_label != null:
         time_trial_status_label.visible = time_trial != null and screen in ["preflight", "flight", "finish"]
         if time_trial != null:
-            var trial_state := "FINISHED" if time_trial.finished else "NEXT %d/%d" % [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()]
+            var trial_state := _t("ui.hud.time_trial_finished") if time_trial.finished else _format("ui.hud.time_trial_next", [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()])
             time_trial_status_label.text = _format("ui.hud.time_trial", [trial_state, time_trial.elapsed_seconds])
     if screen == "preflight":
         var armed := _flight_control_armed()
-        arm_status_label.text = _format("ui.hud.preflight", [_px4_status_text(), _profile_input_status(), "ARMED" if armed else "DISARMED"])
+        arm_status_label.text = _format("ui.hud.preflight", [_px4_status_text(), _profile_input_status(), _localized_arm_state(armed)])
         arm_takeoff_button.text = _t("ui.hud.arm_takeoff")
     elif screen == "flight":
         var armed := _flight_control_armed()
-        arm_status_label.text = _format("ui.hud.flight", [_px4_status_text(), _profile_input_status(), "ARMED" if armed else "DISARMED", "PAUSED" if paused else "TAKEOFF"])
+        arm_status_label.text = _format("ui.hud.flight", [_px4_status_text(), _profile_input_status(), _localized_arm_state(armed), _t("ui.hud.paused") if paused else _t("ui.hud.takeoff")])
         arm_takeoff_button.text = _t("ui.hud.arm_takeoff")
     elif screen == "fallback_prompt":
-        arm_status_label.text = last_error_message
+        arm_status_label.text = visible_error_message
         arm_takeoff_button.text = _t("ui.controller.use_keyboard")
     elif screen == "controller_confirmation":
         arm_status_label.text = _t("ui.hud.confirm_controller")
         arm_takeoff_button.text = _t("ui.action.back_to_menu")
     elif screen == "error":
-        arm_status_label.text = last_error_message
+        arm_status_label.text = visible_error_message
         arm_takeoff_button.text = _t("ui.action.back_to_menu")
     elif screen == "exit":
         arm_status_label.text = _t("ui.hud.exit_requested")
@@ -3634,10 +3663,10 @@ func _refresh_flight_hud() -> void:
         arm_status_label.text = _t("ui.hud.time_trial_complete")
         arm_takeoff_button.text = _t("ui.action.retry")
     elif screen == "controller_disconnected":
-        arm_status_label.text = last_error_message
+        arm_status_label.text = visible_error_message
         arm_takeoff_button.text = _t("ui.hud.wait_controller")
     elif screen == "license_blocked":
-        arm_status_label.text = last_error_message
+        arm_status_label.text = visible_error_message
         arm_takeoff_button.text = _t("ui.license.blocked_button")
     else:
         arm_status_label.text = _t("ui.hud.quick_fly_hint")
@@ -3716,8 +3745,8 @@ func _refresh_controller_confirmation() -> void:
         var axis := int(controller_confirmation_profile.axis_for_role[role])
         var raw := Input.get_joy_axis(controller_confirmation_device_id, axis)
         var normalized := _normalize_gamepad_axis(raw, controller_confirmation_profile.deadzone)
-        mapping_lines.append(_format("ui.controller.mapping_line", [role, axis, " (reversed)" if controller_confirmation_profile.reversed_for_role[role] else ""]))
-        live_axis_lines.append(_format("ui.controller.live_axis_line", [role, raw, normalized]))
+        mapping_lines.append(_format("ui.controller.mapping_line", [_localized_controller_role(role), axis, _localized_reversed_suffix() if controller_confirmation_profile.reversed_for_role[role] else ""]))
+        live_axis_lines.append(_format("ui.controller.live_axis_line", [_localized_controller_role(role), raw, normalized]))
     confirmation_mapping_label.text = "\n".join(mapping_lines)
     confirmation_axes_label.text = "\n".join(live_axis_lines)
 
@@ -3729,16 +3758,16 @@ func _refresh_controller_settings() -> void:
     if device_id < 0:
         controller_settings_device_label.text = _t("ui.controller.device_none")
     else:
-        var support := "SDL mapped" if InputProfiles.GamepadProfile.is_supported_device(device_id, gamepad_device_state) else "unknown"
+        var support := _t("ui.controller.support_sdl") if InputProfiles.GamepadProfile.is_supported_device(device_id, gamepad_device_state) else _t("ui.controller.support_unknown")
         controller_settings_device_label.text = _format("ui.controller.device", [device_id, gamepad_device_state.joy_name(device_id), support])
     if not _has_active_gamepad_profile():
         controller_settings_mapping_label.text = _t("ui.controller.mapping_unavailable")
         controller_settings_monitor_label.text = "\n".join([
             _t("ui.controller.monitor_header"),
-            _format("ui.controller.channel_unavailable", ["roll", " ".repeat(10 - "roll:".length())]),
-            _format("ui.controller.channel_unavailable", ["pitch", " ".repeat(10 - "pitch:".length())]),
-            _format("ui.controller.channel_unavailable", ["yaw", " ".repeat(10 - "yaw:".length())]),
-            _format("ui.controller.channel_unavailable", ["throttle", " ".repeat(10 - "throttle:".length())]),
+            _format("ui.controller.channel_unavailable", [_localized_controller_role("roll"), " ".repeat(10 - "roll:".length())]),
+            _format("ui.controller.channel_unavailable", [_localized_controller_role("pitch"), " ".repeat(10 - "pitch:".length())]),
+            _format("ui.controller.channel_unavailable", [_localized_controller_role("yaw"), " ".repeat(10 - "yaw:".length())]),
+            _format("ui.controller.channel_unavailable", [_localized_controller_role("throttle"), " ".repeat(10 - "throttle:".length())]),
             _format("ui.controller.deadzone", [InputProfiles.GamepadProfile.RAW_AXIS_DEADZONE]),
             _t("ui.controller.arm_unavailable"),
             _t("ui.controller.mode_unavailable"),
@@ -3748,20 +3777,20 @@ func _refresh_controller_settings() -> void:
     var mapping_lines := [_t("ui.controller.mapping_header")]
     for role in ["roll", "pitch", "yaw", "throttle"]:
         var axis := int(profile.axis_for_role[role])
-        mapping_lines.append(_format("ui.controller.mapping_line", [role, axis, " (reversed)" if profile.reversed_for_role[role] else ""]))
+        mapping_lines.append(_format("ui.controller.mapping_line", [_localized_controller_role(role), axis, _localized_reversed_suffix() if profile.reversed_for_role[role] else ""]))
     controller_settings_mapping_label.text = "\n".join(mapping_lines)
     var monitor_lines := [_t("ui.controller.monitor_header")]
     for role in ["roll", "pitch", "yaw", "throttle"]:
         var raw := Input.get_joy_axis(session_gamepad_device_id, int(profile.axis_for_role[role]))
         var normalized := _profile_axis(role)
-        var role_label := "%s:" % role
+        var role_label := "%s:" % _localized_controller_role(role)
         var line: String = _format("ui.controller.monitor_line", [role_label, " ".repeat(10 - role_label.length()), _controller_monitor_bar(normalized), raw, normalized])
         if role == "throttle":
-            line += _format("ui.controller.throttle_state", ["LOW" if _profile_throttle_is_low() else "HIGH"])
+            line += _format("ui.controller.throttle_state", [_t("ui.hud.low") if _profile_throttle_is_low() else _t("ui.hud.high")])
         monitor_lines.append(line)
     monitor_lines.append(_format("ui.controller.deadzone", [profile.deadzone]))
-    monitor_lines.append(_format("ui.controller.arm_state", ["PRESSED" if profile.arm_pressed else "RELEASED", "ARMED" if _flight_control_armed() else "DISARMED"]))
-    monitor_lines.append(_format("ui.controller.mode_state", ["PRESSED" if profile.mode_pressed else "RELEASED", flight_mode]))
+    monitor_lines.append(_format("ui.controller.arm_state", [_localized_button_state(profile.arm_pressed), _localized_arm_state(_flight_control_armed())]))
+    monitor_lines.append(_format("ui.controller.mode_state", [_localized_button_state(profile.mode_pressed), _localized_flight_mode(flight_mode)]))
     controller_settings_monitor_label.text = "\n".join(monitor_lines)
 
 func _controller_monitor_bar(value: float) -> String:
@@ -3858,10 +3887,10 @@ func _angle_yaw_rate_degrees_per_second() -> float:
 
 func _profile_input_status() -> String:
     if not _has_active_gamepad_profile():
-        return "Throttle LOW | KeyboardProfile"
+        return _t("ui.hud.input_keyboard")
     var throttle := _flight_throttle()
     var is_low := _profile_throttle_is_low()
-    return "Throttle %d%% %s | Arm %s | Mode %s" % [roundi(throttle * 100.0), "LOW" if is_low else "HIGH", "PRESSED" if session_gamepad_profile.arm_pressed else "RELEASED", "PRESSED" if session_gamepad_profile.mode_pressed else "RELEASED"]
+    return _format("ui.hud.input_profile", [roundi(throttle * 100.0), _t("ui.hud.low") if is_low else _t("ui.hud.high"), _localized_button_state(session_gamepad_profile.arm_pressed), _localized_button_state(session_gamepad_profile.mode_pressed)])
 
 func _update_chase_camera() -> void:
     if chase_camera == null or drone_body == null:
@@ -3897,10 +3926,26 @@ func _flight_control_armed() -> bool:
 
 func _px4_status_text() -> String:
     if px4_sitl_bridge == null:
-        return "LOCAL"
+        return _t("ui.hud.local")
     var diagnostics: Dictionary = px4_sitl_bridge.diagnostics()
     var message := String(diagnostics.get("message", ""))
-    return "PX4 %s%s" % [px4_sitl_bridge.state.to_upper(), " (%s)" % message if not message.is_empty() else ""]
+    return _format("ui.hud.px4", [px4_sitl_bridge.state.to_upper(), " (%s)" % message if not message.is_empty() else ""])
+
+
+func _localized_arm_state(armed: bool) -> String:
+    return _t("ui.hud.armed") if armed else _t("ui.hud.disarmed")
+
+
+func _localized_button_state(pressed: bool) -> String:
+    return _t("ui.hud.pressed") if pressed else _t("ui.hud.released")
+
+
+func _localized_controller_role(role: String) -> String:
+    return _t("ui.controller.role.%s" % role)
+
+
+func _localized_reversed_suffix() -> String:
+    return _t("ui.controller.reversed")
 
 func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3) -> float:
     return 0.5 * _mass_kg() * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()

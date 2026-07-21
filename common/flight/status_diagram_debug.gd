@@ -20,6 +20,7 @@ var _last_publish_counts: Dictionary = {}
 var _last_publish_received_us: Dictionary = {}
 var _labels := {}
 var _heading: Label
+var _environment_snapshot: Dictionary = {}
 
 func _ready() -> void:
     layer = 20
@@ -80,6 +81,8 @@ func set_locale(locale: String) -> void:
         _vehicle_selector.tooltip_text = _t("ui.dashboard.vehicle_tooltip")
     if not debug_values.is_empty():
         update_from_snapshot(debug_values, _now_timestamp_us)
+    if not _environment_snapshot.is_empty():
+        update_environment(_environment_snapshot)
 
 
 func _t(key: String) -> String:
@@ -222,19 +225,23 @@ func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> v
     })
 
     _labels.status.text = _format("ui.dashboard.status", [
-        connection_state.to_upper(),
+        _localized_connection_state(connection_state),
         float(debug_values.update_rate_hz),
         float(debug_values.latency_ms),
     ])
     _labels.status.add_theme_color_override("font_color", _status_color(connection_state))
-    _labels.mode.text = _format("ui.dashboard.mode", [debug_values.vehicle_name, "ON" if debug_values.armed else "OFF", debug_values.mode])
+    _labels.mode.text = _format("ui.dashboard.mode", [
+        debug_values.vehicle_name,
+        _t("ui.dashboard.armed" if debug_values.armed else "ui.dashboard.disarmed"),
+        _localized_flight_mode(String(debug_values.mode)),
+    ])
     for index in range(min(motors.size(), MOTOR_KEYS.size())):
         var motor: Dictionary = motors[index]
         _labels[MOTOR_KEYS[index]].text = _format("ui.dashboard.motor", [
             MOTOR_KEYS[index],
             float(motor.get("thrust_newtons", 0.0)),
             float(motor.get("speed_rad_s", 0.0)),
-            " SAT" if bool(motor.get("saturated", false)) else ""
+            _t("ui.dashboard.saturated_suffix") if bool(motor.get("saturated", false)) else ""
         ])
     _labels.battery.text = _format("ui.dashboard.battery", [
         float(battery.get("voltage_v", 0.0)),
@@ -248,7 +255,7 @@ func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> v
     ])
     _labels.latency.text = _format("ui.dashboard.latency", [
         float(debug_values.latency_ms),
-        "FRESH" if connection_state == "live" else "NOT FRESH",
+        _t("ui.dashboard.fresh" if connection_state == "live" else "ui.dashboard.not_fresh"),
     ])
     _labels.timestamp.text = _format("ui.dashboard.timestamp", [timestamp_us])
 
@@ -301,10 +308,11 @@ func _apply_layout() -> void:
 func update_environment(snapshot: Dictionary) -> void:
     if snapshot.is_empty() or not _labels.has("environment"):
         return
+    _environment_snapshot = snapshot.duplicate(true)
     var sun_position: Vector3 = snapshot.get("sun_position", Vector3(0.0, 1.0, 0.0))
     _labels.environment.text = _format("ui.dashboard.environment", [
         int(snapshot.get("revision", 0)),
-        "LIVE" if bool(snapshot.get("weather_enabled", false)) else "READY",
+        _t("ui.dashboard.live" if bool(snapshot.get("weather_enabled", false)) else "ui.dashboard.ready"),
         float(snapshot.get("rain", 0.0)),
         float(snapshot.get("fog", 0.0)),
         float(snapshot.get("time_of_day", 12.0)),
@@ -321,7 +329,11 @@ func _add_label(parent: VBoxContainer, key: String) -> void:
     _labels[key] = label
 
 func _pid_saturation_text(pid: Array) -> String:
-    var names := ["PITCH", "YAW", "ROLL"]
+    var names := [
+        _t("ui.dashboard.pitch"),
+        _t("ui.dashboard.yaw"),
+        _t("ui.dashboard.roll"),
+    ]
     var saturated := []
     for index in range(min(pid.size(), names.size())):
         var axis: Dictionary = pid[index]
@@ -333,3 +345,27 @@ func _pid_saturation_text(pid: Array) -> String:
     for index in range(1, saturated.size()):
         text += ",%s" % saturated[index]
     return text
+
+
+func _localized_connection_state(connection_state: String) -> String:
+    match connection_state:
+        "live":
+            return _t("ui.dashboard.live")
+        "stale":
+            return _t("ui.dashboard.stale")
+        _:
+            return _t("ui.dashboard.disconnected")
+
+
+func _localized_flight_mode(mode: String) -> String:
+    match mode:
+        "ANGLE":
+            return _t("ui.dashboard.mode_angle")
+        "ACRO":
+            return _t("ui.dashboard.mode_acro")
+        "ALTITUDE_HOLD":
+            return _t("ui.dashboard.mode_altitude_hold")
+        "", "-":
+            return _t("ui.dashboard.none")
+        _:
+            return mode

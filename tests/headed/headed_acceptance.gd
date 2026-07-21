@@ -666,6 +666,9 @@ func _audit_localization(runtime: Node) -> void:
 	var language_selector: OptionButton = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Language")
 	_expect(settings_title != null and settings_title.text == "設定", "Traditional Chinese localizes Settings immediately")
 	_expect(language_selector != null and language_selector.get_item_text(1) == "繁體中文", "Language selector localizes its own options")
+	var settings_status: Label = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Status")
+	_expect(settings_status != null and settings_status.text.contains("不支援"), "Traditional Chinese localizes the visible controller diagnostic")
+	_expect(settings_status == null or not settings_status.text.contains("Unsupported controller"), "Traditional Chinese removes the visible English controller diagnostic")
 	_expect(runtime.load_map("industrial_yard"), "Traditional Chinese can load the Industrial Yard")
 	await _settle(2)
 	var north_spawn_label: Label3D = runtime.loaded_map.get_node_or_null("SpawnNorth/DirectionLabel") if runtime.loaded_map != null else null
