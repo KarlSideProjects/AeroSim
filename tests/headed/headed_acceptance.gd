@@ -221,8 +221,6 @@ func _run() -> void:
 		_click(settings_controller_button)
 	await _settle(2)
 	_expect(runtime.screen == "controller_settings", "Settings Controller entry opens Controller settings")
-	runtime.session_gamepad_profile = null
-	runtime.session_gamepad_device_id = -1
 	var controller_settings: Control = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel")
 	var device_label: Label = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/CurrentDevice")
 	var reset_button: Button = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/ResetXboxDefault")
@@ -230,7 +228,7 @@ func _run() -> void:
 	_expect(device_label != null and device_label.text.contains(str(known_device_id)), "Controller settings shows the current device")
 	_expect(reset_button != null and reset_button.text == "RESET TO XBOX DEFAULT", "Controller settings exposes Xbox reset")
 	if reset_button != null:
-		reset_button.pressed.emit()
+		_click(reset_button)
 	await _settle(2)
 	_expect(runtime.screen == "controller_confirmation", "Xbox reset requires confirmation before changing the session profile")
 	var reset_confirmation: Button = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile")
@@ -589,6 +587,11 @@ func _send_ui_action(action: String, device: int) -> void:
 		Input.parse_input_event(event)
 
 func _navigate_graphics_with_ui_actions(runtime: Node, device: int) -> void:
+	var reset_result: Dictionary = runtime.settings_store.factory_reset()
+	_expect(reset_result.ok, "UI action flow resets SettingsStore")
+	runtime.render_scale = 1.0
+	runtime.graphics_committed_scale = 1.0
+	runtime.get_viewport().scaling_3d_scale = 1.0
 	runtime.show_main_menu()
 	await _settle(1)
 	var quick_fly := runtime.get_node_or_null("MainMenu/Entries/QuickFly") as Button
