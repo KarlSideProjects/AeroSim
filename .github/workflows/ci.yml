@@ -131,6 +131,9 @@ jobs:
       - name: Hardcoded airframe constant scan
         run: scripts/check_hardcoded_airframe_constants.sh
 
+      - name: UI localization catalog and sink scan
+        run: python3 scripts/check_ui_localization.py
+
       - name: Shared Industrial Yard asset check
         run: |
           scripts/test_shared_map_assets.sh

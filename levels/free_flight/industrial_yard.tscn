@@ -108,7 +108,7 @@ shape = SubResource("ShapePlatform")
 position = Vector3(0, 0.6, -24)
 
 [node name="DirectionLabel" type="Label3D" parent="SpawnNorth"]
-text = "NORTH SPAWN"
+text = "ui.map.north_spawn"
 outline_size = 4
 font_size = 64
 
@@ -182,7 +182,7 @@ shape = SubResource("ShapeTurn")
 
 [node name="DirectionLabel" type="Label3D" parent="TurnMarker"]
 position = Vector3(0, 1.0, 0)
-text = "TURN 90 DEG"
+text = "ui.map.turn_90"
 outline_size = 4
 font_size = 48
 
@@ -204,7 +204,7 @@ position = Vector3(0, 1.2, -14)
 
 [node name="DirectionArrow" type="Label3D" parent="TimeTrial/Checkpoint01"]
 position = Vector3(0, 1.2, 0)
-text = "▼ CHECKPOINT 1"
+text = "ui.map.checkpoint_1"
 outline_size = 6
 font_size = 52
 
@@ -213,7 +213,7 @@ position = Vector3(0, 1.2, 0)
 
 [node name="DirectionArrow" type="Label3D" parent="TimeTrial/Checkpoint02"]
 position = Vector3(0, 1.2, 0)
-text = "▼ CHECKPOINT 2"
+text = "ui.map.checkpoint_2"
 outline_size = 6
 font_size = 52
 
@@ -222,7 +222,7 @@ position = Vector3(6, 1.2, 9)
 
 [node name="DirectionArrow" type="Label3D" parent="TimeTrial/Checkpoint03"]
 position = Vector3(0, 1.2, 0)
-text = "→ CHECKPOINT 3"
+text = "ui.map.checkpoint_3"
 outline_size = 6
 font_size = 52
 
@@ -231,6 +231,6 @@ position = Vector3(8, 3, 18)
 
 [node name="FinishLabel" type="Label3D" parent="TimeTrial/Finish"]
 position = Vector3(0, 1.5, 0)
-text = "★ FINISH ★"
+text = "ui.map.finish"
 outline_size = 8
 font_size = 64

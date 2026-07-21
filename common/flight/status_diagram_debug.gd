@@ -1,5 +1,7 @@
 extends CanvasLayer
 
+const Localization = preload("res://common/flight/localization.gd")
+
 signal vehicle_selected(vehicle_name: String)
 
 const MOTOR_KEYS := ["M1", "M2", "M3", "M4"]
@@ -17,6 +19,7 @@ var _now_timestamp_us := -1
 var _last_publish_counts: Dictionary = {}
 var _last_publish_received_us: Dictionary = {}
 var _labels := {}
+var _heading: Label
 
 func _ready() -> void:
     layer = 20
@@ -44,13 +47,14 @@ func _ready() -> void:
     panel.add_child(rows)
 
     var heading := Label.new()
-    heading.text = "OPERATIONS DASHBOARD"
+    _heading = heading
+    heading.text = _t("ui.dashboard.title")
     heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     rows.add_child(heading)
 
     _vehicle_selector = OptionButton.new()
     _vehicle_selector.name = "VehicleSelector"
-    _vehicle_selector.tooltip_text = "Select the vehicle shown by the operations dashboard"
+    _vehicle_selector.tooltip_text = _t("ui.dashboard.vehicle_tooltip")
     _vehicle_selector.item_selected.connect(_on_vehicle_selector_item_selected)
     rows.add_child(_vehicle_selector)
     _add_label(rows, "status")
@@ -65,6 +69,25 @@ func _ready() -> void:
     _add_label(rows, "latency")
     _add_label(rows, "timestamp")
     _apply_layout()
+
+
+func set_locale(locale: String) -> void:
+    if not Localization.set_locale(locale):
+        return
+    if _heading != null:
+        _heading.text = _t("ui.dashboard.title")
+    if _vehicle_selector != null:
+        _vehicle_selector.tooltip_text = _t("ui.dashboard.vehicle_tooltip")
+    if not debug_values.is_empty():
+        update_from_snapshot(debug_values, _now_timestamp_us)
+
+
+func _t(key: String) -> String:
+    return Localization.translate(key)
+
+
+func _format(key: String, values: Array) -> String:
+    return Localization.format(key, values)
 
 
 func set_layout_mode(mode: String) -> bool:
@@ -198,36 +221,36 @@ func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> v
         "update_rate_hz": float(snapshot.get("snapshot_hz", 0.0)),
     })
 
-    _labels.status.text = "%s  UPDATE %.1f Hz  LATENCY %.0f ms" % [
+    _labels.status.text = _format("ui.dashboard.status", [
         connection_state.to_upper(),
         float(debug_values.update_rate_hz),
         float(debug_values.latency_ms),
-    ]
+    ])
     _labels.status.add_theme_color_override("font_color", _status_color(connection_state))
-    _labels.mode.text = "%s  ARM %s  MODE %s" % [debug_values.vehicle_name, "ON" if debug_values.armed else "OFF", debug_values.mode]
+    _labels.mode.text = _format("ui.dashboard.mode", [debug_values.vehicle_name, "ON" if debug_values.armed else "OFF", debug_values.mode])
     for index in range(min(motors.size(), MOTOR_KEYS.size())):
         var motor: Dictionary = motors[index]
-        _labels[MOTOR_KEYS[index]].text = "%s  %.2f N  %.1f rad/s%s" % [
+        _labels[MOTOR_KEYS[index]].text = _format("ui.dashboard.motor", [
             MOTOR_KEYS[index],
             float(motor.get("thrust_newtons", 0.0)),
             float(motor.get("speed_rad_s", 0.0)),
             " SAT" if bool(motor.get("saturated", false)) else ""
-        ]
-    _labels.battery.text = "BAT %.2f V  sag %.2f V" % [
+        ])
+    _labels.battery.text = _format("ui.dashboard.battery", [
         float(battery.get("voltage_v", 0.0)),
         float(battery.get("sag_v", 0.0))
-    ]
-    _labels.wind.text = "WIND body %.2f %.2f %.2f m/s" % [wind_body.x, wind_body.y, wind_body.z]
-    _labels.pid.text = "PID sat %s" % _pid_saturation_text(pid)
-    _labels.rate.text = "UPDATE RATE %.1f Hz  PUBLISH #%d" % [
+    ])
+    _labels.wind.text = _format("ui.dashboard.wind", [wind_body.x, wind_body.y, wind_body.z])
+    _labels.pid.text = _format("ui.dashboard.pid", [_pid_saturation_text(pid)])
+    _labels.rate.text = _format("ui.dashboard.rate", [
         float(debug_values.update_rate_hz),
         int(debug_values.publish_count),
-    ]
-    _labels.latency.text = "LATENCY %.0f ms  %s" % [
+    ])
+    _labels.latency.text = _format("ui.dashboard.latency", [
         float(debug_values.latency_ms),
         "FRESH" if connection_state == "live" else "NOT FRESH",
-    ]
-    _labels.timestamp.text = "SAMPLE %d us" % timestamp_us
+    ])
+    _labels.timestamp.text = _format("ui.dashboard.timestamp", [timestamp_us])
 
 
 func _set_disconnected(vehicle_name: String) -> void:
@@ -279,7 +302,7 @@ func update_environment(snapshot: Dictionary) -> void:
     if snapshot.is_empty() or not _labels.has("environment"):
         return
     var sun_position: Vector3 = snapshot.get("sun_position", Vector3(0.0, 1.0, 0.0))
-    _labels.environment.text = "ENV r%d %s R%.2f F%.2f T%.1fh S%.1f/%.1f/%.1f" % [
+    _labels.environment.text = _format("ui.dashboard.environment", [
         int(snapshot.get("revision", 0)),
         "LIVE" if bool(snapshot.get("weather_enabled", false)) else "READY",
         float(snapshot.get("rain", 0.0)),
@@ -288,12 +311,12 @@ func update_environment(snapshot: Dictionary) -> void:
         sun_position.x,
         sun_position.y,
         sun_position.z,
-    ]
+    ])
 
 func _add_label(parent: VBoxContainer, key: String) -> void:
     var label := Label.new()
     label.custom_minimum_size = Vector2(288.0, 20.0)
-    label.text = "-"
+    label.text = _t("ui.dashboard.empty")
     parent.add_child(label)
     _labels[key] = label
 
@@ -305,7 +328,7 @@ func _pid_saturation_text(pid: Array) -> String:
         if bool(axis.get("saturated", false)):
             saturated.append(names[index])
     if saturated.is_empty():
-        return "none"
+        return _t("ui.dashboard.none")
     var text := str(saturated[0])
     for index in range(1, saturated.size()):
         text += ",%s" % saturated[index]

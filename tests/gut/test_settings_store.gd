@@ -3,6 +3,7 @@ extends GutTest
 const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
+const LanguageProfile = preload("res://common/flight/language_profile.gd")
 
 var test_path := "user://aerosim-settings-store-test.json"
 
@@ -100,6 +101,33 @@ func test_settings_store_validates_the_versioned_quality_slot() -> void:
     var missing_result: Dictionary = store.validate_document(missing)
     assert_false(missing_result.ok)
     assert_string_contains(missing_result.error, "quality")
+
+
+func test_settings_store_validates_the_versioned_language_slot() -> void:
+    var store = SettingsStoreScript.new("user://aerosim-test-settings.json")
+    var valid := store.default_document()
+    valid["language"] = LanguageProfile.default_profile()
+    var accepted: Dictionary = store.validate_document(valid)
+    assert_true(accepted.ok, accepted.error)
+
+    var invalid := store.default_document()
+    invalid["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "fr"}
+    var rejected: Dictionary = store.validate_document(invalid)
+    assert_false(rejected.ok)
+    assert_string_contains(rejected.error, "locale")
+
+
+func test_settings_store_round_trips_a_versioned_language_profile() -> void:
+    var store = SettingsStoreScript.new(test_path)
+    var document := store.default_document()
+    document["language"] = LanguageProfile.default_profile()
+
+    var saved: Dictionary = store.save_document(document)
+    var loaded: Dictionary = store.load_document()
+
+    assert_true(saved.ok, saved.error)
+    assert_true(loaded.ok, loaded.error)
+    assert_eq(loaded.document["language"], LanguageProfile.default_profile())
 
 
 func test_settings_store_rejects_nonintegral_json_schema_version() -> void:

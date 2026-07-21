@@ -1,0 +1,114 @@
+keys,en,zh_TW
+ui.settings,SETTINGS,設定
+ui.render_scale,RENDER SCALE: %d%%,渲染比例：%d%%
+ui.menu.quick_fly,Quick Fly,快速飛行
+ui.menu.lab_mode,Lab Mode,實驗室模式
+ui.menu.controller,Controller,控制器
+ui.menu.drone,Drone,無人機
+ui.menu.map,Map,地圖
+ui.menu.settings,Settings,設定
+ui.menu.quit,Quit,離開
+ui.language,LANGUAGE,語言
+ui.language.english,English,English
+ui.language.traditional_chinese,繁體中文,繁體中文
+ui.flight_setup.title,FLIGHT SETUP,飛行設定
+ui.flight_setup.drone,DRONE: 5-INCH 6S,無人機：5 吋 6S
+ui.flight_setup.map,MAP: Industrial Test Range,地圖：工業測試場
+ui.flight_setup.wind_preset,WIND PRESET,風場預設
+ui.flight_setup.mode,MODE: %s,模式：%s
+ui.wind.calm,Calm,平靜
+ui.wind.light,Light,微風
+ui.wind.moderate,Moderate,中風
+ui.wind.severe,Severe,強風
+ui.action.fly,FLY,起飛
+ui.action.back,BACK,返回
+ui.action.apply,APPLY,套用
+ui.action.reset_defaults,RESET DEFAULTS,重設預設值
+ui.action.retry,RETRY,重試
+ui.action.exit,EXIT,離開
+ui.action.change_map,CHANGE MAP,變更地圖
+ui.action.back_to_menu,BACK TO MENU,返回主選單
+ui.settings.controller,CONTROLLER,控制器
+ui.settings.rates,RATES,速率
+ui.settings.graphics,GRAPHICS,圖形
+ui.settings.factory_reset,FACTORY RESET SETTINGS,將設定恢復原廠
+ui.rates.title,BETAFLIGHT RATES,BETAFLIGHT 速率
+ui.rates.disclaimer,SIM PROFILE: RC Rate / Super Rate / Expo affect ACRO mode only.,模擬設定檔：RC Rate／Super Rate／Expo 僅影響 ACRO 模式。
+ui.rates.curve_preview,RATE CURVE PREVIEW (degrees/second),速率曲線預覽（度／秒）
+ui.rates.json_title,JSON EXPORT / IMPORT,JSON 匯出／匯入
+ui.rates.export,EXPORT JSON,匯出 JSON
+ui.rates.import,IMPORT & APPLY JSON,匯入並套用 JSON
+ui.controller.reset_xbox,RESET TO XBOX DEFAULT,重設為 XBOX 預設值
+ui.controller.confirm_title,CONFIRM XBOX DEFAULT PROFILE,確認 XBOX 預設設定檔
+ui.controller.use_xbox,USE XBOX DEFAULT PROFILE,使用 XBOX 預設設定檔
+ui.controller.use_keyboard,USE KEYBOARD FALLBACK,使用鍵盤備援
+ui.license.required,LICENSE REQUIRED,需要授權
+ui.license.key_placeholder,Enter license key,輸入授權金鑰
+ui.license.activate,ACTIVATE LICENSE,啟用授權
+ui.license.diagnostics,DIAGNOSTICS,診斷資訊
+ui.pause.title,PAUSED,已暫停
+ui.pause.resume,RESUME,繼續
+ui.hints,T Arm/Takeoff   P Pause   R Reset   C ACRO   H Alt Hold   Esc Exit,T 起飛   P 暫停   R 重設   C ACRO   H 高度保持   Esc 離開
+ui.finish.title,FINISH,完成
+ui.finish.summary,FINISH - Time %0.2f s,完成－時間 %0.2f 秒
+ui.fallback.status,%s | Mode: %s,%s｜模式：%s
+ui.rates.save_failed,Rates save failed: %s,儲存速率失敗：%s
+ui.rates.saved,Saved rates profile,已儲存速率設定檔
+ui.rates.exported,Exported current rates JSON to the editor,已將目前速率 JSON 匯出至編輯器
+ui.rates.import_rejected,Import rejected: %s,匯入拒絕：%s
+ui.rates.import_save_failed,Import save failed: %s,匯入儲存失敗：%s
+ui.rates.imported,Imported and applied rates profile,已匯入並套用速率設定檔
+ui.rates.reset_failed,Rates reset failed: %s,重設速率失敗：%s
+ui.rates.reset,Rates reset to defaults,速率已重設為預設值
+ui.rates.diff_invalid,BETAFLIGHT DIFF: invalid JSON (%s),BETAFLIGHT 差異：JSON 無效（%s）
+ui.rates.diff_none,CURRENT vs BETAFLIGHT IMPORTED: no changes,目前與 BETAFLIGHT 匯入值：沒有變更
+ui.rates.value,%s: %.2f,%s：%.2f
+ui.license.blocked,LICENSE BLOCKED: %s,授權遭封鎖：%s
+ui.license.blocked_button,LICENSE BLOCKED,授權遭封鎖
+ui.hud.acro,ACRO MODE (C): %s,ACRO 模式（C）：%s
+ui.hud.time_trial,TIME TRIAL | %s | %0.2f s,計時挑戰｜%s｜%0.2f 秒
+ui.hud.preflight,%s | %s -> %s -> press T or ARM,%s｜%s → %s → 按 T 或 ARM
+ui.hud.flight,%s | %s | %s | %s,%s｜%s｜%s｜%s
+ui.hud.arm_takeoff,ARM / TAKEOFF (T),解鎖／起飛（T）
+ui.hud.confirm_controller,Confirm the fixed Xbox mapping or use KeyboardProfile fallback,請確認固定 XBOX 對應或使用鍵盤備援
+ui.hud.exit_requested,EXIT requested,已要求離開
+ui.hud.time_trial_complete,TIME TRIAL COMPLETE,計時挑戰完成
+ui.hud.wait_controller,WAIT FOR CONTROLLER,等待控制器
+ui.hud.quick_fly_hint,Quick Fly: choose Quick Fly then arm at low throttle,快速飛行：選擇快速飛行後以低油門解鎖
+ui.controller.mapping_header,FIXED XBOX MAPPING,固定 XBOX 對應
+ui.controller.live_axes,LIVE AXES,即時軸
+ui.controller.mapping_line,%s -> Axis %d%s,%s → 軸 %d%s
+ui.controller.live_axis_line,%s: Raw %+.3f | Normalized %+.3f,%s：原始 %+.3f｜正規化 %+.3f
+ui.controller.device_none,CURRENT DEVICE: none,目前裝置：無
+ui.controller.device,CURRENT DEVICE: %d %s (%s),目前裝置：%d %s（%s）
+ui.controller.mapping_unavailable,FIXED XBOX MAPPING: UNAVAILABLE,固定 XBOX 對應：無法使用
+ui.controller.monitor_header,CHANNEL MONITOR (30 Hz),通道監看（30 Hz）
+ui.controller.channel_unavailable,%s:%sUNAVAILABLE,%s：%s無法使用
+ui.controller.deadzone,DEADZONE: %.3f (fixed),死區：%.3f（固定）
+ui.controller.arm_unavailable,ARM: UNAVAILABLE,ARM：無法使用
+ui.controller.mode_unavailable,MODE: UNAVAILABLE,模式：無法使用
+ui.controller.monitor_line,%s%s%s raw %+.3f | normalized %+.3f,%s%s%s 原始 %+.3f｜正規化 %+.3f
+ui.controller.throttle_state, | %s,｜%s
+ui.controller.arm_state,ARM: %s | flight control: %s,ARM：%s｜飛行控制：%s
+ui.controller.mode_state,MODE: %s | flight mode: %s,模式：%s｜飛行模式：%s
+ui.dashboard.title,OPERATIONS DASHBOARD,操作儀表板
+ui.dashboard.vehicle_tooltip,Select the vehicle shown by the operations dashboard,選擇操作儀表板顯示的載具
+ui.dashboard.status,%s  UPDATE %.1f Hz  LATENCY %.0f ms,%s  更新 %.1f Hz  延遲 %.0f ms
+ui.dashboard.mode,%s  ARM %s  MODE %s,%s  ARM %s  模式 %s
+ui.dashboard.motor,%s  %.2f N  %.1f rad/s%s,%s  %.2f N  %.1f rad/s%s
+ui.dashboard.battery,BAT %.2f V  sag %.2f V,電池 %.2f V  壓降 %.2f V
+ui.dashboard.wind,WIND body %.2f %.2f %.2f m/s,機體風 %.2f %.2f %.2f m/s
+ui.dashboard.pid,PID sat %s,PID 飽和 %s
+ui.dashboard.rate,UPDATE RATE %.1f Hz  PUBLISH #%d,更新率 %.1f Hz  發布 #%d
+ui.dashboard.latency,LATENCY %.0f ms  %s,延遲 %.0f ms  %s
+ui.dashboard.timestamp,SAMPLE %d us,樣本 %d us
+ui.dashboard.environment,ENV r%d %s R%.2f F%.2f T%.1fh S%.1f/%.1f/%.1f,環境 r%d %s R%.2f F%.2f T%.1fh S%.1f/%.1f/%.1f
+ui.dashboard.empty,-,-
+ui.dashboard.none,none,無
+ui.map.north_spawn,NORTH SPAWN,北側起飛點
+ui.map.turn_90,TURN 90 DEG,轉彎 90 度
+ui.map.checkpoint_1,▼ CHECKPOINT 1,▼ 檢查點 1
+ui.map.checkpoint_2,▼ CHECKPOINT 2,▼ 檢查點 2
+ui.map.checkpoint_3,→ CHECKPOINT 3,→ 檢查點 3
+ui.map.finish,★ FINISH ★,★ 終點 ★
+ui.fallback.unavailable,Input fallback unavailable,輸入備援無法使用

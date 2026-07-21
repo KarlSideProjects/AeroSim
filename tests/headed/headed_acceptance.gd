@@ -513,6 +513,7 @@ func _run() -> void:
 	await _settle(2)
 	await _snapshot("06_exit")
 	_expect(runtime.exit_requested and runtime.screen == "main_menu" and runtime.loaded_map == null and runtime.get_node_or_null("LoadedMap") == null, "exit frees the map and returns to the main menu stub")
+	await _audit_localization(runtime)
 	if not _write_report():
 		quit(1)
 		return
@@ -644,6 +645,50 @@ func _click(control: Control) -> void:
 		event.button_index = MOUSE_BUTTON_LEFT
 		event.pressed = pressed
 		Input.parse_input_event(event)
+
+func _audit_localization(runtime: Node) -> void:
+	var switch_started_us := Time.get_ticks_usec()
+	var switched_to_zh_tw: bool = runtime.set_locale("zh_TW")
+	var switch_elapsed_us := Time.get_ticks_usec() - switch_started_us
+	_expect(switched_to_zh_tw, "UI locale switches to Traditional Chinese")
+	_expect(switch_elapsed_us <= 100_000, "locale switch does not block input for more than 100 ms")
+	if not switched_to_zh_tw:
+		var language_load: Dictionary = runtime.settings_store.load_document()
+		_failures.append("locale switch diagnostic: %s runtime=%s" % [language_load.get("error", "unknown"), runtime.last_error_message])
+	await _settle(2)
+	runtime.show_main_menu()
+	await _settle(1)
+	var quick_fly: Button = runtime.get_node_or_null("MainMenu/Entries/QuickFly")
+	_expect(quick_fly != null and quick_fly.text == "快速飛行", "Traditional Chinese localizes the main menu immediately")
+	runtime.show_settings()
+	await _settle(1)
+	var settings_title: Label = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Title")
+	var language_selector: OptionButton = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Language")
+	_expect(settings_title != null and settings_title.text == "設定", "Traditional Chinese localizes Settings immediately")
+	_expect(language_selector != null and language_selector.get_item_text(1) == "繁體中文", "Language selector localizes its own options")
+	_expect(runtime.load_map("industrial_yard"), "Traditional Chinese can load the Industrial Yard")
+	await _settle(2)
+	var north_spawn_label: Label3D = runtime.loaded_map.get_node_or_null("SpawnNorth/DirectionLabel") if runtime.loaded_map != null else null
+	_expect(north_spawn_label != null and north_spawn_label.text == "北側起飛點", "Industrial Yard Label3D localizes with the active locale")
+	runtime.unload_map()
+	await _snapshot("08_zh_tw_settings")
+	_audit_visible_controls(runtime)
+	_expect(runtime.set_locale("en"), "UI locale switches back to English")
+	await _settle(2)
+	_expect(settings_title != null and settings_title.text == "SETTINGS", "English locale restores Settings immediately")
+	await _snapshot("09_en_settings_roundtrip")
+
+func _audit_visible_controls(node: Node) -> void:
+	var viewport_rect := root.get_viewport().get_visible_rect()
+	for child in node.get_children():
+		if child is Control:
+			var control := child as Control
+			if control.is_visible_in_tree() and (control is Label or control is Button or control is OptionButton):
+				var rect := control.get_global_rect()
+				_expect(viewport_rect.encloses(rect.grow(0.5)), "localized control remains inside viewport: %s" % control.get_path())
+				_expect(not String(control.text).begins_with("ui."), "localized control does not expose a translation key: %s" % control.get_path())
+		_audit_visible_controls(child)
+
 
 func _inject_known_gamepad() -> int:
 	_inject_joy_axis(0, JOY_AXIS_LEFT_X, 0.5)
