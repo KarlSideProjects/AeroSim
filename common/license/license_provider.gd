@@ -222,8 +222,14 @@ func _request_token(endpoint: String, body: Dictionary) -> Dictionary:
         return {"ok": false, "error_type": "network", "error_code": "request_failed"}
     var response: Array = await request.request_completed
     request.queue_free()
+    var request_result := int(response[0])
     var http_status := int(response[1])
     var response_body: PackedByteArray = response[3]
+
+    if request_result != HTTPRequest.RESULT_SUCCESS:
+        _last_online_result = "unreachable"
+        return {"ok": false, "error_type": "network", "error_code": "request_failed"}
+
     if http_status >= 300 and http_status < 400:
         _last_online_result = "unreachable"
         return {"ok": false, "error_type": "network", "error_code": "redirect_rejected"}

@@ -106,6 +106,29 @@ func test_token_without_session_anchor_is_fatal() -> void:
     assert_eq(configured.error_code, "missing_session_anchor")
 
 
+func test_unreachable_loopback_refresh_reports_request_failure_without_parsing_an_empty_body() -> void:
+    _write_state(JSON.stringify({
+        "schema_version": 1,
+        "jwt": "redacted-test-token",
+        "max_observed_utc": 1700000000,
+        "session_anchor_utc": 1700000000,
+        "revoked": false,
+    }))
+    var config := _config()
+    config.verify_endpoint = "http://127.0.0.1:1/verify"
+    var provider := _provider()
+    assert_true(provider.configure(config).ok)
+
+    var refreshed: Dictionary = await provider.refresh_online()
+
+    assert_false(refreshed.ok)
+    assert_eq(refreshed.error_type, "network")
+    assert_eq(refreshed.error_code, "request_failed")
+    provider.queue_free()
+    providers.erase(provider)
+    await get_tree().process_frame
+
+
 func test_local_revocation_is_persisted_and_dominates_snapshot() -> void:
     var provider := _provider()
     assert_true(provider.configure(_config()).ok)
