@@ -106,6 +106,7 @@ var license_status_label: Label
 var license_key_input: LineEdit
 var license_activate_button: Button
 var license_retry_button: Button
+var license_diagnostics_button: Button
 var license_exit_button: Button
 var acro_mode_button: Button
 var time_trial_status_label: Label
@@ -333,6 +334,14 @@ func license_actions() -> Array[String]:
 
 
 func activate_license(license_key: String = "") -> Dictionary:
+    var snapshot := get_license_snapshot()
+    if snapshot.has("fatal"):
+        _refresh_flight_hud()
+        return {"ok": false, "error_type": "fatal", "error_code": String(snapshot.fatal.code)}
+    var status := String(snapshot.get("status", "invalid_token"))
+    if status not in ["not_activated", "offline_grace_expired", "invalid_token"]:
+        _refresh_flight_hud()
+        return {"ok": false, "error_type": "request", "error_code": "activation_unavailable"}
     var entered_key := license_key
     if entered_key.is_empty() and license_key_input != null:
         entered_key = license_key_input.text
@@ -343,6 +352,7 @@ func activate_license(license_key: String = "") -> Dictionary:
     var result: Dictionary = await license_provider.activate(entered_key)
     if license_key_input != null:
         license_key_input.clear()
+    _reconcile_license_after_provider_action()
     return result
 
 
@@ -357,7 +367,18 @@ func retry_license() -> Dictionary:
         return {"ok": false, "error_type": "request", "error_code": "retry_unavailable"}
     if license_provider == null:
         return {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
-    return await license_provider.refresh_online()
+    var result: Dictionary = await license_provider.refresh_online()
+    _reconcile_license_after_provider_action()
+    return result
+
+
+func _reconcile_license_after_provider_action() -> void:
+    if can_start_quick_fly():
+        last_error_message = ""
+        show_main_menu()
+    else:
+        screen = "license_blocked"
+        _refresh_flight_hud()
 
 
 func _show_license_blocked(message: String) -> void:
@@ -2690,14 +2711,14 @@ func show_main_menu() -> void:
     screen = "main_menu"
     _refresh_flight_hud()
     var initial_button := get_node_or_null("MainMenu/Entries/QuickFly") as Button
-    if initial_button != null:
+    if initial_button != null and is_inside_tree():
         initial_button.grab_focus()
 
 func show_settings() -> void:
     screen = "settings"
     _refresh_flight_hud()
     var graphics_button := get_node_or_null("MainMenu/SettingsPanel/Rows/Graphics") as Button
-    if graphics_button != null:
+    if graphics_button != null and is_inside_tree():
         graphics_button.grab_focus()
 
 func show_controller_settings() -> void:
@@ -2931,11 +2952,23 @@ func _build_license_panel() -> void:
     license_retry_button.pressed.connect(retry_license)
     rows.add_child(license_retry_button)
 
+    license_diagnostics_button = Button.new()
+    license_diagnostics_button.name = "Diagnostics"
+    license_diagnostics_button.text = "DIAGNOSTICS"
+    license_diagnostics_button.pressed.connect(_open_license_diagnostics)
+    rows.add_child(license_diagnostics_button)
+
     license_exit_button = Button.new()
     license_exit_button.name = "Exit"
     license_exit_button.text = "EXIT"
     license_exit_button.pressed.connect(request_exit)
     rows.add_child(license_exit_button)
+
+
+func _open_license_diagnostics() -> void:
+    if license_key_input != null:
+        license_key_input.clear()
+    show_settings()
 
 func _build_pause_panel() -> void:
     var panel := PanelContainer.new()
@@ -3125,9 +3158,13 @@ func _refresh_flight_hud() -> void:
         license_panel.visible = screen == "license_blocked"
         license_status_label.text = "LICENSE BLOCKED: %s" % license_status
         var actions := license_actions()
-        license_key_input.visible = actions.has("activate_license") or actions.has("retry_license")
+        var key_status := license_status in ["not_activated", "offline_grace_expired", "invalid_token"] and not license_snapshot.has("fatal")
+        license_key_input.visible = screen == "license_blocked" and key_status
+        if not license_key_input.visible:
+            license_key_input.clear()
         license_activate_button.visible = actions.has("activate_license")
         license_retry_button.visible = actions.has("retry_license")
+        license_diagnostics_button.visible = screen == "license_blocked" and actions.has("diagnostics")
         license_exit_button.visible = actions.has("exit")
     key_hints_label.text = KEY_HINTS_TEXT
     _refresh_rates_panel()

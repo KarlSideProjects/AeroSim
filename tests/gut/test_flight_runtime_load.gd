@@ -51,6 +51,8 @@ class FakeLicenseProvider extends Node:
     var snapshot: Dictionary
     var activation_result: Dictionary = {"ok": true}
     var refresh_result: Dictionary = {"ok": true}
+    var activation_snapshot: Dictionary = {}
+    var refresh_snapshot: Dictionary = {}
     var activation_calls := 0
     var refresh_calls := 0
 
@@ -68,10 +70,14 @@ class FakeLicenseProvider extends Node:
 
     func activate(_license_key: String) -> Dictionary:
         activation_calls += 1
+        if not activation_snapshot.is_empty():
+            snapshot = activation_snapshot.duplicate(true)
         return activation_result.duplicate(true)
 
     func refresh_online() -> Dictionary:
         refresh_calls += 1
+        if not refresh_snapshot.is_empty():
+            snapshot = refresh_snapshot.duplicate(true)
         return refresh_result.duplicate(true)
 
 
@@ -368,6 +374,122 @@ func test_license_status_table_exposes_exact_actions_and_dispatches_retry_safely
     autofree(absent)
     assert_eq(absent.license_actions(), ["exit"])
     await absent.retry_license()
+
+
+func test_license_actions_reconcile_snapshot_after_activation_and_refresh() -> void:
+    var runtime := _runtime_with_license_snapshot("not_activated")
+    runtime._build_flight_hud()
+    runtime.screen = "license_blocked"
+    runtime.last_error_message = "activation pending"
+    runtime._refresh_flight_hud()
+    var provider := runtime.license_provider as FakeLicenseProvider
+    provider.activation_snapshot = {"ok": true, "status": "online_valid", "last_online_result": "accepted"}
+    runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+    await runtime.activate_license("")
+    assert_eq(runtime.screen, "main_menu")
+    assert_true(runtime.last_error_message.is_empty())
+
+    runtime = _runtime_with_license_snapshot("revoked")
+    runtime._build_flight_hud()
+    runtime.screen = "license_blocked"
+    runtime.last_error_message = "refresh pending"
+    runtime._refresh_flight_hud()
+    provider = runtime.license_provider as FakeLicenseProvider
+    provider.refresh_snapshot = {"ok": false, "status": "revoked", "last_online_result": "rejected"}
+    await runtime.retry_license()
+    assert_eq(runtime.screen, "license_blocked")
+    assert_true(runtime.license_panel.visible)
+    assert_string_contains(runtime.license_status_label.text, "revoked")
+
+
+func test_license_key_visibility_and_clearing_follow_activation_backed_statuses() -> void:
+    var cases := [
+        {"status": "not_activated", "key": true, "diagnostics": true},
+        {"status": "offline_grace_expired", "key": true, "diagnostics": true},
+        {"status": "invalid_token", "key": true, "diagnostics": true},
+        {"status": "revoked", "key": false, "diagnostics": true},
+        {"status": "online_valid", "key": false, "diagnostics": false},
+        {"status": "offline_grace_valid", "key": false, "diagnostics": false},
+        {"status": "unknown", "key": false, "diagnostics": false},
+    ]
+    for case in cases:
+        var runtime := _runtime_with_license_snapshot(String(case.status))
+        runtime._build_flight_hud()
+        runtime.screen = "license_blocked"
+        runtime._refresh_flight_hud()
+        assert_eq(runtime.license_key_input.visible, bool(case.key), case.status)
+        var diagnostics := runtime.get_node_or_null("FlightHud/LicensePanel/Rows/Diagnostics") as Button
+        assert_not_null(diagnostics)
+        assert_eq(diagnostics.visible, bool(case.diagnostics), case.status)
+        if bool(case.key):
+            runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+            (runtime.license_provider as FakeLicenseProvider).snapshot = {"ok": false, "status": "revoked"}
+            runtime._refresh_flight_hud()
+            assert_true(runtime.license_key_input.text.is_empty(), case.status)
+            assert_false(runtime.license_key_input.visible, case.status)
+
+    var fatal := _runtime_with_license_snapshot("invalid_token", "rejected", {"kind": "config", "code": "public_key_missing"})
+    fatal._build_flight_hud()
+    fatal.screen = "license_blocked"
+    fatal._refresh_flight_hud()
+    assert_false(fatal.license_key_input.visible)
+    var fatal_diagnostics := fatal.get_node_or_null("FlightHud/LicensePanel/Rows/Diagnostics") as Button
+    assert_not_null(fatal_diagnostics)
+    assert_false(fatal_diagnostics.visible)
+
+
+func test_license_diagnostics_clears_key_and_reuses_settings_screen() -> void:
+    var runtime := _runtime_with_license_snapshot("not_activated")
+    runtime._build_main_menu()
+    runtime._build_flight_hud()
+    runtime.screen = "license_blocked"
+    runtime.last_error_message = "license diagnostics requested"
+    runtime._refresh_flight_hud()
+    runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+    var diagnostics := runtime.get_node_or_null("FlightHud/LicensePanel/Rows/Diagnostics") as Button
+    assert_not_null(diagnostics)
+    diagnostics.pressed.emit()
+    assert_true(runtime.license_key_input.text.is_empty())
+    assert_eq(runtime.screen, "settings")
+    assert_true(runtime.settings_panel.visible)
+    assert_eq(runtime.settings_status_label.text, runtime.last_error_message)
+
+
+func test_activate_license_guards_sanitized_status_before_reading_key_or_calling_provider() -> void:
+    var cases := [
+        {"status": "not_activated", "allowed": true},
+        {"status": "offline_grace_expired", "allowed": true},
+        {"status": "invalid_token", "allowed": true},
+        {"status": "online_valid", "allowed": false},
+        {"status": "offline_grace_valid", "allowed": false},
+        {"status": "revoked", "allowed": false},
+        {"status": "unknown", "allowed": false},
+    ]
+    for case in cases:
+        var runtime := _runtime_with_license_snapshot(String(case.status))
+        runtime._build_flight_hud()
+        runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+        var provider := runtime.license_provider as FakeLicenseProvider
+        var result: Dictionary = await runtime.activate_license("")
+        if bool(case.allowed):
+            assert_true(result.ok, case.status)
+            assert_eq(provider.activation_calls, 1, case.status)
+        else:
+            assert_false(result.ok, case.status)
+            assert_eq(result.error_code, "activation_unavailable", case.status)
+            assert_eq(provider.activation_calls, 0, case.status)
+
+    var fatal := _runtime_with_license_snapshot("invalid_token", "rejected", {"kind": "config", "code": "public_key_missing"})
+    var fatal_result: Dictionary = await fatal.activate_license("")
+    assert_false(fatal_result.ok)
+    assert_eq(fatal_result.error_type, "fatal")
+    assert_eq((fatal.license_provider as FakeLicenseProvider).activation_calls, 0)
+
+    var absent := FlightRuntime.new()
+    autofree(absent)
+    var absent_result: Dictionary = await absent.activate_license("")
+    assert_false(absent_result.ok)
+    assert_eq(absent_result.error_type, "fatal")
 
 
 func test_graphics_startup_applies_persisted_viewport_scale() -> void:
