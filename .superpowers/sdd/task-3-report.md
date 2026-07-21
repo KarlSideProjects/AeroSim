@@ -74,3 +74,17 @@ The adversarial review required evidence corrections only. Production behavior i
 - `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 RUNNER_TEMP=/tmp/aerosim-ci-43 scripts/verify_issue_11.sh` — PASS confirmed after the interrupted session: the process completed after the pinned Godot C++ build and its final smoke artifact contained the required values above. The terminal wrapper exit-code line was not retained after interruption.
 
 Self-review found no production-file changes, no new architecture, no persistence/session additions, no scene changes, and no real secret material. Generated Godot `.uid`/import files remain untracked and were not included in the commit. No GitHub comment was posted.
+
+## Final narrow license-evidence fix
+
+The smoke canary path now uses the real `LicenseProviderScript` created by `FlightRuntime._configure_license_provider()`. The prior `SmokeFailingLicenseProvider` fake was removed. The empty `{}` configuration remains a separate real-provider missing-configuration assertion, while the canary case uses a complete-looking config with a deliberately missing public-key path and distinct non-secret token, key, customer, and claim canaries. The blocked screen/error/status and real provider’s sanitized snapshot are serialized and checked against every exact canary.
+
+TDD evidence: the new real-provider assertion was added first. The first smoke run was red only because the assertion inverted the expected `false` result from invalid configuration; the exact root cause was `not _configure_license_provider(...)` in the test. Removing `not` was the minimal test-only correction. No production defect or production-file change resulted.
+
+Final validation:
+
+- `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5` — PASS; `completed=true`, `native_probe=47`, `simulated_frames=5`, `trajectory_stride=12`.
+- `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh --recovery-mode` — PASS; 179 tests, 0 failures, 11 expected native-dependent pending tests.
+- `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 RUNNER_TEMP=/tmp/aerosim-ci-43 scripts/verify_issue_11.sh` — EXIT 0. Final stdout printed the required artifact dictionary: `completed=true`, `native_probe=47`, `simulated_frames=5`, `trajectory_stride=12`, plus all public-path and collision assertions true. The pinned Godot C++ build, native tests, license checks, and final smoke therefore completed successfully.
+
+This final fix remains smoke/report-only; no GitHub comment was posted.

@@ -8,6 +8,7 @@ const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
 const IndustrialYardScene = preload("res://levels/free_flight/industrial_yard.tscn")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
+const LicenseProviderScript = preload("res://common/license/license_provider.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 
 class InputProbe:
@@ -54,27 +55,6 @@ class SmokeLicenseProvider:
 
     func get_snapshot() -> Dictionary:
         return {"ok": true, "status": "online_valid", "last_online_result": "smoke"}
-
-class SmokeFailingLicenseProvider:
-    extends Node
-
-    const TOKEN_CANARY := "SMOKE_TOKEN_CANARY_7F2A"
-    const KEY_CANARY := "SMOKE_KEY_CANARY_19C4"
-    const CUSTOMER_CANARY := "SMOKE_CUSTOMER_CANARY_52D8"
-    const CLAIM_CANARY := "SMOKE_CLAIM_CANARY_83B1"
-
-    var received_config: Dictionary = {}
-
-    func configure(config: Dictionary) -> Dictionary:
-        received_config = config.duplicate(true)
-        return {"ok": false, "error_code": "controlled_provider_failure"}
-
-    func get_snapshot() -> Dictionary:
-        return {
-            "ok": false,
-            "status": "invalid_token",
-            "fatal": {"kind": "config", "code": "controlled_provider_failure"},
-        }
 
 var verified_jolt_collision_trials := 0
 var production_gamepad_device_state := GamepadDeviceState.DeviceState.new()
@@ -1557,43 +1537,52 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     scene.exit_requested = false
-    var missing_provider := FlightRuntime.new()
-    missing_provider._build_main_menu()
-    missing_provider._build_flight_hud()
-    var failing_provider := SmokeFailingLicenseProvider.new()
-    missing_provider.license_provider = failing_provider
-    missing_provider.add_child(failing_provider)
-    var canary_config := {
-        "token": SmokeFailingLicenseProvider.TOKEN_CANARY,
-        "key": SmokeFailingLicenseProvider.KEY_CANARY,
-        "customer": SmokeFailingLicenseProvider.CUSTOMER_CANARY,
-        "claim": SmokeFailingLicenseProvider.CLAIM_CANARY,
-    }
-    if missing_provider._configure_license_provider(canary_config) or missing_provider.screen != "license_blocked" or not missing_provider.last_error_message.contains("configuration failed"):
-        push_error("Controlled failing license provider configuration must fail loudly")
-        missing_provider.free()
+    var missing_config_provider := FlightRuntime.new()
+    missing_config_provider._build_main_menu()
+    missing_config_provider._build_flight_hud()
+    if missing_config_provider._configure_license_provider({}) or missing_config_provider.screen != "license_blocked" or not missing_config_provider.last_error_message.contains("configuration failed"):
+        push_error("Missing license provider configuration must fail loudly")
+        missing_config_provider.free()
         scene.queue_free()
         return false
-    for canary_key in canary_config:
-        if failing_provider.received_config.get(canary_key, "") != canary_config[canary_key]:
-            push_error("Controlled failing provider must receive the canary configuration snapshot")
-            missing_provider.free()
-            scene.queue_free()
-            return false
+    missing_config_provider.free()
+
+    var canary_provider_runtime := FlightRuntime.new()
+    canary_provider_runtime._build_main_menu()
+    canary_provider_runtime._build_flight_hud()
+    var canary_config := {
+        "schema_version": 1,
+        "issue_endpoint": "https://license.example.test/issue",
+        "verify_endpoint": "https://license.example.test/verify",
+        "public_key_path": "res://config/SMOKE_KEY_CANARY_19C4.pem",
+        "allowed_kids": ["SMOKE_CLAIM_CANARY_83B1"],
+        "state_path": "user://aerosim-smoke-canary-state.json",
+        "token": "SMOKE_TOKEN_CANARY_7F2A",
+        "key": "SMOKE_KEY_CANARY_19C4",
+        "customer": "SMOKE_CUSTOMER_CANARY_52D8",
+        "claim": "SMOKE_CLAIM_CANARY_83B1",
+    }
+    if canary_provider_runtime._configure_license_provider(canary_config) or canary_provider_runtime.screen != "license_blocked" or \
+            not canary_provider_runtime.last_error_message.contains("configuration failed") or \
+            canary_provider_runtime.license_provider == null or canary_provider_runtime.license_provider.get_script() != LicenseProviderScript:
+        push_error("Real license provider must fail loudly on the invalid canary-bearing configuration")
+        canary_provider_runtime.free()
+        scene.queue_free()
+        return false
     var blocked_output := JSON.stringify({
-        "screen": missing_provider.screen,
-        "error": missing_provider.last_error_message,
-        "license_status": missing_provider.license_status_label.text,
-        "arm_status": missing_provider.arm_status_label.text,
-        "snapshot": missing_provider.get_license_snapshot(),
+        "screen": canary_provider_runtime.screen,
+        "error": canary_provider_runtime.last_error_message,
+        "license_status": canary_provider_runtime.license_status_label.text,
+        "arm_status": canary_provider_runtime.arm_status_label.text,
+        "snapshot": canary_provider_runtime.get_license_snapshot(),
     })
-    for canary in canary_config.values():
+    for canary in [canary_config.token, canary_config.key, canary_config.customer, canary_config.claim]:
         if blocked_output.contains(String(canary)):
             push_error("Blocked license UI/status/error output must not expose controlled credential canaries")
-            missing_provider.free()
+            canary_provider_runtime.free()
             scene.queue_free()
             return false
-    missing_provider.free()
+    canary_provider_runtime.free()
     if not scene.has_method("open_map_menu") or not scene.has_method("select_map"):
         push_error("Smoke runtime must expose Map wind preset selection")
         scene.queue_free()
