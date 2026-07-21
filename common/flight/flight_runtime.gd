@@ -123,6 +123,7 @@ var gamepad_device_state: GamepadDeviceState.DeviceState = GamepadDeviceState.De
 var controller_confirmation_panel: Control
 var controller_confirmation_profile: InputProfiles.GamepadProfile
 var controller_confirmation_device_id := -1
+var controller_return_screen := "preflight"
 var confirmation_mapping_label: Label
 var confirmation_axes_label: Label
 var controller_settings_device_label: Label
@@ -1081,7 +1082,10 @@ func _unhandled_input(event: InputEvent) -> void:
     elif event.is_action_pressed("flight_altitude_hold"):
         toggle_altitude_hold()
     elif event.is_action_pressed("flight_exit"):
-        request_exit()
+        if screen == "lab_mode":
+            return_from_lab_mode()
+        else:
+            request_exit()
 
 func _process(_delta: float) -> void:
     if not airsim_stop_file.is_empty() and FileAccess.file_exists(airsim_stop_file):
@@ -1771,6 +1775,7 @@ func quick_fly() -> void:
             session_gamepad_device_id = device_id
             enter_preflight()
             return
+        controller_return_screen = "preflight"
         begin_controller_confirmation(device_id)
         return
     enter_preflight()
@@ -1791,6 +1796,31 @@ func begin_controller_confirmation(device_id: int = _first_connected_device()) -
     _refresh_controller_confirmation()
     _refresh_flight_hud()
 
+
+func open_controller_from_menu() -> void:
+    controller_return_screen = "main_menu"
+    begin_controller_confirmation()
+
+
+func _complete_controller_route() -> void:
+    var target := controller_return_screen
+    controller_return_screen = "preflight"
+    if target == "preflight":
+        enter_preflight()
+    elif target == "controller_settings":
+        show_controller_settings()
+    else:
+        show_main_menu()
+
+
+func _cancel_controller_route() -> void:
+    var target := controller_return_screen
+    controller_return_screen = "preflight"
+    if target == "controller_settings":
+        show_controller_settings()
+    else:
+        show_main_menu()
+
 func accept_controller_confirmation() -> void:
     var profile := InputProfiles.GamepadProfile.xbox_default(controller_confirmation_device_id, gamepad_device_state)
     if profile == null:
@@ -1807,7 +1837,7 @@ func accept_controller_confirmation() -> void:
     session_gamepad_profile = profile
     session_gamepad_device_id = controller_confirmation_device_id
     controller_confirmation_panel.hide()
-    enter_preflight()
+    _complete_controller_route()
 
 func use_keyboard_fallback() -> void:
     session_gamepad_profile = null
@@ -1829,7 +1859,7 @@ func accept_fallback() -> void:
         controller_safety_latched = false
         controller_reconnected = false
         disconnected_gamepad_device_id = -1
-        enter_preflight()
+        _complete_controller_route()
         return
     last_error_message = "No fallback prompt is active"
     screen = "error"
@@ -2399,14 +2429,18 @@ func _build_main_menu() -> void:
         entries.add_child(button)
         if entry == "Quick Fly":
             button.pressed.connect(quick_fly)
+        elif entry == "Lab Mode":
+            button.pressed.connect(open_lab_mode)
         elif entry == "Drone":
             button.pressed.connect(open_flight_setup.bind("drone"))
         elif entry == "Map":
             button.pressed.connect(open_flight_setup.bind("map"))
         elif entry == "Controller":
-            button.pressed.connect(begin_controller_confirmation)
+            button.pressed.connect(open_controller_from_menu)
         elif entry == "Settings":
             button.pressed.connect(show_settings)
+        elif entry == "Quit":
+            button.pressed.connect(request_exit)
     _build_settings_panel()
     _build_controller_settings_panel()
     _build_rates_panel()
@@ -2870,11 +2904,24 @@ func _build_controller_settings_panel() -> void:
     rows.add_child(back_button)
 
 func show_main_menu() -> void:
+    if screen == "lab_mode":
+        set_dashboard_layout_mode("compact")
     screen = "main_menu"
     _refresh_flight_hud()
     var initial_button := get_node_or_null("MainMenu/Entries/QuickFly") as Button
     if initial_button != null and is_inside_tree():
         initial_button.grab_focus()
+
+
+func open_lab_mode() -> void:
+    set_dashboard_layout_mode("full")
+    screen = "lab_mode"
+    _refresh_flight_hud()
+
+
+func return_from_lab_mode() -> void:
+    set_dashboard_layout_mode("compact")
+    show_main_menu()
 
 func show_settings() -> void:
     screen = "settings"
@@ -2959,6 +3006,7 @@ func _close_rates_panel() -> void:
         show_settings()
 
 func reset_to_xbox_default() -> void:
+    controller_return_screen = "controller_settings"
     begin_controller_confirmation(_first_connected_device())
 
 
@@ -3383,9 +3431,11 @@ func _handle_primary_action() -> void:
     elif screen in ["controller_confirmation", "error"]:
         if controller_confirmation_panel != null:
             controller_confirmation_panel.hide()
-        screen = "main_menu"
         last_error_message = ""
-        _refresh_flight_hud()
+        if screen == "controller_confirmation":
+            _cancel_controller_route()
+        else:
+            show_main_menu()
     elif screen == "finish":
         retry_time_trial()
 

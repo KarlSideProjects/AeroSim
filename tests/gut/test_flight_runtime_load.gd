@@ -350,6 +350,47 @@ func test_quick_fly_reapplies_default_setup_after_a_prior_setup_choice() -> void
     assert_eq(runtime.selected_wind_preset, "calm")
 
 
+func test_controller_confirmation_from_menu_returns_to_menu() -> void:
+    var runtime := _licensed_runtime()
+    runtime.gamepad_device_state = FakeDeviceState.new()
+    runtime.settings_store = QualitySettingsStore.new(null)
+    runtime._build_flight_hud()
+    runtime.open_controller_from_menu()
+    assert_eq(runtime.screen, "controller_confirmation")
+    runtime.accept_controller_confirmation()
+    assert_eq(runtime.screen, "main_menu")
+    assert_false(runtime.takeoff_requested)
+
+
+func test_controller_fallback_and_cancel_from_menu_return_to_menu() -> void:
+    var runtime := _licensed_runtime()
+    runtime.gamepad_device_state = FakeDeviceState.new(false)
+    runtime._build_flight_hud()
+    runtime.open_controller_from_menu()
+    assert_eq(runtime.screen, "fallback_prompt")
+    runtime.accept_fallback()
+    assert_eq(runtime.screen, "main_menu")
+
+    runtime.gamepad_device_state = FakeDeviceState.new()
+    runtime.open_controller_from_menu()
+    assert_eq(runtime.screen, "controller_confirmation")
+    runtime._handle_primary_action()
+    assert_eq(runtime.screen, "main_menu")
+
+
+func test_lab_mode_reuses_the_existing_runtime_and_dashboard() -> void:
+    var runtime := _licensed_runtime()
+    var native_before := FakeNative.new()
+    runtime.native = native_before
+    runtime.open_lab_mode()
+    assert_eq(runtime.screen, "lab_mode")
+    assert_eq(runtime.dashboard_layout_mode, "full")
+    assert_same(runtime.native, native_before)
+    runtime.return_from_lab_mode()
+    assert_eq(runtime.screen, "main_menu")
+    assert_eq(runtime.dashboard_layout_mode, "compact")
+
+
 func test_main_menu_exposes_the_ordered_cap006_entries_and_defaults() -> void:
     var runtime := _licensed_runtime()
     assert_eq(runtime.main_menu_entries, ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"])
@@ -603,7 +644,7 @@ func test_keyboard_ui_actions_reach_graphics_apply_and_return() -> void:
     var runtime := _graphics_runtime_with_store(1.0)
     var quick_fly := runtime.get_node("MainMenu/Entries/QuickFly") as Button
     assert_eq(runtime.get_viewport().gui_get_focus_owner(), quick_fly)
-    for _step in range(4):
+    for _step in range(5):
         await _send_ui_action_and_wait("ui_down")
     await _send_ui_action_and_wait("ui_accept")
     assert_eq(runtime.screen, "settings")
@@ -631,7 +672,7 @@ func test_joypad_ui_actions_reach_graphics_apply_and_return() -> void:
     var runtime := _graphics_runtime_with_store(1.0)
     var quick_fly := runtime.get_node("MainMenu/Entries/QuickFly") as Button
     assert_eq(runtime.get_viewport().gui_get_focus_owner(), quick_fly)
-    for _step in range(4):
+    for _step in range(5):
         await _send_ui_action_and_wait("ui_down", 7)
     await _send_ui_action_and_wait("ui_accept", 7)
     assert_eq(runtime.screen, "settings")
