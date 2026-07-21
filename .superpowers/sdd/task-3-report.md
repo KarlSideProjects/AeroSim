@@ -88,3 +88,37 @@ Final validation:
 - `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 RUNNER_TEMP=/tmp/aerosim-ci-43 scripts/verify_issue_11.sh` — EXIT 0. Final stdout printed the required artifact dictionary: `completed=true`, `native_probe=47`, `simulated_frames=5`, `trajectory_stride=12`, plus all public-path and collision assertions true. The pinned Godot C++ build, native tests, license checks, and final smoke therefore completed successfully.
 
 This final fix remains smoke/report-only; no GitHub comment was posted.
+
+## Final Sol whole-branch fix wave
+
+### Scope and implementation
+
+This review wave changed only the existing runtime, GUT coverage, headed acceptance, and this report. It added no scene, persistence, runtime/session, diagnostics system, PRD, or product decision.
+
+- `flight_exit` now cancels an active `controller_confirmation` or `fallback_prompt` through `_cancel_controller_route()`. Escape and gamepad B therefore return to Main Menu for menu/Quick Fly callers and Controller Settings for reset callers, without calling `request_exit`.
+- `_complete_controller_route()` rechecks `can_start_quick_fly()` immediately before its sole preflight transition. A confirmation/fallback completed after an expired or revoked snapshot now presents the existing blocked-license route rather than loading preflight.
+- Confirmation focuses `UseXboxDefaultProfile`; fallback focuses its visible keyboard-fallback primary action. Lab Mode exposes an existing-HUD `BACK TO MENU` button, focused while visible and wired to `return_from_lab_mode()`.
+- Failed activation and retry paths record only `error_type` and `error_code` as `License <type> failed: <code>` before reconciliation. The existing Diagnostics route therefore shows the current sanitized reason and does not surface provider `error` payload text.
+- Headed acceptance now injects a deterministic valid test provider, asserts the exact seven-entry menu, exercises Drone/Map shared Flight Setup, Lab/Back/Escape, real Quit, the actual reset confirmation return, and Quick Fly’s actual confirmation route.
+
+### TDD evidence
+
+1. Added focused GUT assertions first for Escape/B cancellation across main-menu, controller-settings, and Quick Fly callers; confirmation/fallback revocation between route start and completion; focus ownership; actual Lab/Back control navigation; and sanitized activation/retry Diagnostics text.
+2. The first direct focused GUT command could not start because the GUT global class cache had not been imported (`Missing class_names: ["GutErrorTracker", "GutHookScript", "GutInputFactory", "GutInputSender", "GutMain", "GutStringUtils", "GutTest", "GutTrackedError", "GutUtils"]`). The prescribed recovery import restored that cache.
+3. The red focused run then failed for the requested missing behavior: Escape/B invoked `request_exit`, invalidated controller routes entered preflight, focus was unset, Lab Back did not exist, and failed provider actions left Diagnostics stale. The initial bare-runtime test fixture also produced a null-tree cleanup error when the obsolete `request_exit` path ran; the fixture was narrowed to attached UI layers so green tests do not execute full scene startup.
+4. Implemented the minimum runtime code above. The focused recovery-mode GUT retry passed `37/48` with `11` expected native-extension pending tests and `271` assertions.
+5. The first focused green invocation experienced one Godot 4.7 signal-11 crash with no GDScript error output. An immediate identical retry completed normally, and the required full recovery suite, smoke, headed acceptance, and Ubuntu verification all passed. This was treated as a transient runner event, not bypassed.
+
+### Final validation
+
+- Focused recovery GUT: direct `gut_cmdln.gd -gtest=res://tests/gut/test_flight_runtime_load.gd` — PASS on retry: 37 passing, 11 expected recovery-mode pending, 271 assertions.
+- `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh --recovery-mode` — PASS: 183 tests, 0 failures, 0 errors; 11 expected native-dependent pending tests.
+- `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke-final-sol.json --frames 5` — PASS (exit 0). Godot emitted the existing non-fatal Jolt job-system warning.
+- `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headed_acceptance.sh --xvfb --out-dir build/headed-final-sol` — PASS (exit 0). It produced the required report/screenshots; the existing deliberate missing-map assertion emitted its expected warnings.
+- `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 RUNNER_TEMP=/tmp/aerosim-ci-43 scripts/verify_issue_11.sh` — PASS (exit 0).
+
+### Self-review
+
+- Checked the final diff for scope, formatting, route targets, license-message provenance, and control visibility/focus. No production defect beyond the reviewed gaps emerged.
+- Generated Godot `.uid` and `.import` artifacts remain untracked and are excluded from the commit.
+- No GitHub comment was posted. Human visual review remains deferred until the Playable Game Milestone.

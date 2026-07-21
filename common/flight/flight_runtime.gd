@@ -105,6 +105,7 @@ var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
+var lab_back_button: Button
 var license_panel: Control
 var license_status_label: Label
 var license_key_input: LineEdit
@@ -342,22 +343,33 @@ func license_actions() -> Array[String]:
 func activate_license(license_key: String = "") -> Dictionary:
     var snapshot := get_license_snapshot()
     if snapshot.has("fatal"):
+        var fatal_result := {"ok": false, "error_type": "fatal", "error_code": String(snapshot.fatal.code)}
+        _record_license_action_failure(fatal_result)
         _refresh_flight_hud()
-        return {"ok": false, "error_type": "fatal", "error_code": String(snapshot.fatal.code)}
+        return fatal_result
     var status := String(snapshot.get("status", "invalid_token"))
     if status not in ["not_activated", "offline_grace_expired", "invalid_token"]:
+        var unavailable_result := {"ok": false, "error_type": "request", "error_code": "activation_unavailable"}
+        _record_license_action_failure(unavailable_result)
         _refresh_flight_hud()
-        return {"ok": false, "error_type": "request", "error_code": "activation_unavailable"}
+        return unavailable_result
     var entered_key := license_key
     if entered_key.is_empty() and license_key_input != null:
         entered_key = license_key_input.text
     if entered_key.is_empty():
-        return {"ok": false, "error_type": "request", "error_code": "license_key_required"}
+        var missing_key_result := {"ok": false, "error_type": "request", "error_code": "license_key_required"}
+        _record_license_action_failure(missing_key_result)
+        _refresh_flight_hud()
+        return missing_key_result
     if license_provider == null:
-        return {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
+        var missing_provider_result := {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
+        _record_license_action_failure(missing_provider_result)
+        _refresh_flight_hud()
+        return missing_provider_result
     var result: Dictionary = await license_provider.activate(entered_key)
     if license_key_input != null:
         license_key_input.clear()
+    _record_license_action_failure(result)
     _reconcile_license_after_provider_action()
     return result
 
@@ -365,17 +377,36 @@ func activate_license(license_key: String = "") -> Dictionary:
 func retry_license() -> Dictionary:
     var snapshot := get_license_snapshot()
     if snapshot.has("fatal"):
-        return {"ok": false, "error_type": "fatal", "error_code": String(snapshot.fatal.code)}
+        var fatal_result := {"ok": false, "error_type": "fatal", "error_code": String(snapshot.fatal.code)}
+        _record_license_action_failure(fatal_result)
+        _refresh_flight_hud()
+        return fatal_result
     var status := String(snapshot.get("status", "invalid_token"))
     if status in ["offline_grace_expired", "invalid_token"]:
         return await activate_license("")
     if status != "revoked":
-        return {"ok": false, "error_type": "request", "error_code": "retry_unavailable"}
+        var unavailable_result := {"ok": false, "error_type": "request", "error_code": "retry_unavailable"}
+        _record_license_action_failure(unavailable_result)
+        _refresh_flight_hud()
+        return unavailable_result
     if license_provider == null:
-        return {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
+        var missing_provider_result := {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
+        _record_license_action_failure(missing_provider_result)
+        _refresh_flight_hud()
+        return missing_provider_result
     var result: Dictionary = await license_provider.refresh_online()
+    _record_license_action_failure(result)
     _reconcile_license_after_provider_action()
     return result
+
+
+func _record_license_action_failure(result: Dictionary) -> void:
+    if bool(result.get("ok", false)):
+        return
+    last_error_message = "License %s failed: %s" % [
+        String(result.get("error_type", "unknown")),
+        String(result.get("error_code", "unknown")),
+    ]
 
 
 func _reconcile_license_after_provider_action() -> void:
@@ -1084,6 +1115,10 @@ func _unhandled_input(event: InputEvent) -> void:
     elif event.is_action_pressed("flight_exit"):
         if screen == "lab_mode":
             return_from_lab_mode()
+        elif screen in ["controller_confirmation", "fallback_prompt"]:
+            if controller_confirmation_panel != null:
+                controller_confirmation_panel.hide()
+            _cancel_controller_route()
         else:
             request_exit()
 
@@ -1795,6 +1830,9 @@ func begin_controller_confirmation(device_id: int = _first_connected_device()) -
     controller_confirmation_panel.show()
     _refresh_controller_confirmation()
     _refresh_flight_hud()
+    var confirm_button := controller_confirmation_panel.get_node_or_null("Rows/UseXboxDefaultProfile") as Button
+    if confirm_button != null and confirm_button.is_inside_tree():
+        confirm_button.grab_focus()
 
 
 func open_controller_from_menu() -> void:
@@ -1806,6 +1844,9 @@ func _complete_controller_route() -> void:
     var target := controller_return_screen
     controller_return_screen = "preflight"
     if target == "preflight":
+        if not can_start_quick_fly():
+            _show_license_blocked("Quick Fly unavailable: license %s" % String(get_license_snapshot().get("status", "invalid_token")))
+            return
         enter_preflight()
     elif target == "controller_settings":
         show_controller_settings()
@@ -1852,6 +1893,8 @@ func _show_keyboard_fallback(message: String) -> void:
     last_error_message = message
     screen = "fallback_prompt"
     _refresh_flight_hud()
+    if arm_takeoff_button != null and arm_takeoff_button.is_inside_tree():
+        arm_takeoff_button.grab_focus()
 
 func accept_fallback() -> void:
     if screen == "fallback_prompt":
@@ -2917,6 +2960,8 @@ func open_lab_mode() -> void:
     set_dashboard_layout_mode("full")
     screen = "lab_mode"
     _refresh_flight_hud()
+    if lab_back_button != null and lab_back_button.is_inside_tree():
+        lab_back_button.grab_focus()
 
 
 func return_from_lab_mode() -> void:
@@ -3112,6 +3157,11 @@ func _build_flight_hud() -> void:
     arm_takeoff_button.name = "ArmTakeoff"
     arm_takeoff_button.pressed.connect(_handle_primary_action)
     rows.add_child(arm_takeoff_button)
+    lab_back_button = Button.new()
+    lab_back_button.name = "LabBack"
+    lab_back_button.text = "BACK TO MENU"
+    lab_back_button.pressed.connect(return_from_lab_mode)
+    rows.add_child(lab_back_button)
     acro_mode_button = Button.new()
     acro_mode_button.name = "AcroMode"
     acro_mode_button.pressed.connect(toggle_acro_mode)
@@ -3382,6 +3432,9 @@ func _refresh_flight_hud() -> void:
     _refresh_rates_panel()
     _refresh_graphics_panel()
     arm_takeoff_button.disabled = screen in ["main_menu", "license_blocked"] or (controller_safety_latched and screen != "fallback_prompt")
+    if lab_back_button != null:
+        lab_back_button.visible = screen == "lab_mode"
+        lab_back_button.disabled = false
     if acro_mode_button != null:
         acro_mode_button.disabled = screen != "flight" or paused or controller_safety_latched
         acro_mode_button.text = "ACRO MODE (C): %s" % ("ON" if flight_mode == "ACRO" else "OFF")

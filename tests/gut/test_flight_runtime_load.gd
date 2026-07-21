@@ -205,6 +205,19 @@ func _send_ui_action_and_wait(action: String, device: int = -1) -> void:
     await get_tree().process_frame
 
 
+func _flight_exit_event(use_gamepad: bool) -> InputEvent:
+    if use_gamepad:
+        var gamepad_event := InputEventJoypadButton.new()
+        gamepad_event.button_index = JOY_BUTTON_B
+        gamepad_event.pressed = true
+        return gamepad_event
+    var key_event := InputEventKey.new()
+    key_event.keycode = KEY_ESCAPE
+    key_event.physical_keycode = KEY_ESCAPE
+    key_event.pressed = true
+    return key_event
+
+
 func _controller_monitor_runtime() -> FlightRuntime:
     var runtime := FlightRuntime.new()
     runtime.main_menu_layer = CanvasLayer.new()
@@ -247,6 +260,20 @@ func _licensed_runtime() -> FlightRuntime:
     var runtime := _runtime_with_license_snapshot("online_valid")
     runtime.gamepad_device_state = FakeDeviceState.new(false)
     return runtime
+
+
+func _attach_runtime_ui(runtime: FlightRuntime) -> FlightRuntime:
+    runtime._build_main_menu()
+    runtime._build_flight_hud()
+    for layer in [runtime.main_menu_layer, runtime.flight_hud_layer]:
+        runtime.remove_child(layer)
+        get_tree().root.add_child(layer)
+        autofree(layer)
+    return runtime
+
+
+func _interactive_runtime() -> FlightRuntime:
+    return _attach_runtime_ui(_licensed_runtime())
 
 
 func _menu_runtime() -> FlightRuntime:
@@ -378,15 +405,74 @@ func test_controller_fallback_and_cancel_from_menu_return_to_menu() -> void:
     assert_eq(runtime.screen, "main_menu")
 
 
-func test_lab_mode_reuses_the_existing_runtime_and_dashboard() -> void:
-    var runtime := _licensed_runtime()
+func test_controller_route_exit_input_cancels_each_caller_without_requesting_exit() -> void:
+    for use_gamepad in [false, true]:
+        for route in ["main_menu", "controller_settings", "preflight"]:
+            for fallback in [false, true]:
+                var runtime := _interactive_runtime()
+                runtime.settings_store = QualitySettingsStore.new(null)
+                runtime.gamepad_device_state = FakeDeviceState.new(not fallback)
+                if route == "main_menu":
+                    (runtime.main_menu_layer.get_node("Entries/Controller") as Button).pressed.emit()
+                elif route == "controller_settings":
+                    runtime.show_controller_settings()
+                    (runtime.main_menu_layer.get_node("ControllerSettingsPanel/Rows/ResetXboxDefault") as Button).pressed.emit()
+                else:
+                    (runtime.main_menu_layer.get_node("Entries/QuickFly") as Button).pressed.emit()
+                assert_eq(runtime.screen, "fallback_prompt" if fallback else "controller_confirmation", "%s/%s starts the expected route" % [route, "B" if use_gamepad else "Escape"])
+                runtime._unhandled_input(_flight_exit_event(use_gamepad))
+                assert_eq(runtime.screen, "controller_settings" if route == "controller_settings" else "main_menu", "%s/%s cancels to its caller" % [route, "B" if use_gamepad else "Escape"])
+                assert_false(runtime.exit_requested, "%s/%s does not request cleanup exit" % [route, "B" if use_gamepad else "Escape"])
+
+
+func test_controller_route_completion_rechecks_current_license_before_preflight() -> void:
+    var confirmation_runtime := _interactive_runtime()
+    confirmation_runtime.settings_store = QualitySettingsStore.new(null)
+    confirmation_runtime.gamepad_device_state = FakeDeviceState.new()
+    (confirmation_runtime.main_menu_layer.get_node("Entries/QuickFly") as Button).pressed.emit()
+    assert_eq(confirmation_runtime.screen, "controller_confirmation")
+    (confirmation_runtime.license_provider as FakeLicenseProvider).snapshot = {"ok": false, "status": "revoked"}
+    confirmation_runtime.accept_controller_confirmation()
+    assert_eq(confirmation_runtime.screen, "license_blocked")
+    assert_null(confirmation_runtime.loaded_map)
+
+    var fallback_runtime := _interactive_runtime()
+    fallback_runtime.gamepad_device_state = FakeDeviceState.new(false)
+    (fallback_runtime.main_menu_layer.get_node("Entries/QuickFly") as Button).pressed.emit()
+    assert_eq(fallback_runtime.screen, "fallback_prompt")
+    (fallback_runtime.license_provider as FakeLicenseProvider).snapshot = {"ok": false, "status": "offline_grace_expired"}
+    fallback_runtime.accept_fallback()
+    assert_eq(fallback_runtime.screen, "license_blocked")
+    assert_null(fallback_runtime.loaded_map)
+
+
+func test_controller_route_focuses_its_visible_primary_action() -> void:
+    var confirmation_runtime := _interactive_runtime()
+    confirmation_runtime.gamepad_device_state = FakeDeviceState.new()
+    (confirmation_runtime.main_menu_layer.get_node("Entries/Controller") as Button).pressed.emit()
+    var confirm_button := confirmation_runtime.flight_hud_layer.get_node("ControllerConfirmation/Rows/UseXboxDefaultProfile") as Button
+    assert_eq(confirmation_runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), confirm_button)
+
+    var fallback_runtime := _interactive_runtime()
+    fallback_runtime.gamepad_device_state = FakeDeviceState.new(false)
+    (fallback_runtime.main_menu_layer.get_node("Entries/Controller") as Button).pressed.emit()
+    assert_eq(fallback_runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), fallback_runtime.arm_takeoff_button)
+
+
+func test_lab_mode_button_reuses_runtime_and_visible_back_control_returns_to_menu() -> void:
+    var runtime := _interactive_runtime()
     var native_before := FakeNative.new()
     runtime.native = native_before
-    runtime.open_lab_mode()
+    var lab_button := runtime.main_menu_layer.get_node("Entries/LabMode") as Button
+    lab_button.pressed.emit()
     assert_eq(runtime.screen, "lab_mode")
     assert_eq(runtime.dashboard_layout_mode, "full")
     assert_same(runtime.native, native_before)
-    runtime.return_from_lab_mode()
+    var back_button := runtime.flight_hud_layer.get_node_or_null("StatusMargin/StatusPanel/StatusRows/LabBack") as Button
+    assert_not_null(back_button)
+    assert_true(back_button.visible)
+    assert_eq(runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), back_button)
+    back_button.pressed.emit()
     assert_eq(runtime.screen, "main_menu")
     assert_eq(runtime.dashboard_layout_mode, "compact")
 
@@ -515,6 +601,44 @@ func test_license_actions_reconcile_snapshot_after_activation_and_refresh() -> v
     assert_eq(runtime.screen, "license_blocked")
     assert_true(runtime.license_panel.visible)
     assert_string_contains(runtime.license_status_label.text, "revoked")
+
+
+func test_failed_license_actions_publish_only_typed_sanitized_reason_to_diagnostics() -> void:
+    var activation_runtime := _attach_runtime_ui(_runtime_with_license_snapshot("not_activated"))
+    activation_runtime.screen = "license_blocked"
+    var activation_provider := activation_runtime.license_provider as FakeLicenseProvider
+    activation_provider.activation_result = {
+        "ok": false,
+        "error_type": "request",
+        "error_code": "activation_rejected",
+        "error": "untyped-secret-canary",
+    }
+    activation_provider.activation_snapshot = {"ok": false, "status": "invalid_token"}
+    activation_runtime.license_key_input.text = "test-license-key"
+    await activation_runtime.activate_license("")
+    assert_eq(activation_runtime.last_error_message, "License request failed: activation_rejected")
+    var activation_diagnostics := activation_runtime.flight_hud_layer.get_node("LicensePanel/Rows/Diagnostics") as Button
+    activation_diagnostics.pressed.emit()
+    assert_eq(activation_runtime.screen, "settings")
+    assert_eq(activation_runtime.settings_status_label.text, "License request failed: activation_rejected")
+    assert_false(activation_runtime.settings_status_label.text.contains("untyped-secret-canary"))
+
+    var retry_runtime := _attach_runtime_ui(_runtime_with_license_snapshot("revoked"))
+    retry_runtime.screen = "license_blocked"
+    var retry_provider := retry_runtime.license_provider as FakeLicenseProvider
+    retry_provider.refresh_result = {
+        "ok": false,
+        "error_type": "network",
+        "error_code": "refresh_unavailable",
+        "error": "untyped-refresh-canary",
+    }
+    retry_provider.refresh_snapshot = {"ok": false, "status": "revoked"}
+    await retry_runtime.retry_license()
+    assert_eq(retry_runtime.last_error_message, "License network failed: refresh_unavailable")
+    var retry_diagnostics := retry_runtime.flight_hud_layer.get_node("LicensePanel/Rows/Diagnostics") as Button
+    retry_diagnostics.pressed.emit()
+    assert_eq(retry_runtime.settings_status_label.text, "License network failed: refresh_unavailable")
+    assert_false(retry_runtime.settings_status_label.text.contains("untyped-refresh-canary"))
 
 
 func test_license_key_visibility_and_clearing_follow_activation_backed_statuses() -> void:
