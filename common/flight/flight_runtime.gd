@@ -101,6 +101,12 @@ var flight_hud_layer: CanvasLayer
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
+var license_panel: Control
+var license_status_label: Label
+var license_key_input: LineEdit
+var license_activate_button: Button
+var license_retry_button: Button
+var license_exit_button: Button
 var acro_mode_button: Button
 var time_trial_status_label: Label
 var pause_panel: Control
@@ -174,14 +180,14 @@ func _ready() -> void:
     settings_store = SettingsStoreScript.new()
     _load_player_settings()
     _restore_startup_gamepad_session()
-    if not _configure_license_provider_from_path(LICENSE_PROVIDER_CONFIG_PATH):
-        return
     var startup_settings := _load_and_validate_airsim_settings()
     if startup_settings.is_empty():
         return
     _build_main_menu()
     _build_flight_hud()
     _build_status_diagram()
+    if not _configure_license_provider_from_path(LICENSE_PROVIDER_CONFIG_PATH):
+        return
     native = ClassDB.instantiate("AeroSimNative")
     if native == null:
         push_error("AeroSimNative is not registered")
@@ -282,14 +288,14 @@ func _run_replay_integration() -> void:
 
 
 func _configure_license_provider_from_path(path: String) -> bool:
-    var file := FileAccess.open(path, FileAccess.READ)
-    if file == null:
-        return _configure_license_provider({})
-    var parsed: Variant = JSON.parse_string(file.get_as_text())
-    file.close()
-    if typeof(parsed) != TYPE_DICTIONARY:
-        return _configure_license_provider({})
-    return _configure_license_provider(parsed)
+    if license_provider == null:
+        license_provider = LicenseProviderScript.new()
+        add_child(license_provider)
+    var result: Dictionary = license_provider.configure_from_path(path)
+    if not bool(result.get("ok", false)):
+        _show_license_blocked("License provider configuration failed: %s" % String(result.get("error_code", "unknown")))
+        return false
+    return true
 
 
 func _configure_license_provider(config: Dictionary) -> bool:
@@ -305,7 +311,7 @@ func _configure_license_provider(config: Dictionary) -> bool:
 
 func get_license_snapshot() -> Dictionary:
     if license_provider == null:
-        return {"ok": false, "status": "invalid_token"}
+        return {"ok": false, "status": "invalid_token", "fatal": {"kind": "config", "code": "not_configured"}}
     return license_provider.get_snapshot()
 
 
@@ -326,17 +332,28 @@ func license_actions() -> Array[String]:
     return []
 
 
-func activate_license(license_key: String) -> Dictionary:
+func activate_license(license_key: String = "") -> Dictionary:
+    var entered_key := license_key
+    if entered_key.is_empty() and license_key_input != null:
+        entered_key = license_key_input.text
+    if entered_key.is_empty():
+        return {"ok": false, "error_type": "request", "error_code": "license_key_required"}
     if license_provider == null:
         return {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
-    var result: Dictionary = await license_provider.activate(license_key)
-    license_key = ""
+    var result: Dictionary = await license_provider.activate(entered_key)
+    if license_key_input != null:
+        license_key_input.clear()
     return result
 
 
 func retry_license() -> Dictionary:
-    var status := String(get_license_snapshot().get("status", "invalid_token"))
-    if status not in ["offline_grace_expired", "revoked", "invalid_token"]:
+    var snapshot := get_license_snapshot()
+    if snapshot.has("fatal"):
+        return {"ok": false, "error_type": "fatal", "error_code": String(snapshot.fatal.code)}
+    var status := String(snapshot.get("status", "invalid_token"))
+    if status in ["offline_grace_expired", "invalid_token"]:
+        return await activate_license("")
+    if status != "revoked":
         return {"ok": false, "error_type": "request", "error_code": "retry_unavailable"}
     if license_provider == null:
         return {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
@@ -2288,7 +2305,7 @@ func _build_main_menu() -> void:
     _build_rates_panel()
     _build_graphics_panel()
     var initial_button := entries.get_child(0) as Button
-    if initial_button != null:
+    if initial_button != null and is_inside_tree():
         initial_button.grab_focus()
 
 func _build_settings_panel() -> void:
@@ -2871,6 +2888,54 @@ func _build_flight_hud() -> void:
     _build_pause_panel()
     _build_controller_safety_panel()
     _build_finish_panel()
+    _build_license_panel()
+
+
+func _build_license_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "LicensePanel"
+    panel.set_anchors_preset(Control.PRESET_CENTER)
+    panel.offset_left = -220.0
+    panel.offset_top = -120.0
+    panel.offset_right = 220.0
+    panel.offset_bottom = 120.0
+    license_panel = panel
+    flight_hud_layer.add_child(panel)
+
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+
+    var title := Label.new()
+    title.text = "LICENSE REQUIRED"
+    rows.add_child(title)
+    license_status_label = Label.new()
+    license_status_label.name = "Status"
+    rows.add_child(license_status_label)
+    license_key_input = LineEdit.new()
+    license_key_input.name = "LicenseKey"
+    license_key_input.secret = true
+    license_key_input.placeholder_text = "Enter license key"
+    rows.add_child(license_key_input)
+
+    license_activate_button = Button.new()
+    license_activate_button.name = "Activate"
+    license_activate_button.text = "ACTIVATE LICENSE"
+    license_activate_button.pressed.connect(activate_license)
+    rows.add_child(license_activate_button)
+
+    license_retry_button = Button.new()
+    license_retry_button.name = "Retry"
+    license_retry_button.text = "RETRY"
+    license_retry_button.pressed.connect(retry_license)
+    rows.add_child(license_retry_button)
+
+    license_exit_button = Button.new()
+    license_exit_button.name = "Exit"
+    license_exit_button.text = "EXIT"
+    license_exit_button.pressed.connect(request_exit)
+    rows.add_child(license_exit_button)
 
 func _build_pause_panel() -> void:
     var panel := PanelContainer.new()
@@ -3054,10 +3119,20 @@ func _refresh_flight_hud() -> void:
         controller_safety_label.text = last_error_message
     if finish_panel != null:
         finish_panel.visible = screen == "finish"
+    if license_panel != null:
+        var license_snapshot := get_license_snapshot()
+        var license_status := String(license_snapshot.get("status", "invalid_token"))
+        license_panel.visible = screen == "license_blocked"
+        license_status_label.text = "LICENSE BLOCKED: %s" % license_status
+        var actions := license_actions()
+        license_key_input.visible = actions.has("activate_license") or actions.has("retry_license")
+        license_activate_button.visible = actions.has("activate_license")
+        license_retry_button.visible = actions.has("retry_license")
+        license_exit_button.visible = actions.has("exit")
     key_hints_label.text = KEY_HINTS_TEXT
     _refresh_rates_panel()
     _refresh_graphics_panel()
-    arm_takeoff_button.disabled = screen == "main_menu" or (controller_safety_latched and screen != "fallback_prompt")
+    arm_takeoff_button.disabled = screen in ["main_menu", "license_blocked"] or (controller_safety_latched and screen != "fallback_prompt")
     if acro_mode_button != null:
         acro_mode_button.disabled = screen != "flight" or paused or controller_safety_latched
         acro_mode_button.text = "ACRO MODE (C): %s" % ("ON" if flight_mode == "ACRO" else "OFF")
@@ -3092,6 +3167,9 @@ func _refresh_flight_hud() -> void:
     elif screen == "controller_disconnected":
         arm_status_label.text = last_error_message
         arm_takeoff_button.text = "WAIT FOR CONTROLLER"
+    elif screen == "license_blocked":
+        arm_status_label.text = last_error_message
+        arm_takeoff_button.text = "LICENSE BLOCKED"
     else:
         arm_status_label.text = "Quick Fly: choose Quick Fly, then arm at low throttle"
         arm_takeoff_button.text = "ARM / TAKEOFF (T)"

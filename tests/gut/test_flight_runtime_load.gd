@@ -49,21 +49,25 @@ class FakeDeviceState:
 
 class FakeLicenseProvider extends Node:
     var snapshot: Dictionary
-    var activation_result := {"ok": true}
-    var refresh_result := {"ok": true}
+    var activation_result: Dictionary = {"ok": true}
+    var refresh_result: Dictionary = {"ok": true}
     var activation_calls := 0
     var refresh_calls := 0
-    var last_license_key := ""
 
-    func _init(status: String) -> void:
-        snapshot = {"ok": status in ["online_valid", "offline_grace_valid", "not_activated"], "status": status}
+    func _init(status: String, last_online_result := "never", fatal: Dictionary = {}) -> void:
+        snapshot = {
+            "ok": status in ["online_valid", "offline_grace_valid", "not_activated"],
+            "status": status,
+            "last_online_result": last_online_result,
+        }
+        if not fatal.is_empty():
+            snapshot["fatal"] = fatal
 
     func get_snapshot() -> Dictionary:
         return snapshot.duplicate(true)
 
-    func activate(license_key: String) -> Dictionary:
+    func activate(_license_key: String) -> Dictionary:
         activation_calls += 1
-        last_license_key = license_key
         return activation_result.duplicate(true)
 
     func refresh_online() -> Dictionary:
@@ -224,13 +228,44 @@ func _runtime_with_missing_license_config() -> FlightRuntime:
     return runtime
 
 
-func _runtime_with_license_snapshot(status: String) -> FlightRuntime:
+func _runtime_with_license_snapshot(status: String, last_online_result := "never", fatal: Dictionary = {}) -> FlightRuntime:
     var runtime := FlightRuntime.new()
     autofree(runtime)
-    var provider := FakeLicenseProvider.new(status)
+    var provider := FakeLicenseProvider.new(status, last_online_result, fatal)
     runtime.license_provider = provider
     runtime.add_child(provider)
     return runtime
+
+
+func _runtime_with_startup_license_path(path: String) -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime._build_main_menu()
+    runtime._build_flight_hud()
+    runtime._configure_license_provider_from_path(path)
+    return runtime
+
+
+func _write_license_config(path: String, public_key_path: String) -> void:
+    var file := FileAccess.open(path, FileAccess.WRITE)
+    file.store_string(JSON.stringify({
+        "schema_version": 1,
+        "issue_endpoint": "https://license.example.test/issue",
+        "verify_endpoint": "https://license.example.test/verify",
+        "public_key_path": public_key_path,
+        "allowed_kids": ["ubuntu-2026"],
+        "state_path": "user://aerosim-task-1-fix-state.json",
+    }))
+    file.close()
+
+
+func after_each() -> void:
+    for path in [
+        "user://aerosim-task-1-fix-missing-key.json",
+        "user://aerosim-task-1-fix-state.json",
+    ]:
+        DirAccess.remove_absolute(path)
+        DirAccess.remove_absolute("%s.tmp" % path)
 
 
 func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() -> void:
@@ -257,10 +292,11 @@ func test_license_routes_expose_status_actions_and_only_retry_provider_states() 
     var runtime := _runtime_with_license_snapshot("not_activated")
     assert_eq(runtime.license_actions(), ["activate_license", "diagnostics", "exit"])
     var provider := runtime.license_provider as FakeLicenseProvider
-    var activation: Dictionary = await runtime.activate_license("test-license-key")
+    runtime._build_flight_hud()
+    runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+    var activation: Dictionary = await runtime.activate_license("")
     assert_true(activation.ok)
     assert_eq(provider.activation_calls, 1)
-    assert_eq(provider.last_license_key, "test-license-key")
     var retry_before_activation: Dictionary = await runtime.retry_license()
     assert_false(retry_before_activation.ok)
     assert_eq(provider.refresh_calls, 0)
@@ -270,6 +306,68 @@ func test_license_routes_expose_status_actions_and_only_retry_provider_states() 
     assert_eq(runtime.license_actions(), ["retry_license", "diagnostics", "exit"])
     await runtime.retry_license()
     assert_eq(provider.refresh_calls, 1)
+
+
+func test_activation_clears_the_real_nonpersistent_input_field_after_request() -> void:
+    var runtime := _runtime_with_license_snapshot("not_activated")
+    runtime._build_flight_hud()
+    runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+    assert_false(runtime.license_key_input.text.is_empty())
+    await runtime.activate_license("")
+    assert_true(runtime.license_key_input.text.is_empty())
+
+
+func test_missing_license_config_builds_observable_blocked_ui() -> void:
+    var runtime := _runtime_with_startup_license_path("user://aerosim-task-1-fix-no-config.json")
+    assert_eq(runtime.screen, "license_blocked")
+    assert_not_null(runtime.get_node_or_null("MainMenu"))
+    assert_true(runtime.license_panel.visible)
+    assert_string_contains(runtime.license_status_label.text, "LICENSE BLOCKED")
+    assert_eq(runtime.license_actions(), ["exit"])
+    assert_false(runtime.license_status_label.text.contains("jwt"))
+
+
+func test_missing_license_public_key_builds_observable_blocked_ui() -> void:
+    var config_path := "user://aerosim-task-1-fix-missing-key.json"
+    _write_license_config(config_path, "res://config/license-public-key-does-not-exist.pem")
+    var runtime := _runtime_with_startup_license_path(config_path)
+    assert_eq(runtime.screen, "license_blocked")
+    assert_true(runtime.license_panel.visible)
+    assert_eq(runtime.license_actions(), ["exit"])
+    assert_false(runtime.license_status_label.text.contains("jwt"))
+
+
+func test_license_status_table_exposes_exact_actions_and_dispatches_retry_safely() -> void:
+    var cases := [
+        {"status": "online_valid", "actions": [], "activation": 0, "refresh": 0},
+        {"status": "offline_grace_valid", "actions": [], "activation": 0, "refresh": 0},
+        {"status": "offline_grace_expired", "actions": ["retry_license", "diagnostics", "exit"], "activation": 1, "refresh": 0},
+        {"status": "invalid_token", "actions": ["retry_license", "diagnostics", "exit"], "activation": 1, "refresh": 0},
+        {"status": "revoked", "actions": ["retry_license", "diagnostics", "exit"], "activation": 0, "refresh": 1},
+        {"status": "not_activated", "actions": ["activate_license", "diagnostics", "exit"], "activation": 0, "refresh": 0},
+    ]
+    for case in cases:
+        var runtime := _runtime_with_license_snapshot(String(case.status))
+        runtime._build_flight_hud()
+        if String(case.status) in ["offline_grace_expired", "invalid_token"]:
+            runtime.license_key_input.text = runtime.license_key_input.placeholder_text
+        var provider := runtime.license_provider as FakeLicenseProvider
+        assert_eq(runtime.license_actions(), case.actions, case.status)
+        await runtime.retry_license()
+        assert_eq(provider.activation_calls, int(case.activation), case.status)
+        assert_eq(provider.refresh_calls, int(case.refresh), case.status)
+
+    var fatal := _runtime_with_license_snapshot("invalid_token", "rejected", {"kind": "config", "code": "public_key_missing"})
+    fatal._build_flight_hud()
+    assert_eq(fatal.license_actions(), ["exit"])
+    await fatal.retry_license()
+    assert_eq((fatal.license_provider as FakeLicenseProvider).activation_calls, 0)
+    assert_eq((fatal.license_provider as FakeLicenseProvider).refresh_calls, 0)
+
+    var absent := FlightRuntime.new()
+    autofree(absent)
+    assert_eq(absent.license_actions(), ["exit"])
+    await absent.retry_license()
 
 
 func test_graphics_startup_applies_persisted_viewport_scale() -> void:
