@@ -19,7 +19,9 @@ const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
 const TimeTrialController = preload("res://common/flight/time_trial.gd")
 const ReplayIntegrationRunner = preload("res://common/flight/replay_integration_runner.gd")
+const LicenseProviderScript = preload("res://common/license/license_provider.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
+const LICENSE_PROVIDER_CONFIG_PATH := "res://config/license_provider.json"
 const DEFAULT_FREE_FLIGHT_MAP_ID := "industrial_yard"
 const MAP_SCENE_PATHS := {
     "industrial_yard": "res://levels/free_flight/industrial_yard.tscn"
@@ -44,6 +46,7 @@ const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 @onready var secondary_chase_camera := get_node_or_null("ChaseCameraSecondary") as Camera3D
 
 var native: Object
+var license_provider: Node
 var airsim_session: AirSimSession
 var airsim_rpc_server: AirSimRpcServer
 var airsim_sensor_suite: AirSimSensorSuite
@@ -171,6 +174,8 @@ func _ready() -> void:
     settings_store = SettingsStoreScript.new()
     _load_player_settings()
     _restore_startup_gamepad_session()
+    if not _configure_license_provider_from_path(LICENSE_PROVIDER_CONFIG_PATH):
+        return
     var startup_settings := _load_and_validate_airsim_settings()
     if startup_settings.is_empty():
         return
@@ -274,6 +279,75 @@ func _run_replay_integration() -> void:
     else:
         push_error(String(result.get("error", "unknown")))
         get_tree().quit(1)
+
+
+func _configure_license_provider_from_path(path: String) -> bool:
+    var file := FileAccess.open(path, FileAccess.READ)
+    if file == null:
+        return _configure_license_provider({})
+    var parsed: Variant = JSON.parse_string(file.get_as_text())
+    file.close()
+    if typeof(parsed) != TYPE_DICTIONARY:
+        return _configure_license_provider({})
+    return _configure_license_provider(parsed)
+
+
+func _configure_license_provider(config: Dictionary) -> bool:
+    if license_provider == null:
+        license_provider = LicenseProviderScript.new()
+        add_child(license_provider)
+    var result: Dictionary = license_provider.configure(config)
+    if not bool(result.get("ok", false)):
+        _show_license_blocked("License provider configuration failed: %s" % String(result.get("error_code", "unknown")))
+        return false
+    return true
+
+
+func get_license_snapshot() -> Dictionary:
+    if license_provider == null:
+        return {"ok": false, "status": "invalid_token"}
+    return license_provider.get_snapshot()
+
+
+func can_start_quick_fly() -> bool:
+    var status := String(get_license_snapshot().get("status", "invalid_token"))
+    return status in ["online_valid", "offline_grace_valid"]
+
+
+func license_actions() -> Array[String]:
+    var snapshot := get_license_snapshot()
+    if snapshot.has("fatal"):
+        return ["exit"]
+    var status := String(snapshot.get("status", "invalid_token"))
+    if status == "not_activated":
+        return ["activate_license", "diagnostics", "exit"]
+    if status in ["offline_grace_expired", "revoked", "invalid_token"]:
+        return ["retry_license", "diagnostics", "exit"]
+    return []
+
+
+func activate_license(license_key: String) -> Dictionary:
+    if license_provider == null:
+        return {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
+    var result: Dictionary = await license_provider.activate(license_key)
+    license_key = ""
+    return result
+
+
+func retry_license() -> Dictionary:
+    var status := String(get_license_snapshot().get("status", "invalid_token"))
+    if status not in ["offline_grace_expired", "revoked", "invalid_token"]:
+        return {"ok": false, "error_type": "request", "error_code": "retry_unavailable"}
+    if license_provider == null:
+        return {"ok": false, "error_type": "fatal", "error_code": "not_configured"}
+    return await license_provider.refresh_online()
+
+
+func _show_license_blocked(message: String) -> void:
+    last_error_message = message
+    screen = "license_blocked"
+    takeoff_requested = false
+    _refresh_flight_hud()
 
 
 func _validate_airsim_startup_settings(raw_settings: Dictionary) -> Dictionary:
@@ -1556,6 +1630,10 @@ func request_exit() -> void:
         get_tree().quit()
 
 func quick_fly() -> void:
+    if not can_start_quick_fly():
+        if screen != "license_blocked":
+            _show_license_blocked("Quick Fly unavailable: license %s" % String(get_license_snapshot().get("status", "invalid_token")))
+        return
     var device_id := _first_connected_device()
     var current_profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)
     if current_profile == null:

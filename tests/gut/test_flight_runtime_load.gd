@@ -47,6 +47,30 @@ class FakeDeviceState:
         return "Xbox Controller" if supported else "Unknown Controller"
 
 
+class FakeLicenseProvider extends Node:
+    var snapshot: Dictionary
+    var activation_result := {"ok": true}
+    var refresh_result := {"ok": true}
+    var activation_calls := 0
+    var refresh_calls := 0
+    var last_license_key := ""
+
+    func _init(status: String) -> void:
+        snapshot = {"ok": status in ["online_valid", "offline_grace_valid", "not_activated"], "status": status}
+
+    func get_snapshot() -> Dictionary:
+        return snapshot.duplicate(true)
+
+    func activate(license_key: String) -> Dictionary:
+        activation_calls += 1
+        last_license_key = license_key
+        return activation_result.duplicate(true)
+
+    func refresh_online() -> Dictionary:
+        refresh_calls += 1
+        return refresh_result.duplicate(true)
+
+
 class RecoverySettingsStore:
     extends RefCounted
 
@@ -193,10 +217,59 @@ func _controller_monitor_runtime() -> FlightRuntime:
     return runtime
 
 
+func _runtime_with_missing_license_config() -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime._configure_license_provider({})
+    return runtime
+
+
+func _runtime_with_license_snapshot(status: String) -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var provider := FakeLicenseProvider.new(status)
+    runtime.license_provider = provider
+    runtime.add_child(provider)
+    return runtime
+
+
 func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() -> void:
     var runtime_script := load("res://common/flight/flight_runtime.gd")
 
     assert_not_null(runtime_script)
+
+
+func test_quick_fly_fails_loudly_when_license_provider_configuration_fails() -> void:
+    var runtime := _runtime_with_missing_license_config()
+    assert_eq(runtime.screen, "license_blocked")
+    runtime.quick_fly()
+    assert_false(runtime.takeoff_requested)
+
+
+func test_only_online_and_offline_grace_license_snapshots_can_start_quick_fly() -> void:
+    var runtime := _runtime_with_license_snapshot("offline_grace_valid")
+    assert_true(runtime.can_start_quick_fly())
+    runtime = _runtime_with_license_snapshot("revoked")
+    assert_false(runtime.can_start_quick_fly())
+
+
+func test_license_routes_expose_status_actions_and_only_retry_provider_states() -> void:
+    var runtime := _runtime_with_license_snapshot("not_activated")
+    assert_eq(runtime.license_actions(), ["activate_license", "diagnostics", "exit"])
+    var provider := runtime.license_provider as FakeLicenseProvider
+    var activation: Dictionary = await runtime.activate_license("test-license-key")
+    assert_true(activation.ok)
+    assert_eq(provider.activation_calls, 1)
+    assert_eq(provider.last_license_key, "test-license-key")
+    var retry_before_activation: Dictionary = await runtime.retry_license()
+    assert_false(retry_before_activation.ok)
+    assert_eq(provider.refresh_calls, 0)
+
+    runtime = _runtime_with_license_snapshot("revoked")
+    provider = runtime.license_provider as FakeLicenseProvider
+    assert_eq(runtime.license_actions(), ["retry_license", "diagnostics", "exit"])
+    await runtime.retry_license()
+    assert_eq(provider.refresh_calls, 1)
 
 
 func test_graphics_startup_applies_persisted_viewport_scale() -> void:

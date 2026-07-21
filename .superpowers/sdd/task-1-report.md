@@ -1,36 +1,34 @@
-# Task 1 Report: Industrial Yard Descriptor and Scene
+# Task 1 Report: Wire the Existing License Provider
 
-Status: DONE with full-smoke concern recorded below.
+Status: DONE
 
 ## Delivered
 
-- Added `FreeFlightMap`, a fail-loud JSON descriptor loader for the sole `industrial_yard` map id.
-- Added `config/maps/industrial_yard.json` with id, name, type, recommended aircraft, wind preset, spawn count, and mode.
-- Added one renderer-shared `levels/free_flight/industrial_yard.tscn` using only primitive meshes and `StandardMaterial3D` materials.
-- The scene includes `SpawnNorth`, a spawn platform, ground, two cargo containers, a low gate, a labelled 90 degree turn marker, a tower, and collision for every `StaticBody3D`.
-- Added smoke coverage that loads the descriptor, checks all required field values, rejects each missing required field, and verifies the named scene landmarks plus collision shapes.
-- Did not modify runtime, Quick Fly, ACRO, #43 UI, #31 wind, the smoke measurement scene, or the performance harness.
+- `FlightRuntime` now preloads and owns one `LicenseProvider`, configuring it once during startup from `res://config/license_provider.json` through the provider's public `configure` method.
+- Missing, invalid, or rejected provider configuration enters the named `license_blocked` screen and prevents Quick Fly from requesting takeoff.
+- Quick Fly is allowed only for sanitized provider snapshots with `online_valid` or `offline_grace_valid` status.
+- Added the public runtime seam used by later menu work: `get_license_snapshot`, `can_start_quick_fly`, `license_actions`, `activate_license`, and `retry_license`.
+- `not_activated` exposes activation, Diagnostics, and Exit actions; `offline_grace_expired`, `revoked`, and `invalid_token` expose retry, Diagnostics, and Exit. Retry does not call the provider for `not_activated`.
+- Activation awaits the provider request and clears the entered key parameter afterward. No JWT, claims, license key, or copied provider state is stored in runtime settings/UI state.
+
+## Root Cause and Solution
+
+The existing provider was tested in isolation but was not connected to `FlightRuntime`; Quick Fly therefore had no license decision boundary. The runtime now reads the provider's sanitized `get_snapshot()` result at the Quick Fly seam and delegates activation/refresh directly to the existing provider methods.
 
 ## TDD Evidence
 
-1. Added the descriptor and scene smoke assertions before either file existed.
-2. RED: fixed-Godot runtime-only smoke failed to preload the missing `free_flight_map.gd` and `industrial_yard.tscn`.
-3. Implemented the smallest descriptor loader, JSON descriptor, and primitive-only scene.
-4. GREEN: fixed-Godot runtime-only smoke exited 0 after the implementation.
-5. Expanded the negative coverage to delete every required descriptor field; the fixed-Godot runtime-only smoke exited 0 again.
+1. RED: the specified tests failed with nonexistent `_configure_license_provider`, `license_provider`, and `can_start_quick_fly` runtime APIs.
+2. GREEN: the provider boundary implementation made both specified tests pass.
+3. RED: the added public-route test failed because `license_actions` was absent.
+4. GREEN: the route implementation made activation and status-specific retry behavior pass.
 
 ## Validation
 
 | Command | Result |
 | --- | --- |
-| `/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://common/smoke/headless_smoke.gd -- --runtime-only` | Exit 0 after implementation and after all-missing-field coverage. |
-| `git diff --check` | Exit 0; no whitespace errors. |
-| `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --frames 5` | Not verified: timed out at 120 seconds, then again at 600 seconds, with no JSON or CSV artifact. |
-
-## Commit
-
-- `feat: add industrial yard scene`
+| `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh --recovery-mode` | PASS; 163 tests, 0 failures, 0 errors; 11 expected native-unavailable pending tests. |
+| `git diff --check` | PASS. |
 
 ## Concerns
 
-- The full headless smoke did not complete within 600 seconds and produced no artifact. Its existing 800 Jolt collision trials are outside Task 1, but this task cannot claim full-smoke verification. The descriptor and scene public seam is verified by the passing fixed-Godot runtime-only smoke.
+- The recovery-mode GUT command intentionally marks native-dependent tests pending; this task's license/runtime tests pass. No product decision was changed and no blocker remains.
