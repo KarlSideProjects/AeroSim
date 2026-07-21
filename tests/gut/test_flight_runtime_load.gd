@@ -423,6 +423,9 @@ func test_controller_route_exit_input_cancels_each_caller_without_requesting_exi
                 runtime._unhandled_input(_flight_exit_event(use_gamepad))
                 assert_eq(runtime.screen, "controller_settings" if route == "controller_settings" else "main_menu", "%s/%s cancels to its caller" % [route, "B" if use_gamepad else "Escape"])
                 assert_false(runtime.exit_requested, "%s/%s does not request cleanup exit" % [route, "B" if use_gamepad else "Escape"])
+                if route == "controller_settings":
+                    var reset_button := runtime.main_menu_layer.get_node("ControllerSettingsPanel/Rows/ResetXboxDefault") as Button
+                    assert_eq(runtime.main_menu_layer.get_viewport().gui_get_focus_owner(), reset_button, "%s/%s returns focus to Controller Settings reset" % ["fallback" if fallback else "confirmation", "B" if use_gamepad else "Escape"])
 
 
 func test_controller_route_completion_rechecks_current_license_before_preflight() -> void:

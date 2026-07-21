@@ -86,9 +86,17 @@ func _run() -> void:
 	_expect(dashboard != null and dashboard.call("get_layout_mode") == "full" and bool(dashboard.call("get_render_evidence").get("visible", false)), "Lab Mode shows the full Operations Dashboard")
 	var lab_back: Button = runtime.get_node_or_null("FlightHud/StatusMargin/StatusPanel/StatusRows/LabBack")
 	_expect(lab_back != null and lab_back.is_visible_in_tree(), "Lab Mode exposes a visible Back control")
+	if lab_back != null:
+		_click(lab_back)
+	await _settle(2)
+	_expect(runtime.screen == "main_menu" and dashboard != null and dashboard.call("get_layout_mode") == "compact", "Lab Back returns to compact main menu")
+	if lab_entry != null:
+		_click(lab_entry)
+	await _settle(2)
+	_expect(runtime.screen == "lab_mode" and dashboard != null and dashboard.call("get_layout_mode") == "full", "Lab Mode reopens for Escape coverage")
 	_tap(KEY_ESCAPE)
 	await _settle(2)
-	_expect(runtime.screen == "main_menu" and dashboard != null and dashboard.call("get_layout_mode") == "compact", "Escape returns Lab Mode to compact main menu")
+	_expect(runtime.screen == "main_menu" and dashboard != null and dashboard.call("get_layout_mode") == "compact", "Escape also returns Lab Mode to compact main menu")
 	runtime.quit_on_exit = false
 	runtime.exit_requested = false
 	var quit_entry: Button = runtime.get_node_or_null("MainMenu/Entries/Quit")
@@ -115,6 +123,18 @@ func _run() -> void:
 	device_state.replace_snapshot([known_device_id], [known_device_id])
 	Input.joy_connection_changed.emit(known_device_id, true)
 	await _settle(2)
+	var menu_controller_button: Button = runtime.get_node_or_null("MainMenu/Entries/Controller")
+	_expect(menu_controller_button != null, "main menu exposes Controller")
+	if menu_controller_button != null:
+		_click(menu_controller_button)
+	await _settle(2)
+	_expect(runtime.screen == "controller_confirmation", "top-level Controller opens confirmation")
+	var menu_controller_confirmation: Button = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile")
+	_expect(menu_controller_confirmation != null, "top-level Controller exposes confirmation")
+	if menu_controller_confirmation != null:
+		_click(menu_controller_confirmation)
+	await _settle(2)
+	_expect(runtime.screen == "main_menu", "top-level Controller confirmation returns to main menu")
 	var settings_button: Button = runtime.get_node_or_null("MainMenu/Entries/Settings")
 	_expect(settings_button != null, "main menu exposes Settings")
 	if settings_button != null:

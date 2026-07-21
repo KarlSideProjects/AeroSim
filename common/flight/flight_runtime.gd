@@ -2980,6 +2980,9 @@ func show_controller_settings() -> void:
     controller_monitor_refresh_count = 0
     _refresh_controller_settings()
     _refresh_flight_hud()
+    var reset_button := controller_settings_panel.get_node_or_null("Rows/ResetXboxDefault") as Button if controller_settings_panel != null else null
+    if reset_button != null and reset_button.is_visible_in_tree():
+        reset_button.grab_focus()
 
 
 func show_rates(return_screen: String = "settings") -> void:

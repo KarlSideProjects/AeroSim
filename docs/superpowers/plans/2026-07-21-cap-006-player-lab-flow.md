@@ -167,4 +167,3 @@ git commit -m "test: cover CAP-006 cold start flow"
 ~~~
 
 Comment on #43 with each resolved provider/setup/controller/Lab problem, commands, outcomes, and the explicit statement that human visual review remains deferred.
-
