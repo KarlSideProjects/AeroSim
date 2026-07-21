@@ -145,6 +145,9 @@ ui.dashboard.pitch,PITCH,俯仰
 ui.dashboard.yaw,YAW,偏航
 ui.dashboard.roll,ROLL,滾轉
 ui.map.north_spawn,NORTH SPAWN,北側起飛點
+ui.map.rain,Rain,雨
+ui.map.fog,Fog,霧
+ui.map.time_of_day,Time of day,時間
 ui.map.turn_90,TURN 90 DEG,轉彎 90 度
 ui.map.checkpoint_1,▼ CHECKPOINT 1,▼ 檢查點 1
 ui.map.checkpoint_2,▼ CHECKPOINT 2,▼ 檢查點 2

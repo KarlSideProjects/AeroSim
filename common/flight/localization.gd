@@ -11,6 +11,8 @@ static func set_locale(locale: String) -> bool:
     if not LanguageProfile.SUPPORTED_LOCALES.has(locale):
         return false
     _ensure_catalog()
+    if not _catalog_loaded:
+        return false
     current_locale = locale
     TranslationServer.set_locale(locale)
     return true
@@ -26,11 +28,28 @@ static func format(key: String, values: Array = []) -> String:
     return translated % values if not values.is_empty() else translated
 
 
+static func catalog_ready() -> bool:
+    _ensure_catalog()
+    return _catalog_loaded
+
+
 static func _ensure_catalog() -> void:
     if _catalog_loaded:
         return
+    var imported_translations_loaded := true
+    for locale in LanguageProfile.SUPPORTED_LOCALES:
+        var imported := ResourceLoader.load("res://locales/ui.%s.translation" % locale)
+        if imported is Translation:
+            TranslationServer.add_translation(imported)
+        else:
+            imported_translations_loaded = false
+            break
+    if imported_translations_loaded:
+        _catalog_loaded = true
+        return
     var file := FileAccess.open("res://locales/ui.csv", FileAccess.READ)
     if file == null:
+        push_error("UI localization catalog is unavailable in the exported project")
         return
     var translations: Dictionary = {}
     for locale in LanguageProfile.SUPPORTED_LOCALES:

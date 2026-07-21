@@ -25,6 +25,7 @@ func test_language_profile_accepts_only_supported_locales() -> void:
 
 
 func test_translation_catalog_has_english_and_traditional_chinese() -> void:
+    assert_true(Localization.catalog_ready())
     assert_true(Localization.set_locale("en"))
     var english := Localization.translate("ui.settings")
     assert_true(Localization.set_locale("zh_TW"))

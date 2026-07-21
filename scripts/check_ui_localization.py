@@ -14,6 +14,7 @@ PRODUCTION_FILES = [
     ROOT / "levels/free_flight/industrial_yard.tscn",
     ROOT / "levels/smoke/smoke.tscn",
 ]
+EXPORT_PRESETS = ROOT / "export_presets.cfg"
 PLACEHOLDER = re.compile(r"%(?:[-+#0 ]*\d*(?:\.\d+)?)?[a-zA-Z]")
 SINK = re.compile(r"\.(?:text|placeholder_text|tooltip_text)\s*=\s*\"([^\"]*)\"")
 SCENE_TEXT = re.compile(r"^text\s*=\s*\"([^\"]*)\"$")
@@ -26,6 +27,11 @@ def placeholders(value: str) -> list[str]:
 
 def main() -> int:
     errors: list[str] = []
+    export_settings = EXPORT_PRESETS.read_text(encoding="utf-8")
+    if 'export_filter="all_resources"' not in export_settings:
+        errors.append("export presets must include all resources so imported UI translations ship")
+    if "locales/ui.csv" in export_settings and "exclude_filter" in export_settings:
+        errors.append("export presets must not exclude the UI localization catalog")
     with CATALOG.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     if not rows or set(rows[0]) != {"keys", "en", "zh_TW"}:

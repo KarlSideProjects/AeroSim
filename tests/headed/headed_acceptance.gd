@@ -35,6 +35,7 @@ class HeadedLicenseProvider:
 var _failures: Array[String] = []
 var _out_dir := "build/headed"
 var _channel_monitor_evidence: Dictionary = {}
+var _ui_animation_count := 0
 
 func _initialize() -> void:
 	_run()
@@ -47,6 +48,8 @@ func _run() -> void:
 	runtime.gamepad_device_state = device_state
 	root.add_child(runtime)
 	await _settle(30)
+	_ui_animation_count = root.find_children("*", "AnimationPlayer", true, false).size()
+	_expect(_ui_animation_count == 0, "production UI has no animation players requiring G4B.9 offset-transform review")
 	_install_deterministic_valid_license(runtime)
 
 	await _snapshot("00_cold_start")
@@ -733,6 +736,6 @@ func _write_report() -> bool:
 	if report == null:
 		push_error("Cannot write headed acceptance report")
 		return false
-	report.store_string(JSON.stringify({"channel_monitor": _channel_monitor_evidence, "failures": _failures, "passed": _failures.is_empty()}))
+	report.store_string(JSON.stringify({"channel_monitor": _channel_monitor_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
 	return true

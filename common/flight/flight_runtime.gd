@@ -1966,19 +1966,19 @@ func open_map_menu() -> void:
     environment_controls.name = "EnvironmentControls"
     environment_controls.position = Vector2(240.0, 0.0)
     layer.add_child(environment_controls)
-    _add_environment_slider(environment_controls, "Rain", "rain", 0.0, 1.0, 0.05)
-    _add_environment_slider(environment_controls, "Fog", "fog", 0.0, 1.0, 0.05)
-    _add_environment_slider(environment_controls, "Time of day", "time_of_day", 0.0, 23.99, 0.25)
+    _add_environment_slider(environment_controls, "ui.map.rain", "rain", 0.0, 1.0, 0.05)
+    _add_environment_slider(environment_controls, "ui.map.fog", "fog", 0.0, 1.0, 0.05)
+    _add_environment_slider(environment_controls, "ui.map.time_of_day", "time_of_day", 0.0, 23.99, 0.25)
 
 
-func _add_environment_slider(parent: VBoxContainer, label_text: String, key: String, minimum: float, maximum: float, step: float) -> void:
+func _add_environment_slider(parent: VBoxContainer, label_key: String, key: String, minimum: float, maximum: float, step: float) -> void:
     if environment_state == null:
         return
     var label := Label.new()
-    label.text = label_text
+    label.text = _t(label_key)
     parent.add_child(label)
     var slider := HSlider.new()
-    slider.name = label_text.replace(" ", "")
+    slider.name = key.capitalize()
     slider.min_value = minimum
     slider.max_value = maximum
     slider.step = step
@@ -3342,6 +3342,7 @@ func _build_flight_hud() -> void:
 
     arm_status_label = Label.new()
     arm_status_label.name = "ArmStatus"
+    arm_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     rows.add_child(arm_status_label)
 
     time_trial_status_label = Label.new()
@@ -3473,11 +3474,11 @@ func _build_pause_panel() -> void:
 func _build_controller_safety_panel() -> void:
     var panel := PanelContainer.new()
     panel.name = "ControllerSafetyPanel"
-    panel.set_anchors_preset(Control.PRESET_CENTER)
-    panel.offset_left = -220.0
-    panel.offset_top = -80.0
-    panel.offset_right = 220.0
-    panel.offset_bottom = 80.0
+    panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    panel.offset_left = 10.0
+    panel.offset_top = 180.0
+    panel.offset_right = 830.0
+    panel.offset_bottom = 290.0
     controller_safety_panel = panel
     flight_hud_layer.add_child(panel)
 
@@ -3487,6 +3488,7 @@ func _build_controller_safety_panel() -> void:
     panel.add_child(rows)
     controller_safety_label = Label.new()
     controller_safety_label.name = "Message"
+    controller_safety_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     rows.add_child(controller_safety_label)
 
 func _build_finish_panel() -> void:
