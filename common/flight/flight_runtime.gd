@@ -2634,13 +2634,18 @@ func _build_flight_setup_panel() -> void:
     wind_title.name = "WindTitle"
     wind_title.text = _t("ui.flight_setup.wind_preset")
     rows.add_child(wind_title)
-    var wind_presets := HBoxContainer.new()
+    var wind_presets := GridContainer.new()
     wind_presets.name = "WindPresets"
+    wind_presets.columns = 4
+    wind_presets.add_theme_constant_override("separation", 6)
+    wind_presets.add_theme_constant_override("h_separation", 6)
+    wind_presets.add_theme_constant_override("v_separation", 6)
     rows.add_child(wind_presets)
     for preset in WIND_PRESETS:
         var wind_button := Button.new()
         wind_button.name = preset.capitalize()
         wind_button.text = _t("ui.wind.%s" % preset)
+        wind_button.custom_minimum_size = Vector2(90.0, 31.0)
         wind_button.pressed.connect(_set_flight_setup_wind.bind(preset))
         wind_presets.add_child(wind_button)
 
