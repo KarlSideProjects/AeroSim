@@ -1995,10 +1995,7 @@ func _verify_runtime_actions() -> bool:
         return false
     _inject_joy_button(known_device_id, JOY_BUTTON_A, false)
     _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.70)
-    # Controlled takeoff assist needs a real acceleration window; 60 frames is
-    # only 250 ms at the fixed 240 Hz physics rate and was calibrated for the
-    # removed one-shot jump velocity rather than the configured hover model.
-    for _frame in range(240):
+    for _frame in range(60):
         await physics_frame
     var high_profile_thrust := float(scene.native.call("flight_control_diagnostics").get("motor_thrust_newtons", 0.0))
     _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.20)
@@ -2188,7 +2185,8 @@ func _verify_runtime_actions() -> bool:
     await _press_key(KEY_T)
     var moved_after_takeoff := false
     var climbed_after_takeoff := false
-    for _frame in range(60):
+    # Controlled throttle takeoff is intentionally slower than the removed one-shot jump.
+    for _frame in range(480):
         await physics_frame
         var takeoff_delta: Vector3 = scene.drone_body.global_position - takeoff_position
         moved_after_takeoff = moved_after_takeoff or takeoff_delta.length() > 0.05
@@ -2305,7 +2303,7 @@ func _verify_runtime_actions() -> bool:
         push_error("Industrial Yard reset must retain the active ChaseCamera Camera3D")
         scene.queue_free()
         return false
-    for _frame in range(31):
+    for _frame in range(Engine.physics_ticks_per_second / 4 + 1):
         await physics_frame
     if scene.drone_body.freeze or not scene.native.call("flight_control_armed"):
         push_error("flight_respawn action must release reset hold and re-arm after pausing")
@@ -2522,6 +2520,9 @@ func _verify_hardware_config_public_path() -> bool:
             push_error("Body-drag presenter must reject coercible but incorrectly typed telemetry")
             scene.queue_free()
             return false
+        # The smoke scene is still on the menu here; expose the presenter explicitly
+        # so this check isolates paused rendering from screen-routing visibility.
+        debug_panel.call("set_screen_visible", true)
         scene.set_paused(true, false)
         var debug_canvas = debug_panel.get("_panel")
         if String(debug_panel.call("_text_value", "body_drag_operating_state")) != "PAUSED" or debug_canvas == null or not debug_canvas.visible:
@@ -2529,6 +2530,7 @@ func _verify_hardware_config_public_path() -> bool:
             scene.queue_free()
             return false
         scene.set_paused(false, false)
+        debug_panel.call("set_screen_visible", false)
     var native_before: Object = scene.native
     var reset_count_before: int = scene.reset_count
     if not loader.apply_to_runtime(scene, "res://config/drones/5_inch_6s.json"):

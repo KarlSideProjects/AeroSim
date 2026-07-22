@@ -1228,13 +1228,12 @@ func _physics_process(delta: float) -> void:
         native.call("arm_flight_control", 0.0)
     var throttle := _flight_throttle()
     if takeoff_assist_active:
-        if _has_active_gamepad_profile() and absf(_profile_throttle_raw()) > InputProfiles.GamepadProfile.THROTTLE_LOW_THRESHOLD:
+        if not _has_active_gamepad_profile() or absf(_profile_throttle_raw()) > InputProfiles.GamepadProfile.THROTTLE_LOW_THRESHOLD:
             takeoff_assist_active = false
         elif drone_body != null and drone_body.global_position.y >= _spawn_position().y + TAKEOFF_ASSIST_ALTITUDE_M:
             takeoff_assist_active = false
-            if _has_active_gamepad_profile():
-                session_gamepad_profile.throttle = takeoff_assist_throttle - TAKEOFF_ASSIST_MARGIN
-                throttle = session_gamepad_profile.throttle
+            session_gamepad_profile.throttle = takeoff_assist_throttle - TAKEOFF_ASSIST_MARGIN
+            throttle = session_gamepad_profile.throttle
         else:
             throttle = takeoff_assist_throttle
     var angle_roll := _angle_roll_degrees()
@@ -1695,7 +1694,7 @@ func request_takeoff() -> void:
     takeoff_assist_active = false
     takeoff_assist_throttle = 0.0
     update_fallback_status()
-    if native != null and native.has_method("hardware_power_diagnostics"):
+    if _has_active_gamepad_profile() and native != null and native.has_method("hardware_power_diagnostics"):
         var diagnostics: Dictionary = native.call("hardware_power_diagnostics")
         var hover_throttle := float(diagnostics.get("hover_throttle", 0.0))
         if is_finite(hover_throttle) and hover_throttle > 0.0:
@@ -2074,8 +2073,8 @@ func respawn() -> void:
     if time_trial != null:
         time_trial.start()
     if drone_body != null:
-        # ponytail: short reset hold; replace with real throttle input state when controller profiles land.
-        reset_hold_frames = 30
+        # Keep the reset pose stable for one quarter second at the configured physics rate.
+        reset_hold_frames = maxi(1, Engine.physics_ticks_per_second / 4)
     _refresh_flight_hud()
 
 func retry_time_trial() -> void:
