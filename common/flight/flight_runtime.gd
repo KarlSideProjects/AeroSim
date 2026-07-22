@@ -2473,6 +2473,13 @@ func _localize_fallback_message(message: String) -> String:
         return _t("ui.error.respawn_blocked_resume")
     if message == "Resume blocked: throttle_not_low":
         return _t("ui.error.resume_blocked_throttle")
+    if message.begins_with("Settings recovered to factory defaults: "):
+        return _format("ui.error.settings_recovered", [message.trim_prefix("Settings recovered to factory defaults: ")])
+    if message.begins_with("Cannot load Free Flight map ") and message.contains(": "):
+        var map_error := message.trim_prefix("Cannot load Free Flight map ")
+        var separator := map_error.find(": ")
+        if separator > 0:
+            return _format("ui.error.map_load_failed", [map_error.substr(0, separator), map_error.substr(separator + 2)])
     if message.begins_with("PX4"):
         return _localized_px4_message(message)
     return _format("ui.error.generic", [message])

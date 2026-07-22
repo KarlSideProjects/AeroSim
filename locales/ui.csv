@@ -222,4 +222,6 @@ ui.error.controller_profile_not_persisted,Controller profile was not persisted: 
 ui.error.fallback_no_prompt,No fallback prompt is active,目前沒有啟用中的備援提示
 ui.error.respawn_blocked_resume,Respawn blocked: controller_resume_required,重生受阻：需要先恢復控制器
 ui.error.resume_blocked_throttle,Resume blocked: throttle_not_low,繼續受阻：油門未在低位
+ui.error.settings_recovered,Settings recovered to factory defaults: %s,設定已恢復原廠預設：%s
+ui.error.map_load_failed,Cannot load Free Flight map %s: %s,無法載入 Free Flight 地圖 %s：%s
 ui.error.generic,%s,錯誤：%s
