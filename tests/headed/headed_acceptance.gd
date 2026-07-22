@@ -35,6 +35,9 @@ class HeadedLicenseProvider:
 var _failures: Array[String] = []
 var _out_dir := "build/headed"
 var _channel_monitor_evidence: Dictionary = {}
+var _layout_audit_evidence: Dictionary = {}
+var _screenshot_comparison: Dictionary = {}
+var _ui_animation_count := 0
 
 func _initialize() -> void:
 	_run()
@@ -47,6 +50,8 @@ func _run() -> void:
 	runtime.gamepad_device_state = device_state
 	root.add_child(runtime)
 	await _settle(30)
+	_ui_animation_count = root.find_children("*", "AnimationPlayer", true, false).size()
+	_expect(_ui_animation_count == 0, "production UI has no animation players requiring G4B.9 offset-transform review")
 	_install_deterministic_valid_license(runtime)
 
 	await _snapshot("00_cold_start")
@@ -513,6 +518,7 @@ func _run() -> void:
 	await _settle(2)
 	await _snapshot("06_exit")
 	_expect(runtime.exit_requested and runtime.screen == "main_menu" and runtime.loaded_map == null and runtime.get_node_or_null("LoadedMap") == null, "exit frees the map and returns to the main menu stub")
+	await _audit_localization(runtime)
 	if not _write_report():
 		quit(1)
 		return
@@ -645,6 +651,133 @@ func _click(control: Control) -> void:
 		event.pressed = pressed
 		Input.parse_input_event(event)
 
+func _audit_localization(runtime: Node) -> void:
+	var switch_started_us := Time.get_ticks_usec()
+	var switched_to_zh_tw: bool = runtime.set_locale("zh_TW")
+	var switch_elapsed_us := Time.get_ticks_usec() - switch_started_us
+	_expect(switched_to_zh_tw, "UI locale switches to Traditional Chinese")
+	_expect(switch_elapsed_us <= 100_000, "locale switch does not block input for more than 100 ms")
+	if not switched_to_zh_tw:
+		var language_load: Dictionary = runtime.settings_store.load_document()
+		_failures.append("locale switch diagnostic: %s runtime=%s" % [language_load.get("error", "unknown"), runtime.last_error_message])
+	await _settle(2)
+	runtime.show_main_menu()
+	await _settle(1)
+	var quick_fly: Button = runtime.get_node_or_null("MainMenu/Entries/QuickFly")
+	_expect(quick_fly != null and quick_fly.text == "快速飛行", "Traditional Chinese localizes the main menu immediately")
+	_audit_visible_controls(runtime, "main_menu_zh_tw")
+	runtime.show_settings()
+	await _settle(1)
+	var settings_title: Label = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Title")
+	var language_selector: OptionButton = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Language")
+	_expect(settings_title != null and settings_title.text == "設定", "Traditional Chinese localizes Settings immediately")
+	_expect(language_selector != null and language_selector.get_item_text(1) == "繁體中文", "Language selector localizes its own options")
+	var settings_status: Label = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Status")
+	_expect(settings_status != null and settings_status.text.contains("不支援"), "Traditional Chinese localizes the visible controller diagnostic")
+	_expect(settings_status == null or not settings_status.text.contains("Unsupported controller"), "Traditional Chinese removes the visible English controller diagnostic")
+	_audit_visible_controls(runtime, "settings_zh_tw")
+	runtime.show_main_menu()
+	await _settle(1)
+	var drone_entry: Button = runtime.get_node_or_null("MainMenu/Entries/Drone")
+	if drone_entry != null:
+		_click(drone_entry)
+	await _settle(1)
+	var flight_mode_label: Label = runtime.get_node_or_null("MainMenu/FlightSetupPanel/Rows/Mode")
+	_expect(flight_mode_label != null and flight_mode_label.text == "模式：角度", "Traditional Chinese localizes the dynamic Flight Setup mode")
+	_audit_visible_controls(runtime, "flight_setup_zh_tw")
+	runtime.show_settings()
+	await _settle(1)
+	runtime.show_controller_settings()
+	await _settle(1)
+	_audit_visible_controls(runtime, "controller_settings_zh_tw")
+	runtime.show_rates()
+	await _settle(1)
+	_audit_visible_controls(runtime, "rates_zh_tw")
+	runtime.show_graphics()
+	await _settle(1)
+	_audit_visible_controls(runtime, "graphics_zh_tw")
+	runtime.show_settings()
+	await _settle(1)
+	_expect(runtime.load_map("industrial_yard"), "Traditional Chinese can load the Industrial Yard")
+	await _settle(2)
+	var north_spawn_label: Label3D = runtime.loaded_map.get_node_or_null("SpawnNorth/DirectionLabel") if runtime.loaded_map != null else null
+	_expect(north_spawn_label != null and north_spawn_label.text == "北側起飛點", "Industrial Yard Label3D localizes with the active locale")
+	runtime.unload_map()
+	var zh_tw_image := await _snapshot("08_zh_tw_settings")
+	_expect(runtime.set_locale("en"), "UI locale switches back to English")
+	await _settle(2)
+	_expect(settings_title != null and settings_title.text == "SETTINGS", "English locale restores Settings immediately")
+	runtime.show_main_menu()
+	await _settle(1)
+	_audit_visible_controls(runtime, "main_menu_en")
+	runtime.show_settings()
+	await _settle(1)
+	_audit_visible_controls(runtime, "settings_en")
+	runtime.show_controller_settings()
+	await _settle(1)
+	_audit_visible_controls(runtime, "controller_settings_en")
+	runtime.show_rates()
+	await _settle(1)
+	_audit_visible_controls(runtime, "rates_en")
+	runtime.show_graphics()
+	await _settle(1)
+	_audit_visible_controls(runtime, "graphics_en")
+	runtime.show_settings()
+	await _settle(1)
+	var en_image := await _snapshot("09_en_settings_roundtrip")
+	_compare_locale_screenshots(zh_tw_image, en_image)
+
+func _audit_visible_controls(node: Node, screen_name: String) -> void:
+	var viewport_rect := root.get_viewport().get_visible_rect()
+	var text_controls: Array[Control] = []
+	_collect_visible_text_controls(node, text_controls)
+	var overlap_count := 0
+	var clipping_count := 0
+	for control in text_controls:
+		var rect := control.get_global_rect()
+		_expect(viewport_rect.encloses(rect), "localized control remains inside viewport: %s" % control.get_path())
+		_expect(not String(control.text).begins_with("ui."), "localized control does not expose a translation key: %s" % control.get_path())
+		var minimum_size := control.get_combined_minimum_size()
+		if minimum_size.x > rect.size.x + 1.0 or minimum_size.y > rect.size.y + 1.0:
+			clipping_count += 1
+			_expect(false, "localized control text exceeds its allocated rect: %s" % control.get_path())
+	for first_index in range(text_controls.size()):
+		var first := text_controls[first_index]
+		for second_index in range(first_index + 1, text_controls.size()):
+			var second := text_controls[second_index]
+			if first.get_global_rect().intersection(second.get_global_rect()).get_area() > 0.5:
+				overlap_count += 1
+				_expect(false, "localized text controls overlap: %s and %s" % [first.get_path(), second.get_path()])
+	var screens: Dictionary = _layout_audit_evidence.get("screens", {})
+	screens[screen_name] = {"text_controls": text_controls.size(), "clipping_count": clipping_count, "overlap_count": overlap_count}
+	_layout_audit_evidence = {"screens": screens}
+
+func _collect_visible_text_controls(node: Node, controls: Array[Control]) -> void:
+	for child in node.get_children():
+		if child is Control:
+			var control := child as Control
+			if control.is_visible_in_tree() and (control is Label or control is Button or control is OptionButton or control is LineEdit or control is TextEdit):
+				controls.append(control)
+		_collect_visible_text_controls(child, controls)
+
+func _compare_locale_screenshots(zh_tw_image: Image, en_image: Image) -> void:
+	var same_dimensions := zh_tw_image.get_size() == en_image.get_size()
+	_expect(same_dimensions, "locale screenshots keep the same viewport dimensions")
+	if not same_dimensions:
+		return
+	var changed_pixels := 0
+	var total_pixels := zh_tw_image.get_width() * zh_tw_image.get_height()
+	for y in range(zh_tw_image.get_height()):
+		for x in range(zh_tw_image.get_width()):
+			var zh_color := zh_tw_image.get_pixel(x, y)
+			var en_color := en_image.get_pixel(x, y)
+			if absf(zh_color.r - en_color.r) + absf(zh_color.g - en_color.g) + absf(zh_color.b - en_color.b) > 0.03:
+				changed_pixels += 1
+	var changed_ratio := float(changed_pixels) / float(total_pixels)
+	_expect(changed_ratio >= 0.001, "locale screenshot comparison detects the translated UI")
+	_screenshot_comparison = {"width": zh_tw_image.get_width(), "height": zh_tw_image.get_height(), "changed_pixels": changed_pixels, "changed_ratio": changed_ratio}
+
+
 func _inject_known_gamepad() -> int:
 	_inject_joy_axis(0, JOY_AXIS_LEFT_X, 0.5)
 	_inject_joy_axis(0, JOY_AXIS_LEFT_Y, -0.5)
@@ -685,6 +818,15 @@ func _write_report() -> bool:
 	if report == null:
 		push_error("Cannot write headed acceptance report")
 		return false
-	report.store_string(JSON.stringify({"channel_monitor": _channel_monitor_evidence, "failures": _failures, "passed": _failures.is_empty()}))
+	var version_info := Engine.get_version_info()
+	var provenance := {
+		"commit_sha": OS.get_environment("AEROSIM_HEADED_COMMIT_SHA"),
+		"godot_version": String(version_info.get("string", "")),
+		"os": OS.get_name(),
+		"display_driver": DisplayServer.get_name(),
+		"gpu_adapter": RenderingServer.get_video_adapter_name(),
+		"vulkan_icd": OS.get_environment("VK_ICD_FILENAMES"),
+	}
+	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
 	return true

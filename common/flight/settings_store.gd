@@ -4,6 +4,7 @@ extends RefCounted
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const QualityProfile = preload("res://common/flight/quality_profile.gd")
+const LanguageProfile = preload("res://common/flight/language_profile.gd")
 
 const SCHEMA_VERSION := 1
 const FIELD_NAMES := [
@@ -59,6 +60,11 @@ func validate_document(candidate: Variant) -> Dictionary:
         var rates_result := RatesProfile.validate_profile(source["rates"])
         if not rates_result.ok:
             return rates_result
+    var language_result: Dictionary = {}
+    if source["language"] != null:
+        language_result = LanguageProfile.validate_profile(source["language"])
+        if not language_result.ok:
+            return language_result
     var quality_result: Dictionary = {}
     if source["quality"] != null:
         quality_result = QualityProfile.validate_profile(source["quality"])
@@ -68,6 +74,8 @@ func validate_document(candidate: Variant) -> Dictionary:
     normalized["schema_version"] = SCHEMA_VERSION
     if source["quality"] != null:
         normalized["quality"] = quality_result.profile
+    if source["language"] != null:
+        normalized["language"] = language_result.profile if source["language"].has("schema_version") else source["language"].duplicate(true)
     return {"ok": true, "error": "", "document": normalized}
 
 
@@ -163,6 +171,12 @@ func _normalize_loaded_document(candidate: Variant) -> Variant:
                     normalized_axes[role] = _normalize_integer_json_value(normalized_axes[role])
             normalized_profile["axis_for_role"] = normalized_axes
         normalized["confirmed_gamepad"] = normalized_profile
+    var language = normalized.get("language")
+    if typeof(language) == TYPE_DICTIONARY:
+        var normalized_language: Dictionary = language.duplicate(true)
+        if typeof(normalized_language.get("schema_version")) in [TYPE_INT, TYPE_FLOAT]:
+            normalized_language["schema_version"] = _normalize_integer_json_value(normalized_language["schema_version"])
+        normalized["language"] = normalized_language
     return normalized
 
 

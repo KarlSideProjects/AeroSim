@@ -51,6 +51,9 @@ if "--out-dir" in runner_args:
         "04_paused.png",
         "05_reset.png",
         "06_exit.png",
+        "07_channel_monitor_paused.png",
+        "08_zh_tw_settings.png",
+        "09_en_settings_roundtrip.png",
     ):
         (result_path.parent / screenshot).write_bytes(b"fake png")
 else:
@@ -61,7 +64,16 @@ else:
     result_key = "completed"
 
 mode = os.environ["FAKE_GODOT_RESULT"]
-result = {} if mode == "missing" else {result_key: mode == "true"}
+result = {} if mode == "missing" else {
+    result_key: mode == "true",
+    "provenance": {
+        "commit_sha": os.environ.get("AEROSIM_HEADED_COMMIT_SHA", ""),
+        "godot_version": "fake",
+        "os": "fake",
+        "display_driver": "fake",
+        "gpu_adapter": "fake",
+    },
+}
 result_path.parent.mkdir(parents=True, exist_ok=True)
 result_path.write_text(json.dumps(result), encoding="utf-8")
 raise SystemExit(int(os.environ.get("FAKE_GODOT_EXIT", "0")))
@@ -295,6 +307,12 @@ class CiStrategyTest(unittest.TestCase):
     ):
         with tempfile.TemporaryDirectory() as temporary_directory:
             workdir = Path(temporary_directory)
+            subprocess.run(["git", "init", "-q"], cwd=workdir, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workdir, check=True)
+            subprocess.run(["git", "config", "user.name", "CI test"], cwd=workdir, check=True)
+            (workdir / "seed").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed"], cwd=workdir, check=True)
+            subprocess.run(["git", "commit", "-qm", "seed"], cwd=workdir, check=True)
             fake_godot = workdir / "fake_godot.py"
             fake_godot.write_text(FAKE_GODOT, encoding="utf-8")
             fake_godot.chmod(0o755)

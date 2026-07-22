@@ -4,7 +4,10 @@ const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const CollisionProbeBody = preload("res://common/flight/collision_probe_body.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
+const LanguageProfile = preload("res://common/flight/language_profile.gd")
+const Localization = preload("res://common/flight/localization.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 
@@ -310,6 +313,7 @@ func _write_license_config(path: String, public_key_path: String) -> void:
 
 
 func after_each() -> void:
+    Localization.set_locale(LanguageProfile.DEFAULT_LOCALE)
     for path in [
         "user://aerosim-task-1-fix-missing-key.json",
         "user://aerosim-task-1-fix-state.json",
@@ -489,6 +493,115 @@ func test_main_menu_exposes_the_ordered_cap006_entries_and_defaults() -> void:
         "mode": "ANGLE",
         "wind_preset": "calm",
     })
+
+
+func test_flight_setup_localizes_dynamic_mode_values() -> void:
+    var runtime := _licensed_runtime()
+    runtime._build_main_menu()
+    Localization.set_locale("zh_TW")
+    runtime.flight_setup = runtime.default_flight_setup()
+    runtime._refresh_flight_setup_panel()
+
+    var mode_label := runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/Mode") as Label
+    assert_eq(mode_label.text, "模式：角度")
+
+    runtime.flight_setup["mode"] = "ACRO"
+    runtime._refresh_flight_setup_panel()
+    assert_eq(mode_label.text, "模式：特技")
+
+
+func test_px4_hud_localizes_finite_state_and_diagnostic() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var bridge := Px4SitlBridge.new()
+    bridge.state = "starting"
+    bridge._message = "waiting for PX4 heartbeat"
+    runtime.px4_sitl_bridge = bridge
+    Localization.set_locale("zh_TW")
+
+    var status := runtime._px4_status_text()
+    assert_string_contains(status, "PX4")
+    assert_string_contains(status, "啟動中")
+    assert_string_contains(status, "等待 PX4 心跳")
+    assert_false(status.contains("STARTING"))
+    assert_false(status.contains("waiting for PX4 heartbeat"))
+
+    var visible_messages := [
+        "PX4 disarmed",
+        "PX4 is not connected",
+        "PX4 SITL requires UseTcp=true",
+        "PX4 SITL bridge requires VehicleType PX4Multirotor",
+        "PX4 SITL bridge does not support serial/HITL transport",
+        "PX4 SITL bridge ports must be in the range 1..65535",
+        "PX4 SITL bridge timeouts must be positive and ordered",
+        "PX4 heartbeat received; awaiting actuator output",
+        "PX4 simulator TCP connection failed: 7",
+        "PX4 control UDP bind failed on 127.0.0.1:14540: 98",
+        "PX4 authority is inactive",
+        "PX4 command 400 rejected with result 4",
+        "PX4 SITL does not support AirSim command 'foo' in this slice",
+        "PX4 moveOnPath requires at least one waypoint",
+        "PX4 actuator output is pending",
+        "PX4 thrust output is pending",
+        "PX4 arm failed: denied",
+    ]
+    for message in visible_messages:
+        var localized := runtime._localize_fallback_message(message)
+        assert_false(localized.contains(message))
+        assert_false(localized.contains("ui."))
+    var combined := runtime._localize_fallback_message(
+        "PX4 SITL requires UseTcp=true; PX4 SITL bridge ports must be in the range 1..65535")
+    assert_false(combined.contains("PX4 SITL requires UseTcp=true"))
+    assert_false(combined.contains("PX4 SITL bridge ports must be in the range 1..65535"))
+    assert_true(combined.contains("；"))
+    var heartbeat_with_semicolon := runtime._localize_fallback_message("PX4 heartbeat received; awaiting actuator output")
+    assert_false(heartbeat_with_semicolon.contains("awaiting actuator output"))
+    assert_true(heartbeat_with_semicolon.contains("等待致動器輸出"))
+
+
+func test_finite_settings_messages_are_localized_without_generic_error_prefix() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    Localization.set_locale("zh_TW")
+
+    assert_eq(runtime._localize_fallback_message("Graphics settings applied"), "圖形設定已套用")
+    assert_eq(runtime._localize_fallback_message("Graphics settings save failed: disk full"), "圖形設定儲存失敗")
+    assert_eq(runtime._localize_fallback_message("Settings reset to factory defaults"), "設定已恢復原廠預設")
+    assert_eq(runtime._localize_fallback_message("Arm blocked: throttle_not_low"), "解鎖受阻：油門未在低位")
+    assert_eq(runtime._localize_fallback_message("Respawn blocked: controller_resume_required"), "重生受阻：需要先恢復控制器")
+    assert_eq(runtime._localize_fallback_message("Settings recovered to factory defaults: invalid JSON"), "設定已恢復原廠預設")
+    assert_eq(runtime._localize_fallback_message("Cannot load Free Flight map missing_map: unknown map"), "無法載入 Free Flight 地圖")
+    assert_eq(runtime._localize_fallback_message("Cannot reset Free Flight: no map is loaded"), "無法重設 Free Flight：尚未載入地圖")
+    assert_eq(runtime._localize_fallback_message("unclassified diagnostic"), "錯誤")
+
+
+func test_failed_locale_persistence_restores_previous_locale() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(null)
+    var store := runtime.settings_store as QualitySettingsStore
+    store.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "zh_TW"}
+    runtime._load_player_settings()
+    store.fail_save = true
+
+    assert_false(runtime.set_locale("en"))
+    assert_eq(Localization.current_locale, "zh_TW")
+    assert_eq(store.document["language"].locale, "zh_TW")
+
+
+func test_factory_reset_applies_default_locale_after_successful_persistence() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := _graphics_runtime_with_store(null)
+    var store := runtime.settings_store as QualitySettingsStore
+    store.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "zh_TW"}
+    runtime._load_player_settings()
+    assert_eq(Localization.current_locale, "zh_TW")
+
+    runtime.factory_reset_player_settings()
+
+    assert_eq(Localization.current_locale, LanguageProfile.DEFAULT_LOCALE)
+    assert_null(store.document["language"])
 
 
 func test_only_online_and_offline_grace_license_snapshots_can_start_quick_fly() -> void:

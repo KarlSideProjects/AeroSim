@@ -1,0 +1,233 @@
+keys,en,zh_TW
+ui.settings,SETTINGS,設定
+ui.render_scale,RENDER SCALE: %d%%,渲染比例：%d%%
+ui.menu.quick_fly,Quick Fly,快速飛行
+ui.menu.lab_mode,Lab Mode,實驗室模式
+ui.menu.controller,Controller,控制器
+ui.menu.drone,Drone,無人機
+ui.menu.map,Map,地圖
+ui.menu.settings,Settings,設定
+ui.menu.quit,Quit,離開
+ui.language,LANGUAGE,語言
+ui.language.english,English,English
+ui.language.traditional_chinese,繁體中文,繁體中文
+ui.flight_setup.title,FLIGHT SETUP,飛行設定
+ui.flight_setup.drone,DRONE: 5-INCH 6S,無人機：5 吋 6S
+ui.flight_setup.map,MAP: Industrial Test Range,地圖：工業測試場
+ui.flight_setup.wind_preset,WIND PRESET,風場預設
+ui.flight_setup.mode,MODE: %s,模式：%s
+ui.wind.calm,Calm,平靜
+ui.wind.light,Light,微風
+ui.wind.moderate,Moderate,中風
+ui.wind.severe,Severe,強風
+ui.action.fly,FLY,起飛
+ui.action.back,BACK,返回
+ui.action.apply,APPLY,套用
+ui.action.reset_defaults,RESET DEFAULTS,重設預設值
+ui.action.retry,RETRY,重試
+ui.action.exit,EXIT,離開
+ui.action.change_map,CHANGE MAP,變更地圖
+ui.action.back_to_menu,BACK TO MENU,返回主選單
+ui.settings.controller,CONTROLLER,控制器
+ui.settings.rates,RATES,速率
+ui.settings.graphics,GRAPHICS,圖形
+ui.settings.factory_reset,FACTORY RESET SETTINGS,將設定恢復原廠
+ui.settings.ready,Settings ready,設定就緒
+ui.rates.title,BETAFLIGHT RATES,BETAFLIGHT 速率
+ui.rates.disclaimer,SIM PROFILE: RC Rate / Super Rate / Expo affect ACRO mode only.,模擬設定檔：RC Rate／Super Rate／Expo 僅影響 ACRO 模式。
+ui.rates.curve_preview,RATE CURVE PREVIEW (degrees/second),速率曲線預覽（度／秒）
+ui.rates.json_title,JSON EXPORT / IMPORT,JSON 匯出／匯入
+ui.rates.export,EXPORT JSON,匯出 JSON
+ui.rates.import,IMPORT & APPLY JSON,匯入並套用 JSON
+ui.controller.reset_xbox,RESET TO XBOX DEFAULT,重設為 XBOX 預設值
+ui.controller.confirm_title,CONFIRM XBOX DEFAULT PROFILE,確認 XBOX 預設設定檔
+ui.controller.use_xbox,USE XBOX DEFAULT PROFILE,使用 XBOX 預設設定檔
+ui.controller.use_keyboard,USE KEYBOARD FALLBACK,使用鍵盤備援
+ui.license.required,LICENSE REQUIRED,需要授權
+ui.license.key_placeholder,Enter license key,輸入授權金鑰
+ui.license.activate,ACTIVATE LICENSE,啟用授權
+ui.license.diagnostics,DIAGNOSTICS,診斷資訊
+ui.pause.title,PAUSED,已暫停
+ui.pause.resume,RESUME,繼續
+ui.hints,T Arm/Takeoff   P Pause   R Reset   C ACRO   H Alt Hold   Esc Exit,T 起飛   P 暫停   R 重設   C ACRO   H 高度保持   Esc 離開
+ui.finish.title,FINISH,完成
+ui.finish.summary,FINISH - Time %0.2f s,完成－時間 %0.2f 秒
+ui.fallback.status,%s | Mode: %s,%s｜模式：%s
+ui.rates.save_failed,Rates save failed,儲存速率失敗
+ui.rates.saved,Saved rates profile,已儲存速率設定檔
+ui.rates.exported,Exported current rates JSON to the editor,已將目前速率 JSON 匯出至編輯器
+ui.rates.import_rejected,Import rejected,匯入拒絕
+ui.rates.import_save_failed,Import save failed,匯入儲存失敗
+ui.rates.imported,Imported and applied rates profile,已匯入並套用速率設定檔
+ui.rates.reset_failed,Rates reset failed,重設速率失敗
+ui.rates.reset,Rates reset to defaults,速率已重設為預設值
+ui.rates.diff_invalid,BETAFLIGHT DIFF: invalid JSON,BETAFLIGHT 差異：JSON 無效
+ui.rates.diff_none,CURRENT vs BETAFLIGHT IMPORTED: no changes,目前與 BETAFLIGHT 匯入值：沒有變更
+ui.rates.diff_header,CURRENT vs BETAFLIGHT IMPORTED:,目前與 BETAFLIGHT 匯入值：
+ui.rates.diff_line,%s: %.2f -> %.2f,%s：%.2f → %.2f
+ui.rates.value,%s: %.2f,%s：%.2f
+ui.rates.axis.rc_rate,RC RATE,RC 速率
+ui.rates.axis.super_rate,SUPER RATE,Super 速率
+ui.rates.axis.expo,EXPO,Expo
+ui.graphics.applied,Graphics settings applied,圖形設定已套用
+ui.graphics.save_failed,Graphics settings save failed,圖形設定儲存失敗
+ui.settings.factory_reset_failed,Settings factory reset failed,設定原廠重設失敗
+ui.settings.factory_reset_locale_failed,Settings factory reset could not apply the default locale,設定原廠重設無法套用預設語言
+ui.settings.factory_reset_applied,Settings reset to factory defaults,設定已恢復原廠預設
+ui.license.blocked,LICENSE BLOCKED: %s,授權遭封鎖：%s
+ui.license.status,%s,狀態：%s
+ui.license.status.online_valid,online_valid,已啟用
+ui.license.status.offline_grace_valid,offline_grace_valid,離線寬限有效
+ui.license.status.offline_grace_expired,offline_grace_expired,離線寬限已過期
+ui.license.status.invalid_token,invalid_token,無效權杖
+ui.license.status.not_activated,not_activated,尚未啟用
+ui.license.status.revoked,revoked,已撤銷
+ui.license.blocked_button,LICENSE BLOCKED,授權遭封鎖
+ui.hud.acro,ACRO MODE (C): %s,ACRO 模式（C）：%s
+ui.hud.time_trial,TIME TRIAL | %s | %0.2f s,計時挑戰｜%s｜%0.2f 秒
+ui.hud.on,ON,開啟
+ui.hud.off,OFF,關閉
+ui.hud.time_trial_finished,FINISHED,完成
+ui.hud.time_trial_next,NEXT %d/%d,下一個 %d/%d
+ui.hud.armed,ARMED,已解鎖
+ui.hud.disarmed,DISARMED,未解鎖
+ui.hud.paused,PAUSED,已暫停
+ui.hud.takeoff,TAKEOFF,起飛
+ui.hud.low,LOW,低
+ui.hud.high,HIGH,高
+ui.hud.pressed,PRESSED,按下
+ui.hud.released,RELEASED,放開
+ui.hud.local,LOCAL,本機
+ui.hud.input_keyboard,Throttle LOW | KeyboardProfile,油門低｜鍵盤設定檔
+ui.hud.input_profile,Throttle %d%% %s | Arm %s | Mode %s,油門 %d%% %s｜解鎖 %s｜模式 %s
+ui.hud.px4,PX4 %s%s,PX4 %s%s
+ui.hud.px4.state.disconnected,DISCONNECTED,未連線
+ui.hud.px4.state.starting,STARTING,啟動中
+ui.hud.px4.state.connected,CONNECTED,已連線
+ui.hud.px4.state.armed,ARMED,已解鎖
+ui.hud.px4.state.stale,STALE,資料過期
+ui.hud.px4.state.failed,FAILED,失敗
+ui.hud.px4.state.unknown,UNKNOWN STATE %s,未知狀態 %s
+ui.hud.px4.message.waiting,Waiting for PX4 heartbeat,等待 PX4 心跳
+ui.hud.px4.message.heartbeat_received,PX4 heartbeat received,PX4 已收到心跳
+ui.hud.px4.message.awaiting_actuator,PX4 heartbeat received; awaiting actuator output,PX4 已收到心跳；等待致動器輸出
+ui.hud.px4.message.actuator_received,PX4 heartbeat and actuator output received,PX4 已收到心跳與致動器輸出
+ui.hud.px4.message.tcp_connected,PX4 TCP simulator channel connected,PX4 TCP 模擬器通道已連線
+ui.hud.px4.message.tcp_disconnected,PX4 simulator TCP channel disconnected,PX4 TCP 模擬器通道已中斷
+ui.hud.px4.message.transport_stopped,PX4 transport stopped,PX4 傳輸已停止
+ui.hud.px4.message.actuator_stale,PX4 actuator output is stale,PX4 致動器輸出已過期
+ui.hud.px4.message.startup_timeout,PX4 heartbeat was not received before startup timeout,啟動逾時前未收到 PX4 心跳
+ui.hud.px4.message.heartbeat_timeout,PX4 heartbeat timeout after %s,PX4 心跳在 %s 後逾時
+ui.hud.px4.message.heartbeat_stale,PX4 heartbeat is stale after %s,PX4 心跳在 %s 後過期
+ui.hud.px4.message.disarmed,PX4 disarmed,PX4 已解除鎖定
+ui.hud.px4.message.not_connected,PX4 is not connected,PX4 未連線
+ui.hud.px4.message.requires_tcp,PX4 SITL requires UseTcp=true,PX4 SITL 需要 UseTcp=true
+ui.hud.px4.message.bridge_vehicle_type,PX4 SITL bridge requires VehicleType PX4Multirotor,PX4 SITL 橋接需要 VehicleType PX4Multirotor
+ui.hud.px4.message.bridge_serial,PX4 SITL bridge does not support serial/HITL transport,PX4 SITL 橋接不支援 serial／HITL 傳輸
+ui.hud.px4.message.bridge_ports,PX4 SITL bridge ports must be in the range 1..65535,PX4 SITL 橋接連接埠必須在 1..65535 範圍內
+ui.hud.px4.message.bridge_timeouts,PX4 SITL bridge timeouts must be positive and ordered,PX4 SITL 橋接逾時必須為正值且順序正確
+ui.hud.px4.message.tcp_failed,PX4 simulator TCP connection failed: %s,PX4 模擬器 TCP 連線失敗：%s
+ui.hud.px4.message.udp_failed,PX4 control UDP bind failed on %s:%d: %s,PX4 控制 UDP 綁定位址 %s:%d 失敗：%s
+ui.hud.px4.message.authority_inactive,PX4 authority is inactive,PX4 控制權未啟用
+ui.hud.px4.message.command_rejected,PX4 command %d rejected with result %d,PX4 指令 %d 被結果 %d 拒絕
+ui.hud.px4.message.command_unsupported,PX4 SITL does not support AirSim command '%s' in this slice,此 PX4 SITL 切片不支援 AirSim 指令 '%s'
+ui.hud.px4.message.move_on_path_empty,PX4 moveOnPath requires at least one waypoint,PX4 moveOnPath 至少需要一個航點
+ui.hud.px4.message.actuator_pending,PX4 actuator output is pending,PX4 致動器輸出等待中
+ui.hud.px4.message.thrust_pending,PX4 thrust output is pending,PX4 推力輸出等待中
+ui.hud.px4.message.arm_failed,PX4 arm failed: %s,PX4 解鎖失敗：%s
+ui.hud.preflight,%s | %s -> %s -> press T or ARM,%s｜%s → %s → 按 T 或 ARM
+ui.hud.flight,%s | %s | %s | %s,%s｜%s｜%s｜%s
+ui.hud.arm_takeoff,ARM / TAKEOFF (T),解鎖／起飛（T）
+ui.hud.confirm_controller,Confirm the fixed Xbox mapping or use KeyboardProfile fallback,請確認固定 XBOX 對應或使用鍵盤備援
+ui.hud.exit_requested,EXIT requested,已要求離開
+ui.hud.time_trial_complete,TIME TRIAL COMPLETE,計時挑戰完成
+ui.hud.wait_controller,WAIT FOR CONTROLLER,等待控制器
+ui.hud.quick_fly_hint,Quick Fly: choose Quick Fly then arm at low throttle,快速飛行：選擇快速飛行後以低油門解鎖
+ui.controller.mapping_header,FIXED XBOX MAPPING,固定 XBOX 對應
+ui.controller.live_axes,LIVE AXES,即時軸
+ui.controller.mapping_line,%s -> Axis %d%s,%s → 軸 %d%s
+ui.controller.live_axis_line,%s: Raw %+.3f | Normalized %+.3f,%s：原始 %+.3f｜正規化 %+.3f
+ui.controller.device_none,CURRENT DEVICE: none,目前裝置：無
+ui.controller.device,CURRENT DEVICE: %d %s (%s),目前裝置：%d %s（%s）
+ui.controller.mapping_unavailable,FIXED XBOX MAPPING: UNAVAILABLE,固定 XBOX 對應：無法使用
+ui.controller.monitor_header,CHANNEL MONITOR (30 Hz),通道監看（30 Hz）
+ui.controller.channel_unavailable,%s:%sUNAVAILABLE,%s：%s無法使用
+ui.controller.deadzone,DEADZONE: %.3f (fixed),死區：%.3f（固定）
+ui.controller.arm_unavailable,ARM: UNAVAILABLE,ARM：無法使用
+ui.controller.mode_unavailable,MODE: UNAVAILABLE,模式：無法使用
+ui.controller.monitor_line,%s%s%s raw %+.3f | normalized %+.3f,%s%s%s 原始 %+.3f｜正規化 %+.3f
+ui.controller.throttle_state, | %s,｜%s
+ui.controller.arm_state,ARM: %s | flight control: %s,ARM：%s｜飛行控制：%s
+ui.controller.mode_state,MODE: %s | flight mode: %s,模式：%s｜飛行模式：%s
+ui.controller.role.roll,roll,滾轉
+ui.controller.role.pitch,pitch,俯仰
+ui.controller.role.yaw,yaw,偏航
+ui.controller.role.throttle,throttle,油門
+ui.controller.reversed, (reversed),（反向）
+ui.controller.support_sdl,SDL mapped,SDL 對應
+ui.controller.support_unknown,unknown,未知
+ui.dashboard.title,OPERATIONS DASHBOARD,操作儀表板
+ui.dashboard.vehicle_tooltip,Select the vehicle shown by the operations dashboard,選擇操作儀表板顯示的載具
+ui.dashboard.live,LIVE,即時
+ui.dashboard.stale,STALE,過期
+ui.dashboard.disconnected,DISCONNECTED,未連線
+ui.dashboard.ready,READY,就緒
+ui.dashboard.armed,ON,開啟
+ui.dashboard.disarmed,OFF,關閉
+ui.dashboard.mode_angle,ANGLE,角度
+ui.dashboard.mode_acro,ACRO,特技
+ui.dashboard.mode_altitude_hold,ALTITUDE_HOLD,定高
+ui.dashboard.saturated_suffix, SAT, 飽和
+ui.dashboard.fresh,FRESH,最新
+ui.dashboard.not_fresh,NOT FRESH,非最新
+ui.dashboard.status,%s  UPDATE %.1f Hz  LATENCY %.0f ms,%s  更新 %.1f Hz  延遲 %.0f ms
+ui.dashboard.mode,%s  ARM %s  MODE %s,%s  解鎖 %s  模式 %s
+ui.dashboard.motor,%s  %.2f N  %.1f rad/s%s,%s  %.2f N  %.1f rad/s%s
+ui.dashboard.battery,BAT %.2f V  sag %.2f V,電池 %.2f V  壓降 %.2f V
+ui.dashboard.wind,WIND body %.2f %.2f %.2f m/s,機體風 %.2f %.2f %.2f m/s
+ui.dashboard.pid,PID sat %s,PID 飽和 %s
+ui.dashboard.rate,UPDATE RATE %.1f Hz  PUBLISH #%d,更新率 %.1f Hz  發布 #%d
+ui.dashboard.latency,LATENCY %.0f ms  %s,延遲 %.0f ms  %s
+ui.dashboard.timestamp,SAMPLE %d us,樣本 %d us
+ui.dashboard.environment,ENV r%d %s R%.2f F%.2f T%.1fh S%.1f/%.1f/%.1f,環境 r%d %s R%.2f F%.2f T%.1fh S%.1f/%.1f/%.1f
+ui.dashboard.empty,-,-
+ui.dashboard.none,none,無
+ui.dashboard.pitch,PITCH,俯仰
+ui.dashboard.yaw,YAW,偏航
+ui.dashboard.roll,ROLL,滾轉
+ui.map.north_spawn,NORTH SPAWN,北側起飛點
+ui.map.rain,Rain,雨
+ui.map.fog,Fog,霧
+ui.map.time_of_day,Time of day,時間
+ui.map.turn_90,TURN 90 DEG,轉彎 90 度
+ui.map.checkpoint_1,▼ CHECKPOINT 1,▼ 檢查點 1
+ui.map.checkpoint_2,▼ CHECKPOINT 2,▼ 檢查點 2
+ui.map.checkpoint_3,→ CHECKPOINT 3,→ 檢查點 3
+ui.map.finish,★ FINISH ★,★ 終點 ★
+ui.fallback.unavailable,Input fallback unavailable,輸入備援無法使用
+ui.fallback.no_controller,No controller detected; KeyboardProfile fallback active (non-sim control),未偵測到控制器；鍵盤設定檔備援啟用（非模擬控制）
+ui.fallback.gamepad,GamepadProfile active (non-sim control),遊戲手把設定檔啟用（非模擬控制）
+ui.fallback.selected,KeyboardProfile fallback selected (non-sim control),已選擇鍵盤設定檔備援（非模擬控制）
+ui.error.unsupported_controller,Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control),不支援的控制器；XBOX 預設設定檔無法使用。鍵盤設定檔備援啟用（非模擬控制）
+ui.error.unsupported_reconnected,Unsupported controller reconnected; remain disarmed and frozen,不支援的控制器重新連線；維持未解鎖並凍結
+ui.error.controller_reconnected,Controller reconnected; throttle LOW then press ARM/RESUME,控制器已重新連線；油門低後按解鎖／繼續
+ui.error.controller_disconnected,Controller disconnected; vehicle disarmed and frozen,控制器中斷連線；載具已解除鎖定並凍結
+ui.error.arm_blocked_resume,Arm blocked: controller_resume_required,解鎖受阻：需要先恢復控制器
+ui.error.quick_fly_native_unavailable,Quick Fly cannot arm: native runtime unavailable,快速飛行無法解鎖：原生執行環境無法使用
+ui.error.arm_blocked_fallback,Arm blocked: keyboard_fallback_requires_confirmation,解鎖受阻：需要確認鍵盤備援
+ui.error.arm_blocked_throttle,Arm blocked: throttle_not_low,解鎖受阻：油門未在低位
+ui.error.quick_fly_rejected,Quick Fly cannot arm: %s,快速飛行無法解鎖：%s
+ui.error.flight_setup_unsupported,Flight Setup contains an unsupported selection,飛行設定包含不支援的選項
+ui.error.controller_profile_not_persisted,Controller profile was not persisted,控制器設定檔未儲存
+ui.error.fallback_no_prompt,No fallback prompt is active,目前沒有啟用中的備援提示
+ui.error.respawn_blocked_resume,Respawn blocked: controller_resume_required,重生受阻：需要先恢復控制器
+ui.error.resume_blocked_throttle,Resume blocked: throttle_not_low,繼續受阻：油門未在低位
+ui.error.settings_recovered,Settings recovered to factory defaults,設定已恢復原廠預設
+ui.error.map_load_failed,Cannot load Free Flight map,無法載入 Free Flight 地圖
+ui.error.license_diagnostics_requested,license diagnostics requested,已要求授權診斷
+ui.error.license_request_failed,License request failed: %s,授權要求失敗：%s
+ui.error.license_network_failed,License network failed: %s,授權網路失敗：%s
+ui.error.license_fatal_failed,License fatal failed: %s,授權重大錯誤：%s
+ui.error.map_reset_no_map,Cannot reset Free Flight: no map is loaded,無法重設 Free Flight：尚未載入地圖
+ui.error.map_reset_failed,Cannot reset Free Flight map,無法重設 Free Flight 地圖
+ui.error.generic,Error,錯誤

@@ -1,6 +1,12 @@
 extends GutTest
 
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
+const Localization = preload("res://common/flight/localization.gd")
+const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
+
+
+func after_each() -> void:
+    Localization.set_locale("en")
 
 
 func _snapshot(vehicle_name: String, mode: String) -> Dictionary:
@@ -91,3 +97,50 @@ func test_single_unnamed_snapshot_still_updates_dashboard() -> void:
 
     dashboard.set_vehicle_snapshots({"": _live_snapshot("", 1_000_000)}, "", 10_120_001)
     assert_eq(String(dashboard.debug_values.get("connection_state", "")), "stale")
+
+
+func test_dashboard_localizes_dynamic_status_words() -> void:
+    var dashboard := StatusDiagramDebug.new()
+    autofree(dashboard)
+    dashboard._ready()
+    dashboard.set_locale("zh_TW")
+
+    dashboard.set_vehicle_snapshots({"DroneA": _live_snapshot("DroneA", 1_000_000)}, "DroneA", 1_000_000)
+
+    assert_string_contains(dashboard._labels.status.text, "即時")
+    assert_string_contains(dashboard._labels.mode.text, "解鎖")
+    assert_string_contains(dashboard._labels.mode.text, "模式")
+    assert_false(dashboard._labels.status.text.contains("LIVE"))
+    assert_false(dashboard._labels.mode.text.contains("ARM"))
+    assert_false(dashboard._labels.mode.text.contains("MODE"))
+
+
+func test_dashboard_localizes_environment_after_locale_switch() -> void:
+    var dashboard := StatusDiagramDebug.new()
+    autofree(dashboard)
+    dashboard._ready()
+    dashboard.update_environment({
+        "revision": 1,
+        "weather_enabled": false,
+        "rain": 0.0,
+        "fog": 0.0,
+        "time_of_day": 12.0,
+        "sun_position": Vector3(0.0, 1.0, 0.0),
+    })
+    dashboard.set_locale("zh_TW")
+
+    assert_string_contains(dashboard._labels.environment.text, "環境")
+    assert_string_contains(dashboard._labels.environment.text, "就緒")
+    assert_false(dashboard._labels.environment.text.contains("ENV"))
+    assert_false(dashboard._labels.environment.text.contains("READY"))
+
+
+func test_runtime_localizes_dynamic_hud_states() -> void:
+    Localization.set_locale("zh_TW")
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+
+    assert_eq(runtime._localized_arm_state(true), "已解鎖")
+    assert_eq(runtime._localized_button_state(false), "放開")
+    assert_eq(runtime._profile_input_status(), "油門低｜鍵盤設定檔")
+    assert_eq(runtime._localize_fallback_message("unclassified diagnostic"), "錯誤")

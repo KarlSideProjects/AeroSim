@@ -3,6 +3,8 @@ extends Node3D
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
+const LanguageProfile = preload("res://common/flight/language_profile.gd")
+const Localization = preload("res://common/flight/localization.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const QualityProfile = preload("res://common/flight/quality_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
@@ -36,7 +38,6 @@ const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
-const KEY_HINTS_TEXT := "T Arm/Takeoff   P Pause   R Reset   C ACRO   H Alt Hold   Esc Exit"
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
@@ -86,6 +87,7 @@ var main_menu_layer: CanvasLayer
 var main_menu_entries_container: VBoxContainer
 var settings_panel: Control
 var settings_status_label: Label
+var language_selector: OptionButton
 var rates_panel: Control
 var rates_status_label: Label
 var rates_json_editor: TextEdit
@@ -962,6 +964,13 @@ func _is_primary_airsim_vehicle(vehicle_name: String) -> bool:
 
 func _load_player_settings() -> void:
     var result: Dictionary = settings_store.load_document()
+    var saved_language = result.document.get("language")
+    var locale := LanguageProfile.DEFAULT_LOCALE
+    if saved_language != null:
+        var language_result: Dictionary = LanguageProfile.validate_profile(saved_language)
+        if language_result.ok:
+            locale = String(language_result.profile.locale)
+    Localization.set_locale(locale)
     var saved_quality = result.document.get("quality")
     if saved_quality == null:
         _preview_render_scale(QualityProfile.DEFAULT_RENDER_SCALE)
@@ -1871,7 +1880,7 @@ func accept_controller_confirmation() -> void:
         return
     var save_result := _save_gamepad_profile(profile)
     if not save_result.ok:
-        last_error_message = "Controller profile was not persisted: %s" % save_result.error
+        last_error_message = "Controller profile was not persisted"
         screen = "error"
         _refresh_flight_hud()
         return
@@ -1950,26 +1959,27 @@ func open_map_menu() -> void:
     for preset in WIND_PRESETS:
         var button := Button.new()
         button.name = preset.capitalize()
-        button.text = preset.capitalize()
+        button.text = _t("ui.wind.%s" % preset)
         button.pressed.connect(select_map.bind(DEFAULT_FREE_FLIGHT_MAP_ID, preset))
         presets.add_child(button)
     var environment_controls := VBoxContainer.new()
     environment_controls.name = "EnvironmentControls"
     environment_controls.position = Vector2(240.0, 0.0)
     layer.add_child(environment_controls)
-    _add_environment_slider(environment_controls, "Rain", "rain", 0.0, 1.0, 0.05)
-    _add_environment_slider(environment_controls, "Fog", "fog", 0.0, 1.0, 0.05)
-    _add_environment_slider(environment_controls, "Time of day", "time_of_day", 0.0, 23.99, 0.25)
+    _add_environment_slider(environment_controls, "ui.map.rain", "rain", 0.0, 1.0, 0.05)
+    _add_environment_slider(environment_controls, "ui.map.fog", "fog", 0.0, 1.0, 0.05)
+    _add_environment_slider(environment_controls, "ui.map.time_of_day", "time_of_day", 0.0, 23.99, 0.25)
 
 
-func _add_environment_slider(parent: VBoxContainer, label_text: String, key: String, minimum: float, maximum: float, step: float) -> void:
+func _add_environment_slider(parent: VBoxContainer, label_key: String, key: String, minimum: float, maximum: float, step: float) -> void:
     if environment_state == null:
         return
     var label := Label.new()
-    label.text = label_text
+    label.name = key
+    label.text = _t(label_key)
     parent.add_child(label)
     var slider := HSlider.new()
-    slider.name = label_text.replace(" ", "")
+    slider.name = key.capitalize()
     slider.min_value = minimum
     slider.max_value = maximum
     slider.step = step
@@ -2051,6 +2061,7 @@ func load_map(map_id: String) -> bool:
     loaded_map = map_root
     loaded_map_id = map_id
     loaded_map_wind_preset = str(descriptor.wind_preset)
+    _refresh_loaded_map_localization()
     if native != null:
         var applied_wind_preset := selected_wind_preset if not selected_wind_preset.is_empty() else str(descriptor.wind_preset)
         native.call("configure_wind", {
@@ -2360,7 +2371,7 @@ func _on_trial_finished(elapsed_seconds: float) -> void:
     set_paused(true)
     screen = "finish"
     if finish_summary_label != null:
-        finish_summary_label.text = "FINISH\nTime %0.2f s" % elapsed_seconds
+        finish_summary_label.text = _format("ui.finish.summary", [elapsed_seconds])
     _refresh_flight_hud()
 
 func _set_map_error(message: String) -> bool:
@@ -2410,9 +2421,91 @@ func _reset_airsim_flight_state() -> void:
         airsim_sensor_suite.configure(airsim_rpc_server.settings, _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name])
 
 func update_fallback_status() -> void:
-    last_profile_status = InputProfiles.fallback_status(gamepad_device_state.connected_joypads())
+    var connected_joypads := gamepad_device_state.connected_joypads()
+    last_profile_status = InputProfiles.fallback_status(connected_joypads)
     if fallback_status_label != null:
-        fallback_status_label.text = "%s | Mode: %s" % [last_profile_status, flight_mode]
+        var profile_key := "ui.fallback.no_controller" if connected_joypads.is_empty() else "ui.fallback.gamepad"
+        fallback_status_label.text = _format("ui.fallback.status", [_t(profile_key), _localized_flight_mode(flight_mode)])
+
+
+func _localize_fallback_message(message: String) -> String:
+    if message == InputProfiles.fallback_status([]):
+        return _t("ui.fallback.no_controller")
+    if message == InputProfiles.fallback_status([0]):
+        return _t("ui.fallback.gamepad")
+    if message == "KeyboardProfile fallback selected (non-sim control)":
+        return _t("ui.fallback.selected")
+    if message == "Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)":
+        return _t("ui.error.unsupported_controller")
+    if message == "Unsupported controller reconnected; remain disarmed and frozen":
+        return _t("ui.error.unsupported_reconnected")
+    if message == "Controller reconnected; throttle LOW then press ARM/RESUME":
+        return _t("ui.error.controller_reconnected")
+    if message == "Controller disconnected; vehicle disarmed and frozen":
+        return _t("ui.error.controller_disconnected")
+    if message == "Graphics settings applied":
+        return _t("ui.graphics.applied")
+    if message.begins_with("Graphics settings save failed: "):
+        return _t("ui.graphics.save_failed")
+    if message.begins_with("Settings factory reset failed: "):
+        return _t("ui.settings.factory_reset_failed")
+    if message == "Settings factory reset could not apply the default locale":
+        return _t("ui.settings.factory_reset_locale_failed")
+    if message == "Settings reset to factory defaults":
+        return _t("ui.settings.factory_reset_applied")
+    if message == "license diagnostics requested":
+        return _t("ui.error.license_diagnostics_requested")
+    if message.begins_with("License request failed: "):
+        return _format("ui.error.license_request_failed", [message.trim_prefix("License request failed: ")])
+    if message.begins_with("License network failed: "):
+        return _format("ui.error.license_network_failed", [message.trim_prefix("License network failed: ")])
+    if message.begins_with("License fatal failed: "):
+        return _format("ui.error.license_fatal_failed", [message.trim_prefix("License fatal failed: ")])
+    if message == "Arm blocked: controller_resume_required":
+        return _t("ui.error.arm_blocked_resume")
+    if message == "Quick Fly cannot arm: native runtime unavailable":
+        return _t("ui.error.quick_fly_native_unavailable")
+    if message == "Arm blocked: keyboard_fallback_requires_confirmation":
+        return _t("ui.error.arm_blocked_fallback")
+    if message == "Arm blocked: throttle_not_low":
+        return _t("ui.error.arm_blocked_throttle")
+    if message.begins_with("Quick Fly cannot arm: "):
+        return _format("ui.error.quick_fly_rejected", [message.trim_prefix("Quick Fly cannot arm: ")])
+    if message == "Flight Setup contains an unsupported selection":
+        return _t("ui.error.flight_setup_unsupported")
+    if message == "Controller profile was not persisted" or message.begins_with("Controller profile was not persisted: "):
+        return _t("ui.error.controller_profile_not_persisted")
+    if message == "No fallback prompt is active":
+        return _t("ui.error.fallback_no_prompt")
+    if message == "Respawn blocked: controller_resume_required":
+        return _t("ui.error.respawn_blocked_resume")
+    if message == "Resume blocked: throttle_not_low":
+        return _t("ui.error.resume_blocked_throttle")
+    if message.begins_with("Settings recovered to factory defaults: "):
+        return _t("ui.error.settings_recovered")
+    if message == "Cannot reset Free Flight: no map is loaded":
+        return _t("ui.error.map_reset_no_map")
+    if message.begins_with("Cannot reset Free Flight map "):
+        return _t("ui.error.map_reset_failed")
+    if message.begins_with("Cannot load Free Flight map ") and message.contains(": "):
+        return _t("ui.error.map_load_failed")
+    if message.begins_with("PX4"):
+        return _localized_px4_message(message)
+    return _t("ui.error.generic")
+
+
+func _localized_flight_mode(mode: String) -> String:
+    match mode:
+        "ANGLE":
+            return _t("ui.dashboard.mode_angle")
+        "ACRO":
+            return _t("ui.dashboard.mode_acro")
+        "ALTITUDE_HOLD":
+            return _t("ui.dashboard.mode_altitude_hold")
+        "", "-":
+            return _t("ui.dashboard.none")
+        _:
+            return mode
 
 func toggle_altitude_hold() -> void:
     if native == null or not takeoff_requested:
@@ -2454,6 +2547,14 @@ func set_paused(value: bool, sync_session: bool = true) -> void:
         secondary_drone_body.freeze = value
         secondary_drone_body.sleeping = value
 
+func _t(key: String) -> String:
+    return Localization.translate(key)
+
+
+func _format(key: String, values: Array) -> String:
+    return Localization.format(key, values)
+
+
 func _build_main_menu() -> void:
     var layer := CanvasLayer.new()
     layer.name = "MainMenu"
@@ -2468,7 +2569,7 @@ func _build_main_menu() -> void:
     for entry in main_menu_entries:
         var button := Button.new()
         button.name = entry.replace(" ", "")
-        button.text = entry
+        button.text = _t("ui.menu.%s" % entry.to_snake_case())
         entries.add_child(button)
         if entry == "Quick Fly":
             button.pressed.connect(quick_fly)
@@ -2511,17 +2612,18 @@ func _build_flight_setup_panel() -> void:
     panel.add_child(rows)
 
     var title := Label.new()
-    title.text = "FLIGHT SETUP"
+    title.name = "Title"
+    title.text = _t("ui.flight_setup.title")
     rows.add_child(title)
 
     var drone_button := Button.new()
     drone_button.name = "Drone"
-    drone_button.text = "DRONE: 5-INCH 6S"
+    drone_button.text = _t("ui.flight_setup.drone")
     rows.add_child(drone_button)
 
     var map_button := Button.new()
     map_button.name = "Map"
-    map_button.text = "MAP: Industrial Test Range"
+    map_button.text = _t("ui.flight_setup.map")
     rows.add_child(map_button)
 
     var mode_label := Label.new()
@@ -2529,7 +2631,8 @@ func _build_flight_setup_panel() -> void:
     rows.add_child(mode_label)
 
     var wind_title := Label.new()
-    wind_title.text = "WIND PRESET"
+    wind_title.name = "WindTitle"
+    wind_title.text = _t("ui.flight_setup.wind_preset")
     rows.add_child(wind_title)
     var wind_presets := HBoxContainer.new()
     wind_presets.name = "WindPresets"
@@ -2537,19 +2640,19 @@ func _build_flight_setup_panel() -> void:
     for preset in WIND_PRESETS:
         var wind_button := Button.new()
         wind_button.name = preset.capitalize()
-        wind_button.text = preset.capitalize()
+        wind_button.text = _t("ui.wind.%s" % preset)
         wind_button.pressed.connect(_set_flight_setup_wind.bind(preset))
         wind_presets.add_child(wind_button)
 
     var fly_button := Button.new()
     fly_button.name = "Fly"
-    fly_button.text = "FLY"
+    fly_button.text = _t("ui.action.fly")
     fly_button.pressed.connect(_fly_from_flight_setup)
     rows.add_child(fly_button)
 
     var back_button := Button.new()
     back_button.name = "Back"
-    back_button.text = "BACK"
+    back_button.text = _t("ui.action.back")
     back_button.pressed.connect(show_main_menu)
     rows.add_child(back_button)
     _refresh_flight_setup_panel()
@@ -2562,7 +2665,7 @@ func _refresh_flight_setup_panel() -> void:
         flight_setup = default_flight_setup()
     var mode_label := get_node_or_null("MainMenu/FlightSetupPanel/Rows/Mode") as Label
     if mode_label != null:
-        mode_label.text = "MODE: %s" % String(flight_setup.get("mode", DEFAULT_FLIGHT_MODE))
+        mode_label.text = _format("ui.flight_setup.mode", [_localized_flight_mode(String(flight_setup.get("mode", DEFAULT_FLIGHT_MODE)))])
     for preset in WIND_PRESETS:
         var wind_button := get_node_or_null("MainMenu/FlightSetupPanel/Rows/WindPresets/%s" % preset.capitalize()) as Button
         if wind_button != null:
@@ -2575,7 +2678,7 @@ func _build_settings_panel() -> void:
     panel.offset_left = 20.0
     panel.offset_top = 20.0
     panel.offset_right = 360.0
-    panel.offset_bottom = 280.0
+    panel.offset_bottom = 340.0
     settings_panel = panel
     main_menu_layer.add_child(panel)
 
@@ -2585,30 +2688,44 @@ func _build_settings_panel() -> void:
     panel.add_child(rows)
 
     var title := Label.new()
-    title.text = "SETTINGS"
+    title.name = "Title"
+    title.text = _t("ui.settings")
     rows.add_child(title)
+
+    var language_label := Label.new()
+    language_label.name = "LanguageLabel"
+    language_label.text = _t("ui.language")
+    rows.add_child(language_label)
+    language_selector = OptionButton.new()
+    language_selector.name = "Language"
+    language_selector.add_item(_t("ui.language.english"))
+    language_selector.set_item_metadata(0, "en")
+    language_selector.add_item(_t("ui.language.traditional_chinese"))
+    language_selector.set_item_metadata(1, "zh_TW")
+    language_selector.item_selected.connect(_on_language_selected)
+    rows.add_child(language_selector)
 
     var controller_button := Button.new()
     controller_button.name = "Controller"
-    controller_button.text = "CONTROLLER"
+    controller_button.text = _t("ui.settings.controller")
     controller_button.pressed.connect(show_controller_settings)
     rows.add_child(controller_button)
 
     var rates_button := Button.new()
     rates_button.name = "Rates"
-    rates_button.text = "RATES"
+    rates_button.text = _t("ui.settings.rates")
     rates_button.pressed.connect(show_rates)
     rows.add_child(rates_button)
 
     var graphics_button := Button.new()
     graphics_button.name = "Graphics"
-    graphics_button.text = "GRAPHICS"
+    graphics_button.text = _t("ui.settings.graphics")
     graphics_button.pressed.connect(show_graphics)
     rows.add_child(graphics_button)
 
     var factory_reset_button := Button.new()
     factory_reset_button.name = "FactoryReset"
-    factory_reset_button.text = "FACTORY RESET SETTINGS"
+    factory_reset_button.text = _t("ui.settings.factory_reset")
     factory_reset_button.pressed.connect(factory_reset_player_settings)
     rows.add_child(factory_reset_button)
 
@@ -2619,9 +2736,149 @@ func _build_settings_panel() -> void:
 
     var back_button := Button.new()
     back_button.name = "Back"
-    back_button.text = "BACK"
+    back_button.text = _t("ui.action.back")
     back_button.pressed.connect(show_main_menu)
     rows.add_child(back_button)
+    _refresh_language_selector()
+
+
+func _on_language_selected(index: int) -> void:
+    if language_selector == null or index < 0 or index >= language_selector.item_count:
+        return
+    set_locale(String(language_selector.get_item_metadata(index)))
+
+
+func set_locale(locale: String) -> bool:
+    var previous_locale := Localization.current_locale
+    if not Localization.set_locale(locale):
+        return false
+    var loaded: Dictionary = settings_store.load_document()
+    if not loaded.ok:
+        Localization.set_locale(previous_locale)
+        _refresh_localized_ui()
+        return false
+    loaded.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": locale}
+    var saved: Dictionary = settings_store.save_document(loaded.document)
+    if not saved.ok:
+        Localization.set_locale(previous_locale)
+        _refresh_localized_ui()
+        return false
+    _refresh_localized_ui()
+    return true
+
+
+func _refresh_language_selector() -> void:
+    if language_selector == null:
+        return
+    language_selector.set_item_text(0, _t("ui.language.english"))
+    language_selector.set_item_text(1, _t("ui.language.traditional_chinese"))
+    language_selector.select(LanguageProfile.SUPPORTED_LOCALES.find(Localization.current_locale))
+
+
+func _refresh_localized_ui() -> void:
+    if main_menu_entries_container != null:
+        for index in range(min(main_menu_entries_container.get_child_count(), main_menu_entries.size())):
+            var button := main_menu_entries_container.get_child(index) as Button
+            if button != null:
+                button.text = _t("ui.menu.%s" % main_menu_entries[index].to_snake_case())
+    var text_by_path := {
+        "MainMenu/FlightSetupPanel/Rows/Title": "ui.flight_setup.title",
+        "MainMenu/FlightSetupPanel/Rows/Drone": "ui.flight_setup.drone",
+        "MainMenu/FlightSetupPanel/Rows/Map": "ui.flight_setup.map",
+        "MainMenu/FlightSetupPanel/Rows/WindTitle": "ui.flight_setup.wind_preset",
+        "MainMenu/FlightSetupPanel/Rows/Fly": "ui.action.fly",
+        "MainMenu/FlightSetupPanel/Rows/Back": "ui.action.back",
+        "MainMenu/SettingsPanel/Rows/Title": "ui.settings",
+        "MainMenu/SettingsPanel/Rows/LanguageLabel": "ui.language",
+        "MainMenu/SettingsPanel/Rows/Controller": "ui.settings.controller",
+        "MainMenu/SettingsPanel/Rows/Rates": "ui.settings.rates",
+        "MainMenu/SettingsPanel/Rows/Graphics": "ui.settings.graphics",
+        "MainMenu/SettingsPanel/Rows/FactoryReset": "ui.settings.factory_reset",
+        "MainMenu/SettingsPanel/Rows/Back": "ui.action.back",
+        "MainMenu/GraphicsPanel/Rows/Title": "ui.settings.graphics",
+        "MainMenu/GraphicsPanel/Rows/Apply": "ui.action.apply",
+        "MainMenu/GraphicsPanel/Rows/ResetDefaults": "ui.action.reset_defaults",
+        "MainMenu/GraphicsPanel/Rows/Back": "ui.action.back",
+        "MainMenu/RatesPanel/Scroll/Rows/Title": "ui.rates.title",
+        "MainMenu/RatesPanel/Scroll/Rows/Disclaimer": "ui.rates.disclaimer",
+        "MainMenu/RatesPanel/Scroll/Rows/CurvePreviewTitle": "ui.rates.curve_preview",
+        "MainMenu/RatesPanel/Scroll/Rows/JsonTitle": "ui.rates.json_title",
+        "MainMenu/RatesPanel/Scroll/Rows/Actions/ExportJson": "ui.rates.export",
+        "MainMenu/RatesPanel/Scroll/Rows/Actions/ImportJson": "ui.rates.import",
+        "MainMenu/RatesPanel/Scroll/Rows/Actions/ResetDefaults": "ui.action.reset_defaults",
+        "MainMenu/RatesPanel/Scroll/Rows/Actions/Back": "ui.action.back",
+        "MainMenu/ControllerSettingsPanel/Rows/Title": "ui.settings.controller",
+        "MainMenu/ControllerSettingsPanel/Rows/ResetXboxDefault": "ui.controller.reset_xbox",
+        "MainMenu/ControllerSettingsPanel/Rows/Back": "ui.action.back",
+        "FlightHud/ControllerConfirmation/Rows/Title": "ui.controller.confirm_title",
+        "FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile": "ui.controller.use_xbox",
+        "FlightHud/ControllerConfirmation/Rows/UseKeyboardFallback": "ui.controller.use_keyboard",
+        "FlightHud/StatusMargin/StatusPanel/StatusRows/LabBack": "ui.action.back_to_menu",
+        "FlightHud/LicensePanel/Rows/Title": "ui.license.required",
+        "FlightHud/LicensePanel/Rows/Activate": "ui.license.activate",
+        "FlightHud/LicensePanel/Rows/Retry": "ui.action.retry",
+        "FlightHud/LicensePanel/Rows/Diagnostics": "ui.license.diagnostics",
+        "FlightHud/LicensePanel/Rows/Exit": "ui.action.exit",
+        "FlightHud/PausePanel/Rows/Title": "ui.pause.title",
+        "FlightHud/PausePanel/Rows/Resume": "ui.pause.resume",
+        "FlightHud/PausePanel/Rows/Retry": "ui.action.retry",
+        "FlightHud/PausePanel/Rows/ChangeMap": "ui.action.change_map",
+        "FlightHud/PausePanel/Rows/Rates": "ui.settings.rates",
+        "FlightHud/PausePanel/Rows/Exit": "ui.action.exit",
+        "FlightHud/FinishPanel/Rows/Retry": "ui.action.retry",
+        "FlightHud/FinishPanel/Rows/ChangeMap": "ui.action.change_map",
+        "FlightHud/FinishPanel/Rows/Exit": "ui.action.exit",
+    }
+    for path in text_by_path:
+        var control := get_node_or_null(path) as Control
+        if control != null:
+            control.text = _t(String(text_by_path[path]))
+    var wind_rows := get_node_or_null("MainMenu/FlightSetupPanel/Rows/WindPresets")
+    if wind_rows != null:
+        for preset in WIND_PRESETS:
+            var wind_button := wind_rows.get_node_or_null(preset.capitalize()) as Button
+            if wind_button != null:
+                wind_button.text = _t("ui.wind.%s" % preset)
+    var map_wind_rows := get_node_or_null("MapMenu/WindPresets")
+    if map_wind_rows != null:
+        for preset in WIND_PRESETS:
+            var map_wind_button := map_wind_rows.get_node_or_null(preset.capitalize()) as Button
+            if map_wind_button != null:
+                map_wind_button.text = _t("ui.wind.%s" % preset)
+    var map_environment_labels := {
+        "rain": "ui.map.rain",
+        "fog": "ui.map.fog",
+        "time_of_day": "ui.map.time_of_day",
+    }
+    for node_name in map_environment_labels:
+        var environment_label := get_node_or_null("MapMenu/EnvironmentControls/%s" % node_name) as Label
+        if environment_label != null:
+            environment_label.text = _t(String(map_environment_labels[node_name]))
+    if license_key_input != null:
+        license_key_input.placeholder_text = _t("ui.license.key_placeholder")
+    _refresh_language_selector()
+    _refresh_flight_setup_panel()
+    _refresh_flight_hud()
+    if status_diagram != null:
+        status_diagram.call("set_locale", Localization.current_locale)
+    _refresh_loaded_map_localization()
+
+
+func _refresh_loaded_map_localization() -> void:
+    if loaded_map == null:
+        return
+    var labels_by_path := {
+        "SpawnNorth/DirectionLabel": "ui.map.north_spawn",
+        "TurnMarker/DirectionLabel": "ui.map.turn_90",
+        "TimeTrial/Checkpoint01/DirectionArrow": "ui.map.checkpoint_1",
+        "TimeTrial/Checkpoint02/DirectionArrow": "ui.map.checkpoint_2",
+        "TimeTrial/Checkpoint03/DirectionArrow": "ui.map.checkpoint_3",
+        "TimeTrial/Finish/FinishLabel": "ui.map.finish",
+    }
+    for path in labels_by_path:
+        var label := loaded_map.get_node_or_null(path) as Label3D
+        if label != null:
+            label.text = _t(String(labels_by_path[path]))
 
 
 func _build_graphics_panel() -> void:
@@ -2641,7 +2898,8 @@ func _build_graphics_panel() -> void:
     panel.add_child(rows)
 
     var title := Label.new()
-    title.text = "GRAPHICS"
+    title.name = "Title"
+    title.text = _t("ui.settings.graphics")
     rows.add_child(title)
 
     graphics_value_label = Label.new()
@@ -2659,19 +2917,19 @@ func _build_graphics_panel() -> void:
 
     var apply_button := Button.new()
     apply_button.name = "Apply"
-    apply_button.text = "APPLY"
+    apply_button.text = _t("ui.action.apply")
     apply_button.pressed.connect(_apply_graphics_settings)
     rows.add_child(apply_button)
 
     var reset_button := Button.new()
     reset_button.name = "ResetDefaults"
-    reset_button.text = "RESET DEFAULTS"
+    reset_button.text = _t("ui.action.reset_defaults")
     reset_button.pressed.connect(_reset_graphics_defaults)
     rows.add_child(reset_button)
 
     var back_button := Button.new()
     back_button.name = "Back"
-    back_button.text = "BACK"
+    back_button.text = _t("ui.action.back")
     back_button.pressed.connect(_close_graphics_panel)
     rows.add_child(back_button)
     _refresh_graphics_panel()
@@ -2698,10 +2956,12 @@ func _build_rates_panel() -> void:
     scroll.add_child(rows)
 
     var title := Label.new()
-    title.text = "BETAFLIGHT RATES"
+    title.name = "Title"
+    title.text = _t("ui.rates.title")
     rows.add_child(title)
     var disclaimer := Label.new()
-    disclaimer.text = "SIM PROFILE: RC Rate / Super Rate / Expo affect ACRO mode only."
+    disclaimer.name = "Disclaimer"
+    disclaimer.text = _t("ui.rates.disclaimer")
     disclaimer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     rows.add_child(disclaimer)
 
@@ -2726,7 +2986,8 @@ func _build_rates_panel() -> void:
         rates_sliders[key] = slider
 
     var curve_title := Label.new()
-    curve_title.text = "RATE CURVE PREVIEW (degrees/second)"
+    curve_title.name = "CurvePreviewTitle"
+    curve_title.text = _t("ui.rates.curve_preview")
     rows.add_child(curve_title)
     rates_curve_plot = Control.new()
     rates_curve_plot.name = "CurvePreview"
@@ -2749,7 +3010,8 @@ func _build_rates_panel() -> void:
     rates_curve_plot.add_child(rates_curve_line)
 
     var json_title := Label.new()
-    json_title.text = "JSON EXPORT / IMPORT"
+    json_title.name = "JsonTitle"
+    json_title.text = _t("ui.rates.json_title")
     rows.add_child(json_title)
     rates_json_editor = TextEdit.new()
     rates_json_editor.name = "RatesJson"
@@ -2772,22 +3034,22 @@ func _build_rates_panel() -> void:
     rows.add_child(actions)
     var export_button := Button.new()
     export_button.name = "ExportJson"
-    export_button.text = "EXPORT JSON"
+    export_button.text = _t("ui.rates.export")
     export_button.pressed.connect(_export_rates_json)
     actions.add_child(export_button)
     var import_button := Button.new()
     import_button.name = "ImportJson"
-    import_button.text = "IMPORT & APPLY JSON"
+    import_button.text = _t("ui.rates.import")
     import_button.pressed.connect(_import_rates_json)
     actions.add_child(import_button)
     var reset_button := Button.new()
     reset_button.name = "ResetDefaults"
-    reset_button.text = "RESET DEFAULTS"
+    reset_button.text = _t("ui.action.reset_defaults")
     reset_button.pressed.connect(_reset_rates_defaults)
     actions.add_child(reset_button)
     var back_button := Button.new()
     back_button.name = "Back"
-    back_button.text = "BACK"
+    back_button.text = _t("ui.action.back")
     back_button.pressed.connect(_close_rates_panel)
     actions.add_child(back_button)
 
@@ -2797,9 +3059,9 @@ func _on_rates_slider_changed(value: float, key: String) -> void:
     candidate[key] = value
     var result: Dictionary = _save_rates_profile(candidate)
     if not result.ok:
-        rates_status_label.text = "Rates save failed: %s" % result.error
+        rates_status_label.text = _t("ui.rates.save_failed")
         return
-    rates_status_label.text = "Saved rates profile"
+    rates_status_label.text = _t("ui.rates.saved")
     if rates_json_editor != null:
         rates_json_editor.text = RatesProfile.to_json(rates_profile)
     _refresh_rates_panel()
@@ -2808,7 +3070,7 @@ func _on_rates_slider_changed(value: float, key: String) -> void:
 func _export_rates_json() -> void:
     if rates_json_editor != null:
         rates_json_editor.text = RatesProfile.to_json(rates_profile)
-    rates_status_label.text = "Exported current rates JSON to the editor"
+    rates_status_label.text = _t("ui.rates.exported")
     _refresh_rates_import_diff()
 
 
@@ -2817,25 +3079,25 @@ func _import_rates_json() -> void:
         return
     var result: Dictionary = RatesProfile.from_json(rates_json_editor.text)
     if not result.ok:
-        rates_status_label.text = "Import rejected: %s" % result.error
+        rates_status_label.text = _t("ui.rates.import_rejected")
         _refresh_rates_import_diff()
         return
     var save_result: Dictionary = _save_rates_profile(result.profile)
     if not save_result.ok:
-        rates_status_label.text = "Import save failed: %s" % save_result.error
+        rates_status_label.text = _t("ui.rates.import_save_failed")
         return
     rates_json_editor.text = RatesProfile.to_json(rates_profile)
-    rates_status_label.text = "Imported and applied rates profile"
+    rates_status_label.text = _t("ui.rates.imported")
     _refresh_rates_import_diff()
 
 
 func _reset_rates_defaults() -> void:
     var result: Dictionary = _save_rates_profile(RatesProfile.default_profile())
     if not result.ok:
-        rates_status_label.text = "Rates reset failed: %s" % result.error
+        rates_status_label.text = _t("ui.rates.reset_failed")
         return
     rates_json_editor.text = RatesProfile.to_json(rates_profile)
-    rates_status_label.text = "Rates reset to defaults"
+    rates_status_label.text = _t("ui.rates.reset")
     _refresh_rates_import_diff()
 
 
@@ -2848,15 +3110,15 @@ func _refresh_rates_import_diff() -> void:
         return
     var result: Dictionary = RatesProfile.from_json(rates_json_editor.text)
     if not result.ok:
-        rates_diff_label.text = "BETAFLIGHT DIFF: invalid JSON (%s)" % result.error
+        rates_diff_label.text = _t("ui.rates.diff_invalid")
         return
     var changes: Array[Dictionary] = RatesProfile.diff(rates_profile, result.profile)
     if changes.is_empty():
-        rates_diff_label.text = "CURRENT vs BETAFLIGHT IMPORTED: no changes"
+        rates_diff_label.text = _t("ui.rates.diff_none")
         return
-    var lines := ["CURRENT vs BETAFLIGHT IMPORTED:"]
+    var lines := [_t("ui.rates.diff_header")]
     for change in changes:
-        lines.append("%s: %.2f -> %.2f" % [change.key, change.current, change.imported])
+        lines.append(_format("ui.rates.diff_line", [change.key, change.current, change.imported]))
     rates_diff_label.text = "\n".join(lines)
 
 
@@ -2869,16 +3131,20 @@ func _refresh_rates_panel() -> void:
         if not is_equal_approx(slider.value, value):
             slider.set_value_no_signal(value)
         var label: Label = rates_slider_labels[key]
-        label.text = "%s: %.2f" % [key.to_upper(), value]
+        label.text = _format("ui.rates.value", [_localized_rate_name(key), value])
     if rates_curve_line != null:
         _refresh_rates_curve()
     _refresh_rates_import_diff()
 
 
+func _localized_rate_name(key: String) -> String:
+    return _t("ui.rates.axis.%s" % key)
+
+
 func _refresh_graphics_panel() -> void:
     if graphics_value_label == null:
         return
-    graphics_value_label.text = "RENDER SCALE: %d%%" % roundi(render_scale * 100.0)
+    graphics_value_label.text = _format("ui.render_scale", [roundi(render_scale * 100.0)])
     var slider := get_node_or_null("MainMenu/GraphicsPanel/Rows/RenderScale") as HSlider
     if slider != null and not is_equal_approx(slider.value, render_scale):
         slider.set_value_no_signal(render_scale)
@@ -2919,7 +3185,8 @@ func _build_controller_settings_panel() -> void:
     panel.add_child(rows)
 
     var title := Label.new()
-    title.text = "CONTROLLER"
+    title.name = "Title"
+    title.text = _t("ui.settings.controller")
     rows.add_child(title)
 
     controller_settings_device_label = Label.new()
@@ -2936,13 +3203,13 @@ func _build_controller_settings_panel() -> void:
 
     var reset_button := Button.new()
     reset_button.name = "ResetXboxDefault"
-    reset_button.text = "RESET TO XBOX DEFAULT"
+    reset_button.text = _t("ui.controller.reset_xbox")
     reset_button.pressed.connect(reset_to_xbox_default)
     rows.add_child(reset_button)
 
     var back_button := Button.new()
     back_button.name = "Back"
-    back_button.text = "BACK"
+    back_button.text = _t("ui.action.back")
     back_button.pressed.connect(show_settings)
     rows.add_child(back_button)
 
@@ -3071,6 +3338,12 @@ func factory_reset_player_settings() -> void:
     graphics_committed_scale = QualityProfile.DEFAULT_RENDER_SCALE
     if rates_json_editor != null:
         rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    if not Localization.set_locale(LanguageProfile.DEFAULT_LOCALE):
+        last_error_message = "Settings factory reset could not apply the default locale"
+        screen = "error"
+        _refresh_flight_hud()
+        return
+    _refresh_localized_ui()
     last_error_message = "Settings reset to factory defaults"
     screen = "settings"
     _refresh_flight_hud()
@@ -3093,7 +3366,7 @@ func _build_controller_confirmation() -> void:
 
     var title := Label.new()
     title.name = "Title"
-    title.text = "CONFIRM XBOX DEFAULT PROFILE"
+    title.text = _t("ui.controller.confirm_title")
     rows.add_child(title)
 
     confirmation_mapping_label = Label.new()
@@ -3106,13 +3379,13 @@ func _build_controller_confirmation() -> void:
 
     var confirm_button := Button.new()
     confirm_button.name = "UseXboxDefaultProfile"
-    confirm_button.text = "USE XBOX DEFAULT PROFILE"
+    confirm_button.text = _t("ui.controller.use_xbox")
     confirm_button.pressed.connect(accept_controller_confirmation)
     rows.add_child(confirm_button)
 
     var fallback_button := Button.new()
     fallback_button.name = "UseKeyboardFallback"
-    fallback_button.text = "USE KEYBOARD FALLBACK"
+    fallback_button.text = _t("ui.controller.use_keyboard")
     fallback_button.pressed.connect(use_keyboard_fallback)
     rows.add_child(fallback_button)
 
@@ -3145,11 +3418,12 @@ func _build_flight_hud() -> void:
 
     key_hints_label = Label.new()
     key_hints_label.name = "KeyHints"
-    key_hints_label.text = KEY_HINTS_TEXT
+    key_hints_label.text = _t("ui.hints")
     rows.add_child(key_hints_label)
 
     arm_status_label = Label.new()
     arm_status_label.name = "ArmStatus"
+    arm_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     rows.add_child(arm_status_label)
 
     time_trial_status_label = Label.new()
@@ -3162,7 +3436,7 @@ func _build_flight_hud() -> void:
     rows.add_child(arm_takeoff_button)
     lab_back_button = Button.new()
     lab_back_button.name = "LabBack"
-    lab_back_button.text = "BACK TO MENU"
+    lab_back_button.text = _t("ui.action.back_to_menu")
     lab_back_button.pressed.connect(return_from_lab_mode)
     rows.add_child(lab_back_button)
     acro_mode_button = Button.new()
@@ -3192,7 +3466,7 @@ func _build_license_panel() -> void:
     panel.add_child(rows)
 
     var title := Label.new()
-    title.text = "LICENSE REQUIRED"
+    title.text = _t("ui.license.required")
     rows.add_child(title)
     license_status_label = Label.new()
     license_status_label.name = "Status"
@@ -3200,30 +3474,30 @@ func _build_license_panel() -> void:
     license_key_input = LineEdit.new()
     license_key_input.name = "LicenseKey"
     license_key_input.secret = true
-    license_key_input.placeholder_text = "Enter license key"
+    license_key_input.placeholder_text = _t("ui.license.key_placeholder")
     rows.add_child(license_key_input)
 
     license_activate_button = Button.new()
     license_activate_button.name = "Activate"
-    license_activate_button.text = "ACTIVATE LICENSE"
+    license_activate_button.text = _t("ui.license.activate")
     license_activate_button.pressed.connect(activate_license)
     rows.add_child(license_activate_button)
 
     license_retry_button = Button.new()
     license_retry_button.name = "Retry"
-    license_retry_button.text = "RETRY"
+    license_retry_button.text = _t("ui.action.retry")
     license_retry_button.pressed.connect(retry_license)
     rows.add_child(license_retry_button)
 
     license_diagnostics_button = Button.new()
     license_diagnostics_button.name = "Diagnostics"
-    license_diagnostics_button.text = "DIAGNOSTICS"
+    license_diagnostics_button.text = _t("ui.license.diagnostics")
     license_diagnostics_button.pressed.connect(_open_license_diagnostics)
     rows.add_child(license_diagnostics_button)
 
     license_exit_button = Button.new()
     license_exit_button.name = "Exit"
-    license_exit_button.text = "EXIT"
+    license_exit_button.text = _t("ui.action.exit")
     license_exit_button.pressed.connect(request_exit)
     rows.add_child(license_exit_button)
 
@@ -3249,31 +3523,31 @@ func _build_pause_panel() -> void:
     rows.add_theme_constant_override("separation", 6)
     panel.add_child(rows)
     var title := Label.new()
-    title.text = "PAUSED"
+    title.text = _t("ui.pause.title")
     rows.add_child(title)
     var resume := Button.new()
     resume.name = "Resume"
-    resume.text = "RESUME"
+    resume.text = _t("ui.pause.resume")
     resume.pressed.connect(func() -> void: set_paused(false))
     rows.add_child(resume)
     var retry := Button.new()
     retry.name = "Retry"
-    retry.text = "RETRY"
+    retry.text = _t("ui.action.retry")
     retry.pressed.connect(retry_time_trial)
     rows.add_child(retry)
     var change := Button.new()
     change.name = "ChangeMap"
-    change.text = "CHANGE MAP"
+    change.text = _t("ui.action.change_map")
     change.pressed.connect(change_map)
     rows.add_child(change)
     var rates := Button.new()
     rates.name = "Rates"
-    rates.text = "RATES"
+    rates.text = _t("ui.settings.rates")
     rates.pressed.connect(show_rates.bind("flight"))
     rows.add_child(rates)
     var exit := Button.new()
     exit.name = "Exit"
-    exit.text = "EXIT"
+    exit.text = _t("ui.action.exit")
     exit.pressed.connect(request_exit)
     rows.add_child(exit)
 
@@ -3281,11 +3555,11 @@ func _build_pause_panel() -> void:
 func _build_controller_safety_panel() -> void:
     var panel := PanelContainer.new()
     panel.name = "ControllerSafetyPanel"
-    panel.set_anchors_preset(Control.PRESET_CENTER)
-    panel.offset_left = -220.0
-    panel.offset_top = -80.0
-    panel.offset_right = 220.0
-    panel.offset_bottom = 80.0
+    panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    panel.offset_left = 10.0
+    panel.offset_top = 180.0
+    panel.offset_right = 830.0
+    panel.offset_bottom = 290.0
     controller_safety_panel = panel
     flight_hud_layer.add_child(panel)
 
@@ -3295,6 +3569,7 @@ func _build_controller_safety_panel() -> void:
     panel.add_child(rows)
     controller_safety_label = Label.new()
     controller_safety_label.name = "Message"
+    controller_safety_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     rows.add_child(controller_safety_label)
 
 func _build_finish_panel() -> void:
@@ -3314,21 +3589,21 @@ func _build_finish_panel() -> void:
     panel.add_child(rows)
     finish_summary_label = Label.new()
     finish_summary_label.name = "Summary"
-    finish_summary_label.text = "FINISH"
+    finish_summary_label.text = _t("ui.finish.title")
     rows.add_child(finish_summary_label)
     var retry := Button.new()
     retry.name = "Retry"
-    retry.text = "RETRY"
+    retry.text = _t("ui.action.retry")
     retry.pressed.connect(retry_time_trial)
     rows.add_child(retry)
     var change := Button.new()
     change.name = "ChangeMap"
-    change.text = "CHANGE MAP"
+    change.text = _t("ui.action.change_map")
     change.pressed.connect(change_map)
     rows.add_child(change)
     var exit := Button.new()
     exit.name = "Exit"
-    exit.text = "EXIT"
+    exit.text = _t("ui.action.exit")
     exit.pressed.connect(request_exit)
     rows.add_child(exit)
 
@@ -3391,6 +3666,7 @@ func _reset_drone_body() -> void:
 func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
         return
+    var visible_error_message := _localize_fallback_message(last_error_message)
     if main_menu_layer != null:
         main_menu_layer.visible = screen in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
     if main_menu_entries_container != null:
@@ -3400,7 +3676,7 @@ func _refresh_flight_hud() -> void:
     if settings_panel != null:
         settings_panel.visible = screen == "settings"
     if settings_status_label != null:
-        settings_status_label.text = last_error_message if not last_error_message.is_empty() else "Settings ready"
+        settings_status_label.text = visible_error_message if not last_error_message.is_empty() else _t("ui.settings.ready")
     if controller_settings_panel != null:
         controller_settings_panel.visible = screen == "controller_settings"
     if rates_panel != null:
@@ -3414,14 +3690,14 @@ func _refresh_flight_hud() -> void:
     if controller_safety_panel != null:
         controller_safety_panel.visible = controller_safety_latched
     if controller_safety_label != null:
-        controller_safety_label.text = last_error_message
+        controller_safety_label.text = visible_error_message
     if finish_panel != null:
         finish_panel.visible = screen == "finish"
     if license_panel != null:
         var license_snapshot := get_license_snapshot()
         var license_status := String(license_snapshot.get("status", "invalid_token"))
         license_panel.visible = screen == "license_blocked"
-        license_status_label.text = "LICENSE BLOCKED: %s" % license_status
+        license_status_label.text = _format("ui.license.blocked", [_localized_license_status(license_status)])
         var actions := license_actions()
         var key_status := license_status in ["not_activated", "offline_grace_expired", "invalid_token"] and not license_snapshot.has("fatal")
         license_key_input.visible = screen == "license_blocked" and key_status
@@ -3431,7 +3707,7 @@ func _refresh_flight_hud() -> void:
         license_retry_button.visible = actions.has("retry_license")
         license_diagnostics_button.visible = screen == "license_blocked" and actions.has("diagnostics")
         license_exit_button.visible = actions.has("exit")
-    key_hints_label.text = KEY_HINTS_TEXT
+    key_hints_label.text = _t("ui.hints")
     _refresh_rates_panel()
     _refresh_graphics_panel()
     arm_takeoff_button.disabled = screen in ["main_menu", "license_blocked"] or (controller_safety_latched and screen != "fallback_prompt")
@@ -3440,44 +3716,44 @@ func _refresh_flight_hud() -> void:
         lab_back_button.disabled = false
     if acro_mode_button != null:
         acro_mode_button.disabled = screen != "flight" or paused or controller_safety_latched
-        acro_mode_button.text = "ACRO MODE (C): %s" % ("ON" if flight_mode == "ACRO" else "OFF")
+        acro_mode_button.text = _format("ui.hud.acro", [_t("ui.hud.on") if flight_mode == "ACRO" else _t("ui.hud.off")])
     if time_trial_status_label != null:
         time_trial_status_label.visible = time_trial != null and screen in ["preflight", "flight", "finish"]
         if time_trial != null:
-            var trial_state := "FINISHED" if time_trial.finished else "NEXT %d/%d" % [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()]
-            time_trial_status_label.text = "TIME TRIAL | %s | %0.2f s" % [trial_state, time_trial.elapsed_seconds]
+            var trial_state := _t("ui.hud.time_trial_finished") if time_trial.finished else _format("ui.hud.time_trial_next", [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()])
+            time_trial_status_label.text = _format("ui.hud.time_trial", [trial_state, time_trial.elapsed_seconds])
     if screen == "preflight":
         var armed := _flight_control_armed()
-        arm_status_label.text = "%s | %s -> %s -> press T or ARM" % [_px4_status_text(), _profile_input_status(), "ARMED" if armed else "DISARMED"]
-        arm_takeoff_button.text = "ARM / TAKEOFF (T)"
+        arm_status_label.text = _format("ui.hud.preflight", [_px4_status_text(), _profile_input_status(), _localized_arm_state(armed)])
+        arm_takeoff_button.text = _t("ui.hud.arm_takeoff")
     elif screen == "flight":
         var armed := _flight_control_armed()
-        arm_status_label.text = "%s | %s | %s | %s" % [_px4_status_text(), _profile_input_status(), "ARMED" if armed else "DISARMED", "PAUSED" if paused else "TAKEOFF"]
-        arm_takeoff_button.text = "ARM / TAKEOFF (T)"
+        arm_status_label.text = _format("ui.hud.flight", [_px4_status_text(), _profile_input_status(), _localized_arm_state(armed), _t("ui.hud.paused") if paused else _t("ui.hud.takeoff")])
+        arm_takeoff_button.text = _t("ui.hud.arm_takeoff")
     elif screen == "fallback_prompt":
-        arm_status_label.text = last_error_message
-        arm_takeoff_button.text = "USE KEYBOARD FALLBACK"
+        arm_status_label.text = visible_error_message
+        arm_takeoff_button.text = _t("ui.controller.use_keyboard")
     elif screen == "controller_confirmation":
-        arm_status_label.text = "Confirm the fixed Xbox mapping or use KeyboardProfile fallback"
-        arm_takeoff_button.text = "BACK TO MAIN MENU"
+        arm_status_label.text = _t("ui.hud.confirm_controller")
+        arm_takeoff_button.text = _t("ui.action.back_to_menu")
     elif screen == "error":
-        arm_status_label.text = last_error_message
-        arm_takeoff_button.text = "BACK TO MAIN MENU"
+        arm_status_label.text = visible_error_message
+        arm_takeoff_button.text = _t("ui.action.back_to_menu")
     elif screen == "exit":
-        arm_status_label.text = "EXIT requested"
-        arm_takeoff_button.text = "EXIT"
+        arm_status_label.text = _t("ui.hud.exit_requested")
+        arm_takeoff_button.text = _t("ui.action.exit")
     elif screen == "finish":
-        arm_status_label.text = "TIME TRIAL COMPLETE"
-        arm_takeoff_button.text = "RETRY"
+        arm_status_label.text = _t("ui.hud.time_trial_complete")
+        arm_takeoff_button.text = _t("ui.action.retry")
     elif screen == "controller_disconnected":
-        arm_status_label.text = last_error_message
-        arm_takeoff_button.text = "WAIT FOR CONTROLLER"
+        arm_status_label.text = visible_error_message
+        arm_takeoff_button.text = _t("ui.hud.wait_controller")
     elif screen == "license_blocked":
-        arm_status_label.text = last_error_message
-        arm_takeoff_button.text = "LICENSE BLOCKED"
+        arm_status_label.text = visible_error_message
+        arm_takeoff_button.text = _t("ui.license.blocked_button")
     else:
-        arm_status_label.text = "Quick Fly: choose Quick Fly, then arm at low throttle"
-        arm_takeoff_button.text = "ARM / TAKEOFF (T)"
+        arm_status_label.text = _t("ui.hud.quick_fly_hint")
+        arm_takeoff_button.text = _t("ui.hud.arm_takeoff")
 
 func _handle_primary_action() -> void:
     if screen == "fallback_prompt":
@@ -3546,14 +3822,14 @@ func handle_controller_connection_changed(device_id: int, connected: bool) -> vo
 func _refresh_controller_confirmation() -> void:
     if controller_confirmation_panel == null or not controller_confirmation_panel.visible or controller_confirmation_profile == null:
         return
-    var mapping_lines := ["FIXED XBOX MAPPING"]
-    var live_axis_lines := ["LIVE AXES"]
+    var mapping_lines := [_t("ui.controller.mapping_header")]
+    var live_axis_lines := [_t("ui.controller.live_axes")]
     for role in ["roll", "pitch", "yaw", "throttle"]:
         var axis := int(controller_confirmation_profile.axis_for_role[role])
         var raw := Input.get_joy_axis(controller_confirmation_device_id, axis)
         var normalized := _normalize_gamepad_axis(raw, controller_confirmation_profile.deadzone)
-        mapping_lines.append("%s -> Axis %d%s" % [role, axis, " (reversed)" if controller_confirmation_profile.reversed_for_role[role] else ""])
-        live_axis_lines.append("%s: Raw %+.3f | Normalized %+.3f" % [role, raw, normalized])
+        mapping_lines.append(_format("ui.controller.mapping_line", [_localized_controller_role(role), axis, _localized_reversed_suffix() if controller_confirmation_profile.reversed_for_role[role] else ""]))
+        live_axis_lines.append(_format("ui.controller.live_axis_line", [_localized_controller_role(role), raw, normalized]))
     confirmation_mapping_label.text = "\n".join(mapping_lines)
     confirmation_axes_label.text = "\n".join(live_axis_lines)
 
@@ -3563,41 +3839,41 @@ func _refresh_controller_settings() -> void:
     controller_monitor_refresh_count += 1
     var device_id := _first_connected_device()
     if device_id < 0:
-        controller_settings_device_label.text = "CURRENT DEVICE: none"
+        controller_settings_device_label.text = _t("ui.controller.device_none")
     else:
-        var support := "SDL mapped" if InputProfiles.GamepadProfile.is_supported_device(device_id, gamepad_device_state) else "unknown"
-        controller_settings_device_label.text = "CURRENT DEVICE: %d %s (%s)" % [device_id, gamepad_device_state.joy_name(device_id), support]
+        var support := _t("ui.controller.support_sdl") if InputProfiles.GamepadProfile.is_supported_device(device_id, gamepad_device_state) else _t("ui.controller.support_unknown")
+        controller_settings_device_label.text = _format("ui.controller.device", [device_id, gamepad_device_state.joy_name(device_id), support])
     if not _has_active_gamepad_profile():
-        controller_settings_mapping_label.text = "FIXED XBOX MAPPING: UNAVAILABLE"
+        controller_settings_mapping_label.text = _t("ui.controller.mapping_unavailable")
         controller_settings_monitor_label.text = "\n".join([
-            "CHANNEL MONITOR (30 Hz)",
-            "roll:     UNAVAILABLE",
-            "pitch:    UNAVAILABLE",
-            "yaw:      UNAVAILABLE",
-            "throttle: UNAVAILABLE",
-            "DEADZONE: %.3f (fixed)" % InputProfiles.GamepadProfile.RAW_AXIS_DEADZONE,
-            "ARM: UNAVAILABLE",
-            "MODE: UNAVAILABLE",
+            _t("ui.controller.monitor_header"),
+            _format("ui.controller.channel_unavailable", [_localized_controller_role("roll"), " ".repeat(10 - "roll:".length())]),
+            _format("ui.controller.channel_unavailable", [_localized_controller_role("pitch"), " ".repeat(10 - "pitch:".length())]),
+            _format("ui.controller.channel_unavailable", [_localized_controller_role("yaw"), " ".repeat(10 - "yaw:".length())]),
+            _format("ui.controller.channel_unavailable", [_localized_controller_role("throttle"), " ".repeat(10 - "throttle:".length())]),
+            _format("ui.controller.deadzone", [InputProfiles.GamepadProfile.RAW_AXIS_DEADZONE]),
+            _t("ui.controller.arm_unavailable"),
+            _t("ui.controller.mode_unavailable"),
         ])
         return
     var profile := session_gamepad_profile
-    var mapping_lines := ["FIXED XBOX MAPPING"]
+    var mapping_lines := [_t("ui.controller.mapping_header")]
     for role in ["roll", "pitch", "yaw", "throttle"]:
         var axis := int(profile.axis_for_role[role])
-        mapping_lines.append("%s -> Axis %d%s" % [role, axis, " (reversed)" if profile.reversed_for_role[role] else ""])
+        mapping_lines.append(_format("ui.controller.mapping_line", [_localized_controller_role(role), axis, _localized_reversed_suffix() if profile.reversed_for_role[role] else ""]))
     controller_settings_mapping_label.text = "\n".join(mapping_lines)
-    var monitor_lines := ["CHANNEL MONITOR (30 Hz)"]
+    var monitor_lines := [_t("ui.controller.monitor_header")]
     for role in ["roll", "pitch", "yaw", "throttle"]:
         var raw := Input.get_joy_axis(session_gamepad_device_id, int(profile.axis_for_role[role]))
         var normalized := _profile_axis(role)
-        var role_label := "%s:" % role
-        var line: String = role_label + " ".repeat(10 - role_label.length()) + "%s raw %+.3f | normalized %+.3f" % [_controller_monitor_bar(normalized), raw, normalized]
+        var role_label := "%s:" % _localized_controller_role(role)
+        var line: String = _format("ui.controller.monitor_line", [role_label, " ".repeat(10 - role_label.length()), _controller_monitor_bar(normalized), raw, normalized])
         if role == "throttle":
-            line += " | %s" % ("LOW" if _profile_throttle_is_low() else "HIGH")
+            line += _format("ui.controller.throttle_state", [_t("ui.hud.low") if _profile_throttle_is_low() else _t("ui.hud.high")])
         monitor_lines.append(line)
-    monitor_lines.append("DEADZONE: %.3f (fixed)" % profile.deadzone)
-    monitor_lines.append("ARM: %s | flight control: %s" % ["PRESSED" if profile.arm_pressed else "RELEASED", "ARMED" if _flight_control_armed() else "DISARMED"])
-    monitor_lines.append("MODE: %s | flight mode: %s" % ["PRESSED" if profile.mode_pressed else "RELEASED", flight_mode])
+    monitor_lines.append(_format("ui.controller.deadzone", [profile.deadzone]))
+    monitor_lines.append(_format("ui.controller.arm_state", [_localized_button_state(profile.arm_pressed), _localized_arm_state(_flight_control_armed())]))
+    monitor_lines.append(_format("ui.controller.mode_state", [_localized_button_state(profile.mode_pressed), _localized_flight_mode(flight_mode)]))
     controller_settings_monitor_label.text = "\n".join(monitor_lines)
 
 func _controller_monitor_bar(value: float) -> String:
@@ -3694,10 +3970,10 @@ func _angle_yaw_rate_degrees_per_second() -> float:
 
 func _profile_input_status() -> String:
     if not _has_active_gamepad_profile():
-        return "Throttle LOW | KeyboardProfile"
+        return _t("ui.hud.input_keyboard")
     var throttle := _flight_throttle()
     var is_low := _profile_throttle_is_low()
-    return "Throttle %d%% %s | Arm %s | Mode %s" % [roundi(throttle * 100.0), "LOW" if is_low else "HIGH", "PRESSED" if session_gamepad_profile.arm_pressed else "RELEASED", "PRESSED" if session_gamepad_profile.mode_pressed else "RELEASED"]
+    return _format("ui.hud.input_profile", [roundi(throttle * 100.0), _t("ui.hud.low") if is_low else _t("ui.hud.high"), _localized_button_state(session_gamepad_profile.arm_pressed), _localized_button_state(session_gamepad_profile.mode_pressed)])
 
 func _update_chase_camera() -> void:
     if chase_camera == null or drone_body == null:
@@ -3733,10 +4009,123 @@ func _flight_control_armed() -> bool:
 
 func _px4_status_text() -> String:
     if px4_sitl_bridge == null:
-        return "LOCAL"
+        return _t("ui.hud.local")
     var diagnostics: Dictionary = px4_sitl_bridge.diagnostics()
     var message := String(diagnostics.get("message", ""))
-    return "PX4 %s%s" % [px4_sitl_bridge.state.to_upper(), " (%s)" % message if not message.is_empty() else ""]
+    var localized_message := _localized_px4_message(message)
+    return _format("ui.hud.px4", [_localized_px4_state(px4_sitl_bridge.state), " (%s)" % localized_message if not localized_message.is_empty() else ""])
+
+
+func _localized_px4_state(state: String) -> String:
+    match state:
+        "disconnected":
+            return _t("ui.hud.px4.state.disconnected")
+        "starting":
+            return _t("ui.hud.px4.state.starting")
+        "connected":
+            return _t("ui.hud.px4.state.connected")
+        "armed":
+            return _t("ui.hud.px4.state.armed")
+        "stale":
+            return _t("ui.hud.px4.state.stale")
+        "failed":
+            return _t("ui.hud.px4.state.failed")
+        _:
+            return _format("ui.hud.px4.state.unknown", [state])
+
+
+func _localized_px4_message(message: String) -> String:
+    if message == "PX4 heartbeat received; awaiting actuator output":
+        return _t("ui.hud.px4.message.awaiting_actuator")
+    if message.contains("; "):
+        var localized_parts: Array[String] = []
+        for part in message.split("; "):
+            localized_parts.append(_localized_px4_message(part))
+        return "；".join(localized_parts)
+    match message:
+        "waiting for PX4 heartbeat":
+            return _t("ui.hud.px4.message.waiting")
+        "PX4 heartbeat received":
+            return _t("ui.hud.px4.message.heartbeat_received")
+        "PX4 heartbeat received; awaiting actuator output":
+            return _t("ui.hud.px4.message.awaiting_actuator")
+        "PX4 heartbeat and actuator output received":
+            return _t("ui.hud.px4.message.actuator_received")
+        "PX4 TCP simulator channel connected":
+            return _t("ui.hud.px4.message.tcp_connected")
+        "PX4 simulator TCP channel disconnected":
+            return _t("ui.hud.px4.message.tcp_disconnected")
+        "PX4 transport stopped":
+            return _t("ui.hud.px4.message.transport_stopped")
+        "PX4 actuator output is stale":
+            return _t("ui.hud.px4.message.actuator_stale")
+        "PX4 heartbeat was not received before startup timeout":
+            return _t("ui.hud.px4.message.startup_timeout")
+        "PX4 disarmed":
+            return _t("ui.hud.px4.message.disarmed")
+        "PX4 is not connected":
+            return _t("ui.hud.px4.message.not_connected")
+        "PX4 SITL requires UseTcp=true":
+            return _t("ui.hud.px4.message.requires_tcp")
+        "PX4 SITL bridge requires VehicleType PX4Multirotor":
+            return _t("ui.hud.px4.message.bridge_vehicle_type")
+        "PX4 SITL bridge does not support serial/HITL transport":
+            return _t("ui.hud.px4.message.bridge_serial")
+        "PX4 SITL bridge ports must be in the range 1..65535":
+            return _t("ui.hud.px4.message.bridge_ports")
+        "PX4 SITL bridge timeouts must be positive and ordered":
+            return _t("ui.hud.px4.message.bridge_timeouts")
+        "PX4 authority is inactive":
+            return _t("ui.hud.px4.message.authority_inactive")
+        "PX4 actuator output is pending":
+            return _t("ui.hud.px4.message.actuator_pending")
+        "PX4 thrust output is pending":
+            return _t("ui.hud.px4.message.thrust_pending")
+        _:
+            if message == "PX4 moveOnPath requires at least one waypoint":
+                return _t("ui.hud.px4.message.move_on_path_empty")
+            if message.begins_with("PX4 simulator TCP connection failed: "):
+                return _format("ui.hud.px4.message.tcp_failed", [message.trim_prefix("PX4 simulator TCP connection failed: ")])
+            if message.begins_with("PX4 control UDP bind failed on "):
+                var udp_parts := message.trim_prefix("PX4 control UDP bind failed on ").split(":", false, 2)
+                if udp_parts.size() == 3:
+                    return _format("ui.hud.px4.message.udp_failed", [udp_parts[0], int(udp_parts[1]), udp_parts[2]])
+            if message.begins_with("PX4 command ") and message.contains(" rejected with result "):
+                var command_parts := message.trim_prefix("PX4 command ").split(" rejected with result ")
+                if command_parts.size() == 2:
+                    return _format("ui.hud.px4.message.command_rejected", [int(command_parts[0]), int(command_parts[1])])
+            if message.begins_with("PX4 arm failed: "):
+                return _format("ui.hud.px4.message.arm_failed", [message.trim_prefix("PX4 arm failed: ")])
+            if message.begins_with("PX4 SITL does not support AirSim command '"):
+                return _format("ui.hud.px4.message.command_unsupported", [message.trim_prefix("PX4 SITL does not support AirSim command '").trim_suffix("' in this slice")])
+            if message.begins_with("PX4 heartbeat timeout after "):
+                return _format("ui.hud.px4.message.heartbeat_timeout", [message.trim_prefix("PX4 heartbeat timeout after ")])
+            if message.begins_with("PX4 heartbeat is stale after "):
+                return _format("ui.hud.px4.message.heartbeat_stale", [message.trim_prefix("PX4 heartbeat is stale after ")])
+            return _t("ui.error.generic")
+
+
+func _localized_arm_state(armed: bool) -> String:
+    return _t("ui.hud.armed") if armed else _t("ui.hud.disarmed")
+
+
+func _localized_button_state(pressed: bool) -> String:
+    return _t("ui.hud.pressed") if pressed else _t("ui.hud.released")
+
+
+func _localized_controller_role(role: String) -> String:
+    return _t("ui.controller.role.%s" % role)
+
+
+func _localized_reversed_suffix() -> String:
+    return _t("ui.controller.reversed")
+
+
+func _localized_license_status(status: String) -> String:
+    var known_key := "ui.license.status.%s" % status
+    if Localization.translate(known_key) != known_key:
+        return _t(known_key)
+    return _format("ui.license.status", [status])
 
 func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3) -> float:
     return 0.5 * _mass_kg() * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()

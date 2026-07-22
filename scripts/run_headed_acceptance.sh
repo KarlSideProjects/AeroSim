@@ -45,6 +45,7 @@ fi
 mkdir -p "$out_dir"
 mkdir -p .godot
 printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .godot/extension_list.cfg
+export AEROSIM_HEADED_COMMIT_SHA="$(git rev-parse HEAD)"
 log_path="$out_dir/godot.log"
 rm -f "$out_dir"/*.png "$out_dir/report.json" "$log_path"
 timeout 60s "${launcher[@]}" "$godot_bin" --path . --resolution 1280x720 \
@@ -68,11 +69,12 @@ for required_file in \
     fi
 done
 
-python3 - "$out_dir/report.json" <<'PY'
+python3 - "$out_dir/report.json" "$(git rev-parse HEAD)" <<'PY'
 import json
 import sys
 
 path = sys.argv[1]
+expected_commit_sha = sys.argv[2]
 try:
     with open(path, encoding="utf-8") as report_file:
         report = json.load(report_file)
@@ -81,6 +83,14 @@ except (OSError, json.JSONDecodeError) as error:
 
 if report.get("passed") is not True:
     raise SystemExit(f"headed acceptance did not report passed=true: {path}")
+provenance = report.get("provenance")
+if not isinstance(provenance, dict):
+    raise SystemExit(f"headed acceptance report is missing provenance: {path}")
+if provenance.get("commit_sha") != expected_commit_sha:
+    raise SystemExit(f"headed acceptance report commit SHA is not bound to the checkout: {path}")
+for field in ("godot_version", "os", "display_driver", "gpu_adapter"):
+    if not provenance.get(field):
+        raise SystemExit(f"headed acceptance report is missing provenance field {field}: {path}")
 PY
 
 if grep -Eq '^(ERROR:|SCRIPT ERROR:)' "$log_path"; then
