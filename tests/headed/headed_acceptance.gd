@@ -750,13 +750,11 @@ func _audit_transient_localization(runtime: Node, locale_suffix: String) -> void
 	await _settle(1)
 	_audit_visible_controls(runtime, "fallback_%s" % locale_suffix)
 
-	var controller_device_id := int(runtime.session_gamepad_device_id)
-	_expect(controller_device_id >= 0, "headed transient audit has a connected controller for confirmation")
-	if controller_device_id >= 0:
-		runtime.call("begin_controller_confirmation", controller_device_id)
-		await _settle(1)
-		_expect(runtime.screen == "controller_confirmation", "controller confirmation transient state opens")
-		_audit_visible_controls(runtime, "controller_confirmation_%s" % locale_suffix)
+	runtime.gamepad_device_state.call("replace_snapshot", [0], [0])
+	runtime.call("begin_controller_confirmation", 0)
+	await _settle(1)
+	_expect(runtime.screen == "controller_confirmation", "controller confirmation transient state opens")
+	_audit_visible_controls(runtime, "controller_confirmation_%s" % locale_suffix)
 
 	runtime.last_error_message = "Flight Setup contains an unsupported selection"
 	runtime.screen = "error"
@@ -766,6 +764,8 @@ func _audit_transient_localization(runtime: Node, locale_suffix: String) -> void
 
 	runtime.set_paused(false, false)
 	runtime.last_error_message = ""
+	runtime.gamepad_device_state.call("replace_snapshot", [], [])
+	runtime.session_gamepad_device_id = -1
 	runtime.show_settings()
 	await _settle(1)
 

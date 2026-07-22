@@ -3453,9 +3453,9 @@ func _build_license_panel() -> void:
     var panel := PanelContainer.new()
     panel.name = "LicensePanel"
     panel.set_anchors_preset(Control.PRESET_CENTER)
-    panel.offset_left = -220.0
+    panel.offset_left = -280.0
     panel.offset_top = -120.0
-    panel.offset_right = 220.0
+    panel.offset_right = 160.0
     panel.offset_bottom = 120.0
     license_panel = panel
     flight_hud_layer.add_child(panel)
