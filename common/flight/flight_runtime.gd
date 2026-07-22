@@ -1959,7 +1959,7 @@ func open_map_menu() -> void:
     for preset in WIND_PRESETS:
         var button := Button.new()
         button.name = preset.capitalize()
-        button.text = preset.capitalize()
+        button.text = _t("ui.wind.%s" % preset)
         button.pressed.connect(select_map.bind(DEFAULT_FREE_FLIGHT_MAP_ID, preset))
         presets.add_child(button)
     var environment_controls := VBoxContainer.new()
@@ -2436,6 +2436,12 @@ func _localize_fallback_message(message: String) -> String:
         return _t("ui.fallback.selected")
     if message == "Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)":
         return _t("ui.error.unsupported_controller")
+    if message == "Unsupported controller reconnected; remain disarmed and frozen":
+        return _t("ui.error.unsupported_reconnected")
+    if message == "Controller reconnected; throttle LOW then press ARM/RESUME":
+        return _t("ui.error.controller_reconnected")
+    if message == "Controller disconnected; vehicle disarmed and frozen":
+        return _t("ui.error.controller_disconnected")
     return _format("ui.error.generic", [message])
 
 
@@ -3616,7 +3622,7 @@ func _refresh_flight_hud() -> void:
         var license_snapshot := get_license_snapshot()
         var license_status := String(license_snapshot.get("status", "invalid_token"))
         license_panel.visible = screen == "license_blocked"
-        license_status_label.text = _format("ui.license.blocked", [license_status])
+        license_status_label.text = _format("ui.license.blocked", [_format("ui.license.status", [license_status])])
         var actions := license_actions()
         var key_status := license_status in ["not_activated", "offline_grace_expired", "invalid_token"] and not license_snapshot.has("fatal")
         license_key_input.visible = screen == "license_blocked" and key_status

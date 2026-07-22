@@ -65,6 +65,7 @@ ui.rates.diff_invalid,BETAFLIGHT DIFF: invalid JSON (%s),BETAFLIGHT 差異：JSO
 ui.rates.diff_none,CURRENT vs BETAFLIGHT IMPORTED: no changes,目前與 BETAFLIGHT 匯入值：沒有變更
 ui.rates.value,%s: %.2f,%s：%.2f
 ui.license.blocked,LICENSE BLOCKED: %s,授權遭封鎖：%s
+ui.license.status,%s,狀態：%s
 ui.license.blocked_button,LICENSE BLOCKED,授權遭封鎖
 ui.hud.acro,ACRO MODE (C): %s,ACRO 模式（C）：%s
 ui.hud.time_trial,TIME TRIAL | %s | %0.2f s,計時挑戰｜%s｜%0.2f 秒
@@ -158,4 +159,7 @@ ui.fallback.no_controller,No controller detected; KeyboardProfile fallback activ
 ui.fallback.gamepad,GamepadProfile active (non-sim control),遊戲手把設定檔啟用（非模擬控制）
 ui.fallback.selected,KeyboardProfile fallback selected (non-sim control),已選擇鍵盤設定檔備援（非模擬控制）
 ui.error.unsupported_controller,Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control),不支援的控制器；XBOX 預設設定檔無法使用。鍵盤設定檔備援啟用（非模擬控制）
+ui.error.unsupported_reconnected,Unsupported controller reconnected; remain disarmed and frozen,不支援的控制器重新連線；維持未解鎖並凍結
+ui.error.controller_reconnected,Controller reconnected; throttle LOW then press ARM/RESUME,控制器已重新連線；油門低後按解鎖／繼續
+ui.error.controller_disconnected,Controller disconnected; vehicle disarmed and frozen,控制器中斷連線；載具已解除鎖定並凍結
 ui.error.generic,%s,錯誤：%s

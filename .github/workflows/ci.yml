@@ -134,6 +134,13 @@ jobs:
       - name: UI localization catalog and sink scan
         run: python3 scripts/check_ui_localization.py
 
+      - name: Exported localization smoke
+        run: |
+          mkdir -p build/export-smoke
+          "$GODOT_BIN" --headless --path . --export-pack "Linux Desktop" build/export-smoke/AeroSim.pck
+          "$GODOT_BIN" --headless --main-pack build/export-smoke/AeroSim.pck \
+            --script res://tests/headless/localization_export_smoke.gd
+
       - name: Shared Industrial Yard asset check
         run: |
           scripts/test_shared_map_assets.sh
