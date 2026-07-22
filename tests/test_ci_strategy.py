@@ -73,6 +73,9 @@ result = {} if mode == "missing" else {
         "display_driver": "fake",
         "gpu_adapter": "fake",
     },
+    "locale_switches": [
+        {"from": "en", "to": "zh_TW", "elapsed_us": 1000, "threshold_us": 100000},
+    ],
 }
 result_path.parent.mkdir(parents=True, exist_ok=True)
 result_path.write_text(json.dumps(result), encoding="utf-8")
@@ -225,6 +228,17 @@ class CiStrategyTest(unittest.TestCase):
                 self.assertGreater(step_position, debug_build_position)
             with self.subTest(contract="preserved headed command", step=step):
                 self.assertIn(command, step_block)
+
+    def test_ci_keeps_evidence_runner_local_without_hosted_artifact_actions(self):
+        self.assertNotRegex(self.workflow, re.compile(r"actions/(upload|download)-artifact@"))
+        for step in ("Store headed screenshots locally", "Store Linux replay artifact locally"):
+            step_match = re.search(
+                rf"^      - name: {re.escape(step)}\n(?:(?!^      - ).)*(?=^      - |\Z)",
+                self.linux_job,
+                re.MULTILINE | re.DOTALL,
+            )
+            self.assertIsNotNone(step_match)
+            self.assertIn("AEROSIM_CI_ARTIFACT_RUN_DIR", step_match.group(0) if step_match else "")
 
     def test_headed_runner_retains_logs_and_requires_structured_success(self):
         self._assert_runtime_runner_contract(HEADED_RUNNER, reject_console_errors=True)

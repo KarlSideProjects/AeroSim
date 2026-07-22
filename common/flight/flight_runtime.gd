@@ -2505,7 +2505,7 @@ func _localized_flight_mode(mode: String) -> String:
         "", "-":
             return _t("ui.dashboard.none")
         _:
-            return mode
+            return _t("ui.dashboard.mode_unknown")
 
 func toggle_altitude_hold() -> void:
     if native == null or not takeoff_requested:
@@ -2634,13 +2634,18 @@ func _build_flight_setup_panel() -> void:
     wind_title.name = "WindTitle"
     wind_title.text = _t("ui.flight_setup.wind_preset")
     rows.add_child(wind_title)
-    var wind_presets := HBoxContainer.new()
+    var wind_presets := GridContainer.new()
     wind_presets.name = "WindPresets"
+    wind_presets.columns = 4
+    wind_presets.add_theme_constant_override("separation", 6)
+    wind_presets.add_theme_constant_override("h_separation", 6)
+    wind_presets.add_theme_constant_override("v_separation", 6)
     rows.add_child(wind_presets)
     for preset in WIND_PRESETS:
         var wind_button := Button.new()
         wind_button.name = preset.capitalize()
         wind_button.text = _t("ui.wind.%s" % preset)
+        wind_button.custom_minimum_size = Vector2(90.0, 31.0)
         wind_button.pressed.connect(_set_flight_setup_wind.bind(preset))
         wind_presets.add_child(wind_button)
 
@@ -3453,9 +3458,9 @@ func _build_license_panel() -> void:
     var panel := PanelContainer.new()
     panel.name = "LicensePanel"
     panel.set_anchors_preset(Control.PRESET_CENTER)
-    panel.offset_left = -220.0
+    panel.offset_left = -280.0
     panel.offset_top = -120.0
-    panel.offset_right = 220.0
+    panel.offset_right = 160.0
     panel.offset_bottom = 120.0
     license_panel = panel
     flight_hud_layer.add_child(panel)
@@ -3685,12 +3690,17 @@ func _refresh_flight_hud() -> void:
         graphics_panel.visible = screen == "graphics"
     if flight_hud_layer != null:
         flight_hud_layer.visible = screen not in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
+        var status_margin := flight_hud_layer.get_node_or_null("StatusMargin") as Control
+        if status_margin != null:
+            status_margin.visible = screen != "controller_confirmation"
     if pause_panel != null:
         pause_panel.visible = paused and screen == "flight"
     if controller_safety_panel != null:
-        controller_safety_panel.visible = controller_safety_latched
+        controller_safety_panel.visible = controller_safety_latched and screen != "controller_confirmation"
     if controller_safety_label != null:
         controller_safety_label.text = visible_error_message
+    if controller_confirmation_panel != null:
+        controller_confirmation_panel.visible = screen == "controller_confirmation"
     if finish_panel != null:
         finish_panel.visible = screen == "finish"
     if license_panel != null:

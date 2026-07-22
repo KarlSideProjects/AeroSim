@@ -368,4 +368,4 @@ func _localized_flight_mode(mode: String) -> String:
         "", "-":
             return _t("ui.dashboard.none")
         _:
-            return mode
+            return _t("ui.dashboard.mode_unknown")

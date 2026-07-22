@@ -115,6 +115,19 @@ func test_dashboard_localizes_dynamic_status_words() -> void:
     assert_false(dashboard._labels.mode.text.contains("MODE"))
 
 
+func test_unknown_dashboard_mode_is_catalog_backed() -> void:
+    var dashboard := StatusDiagramDebug.new()
+    autofree(dashboard)
+    dashboard._ready()
+    dashboard.set_locale("zh_TW")
+
+    var snapshot := _snapshot("DroneA", "UNSUPPORTED_RUNTIME_MODE")
+    dashboard.set_vehicle_snapshots({"DroneA": snapshot}, "DroneA")
+
+    assert_string_contains(dashboard._labels.mode.text, "未知模式")
+    assert_false(dashboard._labels.mode.text.contains("UNSUPPORTED_RUNTIME_MODE"))
+
+
 func test_dashboard_localizes_environment_after_locale_switch() -> void:
     var dashboard := StatusDiagramDebug.new()
     autofree(dashboard)
@@ -143,4 +156,5 @@ func test_runtime_localizes_dynamic_hud_states() -> void:
     assert_eq(runtime._localized_arm_state(true), "已解鎖")
     assert_eq(runtime._localized_button_state(false), "放開")
     assert_eq(runtime._profile_input_status(), "油門低｜鍵盤設定檔")
+    assert_eq(runtime._localized_flight_mode("UNSUPPORTED_RUNTIME_MODE"), "未知模式")
     assert_eq(runtime._localize_fallback_message("unclassified diagnostic"), "錯誤")

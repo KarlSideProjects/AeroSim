@@ -177,6 +177,7 @@ ui.dashboard.disarmed,OFF,關閉
 ui.dashboard.mode_angle,ANGLE,角度
 ui.dashboard.mode_acro,ACRO,特技
 ui.dashboard.mode_altitude_hold,ALTITUDE_HOLD,定高
+ui.dashboard.mode_unknown,UNKNOWN MODE,未知模式
 ui.dashboard.saturated_suffix, SAT, 飽和
 ui.dashboard.fresh,FRESH,最新
 ui.dashboard.not_fresh,NOT FRESH,非最新
