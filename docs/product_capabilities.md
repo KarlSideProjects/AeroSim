@@ -290,9 +290,9 @@ Ubuntu x86_64 is the Qualification Platform on which every AirSim-class minimum 
 
 **Status:** Confirmed target
 
-The Reference Performance Profile is a designated Ubuntu 26.04 LTS runner with AMD Ryzen 9 7945HX, NVIDIA GeForce RTX 4060 Ti, and NVIDIA driver 580.159.03. On that profile, Player Mode targets stable 60 FPS at 1080p default quality, and the documented two-vehicle Lab Mode sensor workload targets real-time factor at least 1.0.
+The Reference Performance Profile is a designated Ubuntu 26.04 LTS runner with AMD Ryzen 9 7945HX, NVIDIA GeForce RTX 4060 Ti, and NVIDIA driver 580.159.03. On that profile, Player Mode targets stable 60 FPS at 1080p default quality, and the documented two-vehicle Lab Mode sensor workload targets real-time factor at least 1.0. These exact CPU/GPU/driver values are reproducibility anchors for performance gates, not installation or feature-compatibility requirements.
 
-Lower-spec developer machines use the Local Development Profile. They still run functional and deterministic verification and may reduce visual quality or sensor rates. Missing the reference hardware reports performance as not qualified; it does not fail local development solely because of hardware specification.
+The product does not require a specific GPU model or discrete GPU. Desktop starts with Forward+ and explicitly allows Godot's Compatibility renderer fallback when the RenderingDevice backend is unavailable; lower-spec or fallback-renderer machines may reduce visual quality or sensor rates. They still run functional and deterministic verification. Missing the reference hardware reports performance as not qualified; it does not fail local development solely because of hardware specification. A post-backend shader/driver hang remains a startup failure and must be reported separately rather than being hidden by the fallback policy.
 
 **Minimum acceptance:** Performance gates execute and block only on an explicitly identified reference runner; local commands select non-blocking defaults; reports distinguish pass, fail, and not-qualified; functional failures remain blocking on every supported development machine.
 
