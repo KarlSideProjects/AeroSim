@@ -222,6 +222,7 @@ jobs:
 
       - name: Upload headed acceptance evidence
         if: ${{ always() && hashFiles('build/headed/**') != '' }}
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: headed-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
