@@ -526,6 +526,29 @@ func test_px4_hud_localizes_finite_state_and_diagnostic() -> void:
     assert_false(status.contains("STARTING"))
     assert_false(status.contains("waiting for PX4 heartbeat"))
 
+    var visible_messages := [
+        "PX4 disarmed",
+        "PX4 is not connected",
+        "PX4 SITL requires UseTcp=true",
+        "PX4 SITL bridge requires VehicleType PX4Multirotor",
+        "PX4 SITL bridge does not support serial/HITL transport",
+        "PX4 SITL bridge ports must be in the range 1..65535",
+        "PX4 SITL bridge timeouts must be positive and ordered",
+        "PX4 simulator TCP connection failed: 7",
+        "PX4 control UDP bind failed on 127.0.0.1:14540: 98",
+        "PX4 authority is inactive",
+        "PX4 command 400 rejected with result 4",
+        "PX4 SITL does not support AirSim command 'foo' in this slice",
+        "PX4 moveOnPath requires at least one waypoint",
+        "PX4 actuator output is pending",
+        "PX4 thrust output is pending",
+        "PX4 arm failed: denied",
+    ]
+    for message in visible_messages:
+        var localized := runtime._localize_fallback_message(message)
+        assert_false(localized.contains(message))
+        assert_false(localized.contains("ui."))
+
 
 func test_failed_locale_persistence_restores_previous_locale() -> void:
     if not _native_runtime_available():

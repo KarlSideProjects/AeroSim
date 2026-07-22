@@ -109,6 +109,22 @@ ui.hud.px4.message.actuator_stale,PX4 actuator output is stale,PX4 致動器輸�
 ui.hud.px4.message.startup_timeout,PX4 heartbeat was not received before startup timeout,啟動逾時前未收到 PX4 心跳
 ui.hud.px4.message.heartbeat_timeout,PX4 heartbeat timeout after %s,PX4 心跳在 %s 後逾時
 ui.hud.px4.message.heartbeat_stale,PX4 heartbeat is stale after %s,PX4 心跳在 %s 後過期
+ui.hud.px4.message.disarmed,PX4 disarmed,PX4 已解除鎖定
+ui.hud.px4.message.not_connected,PX4 is not connected,PX4 未連線
+ui.hud.px4.message.requires_tcp,PX4 SITL requires UseTcp=true,PX4 SITL 需要 UseTcp=true
+ui.hud.px4.message.bridge_vehicle_type,PX4 SITL bridge requires VehicleType PX4Multirotor,PX4 SITL 橋接需要 VehicleType PX4Multirotor
+ui.hud.px4.message.bridge_serial,PX4 SITL bridge does not support serial/HITL transport,PX4 SITL 橋接不支援 serial／HITL 傳輸
+ui.hud.px4.message.bridge_ports,PX4 SITL bridge ports must be in the range 1..65535,PX4 SITL 橋接連接埠必須在 1..65535 範圍內
+ui.hud.px4.message.bridge_timeouts,PX4 SITL bridge timeouts must be positive and ordered,PX4 SITL 橋接逾時必須為正值且順序正確
+ui.hud.px4.message.tcp_failed,PX4 simulator TCP connection failed: %s,PX4 模擬器 TCP 連線失敗：%s
+ui.hud.px4.message.udp_failed,PX4 control UDP bind failed on %s:%d: %s,PX4 控制 UDP 綁定位址 %s:%d 失敗：%s
+ui.hud.px4.message.authority_inactive,PX4 authority is inactive,PX4 控制權未啟用
+ui.hud.px4.message.command_rejected,PX4 command %d rejected with result %d,PX4 指令 %d 被結果 %d 拒絕
+ui.hud.px4.message.command_unsupported,PX4 SITL does not support AirSim command '%s' in this slice,此 PX4 SITL 切片不支援 AirSim 指令 '%s'
+ui.hud.px4.message.move_on_path_empty,PX4 moveOnPath requires at least one waypoint,PX4 moveOnPath 至少需要一個航點
+ui.hud.px4.message.actuator_pending,PX4 actuator output is pending,PX4 致動器輸出等待中
+ui.hud.px4.message.thrust_pending,PX4 thrust output is pending,PX4 推力輸出等待中
+ui.hud.px4.message.arm_failed,PX4 arm failed: %s,PX4 解鎖失敗：%s
 ui.hud.preflight,%s | %s -> %s -> press T or ARM,%s｜%s → %s → 按 T 或 ARM
 ui.hud.flight,%s | %s | %s | %s,%s｜%s｜%s｜%s
 ui.hud.arm_takeoff,ARM / TAKEOFF (T),解鎖／起飛（T）

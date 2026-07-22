@@ -2443,6 +2443,8 @@ func _localize_fallback_message(message: String) -> String:
         return _t("ui.error.controller_reconnected")
     if message == "Controller disconnected; vehicle disarmed and frozen":
         return _t("ui.error.controller_disconnected")
+    if message.begins_with("PX4"):
+        return _localized_px4_message(message)
     return _format("ui.error.generic", [message])
 
 
@@ -4002,7 +4004,43 @@ func _localized_px4_message(message: String) -> String:
             return _t("ui.hud.px4.message.actuator_stale")
         "PX4 heartbeat was not received before startup timeout":
             return _t("ui.hud.px4.message.startup_timeout")
+        "PX4 disarmed":
+            return _t("ui.hud.px4.message.disarmed")
+        "PX4 is not connected":
+            return _t("ui.hud.px4.message.not_connected")
+        "PX4 SITL requires UseTcp=true":
+            return _t("ui.hud.px4.message.requires_tcp")
+        "PX4 SITL bridge requires VehicleType PX4Multirotor":
+            return _t("ui.hud.px4.message.bridge_vehicle_type")
+        "PX4 SITL bridge does not support serial/HITL transport":
+            return _t("ui.hud.px4.message.bridge_serial")
+        "PX4 SITL bridge ports must be in the range 1..65535":
+            return _t("ui.hud.px4.message.bridge_ports")
+        "PX4 SITL bridge timeouts must be positive and ordered":
+            return _t("ui.hud.px4.message.bridge_timeouts")
+        "PX4 authority is inactive":
+            return _t("ui.hud.px4.message.authority_inactive")
+        "PX4 actuator output is pending":
+            return _t("ui.hud.px4.message.actuator_pending")
+        "PX4 thrust output is pending":
+            return _t("ui.hud.px4.message.thrust_pending")
         _:
+            if message == "PX4 moveOnPath requires at least one waypoint":
+                return _t("ui.hud.px4.message.move_on_path_empty")
+            if message.begins_with("PX4 simulator TCP connection failed: "):
+                return _format("ui.hud.px4.message.tcp_failed", [message.trim_prefix("PX4 simulator TCP connection failed: ")])
+            if message.begins_with("PX4 control UDP bind failed on "):
+                var udp_parts := message.trim_prefix("PX4 control UDP bind failed on ").split(":", false, 2)
+                if udp_parts.size() == 3:
+                    return _format("ui.hud.px4.message.udp_failed", [udp_parts[0], int(udp_parts[1]), udp_parts[2]])
+            if message.begins_with("PX4 command ") and message.contains(" rejected with result "):
+                var command_parts := message.trim_prefix("PX4 command ").split(" rejected with result ")
+                if command_parts.size() == 2:
+                    return _format("ui.hud.px4.message.command_rejected", [int(command_parts[0]), int(command_parts[1])])
+            if message.begins_with("PX4 arm failed: "):
+                return _format("ui.hud.px4.message.arm_failed", [message.trim_prefix("PX4 arm failed: ")])
+            if message.begins_with("PX4 SITL does not support AirSim command '"):
+                return _format("ui.hud.px4.message.command_unsupported", [message.trim_prefix("PX4 SITL does not support AirSim command '").trim_suffix("' in this slice")])
             if message.begins_with("PX4 heartbeat timeout after "):
                 return _format("ui.hud.px4.message.heartbeat_timeout", [message.trim_prefix("PX4 heartbeat timeout after ")])
             if message.begins_with("PX4 heartbeat is stale after "):

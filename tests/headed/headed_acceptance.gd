@@ -35,6 +35,8 @@ class HeadedLicenseProvider:
 var _failures: Array[String] = []
 var _out_dir := "build/headed"
 var _channel_monitor_evidence: Dictionary = {}
+var _layout_audit_evidence: Dictionary = {}
+var _screenshot_comparison: Dictionary = {}
 var _ui_animation_count := 0
 
 func _initialize() -> void:
@@ -687,23 +689,60 @@ func _audit_localization(runtime: Node) -> void:
 	var north_spawn_label: Label3D = runtime.loaded_map.get_node_or_null("SpawnNorth/DirectionLabel") if runtime.loaded_map != null else null
 	_expect(north_spawn_label != null and north_spawn_label.text == "北側起飛點", "Industrial Yard Label3D localizes with the active locale")
 	runtime.unload_map()
-	await _snapshot("08_zh_tw_settings")
+	var zh_tw_image := await _snapshot("08_zh_tw_settings")
 	_audit_visible_controls(runtime)
 	_expect(runtime.set_locale("en"), "UI locale switches back to English")
 	await _settle(2)
 	_expect(settings_title != null and settings_title.text == "SETTINGS", "English locale restores Settings immediately")
-	await _snapshot("09_en_settings_roundtrip")
+	var en_image := await _snapshot("09_en_settings_roundtrip")
+	_compare_locale_screenshots(zh_tw_image, en_image)
 
 func _audit_visible_controls(node: Node) -> void:
 	var viewport_rect := root.get_viewport().get_visible_rect()
+	var text_controls: Array[Control] = []
+	_collect_visible_text_controls(node, text_controls)
+	var overlap_count := 0
+	var clipping_count := 0
+	for control in text_controls:
+		var rect := control.get_global_rect()
+		_expect(viewport_rect.encloses(rect.grow(0.5)), "localized control remains inside viewport: %s" % control.get_path())
+		_expect(not String(control.text).begins_with("ui."), "localized control does not expose a translation key: %s" % control.get_path())
+		if control.get_combined_minimum_size().x > rect.size.x + 1.0:
+			clipping_count += 1
+			_expect(false, "localized control text exceeds its allocated width: %s" % control.get_path())
+	for first_index in range(text_controls.size()):
+		var first := text_controls[first_index]
+		for second_index in range(first_index + 1, text_controls.size()):
+			var second := text_controls[second_index]
+			if first.get_parent() == second.get_parent() and first.get_global_rect().intersection(second.get_global_rect()).get_area() > 0.5:
+				overlap_count += 1
+				_expect(false, "localized text controls overlap: %s and %s" % [first.get_path(), second.get_path()])
+	_layout_audit_evidence = {"text_controls": text_controls.size(), "clipping_count": clipping_count, "overlap_count": overlap_count}
+
+func _collect_visible_text_controls(node: Node, controls: Array[Control]) -> void:
 	for child in node.get_children():
 		if child is Control:
 			var control := child as Control
 			if control.is_visible_in_tree() and (control is Label or control is Button or control is OptionButton):
-				var rect := control.get_global_rect()
-				_expect(viewport_rect.encloses(rect.grow(0.5)), "localized control remains inside viewport: %s" % control.get_path())
-				_expect(not String(control.text).begins_with("ui."), "localized control does not expose a translation key: %s" % control.get_path())
-		_audit_visible_controls(child)
+				controls.append(control)
+		_collect_visible_text_controls(child, controls)
+
+func _compare_locale_screenshots(zh_tw_image: Image, en_image: Image) -> void:
+	var same_dimensions := zh_tw_image.get_size() == en_image.get_size()
+	_expect(same_dimensions, "locale screenshots keep the same viewport dimensions")
+	if not same_dimensions:
+		return
+	var changed_pixels := 0
+	var total_pixels := zh_tw_image.get_width() * zh_tw_image.get_height()
+	for y in range(zh_tw_image.get_height()):
+		for x in range(zh_tw_image.get_width()):
+			var zh_color := zh_tw_image.get_pixel(x, y)
+			var en_color := en_image.get_pixel(x, y)
+			if absf(zh_color.r - en_color.r) + absf(zh_color.g - en_color.g) + absf(zh_color.b - en_color.b) > 0.03:
+				changed_pixels += 1
+	var changed_ratio := float(changed_pixels) / float(total_pixels)
+	_expect(changed_ratio >= 0.001, "locale screenshot comparison detects the translated UI")
+	_screenshot_comparison = {"width": zh_tw_image.get_width(), "height": zh_tw_image.get_height(), "changed_pixels": changed_pixels, "changed_ratio": changed_ratio}
 
 
 func _inject_known_gamepad() -> int:
@@ -755,6 +794,6 @@ func _write_report() -> bool:
 		"gpu_adapter": RenderingServer.get_video_adapter_name(),
 		"vulkan_icd": OS.get_environment("VK_ICD_FILENAMES"),
 	}
-	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
+	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
 	return true
