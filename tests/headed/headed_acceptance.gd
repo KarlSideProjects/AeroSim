@@ -713,6 +713,13 @@ func _audit_localization(runtime: Node) -> void:
 	runtime.show_main_menu()
 	await _settle(1)
 	_audit_visible_controls(runtime, "main_menu_en")
+	var english_drone_entry: Button = runtime.get_node_or_null("MainMenu/Entries/Drone")
+	if english_drone_entry != null:
+		_click(english_drone_entry)
+	await _settle(1)
+	var english_flight_mode_label: Label = runtime.get_node_or_null("MainMenu/FlightSetupPanel/Rows/Mode")
+	_expect(english_flight_mode_label != null and english_flight_mode_label.text == "MODE: ANGLE", "English localizes the dynamic Flight Setup mode")
+	_audit_visible_controls(runtime, "flight_setup_en")
 	runtime.show_settings()
 	await _settle(1)
 	_audit_visible_controls(runtime, "settings_en")
