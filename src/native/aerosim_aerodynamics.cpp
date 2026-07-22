@@ -27,6 +27,75 @@ Vec3 rotate_inverse(const Quat &q, const Vec3 &v) {
 
 } // namespace
 
+bool validate_body_drag_config(const BodyDragConfig &config, double air_density_kg_m3) {
+    const double values[] = {
+            config.drag_coefficient.x, config.drag_coefficient.y, config.drag_coefficient.z,
+            config.frontal_area_m2.x, config.frontal_area_m2.y, config.frontal_area_m2.z,
+            config.center_of_pressure_frd_m.x, config.center_of_pressure_frd_m.y,
+            config.center_of_pressure_frd_m.z, air_density_kg_m3,
+    };
+    for (double value : values) {
+        if (!std::isfinite(value)) {
+            return false;
+        }
+    }
+    return config.drag_coefficient.x >= 0.0 && config.drag_coefficient.y >= 0.0 &&
+            config.drag_coefficient.z >= 0.0 && config.frontal_area_m2.x >= 0.0 &&
+            config.frontal_area_m2.y >= 0.0 && config.frontal_area_m2.z >= 0.0 &&
+            air_density_kg_m3 > 0.0;
+}
+
+BodyDragWrench body_drag_wrench_body_frd(
+        const BodyDragConfig &config,
+        const Vec3 &airspeed_body_frd_mps,
+        const Vec3 &angular_velocity_body_frd_rad_s,
+        double air_density_kg_m3) {
+    BodyDragWrench result;
+    if (!config.enabled || !validate_body_drag_config(config, air_density_kg_m3)) {
+        return result;
+    }
+    const double values[] = {
+            config.drag_coefficient.x, config.drag_coefficient.y, config.drag_coefficient.z,
+            config.frontal_area_m2.x, config.frontal_area_m2.y, config.frontal_area_m2.z,
+            config.center_of_pressure_frd_m.x, config.center_of_pressure_frd_m.y,
+            config.center_of_pressure_frd_m.z,
+            airspeed_body_frd_mps.x, airspeed_body_frd_mps.y, airspeed_body_frd_mps.z,
+            angular_velocity_body_frd_rad_s.x, angular_velocity_body_frd_rad_s.y,
+            angular_velocity_body_frd_rad_s.z,
+    };
+    for (double value : values) {
+        if (!std::isfinite(value)) {
+            return {};
+        }
+    }
+    const Vec3 velocity_at_pressure_center{
+            airspeed_body_frd_mps.x + angular_velocity_body_frd_rad_s.y * config.center_of_pressure_frd_m.z -
+                    angular_velocity_body_frd_rad_s.z * config.center_of_pressure_frd_m.y,
+            airspeed_body_frd_mps.y + angular_velocity_body_frd_rad_s.z * config.center_of_pressure_frd_m.x -
+                    angular_velocity_body_frd_rad_s.x * config.center_of_pressure_frd_m.z,
+            airspeed_body_frd_mps.z + angular_velocity_body_frd_rad_s.x * config.center_of_pressure_frd_m.y -
+                    angular_velocity_body_frd_rad_s.y * config.center_of_pressure_frd_m.x,
+    };
+    const double dynamic_pressure = 0.5 * air_density_kg_m3;
+    result.force_body_frd_n = {
+            -dynamic_pressure * config.drag_coefficient.x * config.frontal_area_m2.x *
+                    std::abs(velocity_at_pressure_center.x) * velocity_at_pressure_center.x,
+            -dynamic_pressure * config.drag_coefficient.y * config.frontal_area_m2.y *
+                    std::abs(velocity_at_pressure_center.y) * velocity_at_pressure_center.y,
+            -dynamic_pressure * config.drag_coefficient.z * config.frontal_area_m2.z *
+                    std::abs(velocity_at_pressure_center.z) * velocity_at_pressure_center.z,
+    };
+    result.torque_body_frd_nm = {
+            config.center_of_pressure_frd_m.y * result.force_body_frd_n.z -
+                    config.center_of_pressure_frd_m.z * result.force_body_frd_n.y,
+            config.center_of_pressure_frd_m.z * result.force_body_frd_n.x -
+                    config.center_of_pressure_frd_m.x * result.force_body_frd_n.z,
+            config.center_of_pressure_frd_m.x * result.force_body_frd_n.y -
+                    config.center_of_pressure_frd_m.y * result.force_body_frd_n.x,
+    };
+    return result;
+}
+
 Vec3 a3_drag_force_body(
         const A3DragConfig &config,
         const Quat &body_attitude,

@@ -41,7 +41,7 @@ struct PidTimingStats {
     std::uint64_t samples = 0;
 };
 
-constexpr std::int32_t kTelemetrySnapshotSchemaVersion = 1;
+constexpr std::int32_t kTelemetrySnapshotSchemaVersion = 2;
 constexpr double kTelemetrySnapshotHz = 30.0;
 
 struct MotorTelemetry {
@@ -67,6 +67,10 @@ struct TelemetrySnapshot {
     std::uint64_t timestamp_us = 0;
     std::uint64_t publish_count = 0;
     double snapshot_hz = kTelemetrySnapshotHz;
+    std::string vehicle_id = "primary";
+    std::string world_frame = "NED";
+    std::string body_frame = "FRD";
+    std::string units = "SI";
     std::array<MotorTelemetry, 4> motors;
     Vec3 wind_world_mps;
     Vec3 wind_body_mps;
@@ -75,8 +79,23 @@ struct TelemetrySnapshot {
     double downwash_force_n = 0.0;
     Vec3 propwash_disturbance_rad_s2;
     Vec3 drag_body_n;
+    double air_density_kg_m3 = 1.225;
+    Vec3 airspeed_body_frd_mps_mean;
+    Vec3 body_drag_force_body_frd_n_mean;
+    Vec3 body_drag_torque_body_frd_nm_mean;
+    Vec3 a3_drag_force_body_frd_n_mean;
+    Vec3 a6_angular_accel_body_frd_rad_s2;
+    std::string body_drag_operating_state = "disabled";
+    std::string body_drag_evidence_state = "provisional";
+    std::string body_drag_reason_code = "disabled";
+    std::string a3_operating_state = "disabled";
+    std::string a6_operating_state = "disabled";
+    std::string config_hash = "unavailable";
     BatteryTelemetry battery;
     std::array<PidAxisTelemetry, 3> pid;
+    std::string control_authority = "flight_controller";
+    bool armed_available = true;
+    bool pid_available = true;
     bool armed = false;
     std::string mode = "ANGLE";
 };
@@ -137,6 +156,15 @@ public:
     void capture_altitude_hold(double target_altitude_m);
     const PidTimingStats &pid_timing_stats() const;
     const TelemetrySnapshot &telemetry_snapshot() const;
+    void publish_unavailable_telemetry(
+            const TrajectorySample &sample,
+            const SimulationConfig &config,
+            const std::string &mode);
+    void publish_applied_telemetry(
+            const TrajectorySample &sample,
+            const SimulationConfig &config,
+            double throttle,
+            const std::string &mode);
     void clear_propwash_telemetry();
     TrajectorySample step_angle_mode(
             RigidBodyState &state,

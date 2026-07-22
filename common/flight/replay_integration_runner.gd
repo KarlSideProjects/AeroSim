@@ -31,8 +31,16 @@ func run() -> Dictionary:
         "DroneB", config_hash, config_json, 0)
     if not bool(begin.get("ok", false)):
         return _failure("replay recording did not start: %s" % String(begin.get("diagnostic_message", "unknown")))
+    var atmosphere := {
+        "rain": 0.0,
+        "atmosphere": _json_safe(native.call("wind_configuration")),
+        "atmosphere_air_density_kg_m3": float(native.call("body_drag_configuration").air_density_kg_m3),
+    }
+    var error := _expect_ok(native.call("record_replay_environment", 0, JSON.stringify(atmosphere)), "initial environment")
+    if not error.is_empty():
+        return _failure(error)
     var initial_row := PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    var error := _expect_ok(native.call("record_replay_command", 0, "DroneA", 0.55, 0.0, 0.0, 0.0, 0), "upper command")
+    error = _expect_ok(native.call("record_replay_command", 0, "DroneA", 0.55, 0.0, 0.0, 0.0, 0), "upper command")
     if not error.is_empty():
         return _failure(error)
     error = _expect_ok(native.call("record_replay_command", 0, "DroneB", 0.50, 0.0, 0.0, 0.0, 0), "lower command")
@@ -50,7 +58,8 @@ func run() -> Dictionary:
     error = _expect_ok(native.call("record_replay_scene_object", 2000, 0, "crate", "primitive_box", Vector3(1.0, 2.0, 3.0), Quaternion.IDENTITY), "scene")
     if not error.is_empty():
         return _failure(error)
-    error = _expect_ok(native.call("record_replay_environment", 3000, "{\"rain\":0.25}"), "environment")
+    atmosphere["rain"] = 0.25
+    error = _expect_ok(native.call("record_replay_environment", 3000, JSON.stringify(atmosphere)), "environment")
     if not error.is_empty():
         return _failure(error)
     error = _expect_ok(native.call("record_replay_simulation_operation", 4000, 1, 0.0), "resume")
@@ -64,7 +73,7 @@ func run() -> Dictionary:
         "replay_complete_session", finish.serialized, SETTINGS_HASH, config_hash, config_hash,
         config_manifest, config_manifest)
     if not bool(replay.get("ok", false)) or int(replay.get("scene_object_count", 0)) != 1 or String(replay.get("environment_json", "")).find("rain") < 0:
-        return _failure("native replay failed: %s" % String(replay.get("diagnostic_message", "unknown")))
+        return _failure("native replay failed: %s expected=%s actual=%s" % [String(replay.get("diagnostic_message", "unknown")), String(replay.get("divergence_expected", "")), String(replay.get("divergence_actual", ""))])
     var altered_manifest: Dictionary = JSON.parse_string(finish.serialized)
     altered_manifest["vehicles"][0]["config"]["mass_kg"] = 1.25
     var strict_manifest_rejection: Dictionary = native.call(

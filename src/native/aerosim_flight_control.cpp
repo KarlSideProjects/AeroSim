@@ -334,11 +334,14 @@ MotorCommands FlightController::control_substep(
                 kRateIntegralLimitNm);
         target_torque_y_up[index] = errors[index] * kRateP + rate_integral_[index];
     }
-    const Vec3 target_torque_frd = y_up_to_frd({
+    // The controller's desired-rate tuple is the legacy pitch/yaw/roll command
+    // order used by the mixer, not a physical Godot Y-up vector. Keep this
+    // explicit mapping separate from the frozen coordinate-boundary helpers.
+    const Vec3 target_torque_frd{
             target_torque_y_up[0],
+            -target_torque_y_up[2],
             target_torque_y_up[1],
-            target_torque_y_up[2],
-    });
+    };
     const std::array<double, 3> target_torque = {
             target_torque_frd.x,
             target_torque_frd.y,
@@ -393,32 +396,37 @@ void FlightController::maybe_publish_telemetry(
     }
 
     TelemetrySnapshot snapshot;
+    const bool px4_external = mode == "PX4_ACTUATOR";
     snapshot.timestamp_us = static_cast<std::uint64_t>(std::llround(sample_time_s * 1000000.0));
     snapshot.publish_count = telemetry_publish_count_ + 1;
-    snapshot.armed = armed_;
+    snapshot.control_authority = px4_external ? "px4_external" : "flight_controller";
+    snapshot.armed_available = !px4_external;
+    snapshot.pid_available = !px4_external;
+    snapshot.armed = !px4_external && armed_;
     snapshot.mode = mode;
 
-    const double throttle_clamped = armed_ ? std::clamp(throttle, 0.0, 1.0) : 0.0;
+    const bool actuator_state_available = armed_ || px4_external;
+    const double throttle_clamped = actuator_state_available ? std::clamp(throttle, 0.0, 1.0) : 0.0;
     std::array<double, 4> motor_speeds{};
     for (std::size_t index = 0; index < snapshot.motors.size(); ++index) {
         MotorTelemetry &motor = snapshot.motors[index];
-        motor.thrust_newtons = armed_ ? sample.state.motor_thrust_newtons[index] : 0.0;
+        motor.thrust_newtons = actuator_state_available ? sample.state.motor_thrust_newtons[index] : 0.0;
         const double thrust_fraction = config.per_motor.max_thrust_per_motor_newtons > 0.0
                 ? std::clamp(motor.thrust_newtons / config.per_motor.max_thrust_per_motor_newtons, 0.0, 1.0)
                 : 0.0;
-        motor.current_a = armed_ ? config.per_motor.max_current_per_motor_a * thrust_fraction : 0.0;
+        motor.current_a = actuator_state_available ? config.per_motor.max_current_per_motor_a * thrust_fraction : 0.0;
         motor_speeds[index] = motor_speed_rad_s_from_thrust(
                 motor.thrust_newtons,
                 config.per_motor.max_thrust_per_motor_newtons,
                 config.max_motor_rpm);
         motor.speed_rad_s = motor_speeds[index];
-        motor.saturated = armed_ && (motor_saturation_latched_[index] || throttle_clamped >= 1.0 - 1e-9 ||
+        motor.saturated = actuator_state_available && ((!px4_external && motor_saturation_latched_[index]) || throttle_clamped >= 1.0 - 1e-9 ||
                 (config.per_motor.max_thrust_per_motor_newtons > 0.0 &&
                         motor.thrust_newtons >= config.per_motor.max_thrust_per_motor_newtons - 1e-9));
     }
 
     snapshot.ground_effect_gain = a4_ground_effect_lift_newtons(config.a4_ground_effect, sample.state.position.y);
-    snapshot.wind_world_mps = config.wind_world_mps;
+    snapshot.wind_world_mps = y_up_to_frd(config.wind_world_mps);
     snapshot.wind_body_mps = y_up_to_frd(world_to_body(sample.state.orientation, config.wind_world_mps));
     snapshot.turbulence_intensity = std::sqrt(
             config.wind_turbulence_mps.x * config.wind_turbulence_mps.x +
@@ -434,12 +442,53 @@ void FlightController::maybe_publish_telemetry(
             sample.state.orientation,
             relative_air_velocity,
             motor_speeds);
+    snapshot.air_density_kg_m3 = sample.air_density_kg_m3;
+    snapshot.airspeed_body_frd_mps_mean = sample.airspeed_body_frd_mps_mean;
+    snapshot.a3_drag_force_body_frd_n_mean = sample.a3_drag_force_body_frd_n_mean;
+    snapshot.a6_angular_accel_body_frd_rad_s2 = y_up_to_frd(sample.propwash_disturbance_rad_s2);
+    snapshot.config_hash = config.config_hash;
+    if (!config.body_drag.enabled) {
+        snapshot.body_drag_force_body_frd_n_mean = {};
+        snapshot.body_drag_torque_body_frd_nm_mean = {};
+        snapshot.body_drag_operating_state = "disabled";
+        snapshot.body_drag_evidence_state = "provisional";
+        snapshot.body_drag_reason_code = "disabled";
+    } else if (!validate_body_drag_config(config.body_drag, config.air_density_kg_m3)) {
+        snapshot.body_drag_force_body_frd_n_mean = {NAN, NAN, NAN};
+        snapshot.body_drag_torque_body_frd_nm_mean = {NAN, NAN, NAN};
+        snapshot.body_drag_operating_state = "out_of_domain";
+        snapshot.body_drag_evidence_state = "unavailable";
+        snapshot.body_drag_reason_code = "invalid_configuration";
+    } else if (sample.body_drag_force_applied && sample.body_drag_torque_applied) {
+        snapshot.body_drag_force_body_frd_n_mean = sample.body_drag_force_body_frd_n_mean;
+        snapshot.body_drag_torque_body_frd_nm_mean = sample.body_drag_torque_body_frd_nm_mean;
+        snapshot.body_drag_operating_state = "active";
+        snapshot.body_drag_evidence_state = "provisional";
+        snapshot.body_drag_reason_code = "active_provisional";
+    } else if (sample.body_drag_force_applied || sample.body_drag_torque_applied) {
+        snapshot.body_drag_force_body_frd_n_mean = sample.body_drag_force_applied
+                ? sample.body_drag_force_body_frd_n_mean : Vec3{NAN, NAN, NAN};
+        snapshot.body_drag_torque_body_frd_nm_mean = sample.body_drag_torque_applied
+                ? sample.body_drag_torque_body_frd_nm_mean : Vec3{NAN, NAN, NAN};
+        snapshot.body_drag_operating_state = "out_of_domain";
+        snapshot.body_drag_evidence_state = "unavailable";
+        snapshot.body_drag_reason_code = sample.body_drag_force_applied
+                ? "torque_unavailable" : "force_unavailable";
+    } else {
+        snapshot.body_drag_force_body_frd_n_mean = {NAN, NAN, NAN};
+        snapshot.body_drag_torque_body_frd_nm_mean = {NAN, NAN, NAN};
+        snapshot.body_drag_operating_state = "unavailable";
+        snapshot.body_drag_evidence_state = "unavailable";
+        snapshot.body_drag_reason_code = "authority_unavailable";
+    }
+    snapshot.a3_operating_state = config.a3_drag.enabled ? "active" : "disabled";
+    snapshot.a6_operating_state = config.a6_propwash.enabled ? "active" : "disabled";
     snapshot.battery.voltage_v = loaded_voltage_v(config, throttle_clamped);
     snapshot.battery.sag_v = std::max(0.0, config.battery_nominal_voltage_v - snapshot.battery.voltage_v);
     snapshot.battery.remaining_mah = config.battery_remaining_mah;
     for (std::size_t index = 0; index < snapshot.pid.size(); ++index) {
-        snapshot.pid[index].output = pid_output[index];
-        snapshot.pid[index].saturated = pid_saturated[index] || pid_saturation_latched_[index];
+        snapshot.pid[index].output = px4_external ? NAN : pid_output[index];
+        snapshot.pid[index].saturated = !px4_external && (pid_saturated[index] || pid_saturation_latched_[index]);
     }
 
     const int write_index = 1 - telemetry_read_index_;
@@ -454,6 +503,24 @@ void FlightController::maybe_publish_telemetry(
     while (next_telemetry_publish_s_ <= sample_time_s + 1e-12) {
         next_telemetry_publish_s_ += 1.0 / kTelemetrySnapshotHz;
     }
+}
+
+void FlightController::publish_unavailable_telemetry(
+        const TrajectorySample &sample,
+        const SimulationConfig &config,
+        const std::string &mode) {
+    TrajectorySample unavailable = sample;
+    unavailable.body_drag_force_applied = false;
+    unavailable.body_drag_torque_applied = false;
+    maybe_publish_telemetry(unavailable, config, 0.0, {0.0, 0.0, 0.0}, {false, false, false}, mode);
+}
+
+void FlightController::publish_applied_telemetry(
+        const TrajectorySample &sample,
+        const SimulationConfig &config,
+        double throttle,
+        const std::string &mode) {
+    maybe_publish_telemetry(sample, config, throttle, {0.0, 0.0, 0.0}, {false, false, false}, mode);
 }
 
 TrajectorySample FlightController::step_angle_mode(

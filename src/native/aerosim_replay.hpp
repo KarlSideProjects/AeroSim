@@ -20,7 +20,7 @@ struct ReplayDelta {
     double position_meters = 0.0;
 };
 
-constexpr std::int32_t kCompleteReplaySchemaVersion = 1;
+constexpr std::int32_t kCompleteReplaySchemaVersion = 2;
 
 enum class ReplayControllerAuthority {
     FlightCore,
@@ -188,6 +188,7 @@ private:
     ReplayDiagnostic diagnostic_;
     std::unordered_map<std::string, ReplayAsyncLifecycle> async_lifecycle_;
     std::unordered_map<std::string, std::string> async_methods_;
+    std::string environment_json_;
     bool finished_ = false;
 
     bool fail(ReplayDiagnosticCode code, std::string message);

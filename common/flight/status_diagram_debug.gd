@@ -29,6 +29,8 @@ func _ready() -> void:
     margin.name = "DashboardMargin"
     margin.set_anchors_preset(Control.PRESET_TOP_RIGHT)
     margin.offset_left = -436.0
+    margin.offset_top = 0.0
+    margin.offset_right = 0.0
     margin.offset_bottom = 260.0
     margin.add_theme_constant_override("margin_left", 8)
     margin.add_theme_constant_override("margin_top", 8)
@@ -192,6 +194,8 @@ func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> v
     var battery: Dictionary = snapshot.get("battery", {})
     var wind_body: Vector3 = snapshot.get("wind_body_mps", Vector3.ZERO)
     var pid: Array = snapshot.get("pid", [])
+    var armed_available := bool(snapshot.get("armed_available", snapshot.get("armed", null) != null))
+    var pid_available := bool(snapshot.get("pid_available", true))
     var snapshot_vehicle_name := String(snapshot.get("vehicle_name", ""))
     if not snapshot_vehicle_name.is_empty():
         selected_vehicle_name = snapshot_vehicle_name
@@ -213,12 +217,14 @@ func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> v
         "publish_count": int(snapshot.get("publish_count", 0)),
         "source": str(snapshot.get("source", "")),
         "vehicle_name": str(snapshot.get("vehicle_name", "")),
-        "armed": bool(snapshot.get("armed", false)),
+        "armed": bool(snapshot.get("armed", false)) if armed_available else false,
+        "armed_available": armed_available,
         "mode": str(snapshot.get("mode", "")),
         "motors": motors,
         "battery": battery,
         "wind_body_mps": wind_body,
         "pid": pid,
+        "pid_available": pid_available,
         "connection_state": connection_state,
         "latency_ms": float(latency_us) / 1000.0,
         "update_rate_hz": float(snapshot.get("snapshot_hz", 0.0)),
@@ -232,7 +238,8 @@ func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> v
     _labels.status.add_theme_color_override("font_color", _status_color(connection_state))
     _labels.mode.text = _format("ui.dashboard.mode", [
         debug_values.vehicle_name,
-        _t("ui.dashboard.armed" if debug_values.armed else "ui.dashboard.disarmed"),
+        _t("ui.dashboard.unavailable" if not debug_values.armed_available else
+                "ui.dashboard.armed" if debug_values.armed else "ui.dashboard.disarmed"),
         _localized_flight_mode(String(debug_values.mode)),
     ])
     for index in range(min(motors.size(), MOTOR_KEYS.size())):
@@ -248,7 +255,7 @@ func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> v
         float(battery.get("sag_v", 0.0))
     ])
     _labels.wind.text = _format("ui.dashboard.wind", [wind_body.x, wind_body.y, wind_body.z])
-    _labels.pid.text = _format("ui.dashboard.pid", [_pid_saturation_text(pid)])
+    _labels.pid.text = _format("ui.dashboard.pid", [_pid_saturation_text(pid, pid_available)])
     _labels.rate.text = _format("ui.dashboard.rate", [
         float(debug_values.update_rate_hz),
         int(debug_values.publish_count),
@@ -299,8 +306,12 @@ func _apply_layout() -> void:
         return
     var full := layout_mode == "full"
     _dashboard_margin.offset_left = -536.0 if full else -436.0
+    _dashboard_margin.offset_top = 0.0
+    _dashboard_margin.offset_right = 0.0
     _dashboard_margin.offset_bottom = 430.0 if full else 300.0
-    _dashboard_panel.custom_minimum_size = Vector2(520.0, 414.0) if full else Vector2(420.0, 284.0)
+    var dashboard_size := Vector2(520.0, 414.0) if full else Vector2(420.0, 284.0)
+    _dashboard_panel.custom_minimum_size = dashboard_size
+    _dashboard_panel.size = dashboard_size
     for key in ["rate", "latency", "timestamp"]:
         _labels[key].visible = full
 
@@ -328,7 +339,9 @@ func _add_label(parent: VBoxContainer, key: String) -> void:
     parent.add_child(label)
     _labels[key] = label
 
-func _pid_saturation_text(pid: Array) -> String:
+func _pid_saturation_text(pid: Array, available: bool = true) -> String:
+    if not available:
+        return _t("ui.dashboard.unavailable")
     var names := [
         _t("ui.dashboard.pitch"),
         _t("ui.dashboard.yaw"),

@@ -65,6 +65,21 @@ public:
             double max_total_current_a);
     bool set_hardware_telemetry_model(double max_motor_rpm, double battery_remaining_mah);
     bool set_hardware_per_motor_model(const godot::Dictionary &model);
+    bool set_body_drag_model(
+            bool enabled,
+            double coefficient_x,
+            double coefficient_y,
+            double coefficient_z,
+            double frontal_area_x_m2,
+            double frontal_area_y_m2,
+            double frontal_area_z_m2,
+            double center_of_pressure_x_m,
+            double center_of_pressure_y_m,
+            double center_of_pressure_z_m,
+            double air_density_kg_m3);
+    bool set_config_hash(const godot::String &config_hash);
+    godot::String config_hash() const;
+    godot::Dictionary body_drag_configuration() const;
     void reset_simulation();
     void set_external_force_world(double x, double y, double z);
     void set_a5_downwash_source_position(double x, double y, double z);

@@ -1,0 +1,44 @@
+Debug API for Godot
+===================
+
+Copyright (c) 2026 ArugerDev (@ArugerDev)
+https://github.com/arugerdev/debug-api-godot
+
+This addon is distributed under the MIT License — see LICENSE for the full
+legal text. The MIT License grants you the right to use, copy, modify, merge,
+publish, distribute, sublicense and/or sell copies of the software, free of
+charge, with one obligation:
+
+  → Preserve the copyright notice and license terms in copies and
+    substantial portions of the software.
+
+Beyond the strict legal requirement, attribution is appreciated. If you ship a
+game, tool or video that benefits from this addon, a brief mention in your
+project's credits / about / settings screen — for example:
+
+    "Debug API by @ArugerDev"
+    https://github.com/arugerdev/debug-api-godot
+
+…helps the project reach more developers and motivates further work. It is
+**not** a legal requirement under MIT, just a friendly request.
+
+THIRD-PARTY NOTICES
+-------------------
+This addon does not bundle any third-party dependencies. All GDScript code
+under addons/debug_api/ is original work by ArugerDev.
+
+ART
+---
+The icon and branding under addons/debug_api/icon.svg and docs/branding/ are
+also released under MIT alongside the source code.
+
+REPORTING ISSUES
+----------------
+Bugs, feature requests and questions:
+https://github.com/arugerdev/debug-api-godot/issues
+
+CONTRIBUTING
+------------
+Pull requests are welcome under the same MIT terms. By submitting a
+contribution you agree it can be redistributed under MIT and that ArugerDev
+retains the right to maintain the project.

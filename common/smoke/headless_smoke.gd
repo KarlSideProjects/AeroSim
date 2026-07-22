@@ -318,6 +318,14 @@ func _configure_default_power_model(native: Object) -> bool:
         ):
         push_error("Default hardware preset must apply native telemetry metadata")
         return false
+    if native.has_method("set_config_hash") and native.has_method("replay_vehicle_config_manifest") and native.has_method("replay_manifest_hash"):
+        var canonicalizer := FlightRuntime.new()
+        var config_json: String = canonicalizer._replay_canonical_json(native.call("replay_vehicle_config_manifest"))
+        var config_hash := String(native.call("replay_manifest_hash", config_json))
+        canonicalizer.free()
+        if config_hash.is_empty() or not native.call("set_config_hash", config_hash):
+            push_error("Default hardware preset must publish a canonical config hash")
+            return false
     return true
 
 func _verify_imu_public_path(native: Object) -> bool:
@@ -608,6 +616,10 @@ func _verify_telemetry_snapshot_public_path(native: Object) -> bool:
         "timestamp_us",
         "snapshot_hz",
         "publish_count",
+        "vehicle_id",
+        "world_frame",
+        "body_frame",
+        "units",
         "coordinate_frame",
         "motor_order",
         "motors",
@@ -618,6 +630,18 @@ func _verify_telemetry_snapshot_public_path(native: Object) -> bool:
         "downwash_force_n",
         "propwash_disturbance_rad_s2",
         "drag_body_n",
+        "air_density_kg_m3",
+        "airspeed_body_frd_mps_mean",
+        "body_drag_force_body_frd_n_mean",
+        "body_drag_torque_body_frd_nm_mean",
+        "a3_drag_force_body_frd_n_mean",
+        "a6_angular_accel_body_frd_rad_s2",
+        "body_drag_operating_state",
+        "body_drag_evidence_state",
+        "body_drag_reason_code",
+        "a3_operating_state",
+        "a6_operating_state",
+        "config_hash",
         "battery",
         "pid",
         "armed",
@@ -628,8 +652,8 @@ func _verify_telemetry_snapshot_public_path(native: Object) -> bool:
         if not snapshot.has(key):
             push_error("TelemetrySnapshot missing schema key: %s" % key)
             return false
-    if int(snapshot.schema_version) != 1 or str(snapshot.coordinate_frame) != "FRD" or str(snapshot.source) != "native_double_buffer":
-        push_error("TelemetrySnapshot must expose schema version, FRD frame, and native double-buffer source")
+    if int(snapshot.schema_version) != 2 or str(snapshot.coordinate_frame) != "FRD" or str(snapshot.world_frame) != "NED" or str(snapshot.body_frame) != "FRD" or str(snapshot.units) != "SI" or str(snapshot.source) != "native_double_buffer":
+        push_error("TelemetrySnapshot must expose v2 SI NED/FRD frames and native double-buffer source")
         return false
     if int(snapshot.timestamp_us) <= 0 or int(snapshot.publish_count) < 30 or float(snapshot.snapshot_hz) != 30.0:
         push_error("TelemetrySnapshot must publish at least 30 Hz")
@@ -664,6 +688,14 @@ func _verify_telemetry_snapshot_public_path(native: Object) -> bool:
         return false
     if snapshot.propwash_disturbance_rad_s2 != Vector3.ZERO or snapshot.drag_body_n != Vector3.ZERO:
         push_error("TelemetrySnapshot vector effect indicators must stay zero until runtime models feed them")
+        return false
+    if str(snapshot.body_drag_operating_state) != "disabled" or str(snapshot.body_drag_evidence_state) != "provisional" or \
+            str(snapshot.body_drag_reason_code) != "disabled" or snapshot.body_drag_force_body_frd_n_mean != Vector3.ZERO or \
+            snapshot.body_drag_torque_body_frd_nm_mean != Vector3.ZERO:
+        push_error("TelemetrySnapshot disabled body drag must be explicit and exactly zero")
+        return false
+    if str(snapshot.config_hash).is_empty() or str(snapshot.config_hash) == "unavailable":
+        push_error("TelemetrySnapshot must expose a config hash")
         return false
 
     for _frame in range(12):
@@ -1046,6 +1078,22 @@ func _verify_px4_actuator_public_path(native: Object) -> bool:
     if invalid_collision_row.size() != 0:
         push_error("Public collision path must reject non-positive simulation rates before touching contact state")
         return false
+    if not native.call("set_body_drag_model", true, 1.0, 1.0, 1.0, 0.1, 0.1, 0.1, 0.0, 0.0, 0.0, 1.225):
+        push_error("PX4 telemetry setup must enable body drag")
+        return false
+    native.call("reset_flight")
+    native.call("sync_flight_state", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    native.call("step_px4_actuator_mode", Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5)
+    var active_snapshot: Dictionary = native.call("telemetry_snapshot")
+    if str(active_snapshot.get("body_drag_operating_state", "")) != "active" or \
+            str(active_snapshot.get("control_authority", "")) != "px4_external" or \
+            active_snapshot.get("armed", false) != null or bool(active_snapshot.get("armed_available", true)) or \
+            bool(active_snapshot.get("pid_available", true)) or active_snapshot.pid[0].output != null or \
+            float(active_snapshot.motors[0].thrust_newtons) <= 0.0 or \
+            not (active_snapshot.get("body_drag_force_body_frd_n_mean") is Vector3) or \
+            (active_snapshot.body_drag_force_body_frd_n_mean as Vector3) == Vector3.ZERO:
+        push_error("Normal PX4 actuator authority must publish applied body-drag telemetry")
+        return false
     var row: PackedFloat64Array = native.call(
         "step_collision_px4_actuator_mode",
         Engine.physics_ticks_per_second,
@@ -1073,6 +1121,28 @@ func _verify_px4_actuator_public_path(native: Object) -> bool:
     if row.size() < 17 or not is_finite(float(row[1])) or not is_finite(float(row[2])):
         push_error("PX4 actuator public path must return a deterministic body-state row")
         return false
+    var jolt_args := [
+        Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5, true,
+        0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        float(row[8]), float(row[9]), float(row[10]), float(row[14]), float(row[15]), float(row[16]), -1.0
+    ]
+    var jolt_row: PackedFloat64Array = native.callv("step_collision_px4_actuator_mode", jolt_args)
+    var unavailable_snapshot: Dictionary = native.call("telemetry_snapshot")
+    if int(unavailable_snapshot.get("publish_count", -1)) != int(active_snapshot.get("publish_count", -2)):
+        push_error("Jolt unavailable telemetry must not bypass the frozen 30 Hz publication cadence")
+        return false
+    for _frame in range(12):
+        jolt_row = native.callv("step_collision_px4_actuator_mode", jolt_args)
+        unavailable_snapshot = native.call("telemetry_snapshot")
+        if int(unavailable_snapshot.get("publish_count", -1)) > int(active_snapshot.get("publish_count", -2)):
+            break
+    if jolt_row.is_empty() or str(unavailable_snapshot.get("body_drag_operating_state", "")) != "unavailable" or \
+            unavailable_snapshot.get("body_drag_force_body_frd_n_mean", Vector3.ZERO) != null or \
+            unavailable_snapshot.get("body_drag_torque_body_frd_nm_mean", Vector3.ZERO) != null:
+        push_error("Jolt authority must publish explicit unavailable body-drag values")
+        return false
+    native.call("set_body_drag_model", false, 0.0, 0.0, 0.0, 0.1, 0.1, 0.1, 0.0, 0.0, 0.0, 1.225)
+    native.call("reset_flight")
     return true
 
 func _verify_jolt_collision_scene(native: Object) -> bool:
@@ -2423,6 +2493,39 @@ func _verify_hardware_config_public_path() -> bool:
         push_error("Runtime startup preset must apply per-motor thrust derived from the prop model")
         scene.queue_free()
         return false
+    scene.native.call("reset_flight")
+    if not scene.native.call("arm_flight_control", 0.0):
+        push_error("Config-hash telemetry setup must arm from low throttle")
+        scene.queue_free()
+        return false
+    scene.native.call("step_angle_mode", Engine.physics_ticks_per_second, 1000, float(power_model.hover_throttle), 0.0, 0.0, 0.0)
+    var startup_snapshot: Dictionary = scene.native.call("telemetry_snapshot")
+    var startup_manifest_json: String = scene._replay_canonical_json(scene.native.call("replay_vehicle_config_manifest"))
+    var startup_manifest_hash := String(scene.native.call("replay_manifest_hash", startup_manifest_json))
+    if String(startup_snapshot.get("config_hash", "")) != startup_manifest_hash:
+        push_error("Telemetry and replay must share the final canonical hardware config hash")
+        scene.queue_free()
+        return false
+    if OS.is_debug_build():
+        var debug_panel: Node = scene.body_drag_debug_panel
+        if debug_panel == null:
+            push_error("Debug builds must create the body-drag presenter")
+            scene.queue_free()
+            return false
+        debug_panel.call("update_from_snapshot", startup_snapshot)
+        var wrong_schema_type := startup_snapshot.duplicate(true)
+        wrong_schema_type["schema_version"] = "2"
+        if String(debug_panel.call("_validate_snapshot", wrong_schema_type, int(startup_snapshot.publish_count) + 1)).is_empty():
+            push_error("Body-drag presenter must reject coercible but incorrectly typed telemetry")
+            scene.queue_free()
+            return false
+        scene.set_paused(true, false)
+        var debug_canvas = debug_panel.get("_panel")
+        if String(debug_panel.call("_text_value", "body_drag_operating_state")) != "PAUSED" or debug_canvas == null or not debug_canvas.visible:
+            push_error("Paused runtime must leave a visible blind-mode state in the body-drag presenter")
+            scene.queue_free()
+            return false
+        scene.set_paused(false, false)
     var native_before: Object = scene.native
     var reset_count_before: int = scene.reset_count
     if not loader.apply_to_runtime(scene, "res://config/drones/5_inch_6s.json"):
@@ -2588,7 +2691,8 @@ func _verify_gamepad_profile_actions() -> bool:
         "flight_pause": JOY_BUTTON_START,
         "flight_respawn": JOY_BUTTON_X,
         "flight_altitude_hold": JOY_BUTTON_Y,
-        "flight_exit": JOY_BUTTON_B
+        "flight_exit": JOY_BUTTON_B,
+        "flight_acro": InputProfiles.GamepadProfile.ACRO_BUTTON
     }
     for action in actions:
         if not InputMap.has_action(action):

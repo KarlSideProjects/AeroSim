@@ -50,6 +50,7 @@ ui.license.diagnostics,DIAGNOSTICS,診斷資訊
 ui.pause.title,PAUSED,已暫停
 ui.pause.resume,RESUME,繼續
 ui.hints,T Arm/Takeoff   P Pause   R Reset   C ACRO   H Alt Hold   Esc Exit,T 起飛   P 暫停   R 重設   C ACRO   H 高度保持   Esc 離開
+ui.hints.gamepad,A Arm/Takeoff   START Pause   X Reset   RB ACRO   Y Alt Hold   B Exit,A 解鎖／起飛   START 暫停   X 重設   RB ACRO   Y 高度保持   B 離開
 ui.finish.title,FINISH,完成
 ui.finish.summary,FINISH - Time %0.2f s,完成－時間 %0.2f 秒
 ui.fallback.status,%s | Mode: %s,%s｜模式：%s
@@ -174,6 +175,7 @@ ui.dashboard.disconnected,DISCONNECTED,未連線
 ui.dashboard.ready,READY,就緒
 ui.dashboard.armed,ON,開啟
 ui.dashboard.disarmed,OFF,關閉
+ui.dashboard.unavailable,UNAVAILABLE,無法使用
 ui.dashboard.mode_angle,ANGLE,角度
 ui.dashboard.mode_acro,ACRO,特技
 ui.dashboard.mode_altitude_hold,ALTITUDE_HOLD,定高

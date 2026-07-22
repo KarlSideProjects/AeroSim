@@ -31,6 +31,37 @@ class FakeNative:
     func disarm_flight_control() -> void:
         disarmed = true
 
+    func reset_flight() -> void:
+        armed = false
+
+    func hardware_power_diagnostics() -> Dictionary:
+        return {"hover_throttle": 0.30}
+
+
+class FakeBodyDragPanel extends Node:
+    var blind_mode := false
+    var paused := false
+
+    func set_blind_mode(value: bool) -> void:
+        blind_mode = value
+
+    func set_paused(value: bool) -> void:
+        paused = value
+
+
+class FakeTakeoffBody extends RefCounted:
+    var global_position := Vector3.ZERO
+    var linear_velocity := Vector3.ZERO
+    var freeze := true
+    var sleeping := true
+
+    func reset_contact() -> void:
+        pass
+
+    func apply_native_state(position: Vector3, _orientation: Quaternion, velocity: Vector3, _angular: Vector3) -> void:
+        global_position = position
+        linear_velocity = velocity
+
 
 class FakeDeviceState:
     extends GamepadDeviceState.DeviceState
@@ -246,6 +277,7 @@ func _controller_monitor_runtime() -> FlightRuntime:
 func _runtime_with_missing_license_config() -> FlightRuntime:
     var runtime := FlightRuntime.new()
     autofree(runtime)
+    runtime.development_license_bypass = false
     runtime._configure_license_provider({})
     return runtime
 
@@ -253,6 +285,7 @@ func _runtime_with_missing_license_config() -> FlightRuntime:
 func _runtime_with_license_snapshot(status: String, last_online_result := "never", fatal: Dictionary = {}) -> FlightRuntime:
     var runtime := FlightRuntime.new()
     autofree(runtime)
+    runtime.development_license_bypass = false
     var provider := FakeLicenseProvider.new(status, last_online_result, fatal)
     runtime.license_provider = provider
     runtime.add_child(provider)
@@ -293,6 +326,7 @@ func _menu_runtime() -> FlightRuntime:
 func _runtime_with_startup_license_path(path: String) -> FlightRuntime:
     var runtime := FlightRuntime.new()
     autofree(runtime)
+    runtime.development_license_bypass = false
     runtime._build_main_menu()
     runtime._build_flight_hud()
     runtime._configure_license_provider_from_path(path)
@@ -609,6 +643,69 @@ func test_only_online_and_offline_grace_license_snapshots_can_start_quick_fly() 
     assert_true(runtime.can_start_quick_fly())
     runtime = _runtime_with_license_snapshot("revoked")
     assert_false(runtime.can_start_quick_fly())
+
+
+func test_debug_development_bypass_allows_quick_fly_without_license() -> void:
+    var runtime := _runtime_with_license_snapshot("not_activated")
+    runtime.development_license_bypass = true
+    assert_true(runtime.can_start_quick_fly())
+
+
+func test_debug_quick_fly_routes_without_license_block() -> void:
+    var runtime := _attach_runtime_ui(_runtime_with_license_snapshot("not_activated"))
+    runtime.development_license_bypass = true
+    runtime.gamepad_device_state = FakeDeviceState.new(false)
+
+    runtime.quick_fly()
+
+    assert_eq(runtime.screen, "fallback_prompt")
+    assert_false(runtime.license_panel.visible)
+
+
+func test_flight_hud_hints_follow_active_input_profile() -> void:
+    var runtime := _attach_runtime_ui(_licensed_runtime())
+    runtime.screen = "preflight"
+    runtime._refresh_flight_hud()
+    assert_string_contains(runtime.key_hints_label.text, "T Arm/Takeoff")
+
+    runtime.gamepad_device_state = FakeDeviceState.new()
+    runtime.session_gamepad_profile = InputProfiles.GamepadProfile.xbox_default(7, runtime.gamepad_device_state)
+    runtime.session_gamepad_device_id = 7
+    runtime._refresh_flight_hud()
+
+    assert_string_contains(runtime.key_hints_label.text, "A Arm/Takeoff")
+    assert_string_contains(runtime.key_hints_label.text, "RB ACRO")
+    assert_false(runtime.key_hints_label.text.contains("T Arm/Takeoff"))
+
+
+func test_request_takeoff_does_not_inject_jump_velocity() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var fake_native := FakeNative.new()
+    runtime.native = fake_native
+    runtime.loaded_map_id = "industrial_yard"
+    var map_root := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.position = Vector3(2.0, 3.0, 4.0)
+    map_root.add_child(spawn)
+    get_tree().root.add_child(map_root)
+    autofree(map_root)
+    map_root.name = "LoadedMap"
+    spawn.name = "SpawnNorth"
+    runtime.loaded_map = map_root
+    var body := FakeTakeoffBody.new()
+    runtime.drone_body = body
+    runtime.session_gamepad_device_id = 7
+    runtime.session_gamepad_profile = InputProfiles.GamepadProfile.new()
+
+    runtime.request_takeoff()
+
+    assert_true(runtime.takeoff_requested)
+    assert_true(runtime.takeoff_assist_active)
+    assert_eq(runtime.takeoff_assist_throttle, 0.38)
+    assert_false(body.freeze)
+    assert_eq(body.global_position, spawn.global_position)
+    assert_eq(body.linear_velocity, Vector3.ZERO)
 
 
 func test_license_routes_expose_status_actions_and_only_retry_provider_states() -> void:
@@ -1045,6 +1142,9 @@ func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void
         assert_true(bool(vehicle.call("set_hardware_power_model", 4.0, 0.5, 0.03, 22.2, 6.0, 0.003, 4.0)))
         assert_true(bool(vehicle.call("set_hardware_telemetry_model", 10000.0, 1000.0)))
         assert_true(bool(vehicle.call("set_hardware_per_motor_model", per_motor)))
+        var config_json: String = runtime._replay_canonical_json(vehicle.call("replay_vehicle_config_manifest"))
+        var config_hash := String(vehicle.call("replay_manifest_hash", config_json))
+        assert_true(bool(vehicle.call("set_config_hash", config_hash)))
     runtime.native = upper
     runtime._airsim_secondary_native = lower
     runtime._airsim_vehicle_name = "DroneA"
@@ -1158,15 +1258,78 @@ func test_set_paused_freezes_and_sleeps_secondary_until_resume() -> void:
     var secondary_body := RigidBody3D.new()
     runtime.add_child(secondary_body)
     runtime.secondary_drone_body = secondary_body
+    var debug_panel := FakeBodyDragPanel.new()
+    runtime.add_child(debug_panel)
+    runtime.body_drag_debug_panel = debug_panel
 
     runtime.set_paused(true, false)
     assert_true(secondary_body.freeze)
     assert_true(secondary_body.sleeping)
+    assert_true(debug_panel.paused)
+    assert_false(debug_panel.blind_mode)
 
     runtime.set_paused(false, false)
     assert_false(secondary_body.freeze)
     assert_false(secondary_body.sleeping)
+    assert_false(debug_panel.paused)
+    assert_false(debug_panel.blind_mode)
     runtime.free()
+
+
+func test_participant_mode_is_independent_and_hides_debug_panel_input() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var panel_script := load("res://addons/debug_api/aerosim_body_drag_panel.gd")
+    var runtime = runtime_script.new()
+    var panel = panel_script.new()
+    get_tree().root.add_child(panel)
+    runtime.body_drag_debug_panel = panel
+    var debug_canvas: Control = panel.get("_panel")
+    var focus_button := Button.new()
+    debug_canvas.add_child(focus_button)
+    focus_button.grab_focus()
+
+    runtime.set_paused(true, false)
+    assert_true(debug_canvas.visible)
+    assert_eq(String(panel.call("_text_value", "body_drag_operating_state")), "PAUSED")
+
+    assert_true(runtime.has_method("set_participant_mode"))
+    if not runtime.has_method("set_participant_mode"):
+        panel.queue_free()
+        runtime.free()
+        return
+    runtime.set_participant_mode(true)
+    assert_true(runtime.participant_mode)
+    assert_false(debug_canvas.visible)
+    assert_false(panel.is_processing_input())
+    assert_false(panel.get("_api").is_processing_input())
+    assert_ne(panel.get_viewport().gui_get_focus_owner(), focus_button)
+
+    runtime.set_paused(false, false)
+    assert_false(debug_canvas.visible)
+    runtime.set_participant_mode(false)
+    assert_true(debug_canvas.visible)
+    assert_true(panel.is_processing_input())
+    panel.call("set_screen_visible", false)
+    assert_false(debug_canvas.visible)
+    panel.call("set_screen_visible", true)
+    assert_true(debug_canvas.visible)
+    panel.queue_free()
+    runtime.free()
+
+
+func test_body_drag_panel_waits_for_cold_start_telemetry() -> void:
+    var panel_script := load("res://addons/debug_api/aerosim_body_drag_panel.gd")
+    var panel = panel_script.new()
+    get_tree().root.add_child(panel)
+    await get_tree().process_frame
+
+    assert_eq(String(panel.call("_text_value", "body_drag_operating_state")), "WAITING / UNAVAILABLE")
+    assert_eq(String(panel.call("_vector", "wind_world_mps")), "WAITING / UNAVAILABLE")
+    assert_eq(String(panel.call("_schema_status")), "WAITING / UNAVAILABLE")
+    assert_eq(String(panel.call("_timestamp_status")), "WAITING / UNAVAILABLE")
+    assert_false(String(panel.call("_vector", "wind_world_mps")).contains("NaN"))
+    assert_eq(int(panel.get("_panel").get_config("anchor")), 2)
+    panel.queue_free()
 
 
 func test_direct_spawn_reset_clears_primary_acceleration_sampling_state() -> void:

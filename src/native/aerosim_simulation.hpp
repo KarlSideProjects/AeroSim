@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <array>
+#include <string>
 #include <vector>
 
 namespace aerosim {
@@ -59,6 +60,13 @@ struct A6PropwashConfig {
     double minimum_transverse_rate_rad_s = 0.0;
 };
 
+struct BodyDragConfig {
+    bool enabled = false;
+    Vec3 drag_coefficient;
+    Vec3 frontal_area_m2;
+    Vec3 center_of_pressure_frd_m;
+};
+
 struct PerMotorPhysicsConfig {
     Vec3 inertia_kg_m2;
     std::array<Vec3, 4> position_frd{};
@@ -96,6 +104,9 @@ struct SimulationConfig {
     A4GroundEffectConfig a4_ground_effect;
     A5DownwashConfig a5_downwash;
     A6PropwashConfig a6_propwash;
+    BodyDragConfig body_drag;
+    double air_density_kg_m3 = 1.225;
+    std::string config_hash = "unavailable";
     Vec3 external_force_world;
     std::function<Vec3(const Vec3 &)> external_force_provider;
     Vec3 wind_world_mps;
@@ -131,6 +142,9 @@ struct HardwareConfig {
     double max_motor_rpm = 0.0;
     A3DragConfig a3_drag;
     A6PropwashConfig a6_propwash;
+    BodyDragConfig body_drag;
+    double air_density_kg_m3 = 1.225;
+    std::string config_hash = "unavailable";
     PerMotorPhysicsConfig per_motor;
 
     bool set_mass_kg(double value) {
@@ -211,6 +225,29 @@ struct HardwareConfig {
         return true;
     }
 
+    bool set_body_drag_model(bool enabled, const BodyDragConfig &value, double density) {
+        const double values[] = {
+                value.drag_coefficient.x, value.drag_coefficient.y, value.drag_coefficient.z,
+                value.frontal_area_m2.x, value.frontal_area_m2.y, value.frontal_area_m2.z,
+                value.center_of_pressure_frd_m.x, value.center_of_pressure_frd_m.y,
+                value.center_of_pressure_frd_m.z, density,
+        };
+        for (double number : values) {
+            if (!std::isfinite(number)) {
+                return false;
+            }
+        }
+        if (value.drag_coefficient.x < 0.0 || value.drag_coefficient.y < 0.0 || value.drag_coefficient.z < 0.0 ||
+                value.frontal_area_m2.x < 0.0 || value.frontal_area_m2.y < 0.0 || value.frontal_area_m2.z < 0.0 ||
+                density <= 0.0) {
+            return false;
+        }
+        body_drag = value;
+        body_drag.enabled = enabled;
+        air_density_kg_m3 = density;
+        return true;
+    }
+
     SimulationConfig simulation_config() const {
         SimulationConfig config;
         config.mass_kg = mass_kg;
@@ -225,6 +262,9 @@ struct HardwareConfig {
         config.max_motor_rpm = max_motor_rpm;
         config.a3_drag = a3_drag;
         config.a6_propwash = a6_propwash;
+        config.body_drag = body_drag;
+        config.air_density_kg_m3 = air_density_kg_m3;
+        config.config_hash = config_hash;
         config.per_motor = per_motor;
         return config;
     }
@@ -240,6 +280,13 @@ struct TrajectorySample {
     RigidBodyState state;
     std::uint64_t substeps = 0;
     Vec3 propwash_disturbance_rad_s2;
+    Vec3 airspeed_body_frd_mps_mean;
+    Vec3 body_drag_force_body_frd_n_mean;
+    Vec3 body_drag_torque_body_frd_nm_mean;
+    Vec3 a3_drag_force_body_frd_n_mean;
+    double air_density_kg_m3 = 1.225;
+    bool body_drag_force_applied = false;
+    bool body_drag_torque_applied = false;
 };
 
 struct DualAircraftTrajectorySample {

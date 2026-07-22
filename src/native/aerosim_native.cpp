@@ -4,6 +4,7 @@
 #include "aerosim_probe.hpp"
 #include <cmath>
 #include <godot_cpp/classes/hashing_context.hpp>
+#include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
@@ -113,6 +114,38 @@ bool simulation_config_manifest_value(
             !per_motor_model_value(static_cast<Dictionary>(per_motor_variant), config.per_motor)) {
         return false;
     }
+    const Variant a3_variant = manifest.get("a3_drag", Variant());
+    if (a3_variant.get_type() == Variant::DICTIONARY) {
+        const Dictionary a3 = a3_variant;
+        config.a3_drag.enabled = bool_value(a3, "enabled", config.a3_drag.enabled);
+        config.a3_drag.coefficient = {
+                double_value(a3, "coefficient_x_kg", config.a3_drag.coefficient.x),
+                double_value(a3, "coefficient_y_kg", config.a3_drag.coefficient.y),
+                double_value(a3, "coefficient_z_kg", config.a3_drag.coefficient.z),
+        };
+    }
+    const Variant a6_variant = manifest.get("a6_propwash", Variant());
+    if (a6_variant.get_type() == Variant::DICTIONARY) {
+        const Dictionary a6 = a6_variant;
+        config.a6_propwash.enabled = bool_value(a6, "enabled", config.a6_propwash.enabled);
+        config.a6_propwash.full_collective_angular_accel_rad_s2 = double_value(
+                a6, "full_collective_angular_accel_rad_s2", config.a6_propwash.full_collective_angular_accel_rad_s2);
+        config.a6_propwash.minimum_wake_entry_speed_mps = double_value(
+                a6, "minimum_wake_entry_speed_mps", config.a6_propwash.minimum_wake_entry_speed_mps);
+        config.a6_propwash.minimum_transverse_rate_rad_s = double_value(
+                a6, "minimum_transverse_rate_rad_s", config.a6_propwash.minimum_transverse_rate_rad_s);
+    }
+    const Variant body_drag_variant = manifest.get("body_drag", Variant());
+    if (body_drag_variant.get_type() != Variant::DICTIONARY) {
+        return false;
+    }
+    const Dictionary body_drag = body_drag_variant;
+    config.body_drag.enabled = bool_value(body_drag, "enabled", config.body_drag.enabled);
+    config.body_drag.drag_coefficient = vec3_value(body_drag, "drag_coefficient", config.body_drag.drag_coefficient);
+    config.body_drag.frontal_area_m2 = vec3_value(body_drag, "frontal_area_m2", config.body_drag.frontal_area_m2);
+    config.body_drag.center_of_pressure_frd_m = vec3_value(
+            body_drag, "center_of_pressure_frd_m", config.body_drag.center_of_pressure_frd_m);
+    config.air_density_kg_m3 = double_value(body_drag, "air_density_kg_m3", config.air_density_kg_m3);
     if (manifest.has("external_force_world")) {
         config.external_force_world = vec3_value(manifest, "external_force_world", config.external_force_world);
     }
@@ -149,6 +182,10 @@ String string_value(const Dictionary &dict, const char *key, const String &fallb
 
 Vector3 godot_vec3(const aerosim::Vec3 &value) {
     return {static_cast<real_t>(value.x), static_cast<real_t>(value.y), static_cast<real_t>(value.z)};
+}
+
+bool finite_vec3(const aerosim::Vec3 &value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
 
 aerosim::WindConfig preset_config(const String &preset) {
@@ -206,10 +243,10 @@ Dictionary motor_telemetry_dict(const aerosim::MotorTelemetry &motor) {
     return dict;
 }
 
-Dictionary pid_telemetry_dict(const aerosim::PidAxisTelemetry &axis) {
+Dictionary pid_telemetry_dict(const aerosim::PidAxisTelemetry &axis, bool available) {
     Dictionary dict;
-    dict["output"] = axis.output;
-    dict["saturated"] = axis.saturated;
+    dict["output"] = available ? Variant(axis.output) : Variant();
+    dict["saturated"] = available ? Variant(axis.saturated) : Variant();
     return dict;
 }
 
@@ -226,6 +263,14 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("set_hardware_telemetry_model", "max_motor_rpm", "battery_remaining_mah"),
             &AeroSimNative::set_hardware_telemetry_model);
     ClassDB::bind_method(D_METHOD("set_hardware_per_motor_model", "model"), &AeroSimNative::set_hardware_per_motor_model);
+    ClassDB::bind_method(
+            D_METHOD("set_body_drag_model", "enabled", "coefficient_x", "coefficient_y", "coefficient_z",
+                    "frontal_area_x_m2", "frontal_area_y_m2", "frontal_area_z_m2", "center_of_pressure_x_m",
+                    "center_of_pressure_y_m", "center_of_pressure_z_m", "air_density_kg_m3"),
+            &AeroSimNative::set_body_drag_model);
+    ClassDB::bind_method(D_METHOD("set_config_hash", "config_hash"), &AeroSimNative::set_config_hash);
+    ClassDB::bind_method(D_METHOD("config_hash"), &AeroSimNative::config_hash);
+    ClassDB::bind_method(D_METHOD("body_drag_configuration"), &AeroSimNative::body_drag_configuration);
     ClassDB::bind_method(D_METHOD("reset_simulation"), &AeroSimNative::reset_simulation);
     ClassDB::bind_method(D_METHOD("set_external_force_world", "x", "y", "z"), &AeroSimNative::set_external_force_world);
     ClassDB::bind_method(D_METHOD("set_a5_downwash_source_position", "x", "y", "z"), &AeroSimNative::set_a5_downwash_source_position);
@@ -677,6 +722,9 @@ Dictionary AeroSimNative::replay_vehicle_config_manifest() const {
     result["max_total_current_a"] = config.max_total_current_a;
     result["max_motor_rpm"] = config.max_motor_rpm;
     result["external_force_world"] = godot_vec3(external_force_world_);
+    result["a3_drag"] = a3_drag_configuration();
+    result["a6_propwash"] = a6_propwash_configuration();
+    result["body_drag"] = body_drag_configuration();
     result["a4_ground_effect"] = a4_ground_effect_configuration();
     result["a5_downwash"] = a5_downwash_configuration();
     Dictionary per_motor;
@@ -1002,6 +1050,8 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     if (sample.substeps == 0 && physics_hz > 0 && substep_hz > 0) {
         return {};
     }
+    flight_controller_.publish_applied_telemetry(
+            sample, config, (motor_0 + motor_1 + motor_2 + motor_3) * 0.25, "PX4_ACTUATOR");
     flight_mode_ = "PX4_ACTUATOR";
     PackedFloat64Array row;
     row.append(sample.time_seconds);
@@ -1074,6 +1124,12 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
     const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
     const aerosim::CollisionStepResult result = collision_authority_.step_per_motor(
             simulation_state_, simulation_clock_, config, commands, contact);
+    if (result.authority == aerosim::PhysicsAuthority::Jolt) {
+        flight_controller_.publish_unavailable_telemetry(result.sample, config, "PX4_ACTUATOR");
+    } else {
+        flight_controller_.publish_applied_telemetry(
+                result.sample, config, (motor_0 + motor_1 + motor_2 + motor_3) * 0.25, "PX4_ACTUATOR");
+    }
     if (result.sample.substeps == 0 && !touching && physics_hz > 0 && substep_hz > 0) {
         return {};
     }
@@ -1249,8 +1305,23 @@ void AeroSimNative::configure_wind(const Dictionary &config) {
     wind_preset_name_ = requested_preset;
     aerosim::WindConfig wind_config = preset_config(wind_preset_name_);
     wind_config.steady_wind_mps = steady_wind;
+    wind_config.turbulence_sigma_mps = vec3_value(config, "turbulence_sigma", wind_config.turbulence_sigma_mps);
+    wind_config.reference_airspeed_mps = double_value(config, "reference_airspeed_mps", wind_config.reference_airspeed_mps);
+    wind_config.scale_length_m = double_value(config, "scale_length_m", wind_config.scale_length_m);
+    wind_config.shear_reference_height_m = double_value(config, "shear_reference_height_m", wind_config.shear_reference_height_m);
+    wind_config.shear_exponent = double_value(config, "shear_exponent", wind_config.shear_exponent);
     wind_config.shear_enabled = bool_value(config, "shear_enabled", wind_config.shear_enabled);
-    wind_config.seed = static_cast<std::uint32_t>(int_value(config, "seed", static_cast<std::int32_t>(wind_config.seed)));
+    const std::int32_t seed = int_value(config, "seed", static_cast<std::int32_t>(wind_config.seed));
+    if (seed < 0 || !std::isfinite(wind_config.reference_airspeed_mps) || wind_config.reference_airspeed_mps <= 0.0 ||
+            !std::isfinite(wind_config.scale_length_m) || wind_config.scale_length_m <= 0.0 ||
+            !std::isfinite(wind_config.shear_reference_height_m) || wind_config.shear_reference_height_m <= 0.0 ||
+            !std::isfinite(wind_config.shear_exponent) || wind_config.shear_exponent < 0.0 ||
+            !std::isfinite(wind_config.turbulence_sigma_mps.x) || !std::isfinite(wind_config.turbulence_sigma_mps.y) ||
+            !std::isfinite(wind_config.turbulence_sigma_mps.z) || wind_config.turbulence_sigma_mps.x < 0.0 ||
+            wind_config.turbulence_sigma_mps.y < 0.0 || wind_config.turbulence_sigma_mps.z < 0.0) {
+        return;
+    }
+    wind_config.seed = static_cast<std::uint32_t>(seed);
     wind_field_.configure(wind_config);
 }
 
@@ -1262,6 +1333,8 @@ Dictionary AeroSimNative::wind_configuration() const {
     config["turbulence_sigma"] = godot_vec3(wind_config.turbulence_sigma_mps);
     config["reference_airspeed_mps"] = wind_config.reference_airspeed_mps;
     config["scale_length_m"] = wind_config.scale_length_m;
+    config["shear_reference_height_m"] = wind_config.shear_reference_height_m;
+    config["shear_exponent"] = wind_config.shear_exponent;
     config["shear_enabled"] = wind_config.shear_enabled;
     config["seed"] = static_cast<std::int32_t>(wind_config.seed);
     return config;
@@ -1330,6 +1403,10 @@ Dictionary AeroSimNative::telemetry_snapshot() const {
     dict["timestamp_us"] = static_cast<std::int64_t>(snapshot.timestamp_us);
     dict["publish_count"] = static_cast<std::int64_t>(snapshot.publish_count);
     dict["snapshot_hz"] = snapshot.snapshot_hz;
+    dict["vehicle_id"] = snapshot.vehicle_id.c_str();
+    dict["world_frame"] = snapshot.world_frame.c_str();
+    dict["body_frame"] = snapshot.body_frame.c_str();
+    dict["units"] = snapshot.units.c_str();
     dict["coordinate_frame"] = "FRD";
     Array motor_order;
     motor_order.append("rear_right");
@@ -1350,6 +1427,20 @@ Dictionary AeroSimNative::telemetry_snapshot() const {
     dict["downwash_force_n"] = snapshot.downwash_force_n;
     dict["propwash_disturbance_rad_s2"] = godot_vec3(snapshot.propwash_disturbance_rad_s2);
     dict["drag_body_n"] = godot_vec3(snapshot.drag_body_n);
+    dict["air_density_kg_m3"] = snapshot.air_density_kg_m3;
+    dict["airspeed_body_frd_mps_mean"] = godot_vec3(snapshot.airspeed_body_frd_mps_mean);
+    dict["body_drag_force_body_frd_n_mean"] = finite_vec3(snapshot.body_drag_force_body_frd_n_mean)
+            ? Variant(godot_vec3(snapshot.body_drag_force_body_frd_n_mean)) : Variant();
+    dict["body_drag_torque_body_frd_nm_mean"] = finite_vec3(snapshot.body_drag_torque_body_frd_nm_mean)
+            ? Variant(godot_vec3(snapshot.body_drag_torque_body_frd_nm_mean)) : Variant();
+    dict["a3_drag_force_body_frd_n_mean"] = godot_vec3(snapshot.a3_drag_force_body_frd_n_mean);
+    dict["a6_angular_accel_body_frd_rad_s2"] = godot_vec3(snapshot.a6_angular_accel_body_frd_rad_s2);
+    dict["body_drag_operating_state"] = snapshot.body_drag_operating_state.c_str();
+    dict["body_drag_evidence_state"] = snapshot.body_drag_evidence_state.c_str();
+    dict["body_drag_reason_code"] = snapshot.body_drag_reason_code.c_str();
+    dict["a3_operating_state"] = snapshot.a3_operating_state.c_str();
+    dict["a6_operating_state"] = snapshot.a6_operating_state.c_str();
+    dict["config_hash"] = snapshot.config_hash.c_str();
     Dictionary battery;
     battery["voltage_v"] = snapshot.battery.voltage_v;
     battery["sag_v"] = snapshot.battery.sag_v;
@@ -1357,10 +1448,13 @@ Dictionary AeroSimNative::telemetry_snapshot() const {
     dict["battery"] = battery;
     Array pid;
     for (const aerosim::PidAxisTelemetry &axis : snapshot.pid) {
-        pid.append(pid_telemetry_dict(axis));
+        pid.append(pid_telemetry_dict(axis, snapshot.pid_available));
     }
     dict["pid"] = pid;
-    dict["armed"] = snapshot.armed;
+    dict["control_authority"] = snapshot.control_authority.c_str();
+    dict["armed_available"] = snapshot.armed_available;
+    dict["pid_available"] = snapshot.pid_available;
+    dict["armed"] = snapshot.armed_available ? Variant(snapshot.armed) : Variant();
     dict["mode"] = snapshot.mode.c_str();
     dict["source"] = "native_double_buffer";
     return dict;
@@ -1393,6 +1487,51 @@ Dictionary AeroSimNative::a3_drag_configuration() const {
     config["coefficient_y_kg"] = a3_drag.coefficient.y;
     config["coefficient_z_kg"] = a3_drag.coefficient.z;
     config["motor_speed_source"] = "live_motor_thrust_state";
+    return config;
+}
+
+bool AeroSimNative::set_body_drag_model(
+        bool enabled,
+        double coefficient_x,
+        double coefficient_y,
+        double coefficient_z,
+        double frontal_area_x_m2,
+        double frontal_area_y_m2,
+        double frontal_area_z_m2,
+        double center_of_pressure_x_m,
+        double center_of_pressure_y_m,
+        double center_of_pressure_z_m,
+        double air_density_kg_m3) {
+    const aerosim::BodyDragConfig config{
+            enabled,
+            {coefficient_x, coefficient_y, coefficient_z},
+            {frontal_area_x_m2, frontal_area_y_m2, frontal_area_z_m2},
+            {center_of_pressure_x_m, center_of_pressure_y_m, center_of_pressure_z_m},
+    };
+    return hardware_config_.set_body_drag_model(enabled, config, air_density_kg_m3);
+}
+
+bool AeroSimNative::set_config_hash(const String &config_hash) {
+    if (config_hash.is_empty()) {
+        return false;
+    }
+    hardware_config_.config_hash = config_hash.utf8().get_data();
+    return true;
+}
+
+String AeroSimNative::config_hash() const {
+    return hardware_config_.config_hash.c_str();
+}
+
+Dictionary AeroSimNative::body_drag_configuration() const {
+    const aerosim::BodyDragConfig &body_drag = hardware_config_.body_drag;
+    Dictionary config;
+    config["enabled"] = body_drag.enabled;
+    config["drag_coefficient"] = godot_vec3(body_drag.drag_coefficient);
+    config["frontal_area_m2"] = godot_vec3(body_drag.frontal_area_m2);
+    config["center_of_pressure_frd_m"] = godot_vec3(body_drag.center_of_pressure_frd_m);
+    config["air_density_kg_m3"] = hardware_config_.air_density_kg_m3;
+    config["evidence_state"] = "provisional";
     return config;
 }
 
@@ -1711,6 +1850,9 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
             command,
             contact,
             imu_sample.estimated_attitude);
+    if (result.authority == aerosim::PhysicsAuthority::Jolt) {
+        flight_controller_.publish_unavailable_telemetry(result.sample, config, "ANGLE");
+    }
 
     PackedFloat64Array row;
     const aerosim::TrajectorySample &sample = result.sample;
@@ -1896,6 +2038,9 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
             config,
             command,
             contact);
+    if (result.authority == aerosim::PhysicsAuthority::Jolt) {
+        flight_controller_.publish_unavailable_telemetry(result.sample, config, "ACRO");
+    }
 
     PackedFloat64Array row;
     const aerosim::TrajectorySample &sample = result.sample;
@@ -1987,6 +2132,9 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
             imu_sample.barometer_altitude_m,
             contact,
             imu_sample.estimated_attitude);
+    if (result.authority == aerosim::PhysicsAuthority::Jolt) {
+        flight_controller_.publish_unavailable_telemetry(result.sample, config, "ALTITUDE_HOLD");
+    }
 
     PackedFloat64Array row;
     const aerosim::TrajectorySample &sample = result.sample;

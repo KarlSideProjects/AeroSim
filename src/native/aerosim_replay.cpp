@@ -629,41 +629,97 @@ bool parse_vec_object_or_array(const JsonValue &value, Vec3 &result) {
             number_value(*y, result.y) && number_value(*z, result.z);
 }
 
-bool apply_environment_config(const std::string &serialized, SimulationConfig configs[2]) {
+bool integer_value(const JsonValue &value, std::uint64_t &result);
+
+bool parse_environment_config(
+        const std::string &serialized,
+        WindConfig &wind_config,
+        double &air_density) {
     JsonValue root;
     JsonParser parser(serialized);
     if (!parser.parse(root) || root.type != JsonValue::Type::Object) {
         return false;
     }
-    const JsonValue *steady_wind = field(root, "steady_wind");
-    if (steady_wind != nullptr) {
-        Vec3 wind;
-        if (!parse_vec_object_or_array(*steady_wind, wind)) {
-            return false;
-        }
-        configs[0].wind_world_mps = wind;
-        configs[1].wind_world_mps = wind;
+    const JsonValue *atmosphere = field(root, "atmosphere");
+    if (atmosphere == nullptr || atmosphere->type != JsonValue::Type::Object) {
+        return false;
     }
-    const JsonValue *preset = field(root, "wind_preset");
-    if (preset != nullptr) {
-        std::string preset_name;
-        if (!string_value(*preset, preset_name)) {
-            return false;
-        }
-        WindConfig wind_config;
-        if (preset_name == "light") {
-            wind_config = wind_preset(WindPreset::Light);
-        } else if (preset_name == "moderate") {
-            wind_config = wind_preset(WindPreset::Moderate);
-        } else if (preset_name == "severe") {
-            wind_config = wind_preset(WindPreset::Severe);
-        } else if (preset_name != "calm" && !preset_name.empty()) {
-            return false;
-        }
-        if (!preset_name.empty()) {
-            configs[0].wind_turbulence_mps = wind_config.turbulence_sigma_mps;
-            configs[1].wind_turbulence_mps = wind_config.turbulence_sigma_mps;
-        }
+    const JsonValue *preset = field(*atmosphere, "preset");
+    std::string preset_name;
+    if (preset == nullptr || !string_value(*preset, preset_name)) {
+        return false;
+    }
+    if (preset_name == "light") {
+        wind_config = wind_preset(WindPreset::Light);
+    } else if (preset_name == "moderate") {
+        wind_config = wind_preset(WindPreset::Moderate);
+    } else if (preset_name == "severe") {
+        wind_config = wind_preset(WindPreset::Severe);
+    } else if (!preset_name.empty() && preset_name != "calm" && preset_name != "custom") {
+        return false;
+    }
+    const JsonValue *steady_wind = field(*atmosphere, "steady_wind");
+    if (steady_wind == nullptr || !parse_vec_object_or_array(*steady_wind, wind_config.steady_wind_mps)) {
+        return false;
+    }
+    const JsonValue *turbulence = field(*atmosphere, "turbulence_sigma");
+    if (turbulence == nullptr || !parse_vec_object_or_array(*turbulence, wind_config.turbulence_sigma_mps)) {
+        return false;
+    }
+    const auto parse_number = [&](const char *key, double &target) {
+        const JsonValue *value = field(*atmosphere, key);
+        return value != nullptr && number_value(*value, target);
+    };
+    if (!parse_number("reference_airspeed_mps", wind_config.reference_airspeed_mps) ||
+            !parse_number("scale_length_m", wind_config.scale_length_m) ||
+            !parse_number("shear_reference_height_m", wind_config.shear_reference_height_m) ||
+            !parse_number("shear_exponent", wind_config.shear_exponent)) {
+        return false;
+    }
+    const JsonValue *shear_enabled = field(*atmosphere, "shear_enabled");
+    if (shear_enabled == nullptr || !bool_value(*shear_enabled, wind_config.shear_enabled)) {
+        return false;
+    }
+    const JsonValue *seed = field(*atmosphere, "seed");
+    std::uint64_t seed_value = 0;
+    if (seed == nullptr || !integer_value(*seed, seed_value) ||
+            seed_value > std::numeric_limits<std::uint32_t>::max()) {
+        return false;
+    }
+    wind_config.seed = static_cast<std::uint32_t>(seed_value);
+    if (!std::isfinite(wind_config.reference_airspeed_mps) || wind_config.reference_airspeed_mps <= 0.0 ||
+            !std::isfinite(wind_config.scale_length_m) || wind_config.scale_length_m <= 0.0 ||
+            !std::isfinite(wind_config.shear_reference_height_m) || wind_config.shear_reference_height_m <= 0.0 ||
+            !std::isfinite(wind_config.shear_exponent) || wind_config.shear_exponent < 0.0 ||
+            !std::isfinite(wind_config.steady_wind_mps.x) || !std::isfinite(wind_config.steady_wind_mps.y) ||
+            !std::isfinite(wind_config.steady_wind_mps.z) || !std::isfinite(wind_config.turbulence_sigma_mps.x) ||
+            !std::isfinite(wind_config.turbulence_sigma_mps.y) || !std::isfinite(wind_config.turbulence_sigma_mps.z) ||
+            wind_config.turbulence_sigma_mps.x < 0.0 || wind_config.turbulence_sigma_mps.y < 0.0 ||
+            wind_config.turbulence_sigma_mps.z < 0.0) {
+        return false;
+    }
+    const JsonValue *density = field(root, "atmosphere_air_density_kg_m3");
+    if (density == nullptr || !number_value(*density, air_density) ||
+            !std::isfinite(air_density) || air_density <= 0.0) {
+        return false;
+    }
+    return true;
+}
+
+bool apply_environment_config(
+        const std::string &serialized,
+        SimulationConfig configs[2],
+        WindField wind_fields[2]) {
+    WindConfig wind_config;
+    double air_density = 0.0;
+    if (!parse_environment_config(serialized, wind_config, air_density)) {
+        return false;
+    }
+    for (std::size_t index = 0; index < 2; ++index) {
+        wind_fields[index].configure(wind_config);
+        configs[index].wind_world_mps = wind_fields[index].sample(0.0, configs[index].initial_state.position);
+        configs[index].wind_turbulence_mps = wind_fields[index].turbulence(0.0);
+        configs[index].air_density_kg_m3 = air_density;
     }
     return true;
 }
@@ -743,10 +799,32 @@ bool json_config_matches(const std::string &serialized, const SimulationConfig &
             return false;
         }
     }
+    const JsonValue *a3 = field(root, "a3_drag");
     const JsonValue *a4 = field(root, "a4_ground_effect");
     const JsonValue *a5 = field(root, "a5_downwash");
-    if (a4 == nullptr || a4->type != JsonValue::Type::Object || a5 == nullptr || a5->type != JsonValue::Type::Object) {
+    const JsonValue *a6 = field(root, "a6_propwash");
+    const JsonValue *body_drag = field(root, "body_drag");
+    if (a3 == nullptr || a3->type != JsonValue::Type::Object ||
+            a4 == nullptr || a4->type != JsonValue::Type::Object ||
+            a5 == nullptr || a5->type != JsonValue::Type::Object ||
+            a6 == nullptr || a6->type != JsonValue::Type::Object ||
+            body_drag == nullptr || body_drag->type != JsonValue::Type::Object) {
         return false;
+    }
+    bool enabled = false;
+    const std::pair<const char *, double> a3_scalars[] = {
+            {"coefficient_x_kg", expected.a3_drag.coefficient.x},
+            {"coefficient_y_kg", expected.a3_drag.coefficient.y},
+            {"coefficient_z_kg", expected.a3_drag.coefficient.z},
+    };
+    const JsonValue *a3_enabled = field(*a3, "enabled");
+    if (a3_enabled == nullptr || !bool_value(*a3_enabled, enabled) || enabled != expected.a3_drag.enabled) {
+        return false;
+    }
+    for (const auto &scalar : a3_scalars) {
+        if (!json_number_matches(*a3, scalar.first, scalar.second)) {
+            return false;
+        }
     }
     const std::pair<const char *, double> a4_scalars[] = {
             {"kf", expected.a4_ground_effect.kf}, {"ground_effect_coeff", expected.a4_ground_effect.ground_effect_coeff},
@@ -758,7 +836,6 @@ bool json_config_matches(const std::string &serialized, const SimulationConfig &
         }
     }
     const JsonValue *a4_enabled = field(*a4, "enabled");
-    bool enabled = false;
     if (a4_enabled == nullptr || !bool_value(*a4_enabled, enabled) || enabled != expected.a4_ground_effect.enabled) {
         return false;
     }
@@ -778,6 +855,28 @@ bool json_config_matches(const std::string &serialized, const SimulationConfig &
     }
     const JsonValue *a5_enabled = field(*a5, "enabled");
     if (a5_enabled == nullptr || !bool_value(*a5_enabled, enabled) || enabled != expected.a5_downwash.enabled) {
+        return false;
+    }
+    const std::pair<const char *, double> a6_scalars[] = {
+            {"full_collective_angular_accel_rad_s2", expected.a6_propwash.full_collective_angular_accel_rad_s2},
+            {"minimum_wake_entry_speed_mps", expected.a6_propwash.minimum_wake_entry_speed_mps},
+            {"minimum_transverse_rate_rad_s", expected.a6_propwash.minimum_transverse_rate_rad_s},
+    };
+    const JsonValue *a6_enabled = field(*a6, "enabled");
+    if (a6_enabled == nullptr || !bool_value(*a6_enabled, enabled) || enabled != expected.a6_propwash.enabled) {
+        return false;
+    }
+    for (const auto &scalar : a6_scalars) {
+        if (!json_number_matches(*a6, scalar.first, scalar.second)) {
+            return false;
+        }
+    }
+    const JsonValue *body_enabled = field(*body_drag, "enabled");
+    if (body_enabled == nullptr || !bool_value(*body_enabled, enabled) || enabled != expected.body_drag.enabled ||
+            !json_vec_matches(*body_drag, "drag_coefficient", expected.body_drag.drag_coefficient) ||
+            !json_vec_matches(*body_drag, "frontal_area_m2", expected.body_drag.frontal_area_m2) ||
+            !json_vec_matches(*body_drag, "center_of_pressure_frd_m", expected.body_drag.center_of_pressure_frd_m) ||
+            !json_number_matches(*body_drag, "air_density_kg_m3", expected.air_density_kg_m3)) {
         return false;
     }
     return true;
@@ -1048,6 +1147,10 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
     if (require_termination && session.termination_reason.empty()) {
         return invalid(ReplayDiagnosticCode::InvalidSession, "replay termination is required");
     }
+    if (session.events.empty() || session.events.front().type != ReplayEventType::Environment ||
+            session.events.front().timestamp_us != 0) {
+        return invalid(ReplayDiagnosticCode::Corrupt, "replay v2 requires captured atmosphere metadata at timestamp zero");
+    }
     std::uint64_t previous_timestamp_us = 0;
     bool has_previous_timestamp = false;
     for (const ReplayEvent &event : session.events) {
@@ -1105,6 +1208,13 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
                  (event.simulation_operation == ReplaySimulationOperation::StepSeconds &&
                         (event.simulation_value < 0.0 || event.simulation_value > 1000000.0)))) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "invalid replay simulation step value");
+        }
+        if (event.type == ReplayEventType::Environment) {
+            WindConfig wind_config;
+            double air_density = 0.0;
+            if (!parse_environment_config(event.environment_json, wind_config, air_density)) {
+                return invalid(ReplayDiagnosticCode::Corrupt, "replay v2 atmosphere metadata is incomplete");
+            }
         }
     }
     std::uint64_t previous_checkpoint_timestamp_us = 0;
@@ -1663,10 +1773,16 @@ bool ReplaySessionRecorder::record_environment(std::uint64_t timestamp_us, std::
     if (!parser.parse(parsed) || parsed.type != JsonValue::Type::Object) {
         return fail(ReplayDiagnosticCode::Corrupt, "environment replay state must be a JSON object");
     }
+    WindConfig wind_config;
+    double air_density = 0.0;
+    if (!parse_environment_config(environment_json, wind_config, air_density)) {
+        return fail(ReplayDiagnosticCode::Corrupt, "replay v2 atmosphere metadata is incomplete");
+    }
     ReplayEvent event;
     event.timestamp_us = timestamp_us;
     event.type = ReplayEventType::Environment;
-    event.environment_json = compact_json(parsed);
+    environment_json_ = compact_json(parsed);
+    event.environment_json = environment_json_;
     session_.events.push_back(std::move(event));
     diagnostic_ = {};
     return true;
@@ -1685,7 +1801,7 @@ bool ReplaySessionRecorder::record_checkpoint(std::uint64_t timestamp_us, const 
     if (!session_.checkpoints.empty() && timestamp_us < session_.checkpoints.back().timestamp_us) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay checkpoints must be monotonic");
     }
-    session_.checkpoints.push_back({timestamp_us, state, {}, {}, {}});
+    session_.checkpoints.push_back({timestamp_us, state, {}, {}, environment_json_});
     diagnostic_ = {};
     return true;
 }
@@ -1848,6 +1964,17 @@ ReplayLoadResult load_replay_session(
             if (!parse_checkpoint(value, checkpoint)) {
                 return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "invalid replay checkpoint")};
             }
+            const ReplayEvent *environment = nullptr;
+            for (const ReplayEvent &event : session.events) {
+                if (event.type == ReplayEventType::Environment && event.timestamp_us <= checkpoint.timestamp_us &&
+                        (environment == nullptr || event.timestamp_us >= environment->timestamp_us)) {
+                    environment = &event;
+                }
+            }
+            if (environment == nullptr) {
+                return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "replay checkpoint has no atmosphere context")};
+            }
+            checkpoint.environment_json = environment->environment_json;
             session.checkpoints.push_back(std::move(checkpoint));
         }
     }
@@ -1920,6 +2047,9 @@ ReplayRunResult replay_session(
     }
     const SimulationConfig runtime_configs[] = {config.upper, config.lower};
     SimulationConfig active_configs[] = {config.upper, config.lower};
+    WindField wind_fields[2];
+    wind_fields[0].configure(WindConfig{});
+    wind_fields[1].configure(WindConfig{});
     for (std::size_t index = 0; index < 2; ++index) {
         if (!expected_vehicle_config_hashes[index].empty() &&
                 session.vehicles[index].config_manifest_hash != expected_vehicle_config_hashes[index]) {
@@ -2001,6 +2131,7 @@ ReplayRunResult replay_session(
     std::string environment_json;
     std::vector<ReplayRunCheckpoint> checkpoints;
     const bool has_recorded_checkpoints = !session.checkpoints.empty();
+    std::size_t recorded_checkpoint_index = 0;
     std::uint64_t previous_timestamp_us = 0;
     const auto vehicle_index = [&](const std::string &name) {
         return name == session.vehicles[0].name ? 0 : name == session.vehicles[1].name ? 1 : -1;
@@ -2008,27 +2139,36 @@ ReplayRunResult replay_session(
     const auto checkpoint = [&](std::uint64_t timestamp_us) {
         checkpoints.push_back({timestamp_us, state, {last_collisions[0], last_collisions[1]}, scene_objects, environment_json});
     };
-    if (has_recorded_checkpoints && !session.checkpoints.empty() && session.checkpoints.front().timestamp_us == 0) {
-        checkpoint(0);
-    }
+    const auto checkpoint_recorded_at = [&](std::uint64_t timestamp_us) {
+        while (recorded_checkpoint_index < session.checkpoints.size() &&
+                session.checkpoints[recorded_checkpoint_index].timestamp_us == timestamp_us) {
+            checkpoint(timestamp_us);
+            ++recorded_checkpoint_index;
+        }
+    };
     const auto step_vehicle = [&](std::size_t index, RigidBodyState &vehicle_state, SimulationClock &clock,
                                   FlightController &controller, const SimulationConfig &vehicle_config) {
         if (!vehicle_active[index]) {
             return true;
         }
+        SimulationConfig frame_config = vehicle_config;
+        const double time_seconds = static_cast<double>(clock.total_substeps) /
+                static_cast<double>(std::max(1, vehicle_config.substep_hz));
+        frame_config.wind_world_mps = wind_fields[index].sample(time_seconds, vehicle_state.position);
+        frame_config.wind_turbulence_mps = wind_fields[index].turbulence(time_seconds);
         if (has_pending_collision[index]) {
             CollisionStepResult result;
             if (command_modes[index] == ReplayCommandMode::Actuator) {
-                result = collision_switches[index].step_per_motor(vehicle_state, clock, vehicle_config,
+                result = collision_switches[index].step_per_motor(vehicle_state, clock, frame_config,
                         actuator_commands[index], pending_collisions[index]);
             } else if (command_modes[index] == ReplayCommandMode::Acro) {
-                result = collision_switches[index].step_acro(vehicle_state, clock, controller, vehicle_config,
+                result = collision_switches[index].step_acro(vehicle_state, clock, controller, frame_config,
                         acro_commands[index], pending_collisions[index]);
             } else if (command_modes[index] == ReplayCommandMode::AltitudeHold) {
-                result = collision_switches[index].step_altitude_hold(vehicle_state, clock, controller, vehicle_config,
+                result = collision_switches[index].step_altitude_hold(vehicle_state, clock, controller, frame_config,
                         commands[index], measured_altitudes[index], pending_collisions[index], vehicle_state.orientation);
             } else {
-                result = collision_switches[index].step(vehicle_state, clock, controller, vehicle_config,
+                result = collision_switches[index].step(vehicle_state, clock, controller, frame_config,
                         commands[index], pending_collisions[index]);
             }
             has_pending_collision[index] = false;
@@ -2044,14 +2184,14 @@ ReplayRunResult replay_session(
             return true;
         } else {
             if (command_modes[index] == ReplayCommandMode::Actuator) {
-                step_per_motor_physics_frame(vehicle_state, clock, vehicle_config, actuator_commands[index]);
+                step_per_motor_physics_frame(vehicle_state, clock, frame_config, actuator_commands[index]);
             } else if (command_modes[index] == ReplayCommandMode::Acro) {
-                controller.step_acro_mode(vehicle_state, clock, vehicle_config, acro_commands[index]);
+                controller.step_acro_mode(vehicle_state, clock, frame_config, acro_commands[index]);
             } else if (command_modes[index] == ReplayCommandMode::AltitudeHold) {
-                controller.step_altitude_hold_mode(vehicle_state, clock, vehicle_config, commands[index],
+                controller.step_altitude_hold_mode(vehicle_state, clock, frame_config, commands[index],
                         measured_altitudes[index], vehicle_state.orientation);
             } else {
-                controller.step_angle_mode(vehicle_state, clock, vehicle_config, commands[index]);
+                controller.step_angle_mode(vehicle_state, clock, frame_config, commands[index]);
             }
         }
         return true;
@@ -2061,7 +2201,9 @@ ReplayRunResult replay_session(
                 !step_vehicle(1, state.lower, clocks[1], controllers[1], active_configs[1])) {
             return false;
         }
-        checkpoint(timestamp_us);
+        if (!has_recorded_checkpoints) {
+            checkpoint(timestamp_us);
+        }
         return true;
     };
     const auto step_frames = [&](std::int64_t count, std::uint64_t timestamp_us) {
@@ -2069,6 +2211,9 @@ ReplayRunResult replay_session(
             if (!step_frame(timestamp_us)) {
                 return false;
             }
+        }
+        if (has_recorded_checkpoints && count > 0) {
+            checkpoint_recorded_at(timestamp_us);
         }
         return true;
     };
@@ -2084,14 +2229,28 @@ ReplayRunResult replay_session(
         return true;
     };
     const auto advance_us = [&](std::uint64_t duration_us, std::uint64_t timestamp_us) {
-        const long double frames = static_cast<long double>(frame_remainder) +
-                static_cast<long double>(duration_us) * static_cast<long double>(config.upper.physics_hz) / 1000000.0L;
-        if (!std::isfinite(static_cast<double>(frames)) || frames < 0.0L || frames > 1000000.0L) {
-            return false;
+        std::uint64_t cursor_us = timestamp_us - duration_us;
+        const auto advance_segment = [&](std::uint64_t segment_us, std::uint64_t segment_timestamp_us) {
+            const long double frames = static_cast<long double>(frame_remainder) +
+                    static_cast<long double>(segment_us) * static_cast<long double>(config.upper.physics_hz) / 1000000.0L;
+            if (!std::isfinite(static_cast<double>(frames)) || frames < 0.0L || frames > 1000000.0L) {
+                return false;
+            }
+            const auto frame_count = static_cast<std::int64_t>(std::floor(frames));
+            frame_remainder = frames - static_cast<double>(frame_count);
+            return step_frames(frame_count, segment_timestamp_us);
+        };
+        while (has_recorded_checkpoints && recorded_checkpoint_index < session.checkpoints.size()) {
+            const std::uint64_t checkpoint_timestamp_us = session.checkpoints[recorded_checkpoint_index].timestamp_us;
+            if (checkpoint_timestamp_us <= cursor_us || checkpoint_timestamp_us >= timestamp_us) {
+                break;
+            }
+            if (!advance_segment(checkpoint_timestamp_us - cursor_us, checkpoint_timestamp_us)) {
+                return false;
+            }
+            cursor_us = checkpoint_timestamp_us;
         }
-        const auto frame_count = static_cast<std::int64_t>(std::floor(frames));
-        frame_remainder = frames - static_cast<double>(frame_count);
-        if (!step_frames(frame_count, timestamp_us)) {
+        if (!advance_segment(timestamp_us - cursor_us, timestamp_us)) {
             return false;
         }
         return true;
@@ -2175,7 +2334,7 @@ ReplayRunResult replay_session(
         }
         case ReplayEventType::Environment:
             environment_json = event.environment_json;
-            if (!apply_environment_config(environment_json, active_configs)) {
+            if (!apply_environment_config(environment_json, active_configs, wind_fields)) {
                 return failed_run(invalid(ReplayDiagnosticCode::Corrupt, "replay environment state is unsupported"));
             }
             break;
@@ -2268,6 +2427,9 @@ ReplayRunResult replay_session(
         }
         }
         event_index = group_end;
+        if (has_recorded_checkpoints) {
+            checkpoint_recorded_at(timestamp_us);
+        }
     }
     if (!paused && session.termination_timestamp_us >= previous_timestamp_us &&
             !advance_us(session.termination_timestamp_us - previous_timestamp_us, session.termination_timestamp_us)) {
@@ -2275,6 +2437,8 @@ ReplayRunResult replay_session(
     }
     if (!has_recorded_checkpoints) {
         checkpoint(session.termination_timestamp_us);
+    } else {
+        checkpoint_recorded_at(session.termination_timestamp_us);
     }
     if (has_pending_collision[0] || has_pending_collision[1]) {
         return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay collision was not consumed before termination"));
