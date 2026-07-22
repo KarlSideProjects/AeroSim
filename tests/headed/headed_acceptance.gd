@@ -759,11 +759,14 @@ func _audit_transient_localization(runtime: Node, locale_suffix: String) -> void
 
 	var connected_devices: Array[int] = [0]
 	runtime.gamepad_device_state.call("replace_snapshot", connected_devices, connected_devices)
+	runtime.controller_safety_latched = true
 	runtime.call("begin_controller_confirmation", 0)
 	await _settle(1)
 	_expect(runtime.screen == "controller_confirmation", "controller confirmation transient state opens")
+	_expect(runtime.controller_safety_panel != null and not runtime.controller_safety_panel.is_visible_in_tree(), "controller safety banner yields to confirmation modal")
 	_audit_visible_controls(runtime, "controller_confirmation_%s" % locale_suffix)
 
+	runtime.controller_safety_latched = false
 	runtime.last_error_message = "Flight Setup contains an unsupported selection"
 	runtime.screen = "error"
 	runtime.call("_refresh_flight_hud")
