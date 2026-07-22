@@ -4,6 +4,19 @@
 
 namespace aerosim {
 
+struct BodyDragWrench {
+    Vec3 force_body_frd_n;
+    Vec3 torque_body_frd_nm;
+};
+
+bool validate_body_drag_config(const BodyDragConfig &config, double air_density_kg_m3);
+
+BodyDragWrench body_drag_wrench_body_frd(
+        const BodyDragConfig &config,
+        const Vec3 &airspeed_body_frd_mps,
+        const Vec3 &angular_velocity_body_frd_rad_s,
+        double air_density_kg_m3);
+
 struct A3ForwardFlightEquilibrium {
     double pitch_radians = 0.0;
     double thrust_newtons = 0.0;

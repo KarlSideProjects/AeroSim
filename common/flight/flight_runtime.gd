@@ -34,8 +34,9 @@ const MAP_SCENE_PATHS := {
 }
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const AIRSIM_GROUND_BODY_CLEARANCE_M := 0.25
-const TAKEOFF_VELOCITY := Vector3(0.0, 6.0, 0.0)
 const KEYBOARD_FLIGHT_THROTTLE := 0.75
+const TAKEOFF_ASSIST_ALTITUDE_M := 1.0
+const TAKEOFF_ASSIST_MARGIN := 0.08
 const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
@@ -68,9 +69,12 @@ var time_trial: TimeTrialController
 var camera_profile: Dictionary = CameraProfile.default_profile()
 var osd_profile: Dictionary = OsdProfile.default_profile()
 var paused := false
+var participant_mode := false
 var exit_requested := false
 var quit_on_exit := true
 var takeoff_requested := false
+var takeoff_assist_active := false
+var takeoff_assist_throttle := 0.0
 var reset_count := 0
 var last_profile_status := ""
 var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]
@@ -86,7 +90,9 @@ var acro_roll_stick := 0.0
 var acro_pitch_stick := 0.0
 var acro_yaw_stick := 0.0
 var dashboard_layout_mode := "compact"
+var development_license_bypass := OS.is_debug_build()
 var status_diagram: CanvasLayer
+var body_drag_debug_panel: Node
 var main_menu_layer: CanvasLayer
 var main_menu_entries_container: VBoxContainer
 var settings_panel: Control
@@ -210,6 +216,7 @@ func _ready() -> void:
     _build_main_menu()
     _build_flight_hud()
     _build_status_diagram()
+    set_participant_mode(_has_arg("--aerosim-participant-mode"))
     if not _configure_license_provider_from_path(LICENSE_PROVIDER_CONFIG_PATH):
         return
     native = ClassDB.instantiate("AeroSimNative")
@@ -341,6 +348,8 @@ func get_license_snapshot() -> Dictionary:
 
 
 func can_start_quick_fly() -> bool:
+    if development_license_bypass:
+        return true
     var status := String(get_license_snapshot().get("status", "invalid_token"))
     return status in ["online_valid", "offline_grace_valid"]
 
@@ -641,8 +650,8 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     var upper_config_json := _replay_canonical_json(native.call("replay_vehicle_config_manifest"))
     var lower_config_json := _replay_canonical_json(_airsim_secondary_native.call("replay_vehicle_config_manifest"))
     _replay_settings_manifest_hash = _replay_manifest_hash(settings_json)
-    _replay_upper_config_manifest_hash = String(native.call("replay_manifest_hash", upper_config_json)) if native.has_method("replay_manifest_hash") else _replay_manifest_hash(upper_config_json)
-    _replay_lower_config_manifest_hash = String(_airsim_secondary_native.call("replay_manifest_hash", lower_config_json)) if _airsim_secondary_native.has_method("replay_manifest_hash") else _replay_manifest_hash(lower_config_json)
+    _replay_upper_config_manifest_hash = String(native.call("config_hash")) if native.has_method("config_hash") else ""
+    _replay_lower_config_manifest_hash = String(_airsim_secondary_native.call("config_hash")) if _airsim_secondary_native.has_method("config_hash") else ""
     if _replay_settings_manifest_hash.is_empty() or _replay_upper_config_manifest_hash.is_empty() or _replay_lower_config_manifest_hash.is_empty():
         push_error("Complete replay recording manifest hashing failed")
         return
@@ -662,6 +671,8 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
         push_error("Complete replay recording could not start: %s" % String(result.get("diagnostic_message", "unknown error")))
         return
     _replay_recording_active = true
+    if not _record_replay_environment({}):
+        _replay_recording_active = false
 
 
 func _finish_complete_replay_recording(reason: String) -> Dictionary:
@@ -784,12 +795,22 @@ func _record_replay_scene_object(operation: int, snapshot: Dictionary) -> void:
         push_error("Complete replay scene recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
 
 
-func _record_replay_environment(state: Dictionary) -> void:
+func _record_replay_environment(state: Dictionary) -> bool:
     if not _replay_recording_active or native == null:
-        return
-    var result: Dictionary = native.call("record_replay_environment", _replay_timestamp_us(), JSON.stringify(state))
+        return false
+    var replay_state := state.duplicate(true)
+    if native.has_method("wind_configuration"):
+        replay_state["atmosphere"] = _replay_canonical_value(native.call("wind_configuration"))
+    if native.has_method("replay_vehicle_config_manifest"):
+        var manifest: Dictionary = native.call("replay_vehicle_config_manifest")
+        var body_drag: Dictionary = manifest.get("body_drag", {})
+        if body_drag.has("air_density_kg_m3"):
+            replay_state["atmosphere_air_density_kg_m3"] = body_drag["air_density_kg_m3"]
+    var result: Dictionary = native.call("record_replay_environment", _replay_timestamp_us(), JSON.stringify(replay_state))
     if not bool(result.get("ok", false)):
         push_error("Complete replay environment recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        return false
+    return true
 
 
 func _record_replay_checkpoint(timestamp_us: int, upper_row: PackedFloat64Array) -> void:
@@ -879,9 +900,13 @@ func _apply_replay_world_events(events: Array) -> Dictionary:
                 if not bool(world_result.get("ok", false)):
                     return {"ok": false, "error": String(world_result.get("error", "replay scene application failed"))}
             "environment":
-                var environment_result := _airsim_environment("simSetEnvironment", [event.get("state", {})])
-                if not bool(environment_result.get("ok", false)):
-                    return environment_result
+                var world_environment: Dictionary = event.get("state", {}).duplicate(true)
+                world_environment.erase("atmosphere")
+                world_environment.erase("atmosphere_air_density_kg_m3")
+                if not world_environment.is_empty():
+                    var environment_result := _airsim_environment("simSetEnvironment", [world_environment])
+                    if not bool(environment_result.get("ok", false)):
+                        return environment_result
             "simulation_time":
                 if String(event.get("operation", "")) in ["reset", "respawn"]:
                     scene_object_catalog.reset()
@@ -1273,6 +1298,15 @@ func _physics_process(delta: float) -> void:
     if px4_sitl_bridge == null and not native.call("flight_control_armed") and not _airsim_disarm_requested:
         native.call("arm_flight_control", 0.0)
     var throttle := _flight_throttle()
+    if takeoff_assist_active:
+        if not _has_active_gamepad_profile() or absf(_profile_throttle_raw()) > InputProfiles.GamepadProfile.THROTTLE_LOW_THRESHOLD:
+            takeoff_assist_active = false
+        elif drone_body != null and drone_body.global_position.y >= _spawn_position().y + TAKEOFF_ASSIST_ALTITUDE_M:
+            takeoff_assist_active = false
+            session_gamepad_profile.throttle = takeoff_assist_throttle - TAKEOFF_ASSIST_MARGIN
+            throttle = session_gamepad_profile.throttle
+        else:
+            throttle = takeoff_assist_throttle
     var angle_roll := _angle_roll_degrees()
     var angle_pitch := _angle_pitch_degrees()
     var angle_yaw := _angle_yaw_rate_degrees_per_second()
@@ -1724,16 +1758,24 @@ func _publish_px4_lockstep_sensor_if_needed() -> void:
 
 func request_takeoff() -> void:
     screen = "flight"
+    set_dashboard_layout_mode("compact")
     flight_mode = "ANGLE"
     set_paused(false)
     takeoff_requested = true
+    takeoff_assist_active = false
+    takeoff_assist_throttle = 0.0
     update_fallback_status()
+    if _has_active_gamepad_profile() and native != null and native.has_method("hardware_power_diagnostics"):
+        var diagnostics: Dictionary = native.call("hardware_power_diagnostics")
+        var hover_throttle := float(diagnostics.get("hover_throttle", 0.0))
+        if is_finite(hover_throttle) and hover_throttle > 0.0:
+            takeoff_assist_throttle = clampf(hover_throttle + TAKEOFF_ASSIST_MARGIN, 0.0, 1.0)
+            takeoff_assist_active = true
     if drone_body != null:
         if not reset_to_spawn():
             return
         drone_body.freeze = false
         drone_body.sleeping = false
-        drone_body.apply_native_state(drone_body.global_position, drone_body.global_transform.basis.get_rotation_quaternion(), TAKEOFF_VELOCITY, Vector3.ZERO)
     if time_trial != null:
         time_trial.start()
     _refresh_flight_hud()
@@ -1996,6 +2038,7 @@ func enter_preflight() -> void:
         _refresh_flight_hud()
         return
     screen = "preflight"
+    set_dashboard_layout_mode("compact")
     exit_requested = false
     flight_mode = "ANGLE"
     takeoff_requested = false
@@ -2013,10 +2056,13 @@ func select_map(map_id: String, wind_preset: String) -> void:
             "steady_wind": scene_steady_wind_mps,
         }))
     elif native != null:
-        native.call("configure_wind", {
+        var wind_config := {
             "preset": wind_preset,
             "steady_wind": scene_steady_wind_mps,
-        })
+        }
+        native.call("configure_wind", wind_config)
+        if _airsim_secondary_native != null:
+            _airsim_secondary_native.call("configure_wind", wind_config)
 
 func open_map_menu() -> void:
     if has_node("MapMenu"):
@@ -2079,6 +2125,8 @@ func respawn() -> void:
     reset_count += 1
     _reset_airsim_flight_state()
     _airsim_disarm_requested = false
+    takeoff_assist_active = false
+    takeoff_assist_throttle = 0.0
     screen = "flight"
     flight_mode = "ANGLE"
     takeoff_requested = true
@@ -2097,8 +2145,8 @@ func respawn() -> void:
     if time_trial != null:
         time_trial.start()
     if drone_body != null:
-        # ponytail: short reset hold; replace with real throttle input state when controller profiles land.
-        reset_hold_frames = 30
+        # Keep the reset pose stable for one quarter second at the configured physics rate.
+        reset_hold_frames = maxi(1, Engine.physics_ticks_per_second / 4)
     _refresh_flight_hud()
 
 func retry_time_trial() -> void:
@@ -2136,10 +2184,13 @@ func load_map(map_id: String) -> bool:
     _refresh_loaded_map_localization()
     if native != null:
         var applied_wind_preset := selected_wind_preset if not selected_wind_preset.is_empty() else str(descriptor.wind_preset)
-        native.call("configure_wind", {
+        var wind_config := {
             "preset": applied_wind_preset,
             "steady_wind": scene_steady_wind_mps,
-        })
+        }
+        native.call("configure_wind", wind_config)
+        if _airsim_secondary_native != null:
+            _airsim_secondary_native.call("configure_wind", wind_config)
     _configure_time_trial(map_root)
     return reset_to_spawn()
 
@@ -2327,10 +2378,13 @@ func _apply_environment_result(result: Dictionary) -> Dictionary:
     if not result.ok:
         return result
     if native != null:
-        native.call("configure_wind", {
+        var wind_config := {
             "preset": String(result.state.wind_preset),
             "steady_wind": result.state.steady_wind,
-        })
+        }
+        native.call("configure_wind", wind_config)
+        if _airsim_secondary_native != null:
+            _airsim_secondary_native.call("configure_wind", wind_config)
     _apply_environment_visuals(result.state)
     _record_replay_environment(_environment_rpc_snapshot(result.state))
     return {"ok": true, "value": _environment_rpc_snapshot(result.state)}
@@ -2610,6 +2664,8 @@ func set_paused(value: bool, sync_session: bool = true) -> void:
         if not bool(replay_pause_result.get("ok", false)):
             push_error("Complete replay pause recording failed: %s" % String(replay_pause_result.get("diagnostic_message", "unknown error")))
     paused = value
+    if body_drag_debug_panel != null and body_drag_debug_panel.has_method("set_paused"):
+        body_drag_debug_panel.call("set_paused", value)
     if sync_session and airsim_session != null:
         airsim_session.set_paused(value)
     if drone_body != null:
@@ -2618,6 +2674,11 @@ func set_paused(value: bool, sync_session: bool = true) -> void:
     if secondary_drone_body != null:
         secondary_drone_body.freeze = value
         secondary_drone_body.sleeping = value
+
+func set_participant_mode(value: bool) -> void:
+    participant_mode = value
+    if body_drag_debug_panel != null and body_drag_debug_panel.has_method("set_blind_mode"):
+        body_drag_debug_panel.call("set_blind_mode", value)
 
 func _t(key: String) -> String:
     return Localization.translate(key)
@@ -3951,6 +4012,13 @@ func _build_status_diagram() -> void:
     status_diagram.connect("vehicle_selected", Callable(self, "_on_dashboard_vehicle_selected"))
     add_child(status_diagram)
     status_diagram.call("set_layout_mode", dashboard_layout_mode)
+    if OS.is_debug_build():
+        var body_drag_panel_script = load("res://addons/debug_api/aerosim_body_drag_panel.gd")
+        if body_drag_panel_script != null:
+            body_drag_debug_panel = body_drag_panel_script.new()
+            add_child(body_drag_debug_panel)
+            if body_drag_debug_panel.has_method("set_screen_visible"):
+                body_drag_debug_panel.call("set_screen_visible", screen in ["preflight", "flight", "lab_mode", "finish"])
 
 
 func _refresh_camera_panel() -> void:
@@ -4058,6 +4126,8 @@ func _update_status_diagram() -> void:
             }
     var now_timestamp_us := Time.get_ticks_usec()
     status_diagram.call("set_vehicle_snapshots", snapshots, _dashboard_vehicle_name, now_timestamp_us)
+    if body_drag_debug_panel != null and body_drag_debug_panel.has_method("update_from_snapshot"):
+        body_drag_debug_panel.call("update_from_snapshot", primary_snapshot)
     if environment_state != null and status_diagram.has_method("update_environment"):
         status_diagram.update_environment(environment_state.snapshot())
 
@@ -4076,8 +4146,12 @@ func _refresh_flight_hud() -> void:
     if key_hints_label == null or arm_status_label == null or arm_takeoff_button == null:
         return
     var visible_error_message := _localize_fallback_message(last_error_message)
+    if status_diagram != null:
+        status_diagram.call("set_layout_mode", "full" if screen == "lab_mode" else "compact")
     if main_menu_layer != null:
         main_menu_layer.visible = screen in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
+    if body_drag_debug_panel != null and body_drag_debug_panel.has_method("set_screen_visible"):
+        body_drag_debug_panel.call("set_screen_visible", screen in ["preflight", "flight", "lab_mode", "finish"])
     if main_menu_entries_container != null:
         main_menu_entries_container.visible = screen == "main_menu"
     if flight_setup_panel != null:
@@ -4125,7 +4199,7 @@ func _refresh_flight_hud() -> void:
         license_retry_button.visible = actions.has("retry_license")
         license_diagnostics_button.visible = screen == "license_blocked" and actions.has("diagnostics")
         license_exit_button.visible = actions.has("exit")
-    key_hints_label.text = _t("ui.hints")
+    key_hints_label.text = _t("ui.hints.gamepad" if _has_active_gamepad_profile() else "ui.hints")
     _refresh_rates_panel()
     _refresh_graphics_panel()
     arm_takeoff_button.disabled = screen in ["main_menu", "license_blocked"] or (controller_safety_latched and screen != "fallback_prompt")
@@ -4310,8 +4384,14 @@ func _handle_gamepad_button(event: InputEventJoypadButton) -> bool:
     var profile := session_gamepad_profile
     var is_arm := event.button_index == profile.arm_button
     var is_mode := event.button_index == profile.mode_button
-    if not is_arm and not is_mode:
+    var is_acro := event.button_index == InputProfiles.GamepadProfile.ACRO_BUTTON
+    if not is_arm and not is_mode and not is_acro:
         return false
+    if is_acro:
+        if event.pressed:
+            toggle_acro_mode()
+        _refresh_flight_hud()
+        return true
     if is_arm:
         profile.arm_pressed = event.pressed
     else:

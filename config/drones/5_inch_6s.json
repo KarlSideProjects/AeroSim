@@ -69,6 +69,12 @@
       "enabled": false,
       "coefficient_kg": {"x": 0.0, "y": 0.0, "z": 0.0}
     },
+    "body_drag": {
+      "enabled": false,
+      "drag_coefficient": {"x": 0.0, "y": 0.0, "z": 0.0},
+      "center_of_pressure_frd_m": {"x": 0.0, "y": 0.0, "z": 0.0},
+      "air_density_kg_m3": 1.225
+    },
     "a6": {
       "enabled": false,
       "full_collective_angular_accel_rad_s2": 0.0,

@@ -7,16 +7,25 @@ var loader := HardwareConfig.new()
 
 class FakeHardwareNative extends RefCounted:
     var a5 := {}
+    var config_hash_calls := 0
+    var hash_applied_after_a5 := false
 
     func set_hardware_mass_kg(_value: float) -> bool: return true
     func set_hardware_power_model(_a: float, _b: float, _c: float, _d: float, _e: float, _f: float, _g: float) -> bool: return true
     func set_hardware_per_motor_model(_value: Dictionary) -> bool: return true
     func set_hardware_telemetry_model(_a: float, _b: float) -> bool: return true
+    func set_body_drag_model(_enabled: bool, _a: float, _b: float, _c: float, _d: float, _e: float, _f: float, _g: float, _h: float, _i: float, _density: float) -> bool: return true
     func set_a3_drag_model(_enabled: bool, _x: float, _y: float, _z: float) -> bool: return true
     func set_a6_propwash_model(_enabled: bool, _a: float, _b: float, _c: float) -> bool: return true
     func a6_propwash_configuration() -> Dictionary: return {}
     func set_a5_downwash_model(enabled: bool, radius: float, coeff_1: float, coeff_2: float, coeff_3: float) -> bool:
         a5 = {"enabled": enabled, "prop_radius_m": radius, "coeff_1": coeff_1, "coeff_2": coeff_2, "coeff_3": coeff_3}
+        return true
+    func replay_vehicle_config_manifest() -> Dictionary: return {"complete": true}
+    func replay_manifest_hash(_json: String) -> String: return "canonical-config-hash"
+    func set_config_hash(_hash: String) -> bool:
+        config_hash_calls += 1
+        hash_applied_after_a5 = not a5.is_empty()
         return true
 
 
@@ -92,6 +101,8 @@ func test_default_airframe_applies_configured_a5_model_to_runtime() -> void:
     assert_true(bool(runtime.native.a5.enabled))
     assert_almost_eq(float(runtime.native.a5.prop_radius_m), 0.0231348, 0.0000001)
     assert_almost_eq(float(runtime.native.a5.coeff_1), 2267.18, 0.000001)
+    assert_eq(runtime.native.config_hash_calls, 1)
+    assert_true(runtime.native.hash_applied_after_a5)
 
 
 func test_race_airframe_applies_configured_a5_model_to_runtime() -> void:

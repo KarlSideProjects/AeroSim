@@ -3,12 +3,16 @@
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v4.1（AirSim-class minimum；2026-07-14 執行規則補強） |
+| 版本 | v4.1.4（AirSim-class minimum；2026-07-23 Xbox 起飛行為修正） |
 | 文件狀態 | 產品邊界已核准；GitHub issue 同步中 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
+- v4.1.4：Xbox A 的 Arm/Takeoff 必須以目前機體 hover throttle 加受控起飛輔助升至約 1 m，再交回玩家油門；不得使用一次性跳躍速度，X 僅保留 Reset 行為。
+- v4.1.3：HUD 輸入提示必須跟隨目前 active input profile；Xbox profile 顯示 A／START／X／RB／Y／B，KeyboardProfile 才顯示 T／P／R／C／H／Esc，禁止同時使用錯誤裝置提示。
+- v4.1.2：開發用 debug build 的 Quick Fly 不要求授權金鑰；正式／release build 仍必須遵守授權驗證與離線寬限規則。
+- v4.1.1：新增 UI overlay 不重疊、響應式布局與初始 telemetry 尚未就緒時的可讀狀態規範；以人工截圖發現的主選單、Operations Dashboard、Debug API 面板擠壓問題作為本次修正依據。
 - v4.1：新增 Playable Game Milestone、延後人工審核至完整可玩後、固定外部 AirSim v1.8.1 reference checkout 與上游 open/closed issue 稽核，並固定 Codex Luna high 實作及 Sol high 疑難顧問規則。
 - v4.0：產品改為多旋翼模擬平台優先，新增 Player Mode／Lab Mode、AirSim 1.8.1 相容面、PX4 SITL、雙機、基準感測器、Operations Dashboard、Dataset Recording、單一 Industrial Test Range、Godot-native GLB pipeline、Codex AI 視覺 gate 與 Ubuntu x86_64 完整資格驗證；GA 三地圖改為一張正式地圖，主選單改為七入口。
 - v3.2：接受 v3.1 審查 C1–C4、H1–H4、H7–H10；H5 改分期不降級（3 張地圖仍為 GA Must）；H6 分期交付並移除溫度欄位（無熱模型即無真值）；新增已知物理近似邊界聲明。
@@ -208,7 +212,9 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 #### 3.5.4 人機操作 UI/UX（Human-Drone Operation，回應 v3.0 審查）
 
 **主選單第一層固定七入口**：`Quick Fly`、`Lab Mode`、`Controller`、`Drone`、`Map`、`Settings`、`Quit`。
-- `Quick Fly`：預設機體 + 預設地圖 + 無風直接進場；若相容手把尚未確認固定映射，先導入 Controller Setup 而非帶著失控狀態進場。
+- `Quick Fly`：預設機體 + 預設地圖 + 無風直接進場；開發用 debug build 不要求授權金鑰，正式／release build 仍執行授權 gate；若相容手把尚未確認固定映射，先導入 Controller Setup 而非帶著失控狀態進場。
+- 飛行 HUD 的操作提示必須依 active input profile 顯示實際可用裝置按鈕；Xbox profile 不得顯示 T／P 等鍵盤提示，Keyboard fallback 才顯示鍵盤提示。
+- Xbox profile 的 A 必須執行解鎖／受控起飛：使用目前硬體設定的 hover throttle 加小幅起飛裕度，升至約 1 m 後交回右側油門桿；不得以瞬間向上速度模擬跳躍。X 僅執行 Reset，不得觸發起飛。
 - `Lab Mode`：進入完整 Operations Dashboard，顯示雙機、RPC、PX4、感測器、錄製與環境狀態。
 - `Map`：最低成果仍保留選擇畫面，但 catalog 只有 `Industrial Test Range`，不得顯示假地圖或 Coming Soon 卡片。
 - `Quit`：Ubuntu desktop 可由 UI 正常退出，不依賴開發者快捷鍵。
@@ -256,7 +262,17 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 
 **首飛輔助（非課程）**：首次進場顯示小型 preflight 面板（`Throttle low` / `Arm` / `Mode` / `Reset` 四狀態燈），起飛後自動隱藏，可於設定停用。無教學文字、無進度保存。
 
-#### 3.5.5 機體狀態圖（Drone Status Diagram）
+#### 3.5.5 螢幕布局與 Overlay Collision Contract（新增）
+
+**剛性約束：所有同時可見的 UI surface 必須可讀、可操作且互不重疊。** 主選單、Operations Dashboard、Debug API 氣動面板、飛行 HUD、Pause Overlay 與錯誤提示必須各自使用保留的 Control 區域；不得以互相覆蓋的固定座標碰運氣。
+
+- 必須使用 Godot Control 的 anchors、containers、minimum size 與 viewport-aware layout；視窗大小改變時重新計算布局，不得只為單一解析度硬編碼位置。
+- 頭戴驗收至少檢查 1280×720、1280×800 與 1920×1080；每個可見 root UI surface 的矩形必須完全位於 viewport 內，彼此至少保留 8 px 間距，不得遮擋文字、按鈕、飛行視野中央 1/3 或其他 surface。
+- Lab Mode 的完整 Operations Dashboard 與 Debug API 氣動面板必須能同時存在；若內容超過可用高度，必須採用可辨識的 scroll/collapse，而非壓縮到文字互相覆蓋。
+- Native telemetry 尚未發布時，面板必須顯示明確的 `waiting/unavailable` 狀態；不得在正常冷啟動畫面顯示 `SCHEMA/INVALID`、NaN 或空白欄位作為暫態 placeholder。
+- Headed acceptance 必須輸出每個 surface 的 geometry evidence，並以矩形相交與 viewport containment 斷言阻擋回歸；人工截圖若發現重疊，視為 UI gate failure，不得以功能測試通過抵銷。
+
+#### 3.5.6 機體狀態圖（Drone Status Diagram）
 
 **目的**：以俯視機體示意圖即時顯示各部位所受之動態影響，讓玩家「看見」物理層正在發生什麼。
 

@@ -57,6 +57,7 @@ func _run() -> void:
 	_install_deterministic_valid_license(runtime)
 
 	await _snapshot("00_cold_start")
+	_audit_overlay_geometry(runtime, "main_menu")
 	_expect(runtime.native != null, "native runtime is registered")
 	_expect(root.get_camera_3d() != null, "cold start has an active Camera3D")
 	_expect(runtime.screen == "main_menu", "cold start opens the main menu")
@@ -88,6 +89,7 @@ func _run() -> void:
 	if lab_entry != null:
 		_click(lab_entry)
 	await _settle(2)
+	_audit_overlay_geometry(runtime, "lab_mode")
 	var dashboard: CanvasLayer = runtime.status_diagram
 	_expect(runtime.screen == "lab_mode" and runtime.native == native_before_lab, "Lab Mode keeps the same native runtime")
 	_expect(dashboard != null and dashboard.call("get_layout_mode") == "full" and bool(dashboard.call("get_render_evidence").get("visible", false)), "Lab Mode shows the full Operations Dashboard")
@@ -515,6 +517,7 @@ func _run() -> void:
 
 	_tap(KEY_T)
 	await _settle(60)
+	_audit_overlay_geometry(runtime, "flight")
 	await _snapshot("03_takeoff")
 	_expect(runtime.takeoff_requested, "T requests takeoff after Quick Fly")
 
@@ -855,7 +858,7 @@ func _audit_visible_controls(node: Node, screen_name: String) -> void:
 				_expect(false, "localized text controls overlap: %s and %s" % [first.get_path(), second.get_path()])
 	var screens: Dictionary = _layout_audit_evidence.get("screens", {})
 	screens[screen_name] = {"text_controls": text_controls.size(), "clipping_count": clipping_count, "overlap_count": overlap_count}
-	_layout_audit_evidence = {"screens": screens}
+	_layout_audit_evidence["screens"] = screens
 
 func _collect_visible_text_controls(node: Node, controls: Array[Control]) -> void:
 	for child in node.get_children():
@@ -864,6 +867,50 @@ func _collect_visible_text_controls(node: Node, controls: Array[Control]) -> voi
 			if control.is_visible_in_tree() and (control is Label or control is Button or control is OptionButton or control is LineEdit or control is TextEdit):
 				controls.append(control)
 		_collect_visible_text_controls(child, controls)
+
+func _audit_overlay_geometry(runtime: Node, screen_name: String) -> void:
+	var surfaces: Array[Dictionary] = []
+	_add_overlay_surface(surfaces, "main_menu", runtime.get_node_or_null("MainMenu/Entries"))
+	_add_overlay_surface(surfaces, "flight_hud", runtime.get_node_or_null("FlightHud/StatusMargin/StatusPanel"))
+	var dashboard: CanvasLayer = runtime.status_diagram
+	if dashboard != null:
+		_add_overlay_surface(surfaces, "operations_dashboard", dashboard.get_node_or_null("DashboardMargin/DashboardPanel"))
+	var body_drag: Node = runtime.body_drag_debug_panel
+	if body_drag != null:
+		var body_panel: Control = body_drag.get("_panel")
+		if body_panel != null:
+			var body_surface: Control = body_panel.get("_scroll") if body_panel.get("_scroll") != null else body_panel.get("container")
+			_add_overlay_surface(surfaces, "body_drag", body_surface)
+
+	var viewport_rect := root.get_viewport().get_visible_rect()
+	var geometry: Dictionary = {}
+	for surface in surfaces:
+		var control: Control = surface.control
+		var rect := control.get_global_rect()
+		_expect(viewport_rect.encloses(rect), "%s overlay remains inside viewport: %s" % [screen_name, surface.name])
+		geometry[surface.name] = {
+			"left": rect.position.x,
+			"top": rect.position.y,
+			"right": rect.end.x,
+			"bottom": rect.end.y,
+			"width": rect.size.x,
+			"height": rect.size.y,
+		}
+	for first_index in range(surfaces.size()):
+		var first: Control = surfaces[first_index].control
+		for second_index in range(first_index + 1, surfaces.size()):
+			var second: Control = surfaces[second_index].control
+			var first_rect := first.get_global_rect()
+			var second_rect := second.get_global_rect()
+			_expect(first_rect.grow(8.0).intersection(second_rect).get_area() <= 0.5,
+					"%s overlays keep 8 px spacing: %s and %s" % [screen_name, surfaces[first_index].name, surfaces[second_index].name])
+	var overlays: Dictionary = _layout_audit_evidence.get("overlays", {})
+	overlays[screen_name] = geometry
+	_layout_audit_evidence["overlays"] = overlays
+
+func _add_overlay_surface(surfaces: Array[Dictionary], name: String, node: Node) -> void:
+	if node is Control and node.is_visible_in_tree():
+		surfaces.append({"name": name, "control": node})
 
 func _compare_locale_screenshots(zh_tw_image: Image, en_image: Image) -> void:
 	var same_dimensions := zh_tw_image.get_size() == en_image.get_size()

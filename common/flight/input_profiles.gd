@@ -2,6 +2,7 @@ class GamepadProfile:
     const SCHEMA_VERSION := 1
     const RAW_AXIS_DEADZONE := 0.08
     const THROTTLE_LOW_THRESHOLD := RAW_AXIS_DEADZONE
+    const ACRO_BUTTON := JOY_BUTTON_RIGHT_SHOULDER
 
     var deadzone := RAW_AXIS_DEADZONE
     var throttle := 0.0

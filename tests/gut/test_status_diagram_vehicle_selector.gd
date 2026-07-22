@@ -66,6 +66,19 @@ func test_dashboard_supports_compact_and_full_layouts() -> void:
     assert_eq(dashboard.get_layout_mode(), "compact")
 
 
+func test_dashboard_geometry_fits_supported_headed_viewports() -> void:
+    var dashboard := StatusDiagramDebug.new()
+    autofree(dashboard)
+    dashboard._ready()
+    for viewport_size in [Vector2(1280, 720), Vector2(1280, 800), Vector2(1920, 1080)]:
+        var compact_size := Vector2(absf(dashboard._dashboard_margin.offset_left), dashboard._dashboard_margin.offset_bottom)
+        assert_true(compact_size.x <= viewport_size.x and compact_size.y <= viewport_size.y)
+    dashboard.set_layout_mode("full")
+    for viewport_size in [Vector2(1280, 720), Vector2(1280, 800), Vector2(1920, 1080)]:
+        var full_size := Vector2(absf(dashboard._dashboard_margin.offset_left), dashboard._dashboard_margin.offset_bottom)
+        assert_true(full_size.x <= viewport_size.x and full_size.y <= viewport_size.y)
+
+
 func test_dashboard_marks_snapshot_freshness_and_reports_rate_and_latency() -> void:
     var dashboard := StatusDiagramDebug.new()
     autofree(dashboard)
@@ -126,6 +139,26 @@ func test_unknown_dashboard_mode_is_catalog_backed() -> void:
 
     assert_string_contains(dashboard._labels.mode.text, "未知模式")
     assert_false(dashboard._labels.mode.text.contains("UNSUPPORTED_RUNTIME_MODE"))
+
+
+func test_px4_unavailable_authority_fields_are_not_rendered_as_disarmed_or_unsaturated() -> void:
+    var dashboard := StatusDiagramDebug.new()
+    autofree(dashboard)
+    dashboard._ready()
+    var snapshot := _live_snapshot("DroneA", 1_000_000)
+    snapshot.merge({
+        "mode": "PX4_ACTUATOR",
+        "armed": null,
+        "armed_available": false,
+        "pid": [{"output": null, "saturated": null}],
+        "pid_available": false,
+    })
+
+    dashboard.update_from_snapshot(snapshot, 1_000_000)
+
+    assert_string_contains(dashboard._labels.mode.text, "UNAVAILABLE")
+    assert_false(dashboard._labels.mode.text.contains("ARM OFF"))
+    assert_string_contains(dashboard._labels.pid.text, "UNAVAILABLE")
 
 
 func test_dashboard_localizes_environment_after_locale_switch() -> void:

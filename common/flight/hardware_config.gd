@@ -51,6 +51,12 @@ const FACTORY_DEFAULT := {
     "esc": {"current_limit_a": 45, "protocol": "DShot600", "update_rate_hz": 600},
     "aerodynamics": {
         "a3": {"enabled": false, "coefficient_kg": {"x": 0.0, "y": 0.0, "z": 0.0}},
+        "body_drag": {
+            "enabled": false,
+            "drag_coefficient": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "center_of_pressure_frd_m": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "air_density_kg_m3": 1.225
+        },
         "a6": {
             "enabled": false,
             "full_collective_angular_accel_rad_s2": 0.0,
@@ -266,6 +272,33 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             last_error = "native runtime rejected derived power model"
             push_error(last_error)
             return false
+        if not runtime.native.has_method("set_body_drag_model"):
+            last_ok = false
+            last_error = "native runtime missing body drag model setter"
+            push_error(last_error)
+            return false
+        var body_drag: Dictionary = current.get("aerodynamics", {}).get("body_drag", {})
+        var body_drag_coefficient: Dictionary = body_drag.get("drag_coefficient", {})
+        var center_of_pressure: Dictionary = body_drag.get("center_of_pressure_frd_m", {})
+        var frontal_area: Dictionary = current.get("frame", {}).get("frontal_area_m2", {})
+        if not runtime.native.call(
+                "set_body_drag_model",
+                bool(body_drag.get("enabled", false)),
+                float(body_drag_coefficient.get("x", 0.0)),
+                float(body_drag_coefficient.get("y", 0.0)),
+                float(body_drag_coefficient.get("z", 0.0)),
+                float(frontal_area.get("x", 0.0)),
+                float(frontal_area.get("y", 0.0)),
+                float(frontal_area.get("z", 0.0)),
+                float(center_of_pressure.get("x", 0.0)),
+                float(center_of_pressure.get("y", 0.0)),
+                float(center_of_pressure.get("z", 0.0)),
+                float(body_drag.get("air_density_kg_m3", 1.225))
+            ):
+            last_ok = false
+            last_error = "native runtime rejected body drag model"
+            push_error(last_error)
+            return false
         if not runtime.native.call("set_hardware_per_motor_model", per_motor_model):
             last_ok = false
             last_error = "native runtime rejected derived per-motor model"
@@ -333,6 +366,15 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             last_error = "native runtime rejected A5 downwash model"
             push_error(last_error)
             return false
+        if runtime.native.has_method("set_config_hash") and runtime.native.has_method("replay_vehicle_config_manifest"):
+            var config_manifest: Dictionary = runtime.native.call("replay_vehicle_config_manifest")
+            var config_json: String = runtime._replay_canonical_json(config_manifest) if runtime.has_method("_replay_canonical_json") else JSON.stringify(config_manifest)
+            var config_hash := String(runtime.native.call("replay_manifest_hash", config_json)) if runtime.native.has_method("replay_manifest_hash") else ""
+            if config_hash.is_empty() or not runtime.native.call("set_config_hash", config_hash):
+                last_ok = false
+                last_error = "native runtime rejected canonical config hash"
+                push_error(last_error)
+                return false
     runtime.set_meta("hardware_config_version", current.version)
     runtime.set_meta("hardware_config_path", path)
     return true

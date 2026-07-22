@@ -45,7 +45,67 @@ Vec3 rotate(const Quat &q, const Vec3 &v) {
     return {rotated.x, rotated.y, rotated.z};
 }
 
-void integrate(RigidBodyState &state, const SimulationConfig &config, double dt) {
+Vec3 rotate_inverse(const Quat &q, const Vec3 &v) {
+    const Quat vector{v.x, v.y, v.z, 0.0};
+    const Quat inverse{-q.x, -q.y, -q.z, q.w};
+    const Quat rotated = multiply(multiply(inverse, vector), q);
+    return {rotated.x, rotated.y, rotated.z};
+}
+
+Vec3 frd_inertia_to_y_up_axes(const Vec3 &frd) {
+    return {frd.x, frd.z, frd.y};
+}
+
+struct AerodynamicStepValues {
+    Vec3 airspeed_body_frd_mps;
+    Vec3 body_drag_force_body_frd_n;
+    Vec3 body_drag_torque_body_frd_nm;
+    Vec3 a3_drag_force_body_frd_n;
+    double air_density_kg_m3 = 1.225;
+    bool body_drag_force_applied = false;
+    bool body_drag_torque_applied = false;
+};
+
+AerodynamicStepValues aerodynamic_values(
+        const RigidBodyState &state,
+        const SimulationConfig &config,
+        const std::array<double, 4> &motor_speeds) {
+    const Vec3 relative_air_velocity = state.velocity - config.wind_world_mps;
+    const Vec3 airspeed_body_frd = y_up_to_frd(rotate_inverse(state.orientation, relative_air_velocity));
+    const BodyDragWrench body_drag = body_drag_wrench_body_frd(
+            config.body_drag,
+            airspeed_body_frd,
+            y_up_to_frd(state.angular_velocity),
+            config.air_density_kg_m3);
+    const bool body_drag_valid = config.body_drag.enabled &&
+            validate_body_drag_config(config.body_drag, config.air_density_kg_m3);
+    return {
+            airspeed_body_frd,
+            body_drag.force_body_frd_n,
+            body_drag.torque_body_frd_nm,
+            y_up_to_frd(a3_drag_force_body(
+                    config.a3_drag, state.orientation, relative_air_velocity, motor_speeds)),
+            config.air_density_kg_m3,
+            body_drag_valid,
+            body_drag_valid,
+    };
+}
+
+AerodynamicStepValues add_aerodynamic_values(
+        const AerodynamicStepValues &left,
+        const AerodynamicStepValues &right) {
+    return {
+            left.airspeed_body_frd_mps + right.airspeed_body_frd_mps,
+            left.body_drag_force_body_frd_n + right.body_drag_force_body_frd_n,
+            left.body_drag_torque_body_frd_nm + right.body_drag_torque_body_frd_nm,
+            left.a3_drag_force_body_frd_n + right.a3_drag_force_body_frd_n,
+            right.air_density_kg_m3,
+            left.body_drag_force_applied || right.body_drag_force_applied,
+            left.body_drag_torque_applied || right.body_drag_torque_applied,
+    };
+}
+
+AerodynamicStepValues integrate(RigidBodyState &state, const SimulationConfig &config, double dt) {
     const double ground_lift = a4_ground_effect_lift_newtons(config.a4_ground_effect, state.position.y);
     const Vec3 thrust_world = rotate(state.orientation, {0.0, config.total_thrust_newtons + ground_lift, 0.0});
     std::array<double, 4> motor_speeds{};
@@ -55,10 +115,11 @@ void integrate(RigidBodyState &state, const SimulationConfig &config, double dt)
                 config.per_motor.max_thrust_per_motor_newtons,
                 config.max_motor_rpm);
     }
-    const Vec3 relative_air_velocity = state.velocity - config.wind_world_mps;
+    AerodynamicStepValues aero = aerodynamic_values(state, config, motor_speeds);
     const Vec3 drag_world = rotate(state.orientation, a3_drag_force_body(
-            config.a3_drag, state.orientation, relative_air_velocity, motor_speeds));
-    const Vec3 force_world = thrust_world + drag_world;
+            config.a3_drag, state.orientation, state.velocity - config.wind_world_mps, motor_speeds));
+    const Vec3 body_drag_world = rotate(state.orientation, frd_to_y_up(aero.body_drag_force_body_frd_n));
+    const Vec3 force_world = thrust_world + drag_world + body_drag_world;
     const Vec3 acceleration{
             force_world.x / config.mass_kg,
             force_world.y / config.mass_kg - config.gravity_mps2,
@@ -67,6 +128,16 @@ void integrate(RigidBodyState &state, const SimulationConfig &config, double dt)
 
     state.velocity = state.velocity + acceleration * dt;
     state.position = state.position + state.velocity * dt;
+
+    if (aero.body_drag_torque_applied && validate_per_motor_config(config.per_motor)) {
+        const Vec3 body_drag_torque_y_up = frd_to_y_up(aero.body_drag_torque_body_frd_nm);
+        const Vec3 inertia_y_up = frd_inertia_to_y_up_axes(config.per_motor.inertia_kg_m2);
+        state.angular_velocity.x += body_drag_torque_y_up.x / inertia_y_up.x * dt;
+        state.angular_velocity.y += body_drag_torque_y_up.y / inertia_y_up.y * dt;
+        state.angular_velocity.z += body_drag_torque_y_up.z / inertia_y_up.z * dt;
+    } else {
+        aero.body_drag_torque_applied = false;
+    }
 
     const Quat omega{
             state.angular_velocity.x,
@@ -81,6 +152,7 @@ void integrate(RigidBodyState &state, const SimulationConfig &config, double dt)
             state.orientation.z + 0.5 * q_dot.z * dt,
             state.orientation.w + 0.5 * q_dot.w * dt,
     });
+    return aero;
 }
 
 } // namespace
@@ -200,7 +272,7 @@ bool valid_motor_commands(const MotorCommands &commands) {
     return true;
 }
 
-void integrate_per_motor(
+AerodynamicStepValues integrate_per_motor(
         RigidBodyState &state,
         const SimulationConfig &config,
         const MotorCommands &commands,
@@ -238,7 +310,6 @@ void integrate_per_motor(
 
     const double ground_lift = a4_ground_effect_lift_newtons(config.a4_ground_effect, state.position.y);
     body_force.y += ground_lift;
-    const Vec3 relative_air_velocity = state.velocity - config.wind_world_mps;
     std::array<double, 4> motor_speeds{};
     for (std::size_t index = 0; index < motor_speeds.size(); ++index) {
         motor_speeds[index] = motor_speed_rad_s_from_thrust(
@@ -246,11 +317,14 @@ void integrate_per_motor(
                 config.per_motor.max_thrust_per_motor_newtons,
                 config.max_motor_rpm);
     }
+    const AerodynamicStepValues aero = aerodynamic_values(state, config, motor_speeds);
+    body_force = body_force + frd_to_y_up(aero.body_drag_force_body_frd_n);
+    body_torque = body_torque + frd_to_y_up(aero.body_drag_torque_body_frd_nm);
     const Vec3 configured_external_force = config.external_force_world +
             (config.external_force_provider ? config.external_force_provider(state.position) : Vec3{});
     const Vec3 force_world = rotate(state.orientation, body_force) + external_force_world + configured_external_force +
             rotate(state.orientation, a3_drag_force_body(
-                    config.a3_drag, state.orientation, relative_air_velocity, motor_speeds));
+                    config.a3_drag, state.orientation, state.velocity - config.wind_world_mps, motor_speeds));
     const Vec3 acceleration{
             force_world.x / config.mass_kg,
             force_world.y / config.mass_kg - config.gravity_mps2,
@@ -259,9 +333,10 @@ void integrate_per_motor(
     state.velocity = state.velocity + acceleration * dt;
     state.position = state.position + state.velocity * dt;
 
-    state.angular_velocity.x += body_torque.x / config.per_motor.inertia_kg_m2.x * dt;
-    state.angular_velocity.y += body_torque.y / config.per_motor.inertia_kg_m2.y * dt;
-    state.angular_velocity.z += body_torque.z / config.per_motor.inertia_kg_m2.z * dt;
+    const Vec3 inertia_y_up = frd_inertia_to_y_up_axes(config.per_motor.inertia_kg_m2);
+    state.angular_velocity.x += body_torque.x / inertia_y_up.x * dt;
+    state.angular_velocity.y += body_torque.y / inertia_y_up.y * dt;
+    state.angular_velocity.z += body_torque.z / inertia_y_up.z * dt;
     double collective = 0.0;
     if (config.per_motor.max_thrust_per_motor_newtons > 0.0) {
         for (double thrust : state.motor_thrust_newtons) {
@@ -286,6 +361,7 @@ void integrate_per_motor(
             state.orientation.z + 0.5 * q_dot.z * dt,
             state.orientation.w + 0.5 * q_dot.w * dt,
     });
+    return aero;
 }
 
 } // namespace
@@ -295,11 +371,11 @@ double quat_norm(const Quat &q) {
 }
 
 Vec3 frd_to_y_up(const Vec3 &frd) {
-    return {frd.x, frd.z, -frd.y};
+    return {frd.x, -frd.z, frd.y};
 }
 
 Vec3 y_up_to_frd(const Vec3 &y_up) {
-    return {y_up.x, -y_up.z, y_up.y};
+    return {y_up.x, y_up.z, -y_up.y};
 }
 
 double first_order_motor_response(double current, double target, double tau_s, double dt_s) {
@@ -398,6 +474,7 @@ TrajectorySample step_per_motor_physics_frame(
     const RigidBodyState initial_state = state;
     const SimulationClock initial_clock = clock;
     Vec3 propwash_sum;
+    AerodynamicStepValues aerodynamic_sum;
     const double substeps_per_frame = static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz);
     const double dt = 1.0 / static_cast<double>(config.substep_hz);
     clock.substep_accumulator += substeps_per_frame;
@@ -410,18 +487,27 @@ TrajectorySample step_per_motor_physics_frame(
             clock = initial_clock;
             return {};
         }
-        integrate_per_motor(state, config, commands, {}, dt);
+        const AerodynamicStepValues aerodynamic = integrate_per_motor(state, config, commands, {}, dt);
+        aerodynamic_sum = add_aerodynamic_values(aerodynamic_sum, aerodynamic);
         propwash_sum = propwash_sum + state.propwash_disturbance_rad_s2;
     }
     clock.total_substeps += static_cast<std::uint64_t>(frame_substeps);
     const Vec3 propwash_average = frame_substeps > 0
             ? propwash_sum * (1.0 / static_cast<double>(frame_substeps))
             : Vec3{};
+    const double mean_scale = frame_substeps > 0 ? 1.0 / static_cast<double>(frame_substeps) : 0.0;
     return {
             static_cast<double>(clock.total_substeps) * dt,
             state,
             clock.total_substeps,
             propwash_average,
+            aerodynamic_sum.airspeed_body_frd_mps * mean_scale,
+            aerodynamic_sum.body_drag_force_body_frd_n * mean_scale,
+            aerodynamic_sum.body_drag_torque_body_frd_nm * mean_scale,
+            aerodynamic_sum.a3_drag_force_body_frd_n * mean_scale,
+            config.air_density_kg_m3,
+            aerodynamic_sum.body_drag_force_applied,
+            aerodynamic_sum.body_drag_torque_applied,
     };
 }
 
@@ -509,17 +595,26 @@ TrajectorySample step_physics_frame(
     const auto frame_substeps = static_cast<std::int32_t>(std::floor(clock.substep_accumulator + 1e-12));
     clock.substep_accumulator -= frame_substeps;
 
+    AerodynamicStepValues aerodynamic_sum;
     for (std::int32_t step = 0; step < frame_substeps; ++step) {
         before_substep(dt);
-        integrate(state, config, dt);
+        aerodynamic_sum = add_aerodynamic_values(aerodynamic_sum, integrate(state, config, dt));
     }
     clock.total_substeps += static_cast<std::uint64_t>(frame_substeps);
 
+    const double mean_scale = frame_substeps > 0 ? 1.0 / static_cast<double>(frame_substeps) : 0.0;
     return {
             static_cast<double>(clock.total_substeps) * dt,
             state,
             clock.total_substeps,
             {},
+            aerodynamic_sum.airspeed_body_frd_mps * mean_scale,
+            aerodynamic_sum.body_drag_force_body_frd_n * mean_scale,
+            aerodynamic_sum.body_drag_torque_body_frd_nm * mean_scale,
+            aerodynamic_sum.a3_drag_force_body_frd_n * mean_scale,
+            config.air_density_kg_m3,
+            aerodynamic_sum.body_drag_force_applied,
+            aerodynamic_sum.body_drag_torque_applied,
     };
 }
 

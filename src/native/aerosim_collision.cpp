@@ -72,6 +72,13 @@ TrajectorySample sample_jolt_frame(
             state,
             clock.total_substeps,
             {},
+            {},
+            {},
+            {},
+            {},
+            config.air_density_kg_m3,
+            false,
+            false,
     };
 }
 
