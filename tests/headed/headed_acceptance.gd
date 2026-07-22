@@ -696,6 +696,7 @@ func _audit_localization(runtime: Node) -> void:
 	runtime.show_graphics()
 	await _settle(1)
 	_audit_visible_controls(runtime, "graphics_zh_tw")
+	await _audit_transient_localization(runtime, "zh_tw")
 	runtime.show_settings()
 	await _settle(1)
 	_expect(runtime.load_map("industrial_yard"), "Traditional Chinese can load the Industrial Yard")
@@ -722,10 +723,49 @@ func _audit_localization(runtime: Node) -> void:
 	runtime.show_graphics()
 	await _settle(1)
 	_audit_visible_controls(runtime, "graphics_en")
+	await _audit_transient_localization(runtime, "en")
 	runtime.show_settings()
 	await _settle(1)
 	var en_image := await _snapshot("09_en_settings_roundtrip")
 	_compare_locale_screenshots(zh_tw_image, en_image)
+
+func _audit_transient_localization(runtime: Node, locale_suffix: String) -> void:
+	runtime.screen = "flight"
+	runtime.set_paused(true, false)
+	runtime.call("_refresh_flight_hud")
+	await _settle(1)
+	_audit_visible_controls(runtime, "pause_%s" % locale_suffix)
+
+	runtime.call("_on_trial_finished", 12.34)
+	await _settle(1)
+	_audit_visible_controls(runtime, "finish_%s" % locale_suffix)
+
+	runtime.call("_show_license_blocked", "Quick Fly unavailable: license invalid_token")
+	await _settle(1)
+	_audit_visible_controls(runtime, "license_%s" % locale_suffix)
+
+	runtime.call("_show_keyboard_fallback", "Unsupported controller; Xbox default profile is unavailable. KeyboardProfile fallback active (non-sim control)")
+	await _settle(1)
+	_audit_visible_controls(runtime, "fallback_%s" % locale_suffix)
+
+	var controller_device_id := int(runtime.session_gamepad_device_id)
+	_expect(controller_device_id >= 0, "headed transient audit has a connected controller for confirmation")
+	if controller_device_id >= 0:
+		runtime.call("begin_controller_confirmation", controller_device_id)
+		await _settle(1)
+		_expect(runtime.screen == "controller_confirmation", "controller confirmation transient state opens")
+		_audit_visible_controls(runtime, "controller_confirmation_%s" % locale_suffix)
+
+	runtime.last_error_message = "Flight Setup contains an unsupported selection"
+	runtime.screen = "error"
+	runtime.call("_refresh_flight_hud")
+	await _settle(1)
+	_audit_visible_controls(runtime, "error_%s" % locale_suffix)
+
+	runtime.set_paused(false, false)
+	runtime.last_error_message = ""
+	runtime.show_settings()
+	await _settle(1)
 
 func _audit_visible_controls(node: Node, screen_name: String) -> void:
 	var viewport_rect := root.get_viewport().get_visible_rect()
