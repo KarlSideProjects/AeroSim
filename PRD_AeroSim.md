@@ -112,7 +112,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | 遊戲引擎 | **Godot 4.7（版本鎖定：專案凍結至特定 patch 版與 export template hash，記錄於 repo；引擎升級須重跑 G0–G3 全部 Gate）** | MIT | 無 |
 | 物理引擎 | Jolt Physics（Godot 4.6+ 預設） | MIT | 無 |
 | 飛控核心語言 | C++ GDExtension（1kHz PID、六自由度積分、氣動模型、硬體參數模型皆在此層）。C# 於 iOS/Android 屬實驗性、Web 不支援，故不採用 | MIT（godot-cpp） | 無 |
-| 桌面渲染 | Forward+（Vulkan）+ SDFGI + Volumetric Fog | MIT | 無 |
+| 桌面渲染 | Forward+（Vulkan）優先；Godot RenderingDevice backend 不可用時 fallback 至 Compatibility（OpenGL 3） | MIT | 無 |
 | 行動渲染 | Mobile Renderer + LightmapGI 烘焙光照 | MIT | 無 |
 | 行動觸控輸入 | Godot 4.7 內建 VirtualJoystick（Fixed/Dynamic/Following）；iOS 控制器經 SDL3 | MIT | 無 |
 | 氣動公式來源 | gym-pybullet-drones 之 drag / ground effect / downwash（移植公式並以其 Python 原版為 CI 數值 Oracle） | MIT | 無 |
@@ -124,6 +124,8 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | 場景資產 | Kenney City Kit (Industrial) + 自製 Godot 資產 | CC0 / 自有 | 來源、hash、license 入版控 |
 | 相容實作參考 | Microsoft AirSim `v1.8.1` @ `96235148…` 外部只讀 checkout | MIT | 每次引用先稽核 open/closed issues；不得成為依賴 |
 | 授權伺服器 | 自建 FastAPI + JWT（複用既有架構模式） | 自有 | 無 |
+
+**渲染相容性政策**：產品不要求特定 GPU 型號、品牌或獨立顯卡。桌面啟動先使用 Forward+；若目標平台的 Godot RenderingDevice backend 不可用，允許 Godot fallback 至 Compatibility renderer，並接受進階光照/霧效等視覺功能降低。Reference Performance Profile 的硬體只用於可重現的效能基準，不是安裝、啟動或功能相容性的必要條件。啟動後的 shader/driver hang 仍須另行 fail loud，不以 fallback 宣稱已解決。
 
 ---
 
@@ -336,7 +338,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms（Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX、NVIDIA GeForce RTX 4060 Ti、driver 580.159.03） | GPU-A | SC |
+| G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms；Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX、NVIDIA GeForce RTX 4060 Ti、driver 580.159.03 僅為可重現效能基準，不是硬體相容性要求 | GPU-A | SC |
 | G0.2 | Mobile High 與 Mobile Base 兩 profile 於基準行動裝置：物理 P99 ≤ 5 ms 且整體 ≥ 60 FPS（量測定義同 G0.1；以 Perfetto 拆解物理/渲染占比） | DEV-M→GPU-A | AND, iOS |
 | G0.3 | 1000/500 Hz 子步進下四元數積分 10 分鐘無 NaN、範數漂移 < 1e-6 | CI-A | SC |
 | G0.4 | 桌面/行動雙渲染管線同場景資產打通 | GPU-A | SC |
@@ -404,7 +406,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G4.1 | Reference Performance Profile（Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX、NVIDIA GeForce RTX 4060 Ti、driver 580.159.03）Player Mode 1080p default quality 穩定 60 FPS；僅指定 runner 可阻擋，本機規格不足回報 not-qualified | GPU-A | LIN |
+| G4.1 | Reference Performance Profile（Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX、NVIDIA GeForce RTX 4060 Ti、driver 580.159.03）Player Mode 1080p default quality 穩定 60 FPS；僅指定 runner 可阻擋，本機規格不足回報 not-qualified；其他 Godot-compatible GPU 可執行功能驗收，不因未達 reference hardware 阻擋 | GPU-A | LIN |
 | G4.2 | 行動基準機同場景 ≥ 60 FPS（P99 ≥ 45），30 分鐘熱節流後 ≥ 50 FPS | DEV-M | AND, IOS |
 | G4.3 | GA 交付一張 `Industrial Test Range`：launch area、warehouse/street、obstacle corridor、短 Time Trial route、reset-to-spawn、方向指示與 finish panel；Map Catalog 保留且只有一個真實 entry | GPU-A + DEV-M | LIN |
 | G4.4 | FPV 攝影機：uptilt/FOV/OSD；桌面含類比雜訊濾鏡 | GPU-A | SC |
@@ -454,7 +456,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G6.1 | Ubuntu x86_64 安裝包 ≤ 300 MB；其他 Player Mode lane 各自驗收 | CI-A | LIN |
 | G6.2 | Android APK ≤ 300 MB，側載安裝流程文件化（含簽章與未知來源指引） | CI-A + DEV-M | AND |
 | G6.3 | 授權掃描：Tier 1 產物 0 GPL/LGPL/AGPL；NOTICE 自動生成 | CI-A | SC |
-| G6.4 | 冷啟動至可飛：桌面 ≤ 15 秒、行動 ≤ 20 秒 | GPU-A / DEV-M | 各 Lane |
+| G6.4 | 冷啟動至可飛：在 Godot-compatible rendering path 上，桌面 ≤ 15 秒、行動 ≤ 20 秒；不得要求特定 GPU 型號，renderer fallback 後仍須產生可飛畫面並 fail loud 記錄實際 renderer | GPU-A / DEV-M | 各 Lane |
 | G6.5 | 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件） | DEV-M | 各 Lane |
 | G6.6 | **授權伺服器**：註冊→簽發→JWT 驗證全流程可用；離線寬限期機制（斷網 ≤ 72 小時可玩）；伺服器不可達時明確提示而非靜默鎖死 | CI-A + DEV-M | SC |
 | G6.7 | 交付流程演練：從客戶名單到發送安裝檔+授權金鑰之 SOP 全程演練一次成功，含撤銷授權 | DEV-M | SC |
