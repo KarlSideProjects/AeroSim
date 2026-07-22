@@ -6,6 +6,7 @@ grep -q "release-android/AeroSim-android.apk" docs/release_delivery_sop.md
 grep -q "must never be delivered" docs/release_delivery_sop.md
 test -x scripts/export_android_release.sh
 grep -q '^textures/vram_compression/import_etc2_astc=true$' project.godot
+grep -q '^rendering_device/fallback_to_opengl3=true$' project.godot
 
 python3 tests/test_release_notice_artifacts.py
 
