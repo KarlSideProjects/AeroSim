@@ -23,6 +23,10 @@ func test_language_profile_accepts_only_supported_locales() -> void:
     assert_false(rejected.ok)
     assert_string_contains(rejected.error, "locale")
 
+    var unknown_field := LanguageProfile.validate_profile({"locale": "en", "debug": true})
+    assert_false(unknown_field.ok)
+    assert_string_contains(unknown_field.error, "fields")
+
 
 func test_translation_catalog_has_english_and_traditional_chinese() -> void:
     assert_true(Localization.catalog_ready())

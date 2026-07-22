@@ -14,7 +14,10 @@ static func validate_profile(candidate: Variant) -> Dictionary:
     if typeof(candidate) != TYPE_DICTIONARY:
         return {"ok": false, "error": "language must be an object"}
     var source: Dictionary = candidate
-    if not source.has("locale") or source.keys().size() > 2:
+    for key in source.keys():
+        if key != "locale" and key != "schema_version":
+            return {"ok": false, "error": "language profile fields are invalid"}
+    if not source.has("locale"):
         return {"ok": false, "error": "language profile fields are invalid"}
     if source.has("schema_version") and (typeof(source["schema_version"]) != TYPE_INT or int(source["schema_version"]) != SCHEMA_VERSION):
         return {"ok": false, "error": "unsupported language schema_version"}

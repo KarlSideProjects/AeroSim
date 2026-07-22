@@ -2453,6 +2453,14 @@ func _localize_fallback_message(message: String) -> String:
         return _t("ui.settings.factory_reset_locale_failed")
     if message == "Settings reset to factory defaults":
         return _t("ui.settings.factory_reset_applied")
+    if message == "license diagnostics requested":
+        return _t("ui.error.license_diagnostics_requested")
+    if message.begins_with("License request failed: "):
+        return _format("ui.error.license_request_failed", [message.trim_prefix("License request failed: ")])
+    if message.begins_with("License network failed: "):
+        return _format("ui.error.license_network_failed", [message.trim_prefix("License network failed: ")])
+    if message.begins_with("License fatal failed: "):
+        return _format("ui.error.license_fatal_failed", [message.trim_prefix("License fatal failed: ")])
     if message == "Arm blocked: controller_resume_required":
         return _t("ui.error.arm_blocked_resume")
     if message == "Quick Fly cannot arm: native runtime unavailable":
@@ -2475,6 +2483,10 @@ func _localize_fallback_message(message: String) -> String:
         return _t("ui.error.resume_blocked_throttle")
     if message.begins_with("Settings recovered to factory defaults: "):
         return _format("ui.error.settings_recovered", [message.trim_prefix("Settings recovered to factory defaults: ")])
+    if message == "Cannot reset Free Flight: no map is loaded":
+        return _t("ui.error.map_reset_no_map")
+    if message.begins_with("Cannot reset Free Flight map "):
+        return _format("ui.error.map_reset_failed", [message.trim_prefix("Cannot reset Free Flight map ")])
     if message.begins_with("Cannot load Free Flight map ") and message.contains(": "):
         var map_error := message.trim_prefix("Cannot load Free Flight map ")
         var separator := map_error.find(": ")
@@ -2482,7 +2494,7 @@ func _localize_fallback_message(message: String) -> String:
             return _format("ui.error.map_load_failed", [map_error.substr(0, separator), map_error.substr(separator + 2)])
     if message.begins_with("PX4"):
         return _localized_px4_message(message)
-    return _format("ui.error.generic", [message])
+    return _t("ui.error.generic")
 
 
 func _localized_flight_mode(mode: String) -> String:
@@ -4093,7 +4105,7 @@ func _localized_px4_message(message: String) -> String:
                 return _format("ui.hud.px4.message.heartbeat_timeout", [message.trim_prefix("PX4 heartbeat timeout after ")])
             if message.begins_with("PX4 heartbeat is stale after "):
                 return _format("ui.hud.px4.message.heartbeat_stale", [message.trim_prefix("PX4 heartbeat is stale after ")])
-            return _format("ui.error.generic", [message])
+            return _t("ui.error.generic")
 
 
 func _localized_arm_state(armed: bool) -> String:

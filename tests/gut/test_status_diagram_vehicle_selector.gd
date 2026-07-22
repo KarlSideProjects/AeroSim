@@ -143,4 +143,4 @@ func test_runtime_localizes_dynamic_hud_states() -> void:
     assert_eq(runtime._localized_arm_state(true), "已解鎖")
     assert_eq(runtime._localized_button_state(false), "放開")
     assert_eq(runtime._profile_input_status(), "油門低｜鍵盤設定檔")
-    assert_eq(runtime._localize_fallback_message("unclassified diagnostic"), "錯誤：unclassified diagnostic")
+    assert_eq(runtime._localize_fallback_message("unclassified diagnostic"), "錯誤")
