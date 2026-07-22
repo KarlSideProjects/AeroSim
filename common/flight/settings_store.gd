@@ -5,6 +5,8 @@ const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const QualityProfile = preload("res://common/flight/quality_profile.gd")
 const LanguageProfile = preload("res://common/flight/language_profile.gd")
+const CameraProfile = preload("res://common/flight/camera_profile.gd")
+const OsdProfile = preload("res://common/flight/osd_profile.gd")
 
 const SCHEMA_VERSION := 1
 const FIELD_NAMES := [
@@ -60,6 +62,16 @@ func validate_document(candidate: Variant) -> Dictionary:
         var rates_result := RatesProfile.validate_profile(source["rates"])
         if not rates_result.ok:
             return rates_result
+    var camera_result: Dictionary = {"ok": true, "profile": null}
+    var osd_result: Dictionary = {"ok": true, "profile": null}
+    if source["camera"] != null:
+        camera_result = CameraProfile.validate_profile(source["camera"])
+        if not camera_result.ok:
+            return camera_result
+    if source["osd"] != null:
+        osd_result = OsdProfile.validate_profile(source["osd"])
+        if not osd_result.ok:
+            return osd_result
     var language_result: Dictionary = {}
     if source["language"] != null:
         language_result = LanguageProfile.validate_profile(source["language"])
@@ -72,6 +84,10 @@ func validate_document(candidate: Variant) -> Dictionary:
             return quality_result
     var normalized := source.duplicate(true)
     normalized["schema_version"] = SCHEMA_VERSION
+    if source["camera"] != null:
+        normalized["camera"] = camera_result.profile
+    if source["osd"] != null:
+        normalized["osd"] = osd_result.profile
     if source["quality"] != null:
         normalized["quality"] = quality_result.profile
     if source["language"] != null:
@@ -177,6 +193,13 @@ func _normalize_loaded_document(candidate: Variant) -> Variant:
         if typeof(normalized_language.get("schema_version")) in [TYPE_INT, TYPE_FLOAT]:
             normalized_language["schema_version"] = _normalize_integer_json_value(normalized_language["schema_version"])
         normalized["language"] = normalized_language
+    for slot in ["camera", "osd"]:
+        var slot_profile = normalized.get(slot)
+        if typeof(slot_profile) == TYPE_DICTIONARY:
+            var normalized_slot_profile: Dictionary = slot_profile.duplicate(true)
+            if typeof(normalized_slot_profile.get("schema_version")) in [TYPE_INT, TYPE_FLOAT]:
+                normalized_slot_profile["schema_version"] = _normalize_integer_json_value(normalized_slot_profile["schema_version"])
+            normalized[slot] = normalized_slot_profile
     return normalized
 
 

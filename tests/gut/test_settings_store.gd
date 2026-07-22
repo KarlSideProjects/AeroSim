@@ -4,6 +4,8 @@ const SettingsStoreScript = preload("res://common/flight/settings_store.gd")
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const LanguageProfile = preload("res://common/flight/language_profile.gd")
+const CameraProfile = preload("res://common/flight/camera_profile.gd")
+const OsdProfile = preload("res://common/flight/osd_profile.gd")
 
 var test_path := "user://aerosim-settings-store-test.json"
 
@@ -101,6 +103,57 @@ func test_settings_store_validates_the_versioned_quality_slot() -> void:
     var missing_result: Dictionary = store.validate_document(missing)
     assert_false(missing_result.ok)
     assert_string_contains(missing_result.error, "quality")
+
+
+func test_settings_store_validates_camera_and_osd_slots() -> void:
+    var store = SettingsStoreScript.new(test_path)
+    var document := store.default_document()
+    document["camera"] = CameraProfile.default_profile()
+    document["osd"] = OsdProfile.default_profile()
+    var accepted: Dictionary = store.validate_document(document)
+
+    assert_true(accepted.ok, accepted.error)
+    assert_eq(accepted.document["camera"], CameraProfile.default_profile())
+    assert_eq(accepted.document["osd"], OsdProfile.default_profile())
+
+    var invalid_camera := document.duplicate(true)
+    invalid_camera["camera"]["fov_deg"] = 181.0
+    assert_false(store.validate_document(invalid_camera).ok)
+
+    var invalid_osd := document.duplicate(true)
+    invalid_osd["osd"]["preset"] = "Telemetry"
+    assert_false(store.validate_document(invalid_osd).ok)
+
+
+func test_osd_presets_are_complete_and_keep_warnings_out_of_center_third() -> void:
+    for preset in OsdProfile.PRESETS:
+        var profile: Dictionary = OsdProfile.profile_for_preset(preset)
+        var validation: Dictionary = OsdProfile.validate_profile(profile)
+        assert_true(validation.ok, validation.error)
+        assert_eq(profile.elements.keys().size(), OsdProfile.ELEMENTS.size())
+        assert_true(float(profile.positions.warnings.x) < 1.0 / 3.0)
+    assert_false(OsdProfile.profile_for_preset("Minimal").elements.flight_mode)
+    assert_true(OsdProfile.profile_for_preset("Race").elements.lap_checkpoint)
+    assert_true(OsdProfile.profile_for_preset("Debug").elements.signal)
+
+
+func test_camera_and_osd_settings_round_trip_and_factory_reset() -> void:
+    var store = SettingsStoreScript.new(test_path)
+    var document := store.default_document()
+    document["camera"] = CameraProfile.default_profile()
+    document["camera"]["camera_angle_deg"] = 45.0
+    document["osd"] = OsdProfile.profile_for_preset("Race")
+    assert_true(store.save_document(document).ok)
+
+    var loaded: Dictionary = store.load_document()
+    assert_true(loaded.ok, loaded.error)
+    assert_eq(loaded.document["camera"]["camera_angle_deg"], 45.0)
+    assert_eq(loaded.document["osd"]["preset"], "Race")
+
+    assert_true(store.factory_reset().ok)
+    var reset: Dictionary = store.load_document()
+    assert_true(reset.ok, reset.error)
+    assert_eq(reset.document, store.default_document())
 
 
 func test_settings_store_validates_the_versioned_language_slot() -> void:
