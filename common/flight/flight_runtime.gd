@@ -3685,6 +3685,9 @@ func _refresh_flight_hud() -> void:
         graphics_panel.visible = screen == "graphics"
     if flight_hud_layer != null:
         flight_hud_layer.visible = screen not in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
+        var status_margin := flight_hud_layer.get_node_or_null("StatusMargin") as Control
+        if status_margin != null:
+            status_margin.visible = screen != "controller_confirmation"
     if pause_panel != null:
         pause_panel.visible = paused and screen == "flight"
     if controller_safety_panel != null:
