@@ -4406,8 +4406,13 @@ func _update_chase_camera() -> void:
         chase_camera.global_position = drone_body.global_position + CHASE_CAMERA_OFFSET
         chase_camera.look_at(drone_body.global_position, Vector3.UP)
     if secondary_drone_body != null and secondary_chase_camera != null and secondary_drone_body.visible:
-        secondary_chase_camera.global_position = secondary_drone_body.global_position + CHASE_CAMERA_OFFSET
-        secondary_chase_camera.look_at(secondary_drone_body.global_position, Vector3.UP)
+        if screen in ["preflight", "flight", "finish"]:
+            secondary_chase_camera.global_position = secondary_drone_body.global_position + secondary_drone_body.global_basis * Vector3(0.0, 0.03, 0.0)
+            secondary_chase_camera.global_basis = secondary_drone_body.global_basis * Basis(Vector3.RIGHT, deg_to_rad(float(camera_profile.camera_angle_deg)))
+            secondary_chase_camera.fov = float(camera_profile.fov_deg)
+        else:
+            secondary_chase_camera.global_position = secondary_drone_body.global_position + CHASE_CAMERA_OFFSET
+            secondary_chase_camera.look_at(secondary_drone_body.global_position, Vector3.UP)
 
 
 func _apply_camera_profile() -> void:
