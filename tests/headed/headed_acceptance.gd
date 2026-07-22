@@ -665,6 +665,7 @@ func _audit_localization(runtime: Node) -> void:
 	await _settle(1)
 	var quick_fly: Button = runtime.get_node_or_null("MainMenu/Entries/QuickFly")
 	_expect(quick_fly != null and quick_fly.text == "快速飛行", "Traditional Chinese localizes the main menu immediately")
+	_audit_visible_controls(runtime, "main_menu_zh_tw")
 	runtime.show_settings()
 	await _settle(1)
 	var settings_title: Label = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Title")
@@ -674,6 +675,7 @@ func _audit_localization(runtime: Node) -> void:
 	var settings_status: Label = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Status")
 	_expect(settings_status != null and settings_status.text.contains("不支援"), "Traditional Chinese localizes the visible controller diagnostic")
 	_expect(settings_status == null or not settings_status.text.contains("Unsupported controller"), "Traditional Chinese removes the visible English controller diagnostic")
+	_audit_visible_controls(runtime, "settings_zh_tw")
 	runtime.show_main_menu()
 	await _settle(1)
 	var drone_entry: Button = runtime.get_node_or_null("MainMenu/Entries/Drone")
@@ -682,6 +684,18 @@ func _audit_localization(runtime: Node) -> void:
 	await _settle(1)
 	var flight_mode_label: Label = runtime.get_node_or_null("MainMenu/FlightSetupPanel/Rows/Mode")
 	_expect(flight_mode_label != null and flight_mode_label.text == "模式：角度", "Traditional Chinese localizes the dynamic Flight Setup mode")
+	_audit_visible_controls(runtime, "flight_setup_zh_tw")
+	runtime.show_settings()
+	await _settle(1)
+	runtime.show_controller_settings()
+	await _settle(1)
+	_audit_visible_controls(runtime, "controller_settings_zh_tw")
+	runtime.show_rates()
+	await _settle(1)
+	_audit_visible_controls(runtime, "rates_zh_tw")
+	runtime.show_graphics()
+	await _settle(1)
+	_audit_visible_controls(runtime, "graphics_zh_tw")
 	runtime.show_settings()
 	await _settle(1)
 	_expect(runtime.load_map("industrial_yard"), "Traditional Chinese can load the Industrial Yard")
@@ -690,14 +704,30 @@ func _audit_localization(runtime: Node) -> void:
 	_expect(north_spawn_label != null and north_spawn_label.text == "北側起飛點", "Industrial Yard Label3D localizes with the active locale")
 	runtime.unload_map()
 	var zh_tw_image := await _snapshot("08_zh_tw_settings")
-	_audit_visible_controls(runtime)
 	_expect(runtime.set_locale("en"), "UI locale switches back to English")
 	await _settle(2)
 	_expect(settings_title != null and settings_title.text == "SETTINGS", "English locale restores Settings immediately")
+	runtime.show_main_menu()
+	await _settle(1)
+	_audit_visible_controls(runtime, "main_menu_en")
+	runtime.show_settings()
+	await _settle(1)
+	_audit_visible_controls(runtime, "settings_en")
+	runtime.show_controller_settings()
+	await _settle(1)
+	_audit_visible_controls(runtime, "controller_settings_en")
+	runtime.show_rates()
+	await _settle(1)
+	_audit_visible_controls(runtime, "rates_en")
+	runtime.show_graphics()
+	await _settle(1)
+	_audit_visible_controls(runtime, "graphics_en")
+	runtime.show_settings()
+	await _settle(1)
 	var en_image := await _snapshot("09_en_settings_roundtrip")
 	_compare_locale_screenshots(zh_tw_image, en_image)
 
-func _audit_visible_controls(node: Node) -> void:
+func _audit_visible_controls(node: Node, screen_name: String) -> void:
 	var viewport_rect := root.get_viewport().get_visible_rect()
 	var text_controls: Array[Control] = []
 	_collect_visible_text_controls(node, text_controls)
@@ -707,23 +737,26 @@ func _audit_visible_controls(node: Node) -> void:
 		var rect := control.get_global_rect()
 		_expect(viewport_rect.encloses(rect.grow(0.5)), "localized control remains inside viewport: %s" % control.get_path())
 		_expect(not String(control.text).begins_with("ui."), "localized control does not expose a translation key: %s" % control.get_path())
-		if control.get_combined_minimum_size().x > rect.size.x + 1.0:
+		var minimum_size := control.get_combined_minimum_size()
+		if minimum_size.x > rect.size.x + 1.0 or minimum_size.y > rect.size.y + 1.0:
 			clipping_count += 1
-			_expect(false, "localized control text exceeds its allocated width: %s" % control.get_path())
+			_expect(false, "localized control text exceeds its allocated rect: %s" % control.get_path())
 	for first_index in range(text_controls.size()):
 		var first := text_controls[first_index]
 		for second_index in range(first_index + 1, text_controls.size()):
 			var second := text_controls[second_index]
-			if first.get_parent() == second.get_parent() and first.get_global_rect().intersection(second.get_global_rect()).get_area() > 0.5:
+			if first.get_global_rect().intersection(second.get_global_rect()).get_area() > 0.5:
 				overlap_count += 1
 				_expect(false, "localized text controls overlap: %s and %s" % [first.get_path(), second.get_path()])
-	_layout_audit_evidence = {"text_controls": text_controls.size(), "clipping_count": clipping_count, "overlap_count": overlap_count}
+	var screens: Dictionary = _layout_audit_evidence.get("screens", {})
+	screens[screen_name] = {"text_controls": text_controls.size(), "clipping_count": clipping_count, "overlap_count": overlap_count}
+	_layout_audit_evidence = {"screens": screens}
 
 func _collect_visible_text_controls(node: Node, controls: Array[Control]) -> void:
 	for child in node.get_children():
 		if child is Control:
 			var control := child as Control
-			if control.is_visible_in_tree() and (control is Label or control is Button or control is OptionButton):
+			if control.is_visible_in_tree() and (control is Label or control is Button or control is OptionButton or control is LineEdit or control is TextEdit):
 				controls.append(control)
 		_collect_visible_text_controls(child, controls)
 

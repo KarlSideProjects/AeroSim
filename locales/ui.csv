@@ -63,7 +63,14 @@ ui.rates.reset_failed,Rates reset failed: %s,重設速率失敗：%s
 ui.rates.reset,Rates reset to defaults,速率已重設為預設值
 ui.rates.diff_invalid,BETAFLIGHT DIFF: invalid JSON (%s),BETAFLIGHT 差異：JSON 無效（%s）
 ui.rates.diff_none,CURRENT vs BETAFLIGHT IMPORTED: no changes,目前與 BETAFLIGHT 匯入值：沒有變更
+ui.rates.diff_header,CURRENT vs BETAFLIGHT IMPORTED:,目前與 BETAFLIGHT 匯入值：
+ui.rates.diff_line,%s: %.2f -> %.2f,%s：%.2f → %.2f
 ui.rates.value,%s: %.2f,%s：%.2f
+ui.graphics.applied,Graphics settings applied,圖形設定已套用
+ui.graphics.save_failed,Graphics settings save failed: %s,圖形設定儲存失敗：%s
+ui.settings.factory_reset_failed,Settings factory reset failed: %s,設定原廠重設失敗：%s
+ui.settings.factory_reset_locale_failed,Settings factory reset could not apply the default locale,設定原廠重設無法套用預設語言
+ui.settings.factory_reset_applied,Settings reset to factory defaults,設定已恢復原廠預設
 ui.license.blocked,LICENSE BLOCKED: %s,授權遭封鎖：%s
 ui.license.status,%s,狀態：%s
 ui.license.status.online_valid,online_valid,已啟用

@@ -2443,6 +2443,16 @@ func _localize_fallback_message(message: String) -> String:
         return _t("ui.error.controller_reconnected")
     if message == "Controller disconnected; vehicle disarmed and frozen":
         return _t("ui.error.controller_disconnected")
+    if message == "Graphics settings applied":
+        return _t("ui.graphics.applied")
+    if message.begins_with("Graphics settings save failed: "):
+        return _format("ui.graphics.save_failed", [message.trim_prefix("Graphics settings save failed: ")])
+    if message.begins_with("Settings factory reset failed: "):
+        return _format("ui.settings.factory_reset_failed", [message.trim_prefix("Settings factory reset failed: ")])
+    if message == "Settings factory reset could not apply the default locale":
+        return _t("ui.settings.factory_reset_locale_failed")
+    if message == "Settings reset to factory defaults":
+        return _t("ui.settings.factory_reset_applied")
     if message.begins_with("PX4"):
         return _localized_px4_message(message)
     return _format("ui.error.generic", [message])
@@ -3070,9 +3080,9 @@ func _refresh_rates_import_diff() -> void:
     if changes.is_empty():
         rates_diff_label.text = _t("ui.rates.diff_none")
         return
-    var lines := ["CURRENT vs BETAFLIGHT IMPORTED:"]
+    var lines := [_t("ui.rates.diff_header")]
     for change in changes:
-        lines.append("%s: %.2f -> %.2f" % [change.key, change.current, change.imported])
+        lines.append(_format("ui.rates.diff_line", [change.key, change.current, change.imported]))
     rates_diff_label.text = "\n".join(lines)
 
 
@@ -3985,6 +3995,11 @@ func _localized_px4_state(state: String) -> String:
 
 
 func _localized_px4_message(message: String) -> String:
+    if message.contains("; "):
+        var localized_parts: Array[String] = []
+        for part in message.split("; "):
+            localized_parts.append(_localized_px4_message(part))
+        return "；".join(localized_parts)
     match message:
         "waiting for PX4 heartbeat":
             return _t("ui.hud.px4.message.waiting")
