@@ -2486,12 +2486,9 @@ func _localize_fallback_message(message: String) -> String:
     if message == "Cannot reset Free Flight: no map is loaded":
         return _t("ui.error.map_reset_no_map")
     if message.begins_with("Cannot reset Free Flight map "):
-        return _format("ui.error.map_reset_failed", [message.trim_prefix("Cannot reset Free Flight map ")])
+        return _t("ui.error.map_reset_failed")
     if message.begins_with("Cannot load Free Flight map ") and message.contains(": "):
-        var map_error := message.trim_prefix("Cannot load Free Flight map ")
-        var separator := map_error.find(": ")
-        if separator > 0:
-            return _format("ui.error.map_load_failed", [map_error.substr(0, separator), map_error.substr(separator + 2)])
+        return _t("ui.error.map_load_failed")
     if message.begins_with("PX4"):
         return _localized_px4_message(message)
     return _t("ui.error.generic")

@@ -570,7 +570,7 @@ func test_finite_settings_messages_are_localized_without_generic_error_prefix() 
     assert_eq(runtime._localize_fallback_message("Arm blocked: throttle_not_low"), "解鎖受阻：油門未在低位")
     assert_eq(runtime._localize_fallback_message("Respawn blocked: controller_resume_required"), "重生受阻：需要先恢復控制器")
     assert_eq(runtime._localize_fallback_message("Settings recovered to factory defaults: invalid JSON"), "設定已恢復原廠預設")
-    assert_eq(runtime._localize_fallback_message("Cannot load Free Flight map missing_map: unknown map"), "無法載入 Free Flight 地圖 missing_map：unknown map")
+    assert_eq(runtime._localize_fallback_message("Cannot load Free Flight map missing_map: unknown map"), "無法載入 Free Flight 地圖")
     assert_eq(runtime._localize_fallback_message("Cannot reset Free Flight: no map is loaded"), "無法重設 Free Flight：尚未載入地圖")
     assert_eq(runtime._localize_fallback_message("unclassified diagnostic"), "錯誤")
 
