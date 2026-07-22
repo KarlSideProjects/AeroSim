@@ -3691,6 +3691,8 @@ func _refresh_flight_hud() -> void:
         controller_safety_panel.visible = controller_safety_latched
     if controller_safety_label != null:
         controller_safety_label.text = visible_error_message
+    if controller_confirmation_panel != null:
+        controller_confirmation_panel.visible = screen == "controller_confirmation"
     if finish_panel != null:
         finish_panel.visible = screen == "finish"
     if license_panel != null:
