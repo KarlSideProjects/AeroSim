@@ -70,8 +70,8 @@ ui.rates.axis.rc_rate,RC RATE,RC 速率
 ui.rates.axis.super_rate,SUPER RATE,Super 速率
 ui.rates.axis.expo,EXPO,Expo
 ui.graphics.applied,Graphics settings applied,圖形設定已套用
-ui.graphics.save_failed,Graphics settings save failed: %s,圖形設定儲存失敗：%s
-ui.settings.factory_reset_failed,Settings factory reset failed: %s,設定原廠重設失敗：%s
+ui.graphics.save_failed,Graphics settings save failed,圖形設定儲存失敗
+ui.settings.factory_reset_failed,Settings factory reset failed,設定原廠重設失敗
 ui.settings.factory_reset_locale_failed,Settings factory reset could not apply the default locale,設定原廠重設無法套用預設語言
 ui.settings.factory_reset_applied,Settings reset to factory defaults,設定已恢復原廠預設
 ui.license.blocked,LICENSE BLOCKED: %s,授權遭封鎖：%s
@@ -222,7 +222,7 @@ ui.error.controller_profile_not_persisted,Controller profile was not persisted: 
 ui.error.fallback_no_prompt,No fallback prompt is active,目前沒有啟用中的備援提示
 ui.error.respawn_blocked_resume,Respawn blocked: controller_resume_required,重生受阻：需要先恢復控制器
 ui.error.resume_blocked_throttle,Resume blocked: throttle_not_low,繼續受阻：油門未在低位
-ui.error.settings_recovered,Settings recovered to factory defaults: %s,設定已恢復原廠預設：%s
+ui.error.settings_recovered,Settings recovered to factory defaults,設定已恢復原廠預設
 ui.error.map_load_failed,Cannot load Free Flight map %s: %s,無法載入 Free Flight 地圖 %s：%s
 ui.error.license_diagnostics_requested,license diagnostics requested,已要求授權診斷
 ui.error.license_request_failed,License request failed: %s,授權要求失敗：%s

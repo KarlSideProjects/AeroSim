@@ -2446,9 +2446,9 @@ func _localize_fallback_message(message: String) -> String:
     if message == "Graphics settings applied":
         return _t("ui.graphics.applied")
     if message.begins_with("Graphics settings save failed: "):
-        return _format("ui.graphics.save_failed", [message.trim_prefix("Graphics settings save failed: ")])
+        return _t("ui.graphics.save_failed")
     if message.begins_with("Settings factory reset failed: "):
-        return _format("ui.settings.factory_reset_failed", [message.trim_prefix("Settings factory reset failed: ")])
+        return _t("ui.settings.factory_reset_failed")
     if message == "Settings factory reset could not apply the default locale":
         return _t("ui.settings.factory_reset_locale_failed")
     if message == "Settings reset to factory defaults":
@@ -2482,7 +2482,7 @@ func _localize_fallback_message(message: String) -> String:
     if message == "Resume blocked: throttle_not_low":
         return _t("ui.error.resume_blocked_throttle")
     if message.begins_with("Settings recovered to factory defaults: "):
-        return _format("ui.error.settings_recovered", [message.trim_prefix("Settings recovered to factory defaults: ")])
+        return _t("ui.error.settings_recovered")
     if message == "Cannot reset Free Flight: no map is loaded":
         return _t("ui.error.map_reset_no_map")
     if message.begins_with("Cannot reset Free Flight map "):
