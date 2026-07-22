@@ -735,7 +735,7 @@ func _audit_visible_controls(node: Node, screen_name: String) -> void:
 	var clipping_count := 0
 	for control in text_controls:
 		var rect := control.get_global_rect()
-		_expect(viewport_rect.encloses(rect.grow(0.5)), "localized control remains inside viewport: %s" % control.get_path())
+		_expect(viewport_rect.encloses(rect), "localized control remains inside viewport: %s" % control.get_path())
 		_expect(not String(control.text).begins_with("ui."), "localized control does not expose a translation key: %s" % control.get_path())
 		var minimum_size := control.get_combined_minimum_size()
 		if minimum_size.x > rect.size.x + 1.0 or minimum_size.y > rect.size.y + 1.0:
