@@ -2789,6 +2789,12 @@ func _refresh_localized_ui() -> void:
             var wind_button := wind_rows.get_node_or_null(preset.capitalize()) as Button
             if wind_button != null:
                 wind_button.text = _t("ui.wind.%s" % preset)
+    var map_wind_rows := get_node_or_null("MapMenu/WindPresets")
+    if map_wind_rows != null:
+        for preset in WIND_PRESETS:
+            var map_wind_button := map_wind_rows.get_node_or_null(preset.capitalize()) as Button
+            if map_wind_button != null:
+                map_wind_button.text = _t("ui.wind.%s" % preset)
     if license_key_input != null:
         license_key_input.placeholder_text = _t("ui.license.key_placeholder")
     _refresh_language_selector()
@@ -3622,7 +3628,7 @@ func _refresh_flight_hud() -> void:
         var license_snapshot := get_license_snapshot()
         var license_status := String(license_snapshot.get("status", "invalid_token"))
         license_panel.visible = screen == "license_blocked"
-        license_status_label.text = _format("ui.license.blocked", [_format("ui.license.status", [license_status])])
+        license_status_label.text = _format("ui.license.blocked", [_localized_license_status(license_status)])
         var actions := license_actions()
         var key_status := license_status in ["not_activated", "offline_grace_expired", "invalid_token"] and not license_snapshot.has("fatal")
         license_key_input.visible = screen == "license_blocked" and key_status
@@ -3954,6 +3960,13 @@ func _localized_controller_role(role: String) -> String:
 
 func _localized_reversed_suffix() -> String:
     return _t("ui.controller.reversed")
+
+
+func _localized_license_status(status: String) -> String:
+    var known_key := "ui.license.status.%s" % status
+    if Localization.translate(known_key) != known_key:
+        return _t(known_key)
+    return _format("ui.license.status", [status])
 
 func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3) -> float:
     return 0.5 * _mass_kg() * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()

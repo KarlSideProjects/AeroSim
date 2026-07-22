@@ -66,6 +66,12 @@ ui.rates.diff_none,CURRENT vs BETAFLIGHT IMPORTED: no changes,目前與 BETAFLIG
 ui.rates.value,%s: %.2f,%s：%.2f
 ui.license.blocked,LICENSE BLOCKED: %s,授權遭封鎖：%s
 ui.license.status,%s,狀態：%s
+ui.license.status.online_valid,online_valid,已啟用
+ui.license.status.offline_grace_valid,offline_grace_valid,離線寬限有效
+ui.license.status.offline_grace_expired,offline_grace_expired,離線寬限已過期
+ui.license.status.invalid_token,invalid_token,無效權杖
+ui.license.status.not_activated,not_activated,尚未啟用
+ui.license.status.revoked,revoked,已撤銷
 ui.license.blocked_button,LICENSE BLOCKED,授權遭封鎖
 ui.hud.acro,ACRO MODE (C): %s,ACRO 模式（C）：%s
 ui.hud.time_trial,TIME TRIAL | %s | %0.2f s,計時挑戰｜%s｜%0.2f 秒
