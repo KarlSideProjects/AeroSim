@@ -66,6 +66,9 @@ ui.rates.diff_none,CURRENT vs BETAFLIGHT IMPORTED: no changes,目前與 BETAFLIG
 ui.rates.diff_header,CURRENT vs BETAFLIGHT IMPORTED:,目前與 BETAFLIGHT 匯入值：
 ui.rates.diff_line,%s: %.2f -> %.2f,%s：%.2f → %.2f
 ui.rates.value,%s: %.2f,%s：%.2f
+ui.rates.axis.rc_rate,RC RATE,RC 速率
+ui.rates.axis.super_rate,SUPER RATE,Super 速率
+ui.rates.axis.expo,EXPO,Expo
 ui.graphics.applied,Graphics settings applied,圖形設定已套用
 ui.graphics.save_failed,Graphics settings save failed: %s,圖形設定儲存失敗：%s
 ui.settings.factory_reset_failed,Settings factory reset failed: %s,設定原廠重設失敗：%s
@@ -209,4 +212,14 @@ ui.error.unsupported_controller,Unsupported controller; Xbox default profile is 
 ui.error.unsupported_reconnected,Unsupported controller reconnected; remain disarmed and frozen,不支援的控制器重新連線；維持未解鎖並凍結
 ui.error.controller_reconnected,Controller reconnected; throttle LOW then press ARM/RESUME,控制器已重新連線；油門低後按解鎖／繼續
 ui.error.controller_disconnected,Controller disconnected; vehicle disarmed and frozen,控制器中斷連線；載具已解除鎖定並凍結
+ui.error.arm_blocked_resume,Arm blocked: controller_resume_required,解鎖受阻：需要先恢復控制器
+ui.error.quick_fly_native_unavailable,Quick Fly cannot arm: native runtime unavailable,快速飛行無法解鎖：原生執行環境無法使用
+ui.error.arm_blocked_fallback,Arm blocked: keyboard_fallback_requires_confirmation,解鎖受阻：需要確認鍵盤備援
+ui.error.arm_blocked_throttle,Arm blocked: throttle_not_low,解鎖受阻：油門未在低位
+ui.error.quick_fly_rejected,Quick Fly cannot arm: %s,快速飛行無法解鎖：%s
+ui.error.flight_setup_unsupported,Flight Setup contains an unsupported selection,飛行設定包含不支援的選項
+ui.error.controller_profile_not_persisted,Controller profile was not persisted: %s,控制器設定檔未儲存：%s
+ui.error.fallback_no_prompt,No fallback prompt is active,目前沒有啟用中的備援提示
+ui.error.respawn_blocked_resume,Respawn blocked: controller_resume_required,重生受阻：需要先恢復控制器
+ui.error.resume_blocked_throttle,Resume blocked: throttle_not_low,繼續受阻：油門未在低位
 ui.error.generic,%s,錯誤：%s

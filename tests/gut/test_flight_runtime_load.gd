@@ -534,6 +534,7 @@ func test_px4_hud_localizes_finite_state_and_diagnostic() -> void:
         "PX4 SITL bridge does not support serial/HITL transport",
         "PX4 SITL bridge ports must be in the range 1..65535",
         "PX4 SITL bridge timeouts must be positive and ordered",
+        "PX4 heartbeat received; awaiting actuator output",
         "PX4 simulator TCP connection failed: 7",
         "PX4 control UDP bind failed on 127.0.0.1:14540: 98",
         "PX4 authority is inactive",
@@ -553,6 +554,9 @@ func test_px4_hud_localizes_finite_state_and_diagnostic() -> void:
     assert_false(combined.contains("PX4 SITL requires UseTcp=true"))
     assert_false(combined.contains("PX4 SITL bridge ports must be in the range 1..65535"))
     assert_true(combined.contains("；"))
+    var heartbeat_with_semicolon := runtime._localize_fallback_message("PX4 heartbeat received; awaiting actuator output")
+    assert_false(heartbeat_with_semicolon.contains("awaiting actuator output"))
+    assert_true(heartbeat_with_semicolon.contains("等待致動器輸出"))
 
 
 func test_finite_settings_messages_are_localized_without_generic_error_prefix() -> void:
@@ -563,6 +567,8 @@ func test_finite_settings_messages_are_localized_without_generic_error_prefix() 
     assert_eq(runtime._localize_fallback_message("Graphics settings applied"), "圖形設定已套用")
     assert_eq(runtime._localize_fallback_message("Graphics settings save failed: disk full"), "圖形設定儲存失敗：disk full")
     assert_eq(runtime._localize_fallback_message("Settings reset to factory defaults"), "設定已恢復原廠預設")
+    assert_eq(runtime._localize_fallback_message("Arm blocked: throttle_not_low"), "解鎖受阻：油門未在低位")
+    assert_eq(runtime._localize_fallback_message("Respawn blocked: controller_resume_required"), "重生受阻：需要先恢復控制器")
 
 
 func test_failed_locale_persistence_restores_previous_locale() -> void:

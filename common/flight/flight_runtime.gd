@@ -2453,6 +2453,26 @@ func _localize_fallback_message(message: String) -> String:
         return _t("ui.settings.factory_reset_locale_failed")
     if message == "Settings reset to factory defaults":
         return _t("ui.settings.factory_reset_applied")
+    if message == "Arm blocked: controller_resume_required":
+        return _t("ui.error.arm_blocked_resume")
+    if message == "Quick Fly cannot arm: native runtime unavailable":
+        return _t("ui.error.quick_fly_native_unavailable")
+    if message == "Arm blocked: keyboard_fallback_requires_confirmation":
+        return _t("ui.error.arm_blocked_fallback")
+    if message == "Arm blocked: throttle_not_low":
+        return _t("ui.error.arm_blocked_throttle")
+    if message.begins_with("Quick Fly cannot arm: "):
+        return _format("ui.error.quick_fly_rejected", [message.trim_prefix("Quick Fly cannot arm: ")])
+    if message == "Flight Setup contains an unsupported selection":
+        return _t("ui.error.flight_setup_unsupported")
+    if message.begins_with("Controller profile was not persisted: "):
+        return _format("ui.error.controller_profile_not_persisted", [message.trim_prefix("Controller profile was not persisted: ")])
+    if message == "No fallback prompt is active":
+        return _t("ui.error.fallback_no_prompt")
+    if message == "Respawn blocked: controller_resume_required":
+        return _t("ui.error.respawn_blocked_resume")
+    if message == "Resume blocked: throttle_not_low":
+        return _t("ui.error.resume_blocked_throttle")
     if message.begins_with("PX4"):
         return _localized_px4_message(message)
     return _format("ui.error.generic", [message])
@@ -3095,10 +3115,14 @@ func _refresh_rates_panel() -> void:
         if not is_equal_approx(slider.value, value):
             slider.set_value_no_signal(value)
         var label: Label = rates_slider_labels[key]
-        label.text = _format("ui.rates.value", [key.to_upper(), value])
+        label.text = _format("ui.rates.value", [_localized_rate_name(key), value])
     if rates_curve_line != null:
         _refresh_rates_curve()
     _refresh_rates_import_diff()
+
+
+func _localized_rate_name(key: String) -> String:
+    return _t("ui.rates.axis.%s" % key)
 
 
 func _refresh_graphics_panel() -> void:
@@ -3995,6 +4019,8 @@ func _localized_px4_state(state: String) -> String:
 
 
 func _localized_px4_message(message: String) -> String:
+    if message == "PX4 heartbeat received; awaiting actuator output":
+        return _t("ui.hud.px4.message.awaiting_actuator")
     if message.contains("; "):
         var localized_parts: Array[String] = []
         for part in message.split("; "):
