@@ -213,10 +213,6 @@ class CiStrategyTest(unittest.TestCase):
                 "Store headed screenshots locally",
                 'cp -a build/headed/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux/"',
             ),
-            (
-                "Upload headed acceptance evidence",
-                "uses: actions/upload-artifact@v4",
-            ),
         ):
             step_match = re.search(
                 rf"^      - name: {re.escape(step)}\n(?:(?!^      - ).)*(?=^      - |\Z)",

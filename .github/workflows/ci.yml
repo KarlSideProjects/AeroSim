@@ -220,16 +220,6 @@ jobs:
           cp -a build/headed/. "$AEROSIM_CI_ARTIFACT_RUN_DIR/headed-linux/"
           echo "::notice::Stored headed-linux screenshots in $AEROSIM_CI_ARTIFACT_RUN_DIR"
 
-      - name: Upload headed acceptance evidence
-        if: ${{ always() && hashFiles('build/headed/**') != '' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: headed-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
-          path: build/headed/
-          if-no-files-found: error
-          retention-days: 14
-
       - name: Headless physics qualification
         run: |
           scripts/run_headless_smoke.sh --output build/headless_smoke.json --csv-output build/headless_trajectory.csv --seconds 60
