@@ -1975,6 +1975,7 @@ func _add_environment_slider(parent: VBoxContainer, label_key: String, key: Stri
     if environment_state == null:
         return
     var label := Label.new()
+    label.name = key.capitalize()
     label.text = _t(label_key)
     parent.add_child(label)
     var slider := HSlider.new()
@@ -2795,6 +2796,15 @@ func _refresh_localized_ui() -> void:
             var map_wind_button := map_wind_rows.get_node_or_null(preset.capitalize()) as Button
             if map_wind_button != null:
                 map_wind_button.text = _t("ui.wind.%s" % preset)
+    var map_environment_labels := {
+        "Rain": "ui.map.rain",
+        "Fog": "ui.map.fog",
+        "Time_of_day": "ui.map.time_of_day",
+    }
+    for node_name in map_environment_labels:
+        var environment_label := get_node_or_null("MapMenu/EnvironmentControls/%s" % node_name) as Label
+        if environment_label != null:
+            environment_label.text = _t(String(map_environment_labels[node_name]))
     if license_key_input != null:
         license_key_input.placeholder_text = _t("ui.license.key_placeholder")
     _refresh_language_selector()
