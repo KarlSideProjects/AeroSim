@@ -53,15 +53,15 @@ ui.hints,T Arm/Takeoff   P Pause   R Reset   C ACRO   H Alt Hold   Esc Exit,T �
 ui.finish.title,FINISH,完成
 ui.finish.summary,FINISH - Time %0.2f s,完成－時間 %0.2f 秒
 ui.fallback.status,%s | Mode: %s,%s｜模式：%s
-ui.rates.save_failed,Rates save failed: %s,儲存速率失敗：%s
+ui.rates.save_failed,Rates save failed,儲存速率失敗
 ui.rates.saved,Saved rates profile,已儲存速率設定檔
 ui.rates.exported,Exported current rates JSON to the editor,已將目前速率 JSON 匯出至編輯器
-ui.rates.import_rejected,Import rejected: %s,匯入拒絕：%s
-ui.rates.import_save_failed,Import save failed: %s,匯入儲存失敗：%s
+ui.rates.import_rejected,Import rejected,匯入拒絕
+ui.rates.import_save_failed,Import save failed,匯入儲存失敗
 ui.rates.imported,Imported and applied rates profile,已匯入並套用速率設定檔
-ui.rates.reset_failed,Rates reset failed: %s,重設速率失敗：%s
+ui.rates.reset_failed,Rates reset failed,重設速率失敗
 ui.rates.reset,Rates reset to defaults,速率已重設為預設值
-ui.rates.diff_invalid,BETAFLIGHT DIFF: invalid JSON (%s),BETAFLIGHT 差異：JSON 無效（%s）
+ui.rates.diff_invalid,BETAFLIGHT DIFF: invalid JSON,BETAFLIGHT 差異：JSON 無效
 ui.rates.diff_none,CURRENT vs BETAFLIGHT IMPORTED: no changes,目前與 BETAFLIGHT 匯入值：沒有變更
 ui.rates.diff_header,CURRENT vs BETAFLIGHT IMPORTED:,目前與 BETAFLIGHT 匯入值：
 ui.rates.diff_line,%s: %.2f -> %.2f,%s：%.2f → %.2f

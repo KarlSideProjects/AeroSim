@@ -3062,7 +3062,7 @@ func _on_rates_slider_changed(value: float, key: String) -> void:
     candidate[key] = value
     var result: Dictionary = _save_rates_profile(candidate)
     if not result.ok:
-        rates_status_label.text = _format("ui.rates.save_failed", [result.error])
+        rates_status_label.text = _t("ui.rates.save_failed")
         return
     rates_status_label.text = _t("ui.rates.saved")
     if rates_json_editor != null:
@@ -3082,12 +3082,12 @@ func _import_rates_json() -> void:
         return
     var result: Dictionary = RatesProfile.from_json(rates_json_editor.text)
     if not result.ok:
-        rates_status_label.text = _format("ui.rates.import_rejected", [result.error])
+        rates_status_label.text = _t("ui.rates.import_rejected")
         _refresh_rates_import_diff()
         return
     var save_result: Dictionary = _save_rates_profile(result.profile)
     if not save_result.ok:
-        rates_status_label.text = _format("ui.rates.import_save_failed", [save_result.error])
+        rates_status_label.text = _t("ui.rates.import_save_failed")
         return
     rates_json_editor.text = RatesProfile.to_json(rates_profile)
     rates_status_label.text = _t("ui.rates.imported")
@@ -3097,7 +3097,7 @@ func _import_rates_json() -> void:
 func _reset_rates_defaults() -> void:
     var result: Dictionary = _save_rates_profile(RatesProfile.default_profile())
     if not result.ok:
-        rates_status_label.text = _format("ui.rates.reset_failed", [result.error])
+        rates_status_label.text = _t("ui.rates.reset_failed")
         return
     rates_json_editor.text = RatesProfile.to_json(rates_profile)
     rates_status_label.text = _t("ui.rates.reset")
@@ -3113,7 +3113,7 @@ func _refresh_rates_import_diff() -> void:
         return
     var result: Dictionary = RatesProfile.from_json(rates_json_editor.text)
     if not result.ok:
-        rates_diff_label.text = _format("ui.rates.diff_invalid", [result.error])
+        rates_diff_label.text = _t("ui.rates.diff_invalid")
         return
     var changes: Array[Dictionary] = RatesProfile.diff(rates_profile, result.profile)
     if changes.is_empty():
