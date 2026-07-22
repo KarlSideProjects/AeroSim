@@ -2617,7 +2617,7 @@ func _refresh_flight_setup_panel() -> void:
         flight_setup = default_flight_setup()
     var mode_label := get_node_or_null("MainMenu/FlightSetupPanel/Rows/Mode") as Label
     if mode_label != null:
-        mode_label.text = _format("ui.flight_setup.mode", [String(flight_setup.get("mode", DEFAULT_FLIGHT_MODE))])
+        mode_label.text = _format("ui.flight_setup.mode", [_localized_flight_mode(String(flight_setup.get("mode", DEFAULT_FLIGHT_MODE)))])
     for preset in WIND_PRESETS:
         var wind_button := get_node_or_null("MainMenu/FlightSetupPanel/Rows/WindPresets/%s" % preset.capitalize()) as Button
         if wind_button != null:
@@ -2701,17 +2701,18 @@ func _on_language_selected(index: int) -> void:
 
 
 func set_locale(locale: String) -> bool:
+    var previous_locale := Localization.current_locale
     if not Localization.set_locale(locale):
         return false
     var loaded: Dictionary = settings_store.load_document()
     if not loaded.ok:
-        Localization.set_locale(LanguageProfile.DEFAULT_LOCALE)
+        Localization.set_locale(previous_locale)
         _refresh_localized_ui()
         return false
     loaded.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": locale}
     var saved: Dictionary = settings_store.save_document(loaded.document)
     if not saved.ok:
-        Localization.set_locale(LanguageProfile.DEFAULT_LOCALE)
+        Localization.set_locale(previous_locale)
         _refresh_localized_ui()
         return false
     _refresh_localized_ui()
@@ -3285,6 +3286,12 @@ func factory_reset_player_settings() -> void:
     graphics_committed_scale = QualityProfile.DEFAULT_RENDER_SCALE
     if rates_json_editor != null:
         rates_json_editor.text = RatesProfile.to_json(rates_profile)
+    if not Localization.set_locale(LanguageProfile.DEFAULT_LOCALE):
+        last_error_message = "Settings factory reset could not apply the default locale"
+        screen = "error"
+        _refresh_flight_hud()
+        return
+    _refresh_localized_ui()
     last_error_message = "Settings reset to factory defaults"
     screen = "settings"
     _refresh_flight_hud()
@@ -3953,7 +3960,54 @@ func _px4_status_text() -> String:
         return _t("ui.hud.local")
     var diagnostics: Dictionary = px4_sitl_bridge.diagnostics()
     var message := String(diagnostics.get("message", ""))
-    return _format("ui.hud.px4", [px4_sitl_bridge.state.to_upper(), " (%s)" % message if not message.is_empty() else ""])
+    var localized_message := _localized_px4_message(message)
+    return _format("ui.hud.px4", [_localized_px4_state(px4_sitl_bridge.state), " (%s)" % localized_message if not localized_message.is_empty() else ""])
+
+
+func _localized_px4_state(state: String) -> String:
+    match state:
+        "disconnected":
+            return _t("ui.hud.px4.state.disconnected")
+        "starting":
+            return _t("ui.hud.px4.state.starting")
+        "connected":
+            return _t("ui.hud.px4.state.connected")
+        "armed":
+            return _t("ui.hud.px4.state.armed")
+        "stale":
+            return _t("ui.hud.px4.state.stale")
+        "failed":
+            return _t("ui.hud.px4.state.failed")
+        _:
+            return _format("ui.hud.px4.state.unknown", [state])
+
+
+func _localized_px4_message(message: String) -> String:
+    match message:
+        "waiting for PX4 heartbeat":
+            return _t("ui.hud.px4.message.waiting")
+        "PX4 heartbeat received":
+            return _t("ui.hud.px4.message.heartbeat_received")
+        "PX4 heartbeat received; awaiting actuator output":
+            return _t("ui.hud.px4.message.awaiting_actuator")
+        "PX4 heartbeat and actuator output received":
+            return _t("ui.hud.px4.message.actuator_received")
+        "PX4 TCP simulator channel connected":
+            return _t("ui.hud.px4.message.tcp_connected")
+        "PX4 simulator TCP channel disconnected":
+            return _t("ui.hud.px4.message.tcp_disconnected")
+        "PX4 transport stopped":
+            return _t("ui.hud.px4.message.transport_stopped")
+        "PX4 actuator output is stale":
+            return _t("ui.hud.px4.message.actuator_stale")
+        "PX4 heartbeat was not received before startup timeout":
+            return _t("ui.hud.px4.message.startup_timeout")
+        _:
+            if message.begins_with("PX4 heartbeat timeout after "):
+                return _format("ui.hud.px4.message.heartbeat_timeout", [message.trim_prefix("PX4 heartbeat timeout after ")])
+            if message.begins_with("PX4 heartbeat is stale after "):
+                return _format("ui.hud.px4.message.heartbeat_stale", [message.trim_prefix("PX4 heartbeat is stale after ")])
+            return _format("ui.error.generic", [message])
 
 
 func _localized_arm_state(armed: bool) -> String:

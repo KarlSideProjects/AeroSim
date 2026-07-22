@@ -4,7 +4,10 @@ const InputProfiles = preload("res://common/flight/input_profiles.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const CollisionProbeBody = preload("res://common/flight/collision_probe_body.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
+const LanguageProfile = preload("res://common/flight/language_profile.gd")
+const Localization = preload("res://common/flight/localization.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 
@@ -310,6 +313,7 @@ func _write_license_config(path: String, public_key_path: String) -> void:
 
 
 func after_each() -> void:
+    Localization.set_locale(LanguageProfile.DEFAULT_LOCALE)
     for path in [
         "user://aerosim-task-1-fix-missing-key.json",
         "user://aerosim-task-1-fix-state.json",
@@ -489,6 +493,63 @@ func test_main_menu_exposes_the_ordered_cap006_entries_and_defaults() -> void:
         "mode": "ANGLE",
         "wind_preset": "calm",
     })
+
+
+func test_flight_setup_localizes_dynamic_mode_values() -> void:
+    var runtime := _licensed_runtime()
+    runtime._build_main_menu()
+    Localization.set_locale("zh_TW")
+    runtime.flight_setup = runtime.default_flight_setup()
+    runtime._refresh_flight_setup_panel()
+
+    var mode_label := runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/Mode") as Label
+    assert_eq(mode_label.text, "模式：角度")
+
+    runtime.flight_setup["mode"] = "ACRO"
+    runtime._refresh_flight_setup_panel()
+    assert_eq(mode_label.text, "模式：特技")
+
+
+func test_px4_hud_localizes_finite_state_and_diagnostic() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var bridge := Px4SitlBridge.new()
+    bridge.state = "starting"
+    bridge._message = "waiting for PX4 heartbeat"
+    runtime.px4_sitl_bridge = bridge
+    Localization.set_locale("zh_TW")
+
+    var status := runtime._px4_status_text()
+    assert_string_contains(status, "PX4")
+    assert_string_contains(status, "啟動中")
+    assert_string_contains(status, "等待 PX4 心跳")
+    assert_false(status.contains("STARTING"))
+    assert_false(status.contains("waiting for PX4 heartbeat"))
+
+
+func test_failed_locale_persistence_restores_previous_locale() -> void:
+    var runtime := _graphics_runtime_with_store(null)
+    var store := runtime.settings_store as QualitySettingsStore
+    store.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "zh_TW"}
+    runtime._load_player_settings()
+    store.fail_save = true
+
+    assert_false(runtime.set_locale("en"))
+    assert_eq(Localization.current_locale, "zh_TW")
+    assert_eq(store.document["language"].locale, "zh_TW")
+
+
+func test_factory_reset_applies_default_locale_after_successful_persistence() -> void:
+    var runtime := _graphics_runtime_with_store(null)
+    var store := runtime.settings_store as QualitySettingsStore
+    store.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "zh_TW"}
+    runtime._load_player_settings()
+    assert_eq(Localization.current_locale, "zh_TW")
+
+    runtime.factory_reset_player_settings()
+
+    assert_eq(Localization.current_locale, LanguageProfile.DEFAULT_LOCALE)
+    assert_null(store.document["language"])
 
 
 func test_only_online_and_offline_grace_license_snapshots_can_start_quick_fly() -> void:

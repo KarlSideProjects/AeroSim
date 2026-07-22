@@ -91,6 +91,24 @@ ui.hud.local,LOCAL,本機
 ui.hud.input_keyboard,Throttle LOW | KeyboardProfile,油門低｜鍵盤設定檔
 ui.hud.input_profile,Throttle %d%% %s | Arm %s | Mode %s,油門 %d%% %s｜解鎖 %s｜模式 %s
 ui.hud.px4,PX4 %s%s,PX4 %s%s
+ui.hud.px4.state.disconnected,DISCONNECTED,未連線
+ui.hud.px4.state.starting,STARTING,啟動中
+ui.hud.px4.state.connected,CONNECTED,已連線
+ui.hud.px4.state.armed,ARMED,已解鎖
+ui.hud.px4.state.stale,STALE,資料過期
+ui.hud.px4.state.failed,FAILED,失敗
+ui.hud.px4.state.unknown,UNKNOWN STATE %s,未知狀態 %s
+ui.hud.px4.message.waiting,Waiting for PX4 heartbeat,等待 PX4 心跳
+ui.hud.px4.message.heartbeat_received,PX4 heartbeat received,PX4 已收到心跳
+ui.hud.px4.message.awaiting_actuator,PX4 heartbeat received; awaiting actuator output,PX4 已收到心跳；等待致動器輸出
+ui.hud.px4.message.actuator_received,PX4 heartbeat and actuator output received,PX4 已收到心跳與致動器輸出
+ui.hud.px4.message.tcp_connected,PX4 TCP simulator channel connected,PX4 TCP 模擬器通道已連線
+ui.hud.px4.message.tcp_disconnected,PX4 simulator TCP channel disconnected,PX4 TCP 模擬器通道已中斷
+ui.hud.px4.message.transport_stopped,PX4 transport stopped,PX4 傳輸已停止
+ui.hud.px4.message.actuator_stale,PX4 actuator output is stale,PX4 致動器輸出已過期
+ui.hud.px4.message.startup_timeout,PX4 heartbeat was not received before startup timeout,啟動逾時前未收到 PX4 心跳
+ui.hud.px4.message.heartbeat_timeout,PX4 heartbeat timeout after %s,PX4 心跳在 %s 後逾時
+ui.hud.px4.message.heartbeat_stale,PX4 heartbeat is stale after %s,PX4 心跳在 %s 後過期
 ui.hud.preflight,%s | %s -> %s -> press T or ARM,%s｜%s → %s → 按 T 或 ARM
 ui.hud.flight,%s | %s | %s | %s,%s｜%s｜%s｜%s
 ui.hud.arm_takeoff,ARM / TAKEOFF (T),解鎖／起飛（T）

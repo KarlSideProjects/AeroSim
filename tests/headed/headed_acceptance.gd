@@ -672,6 +672,16 @@ func _audit_localization(runtime: Node) -> void:
 	var settings_status: Label = runtime.get_node_or_null("MainMenu/SettingsPanel/Rows/Status")
 	_expect(settings_status != null and settings_status.text.contains("不支援"), "Traditional Chinese localizes the visible controller diagnostic")
 	_expect(settings_status == null or not settings_status.text.contains("Unsupported controller"), "Traditional Chinese removes the visible English controller diagnostic")
+	runtime.show_main_menu()
+	await _settle(1)
+	var drone_entry: Button = runtime.get_node_or_null("MainMenu/Entries/Drone")
+	if drone_entry != null:
+		_click(drone_entry)
+	await _settle(1)
+	var flight_mode_label: Label = runtime.get_node_or_null("MainMenu/FlightSetupPanel/Rows/Mode")
+	_expect(flight_mode_label != null and flight_mode_label.text == "模式：角度", "Traditional Chinese localizes the dynamic Flight Setup mode")
+	runtime.show_settings()
+	await _settle(1)
 	_expect(runtime.load_map("industrial_yard"), "Traditional Chinese can load the Industrial Yard")
 	await _settle(2)
 	var north_spawn_label: Label3D = runtime.loaded_map.get_node_or_null("SpawnNorth/DirectionLabel") if runtime.loaded_map != null else null
@@ -736,6 +746,15 @@ func _write_report() -> bool:
 	if report == null:
 		push_error("Cannot write headed acceptance report")
 		return false
-	report.store_string(JSON.stringify({"channel_monitor": _channel_monitor_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
+	var version_info := Engine.get_version_info()
+	var provenance := {
+		"commit_sha": OS.get_environment("AEROSIM_HEADED_COMMIT_SHA"),
+		"godot_version": String(version_info.get("string", "")),
+		"os": OS.get_name(),
+		"display_driver": DisplayServer.get_name(),
+		"gpu_adapter": RenderingServer.get_video_adapter_name(),
+		"vulkan_icd": OS.get_environment("VK_ICD_FILENAMES"),
+	}
+	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
 	return true
