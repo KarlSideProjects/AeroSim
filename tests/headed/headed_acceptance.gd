@@ -38,6 +38,7 @@ var _channel_monitor_evidence: Dictionary = {}
 var _layout_audit_evidence: Dictionary = {}
 var _screenshot_comparison: Dictionary = {}
 var _ui_animation_count := 0
+var _locale_switch_evidence: Array[Dictionary] = []
 
 func _initialize() -> void:
 	_run()
@@ -657,6 +658,7 @@ func _audit_localization(runtime: Node) -> void:
 	var switch_started_us := Time.get_ticks_usec()
 	var switched_to_zh_tw: bool = runtime.set_locale("zh_TW")
 	var switch_elapsed_us := Time.get_ticks_usec() - switch_started_us
+	_locale_switch_evidence.append({"from": "en", "to": "zh_TW", "elapsed_us": switch_elapsed_us, "threshold_us": 100_000})
 	_expect(switched_to_zh_tw, "UI locale switches to Traditional Chinese")
 	_expect(switch_elapsed_us <= 100_000, "locale switch does not block input for more than 100 ms")
 	if not switched_to_zh_tw:
@@ -686,6 +688,12 @@ func _audit_localization(runtime: Node) -> void:
 	await _settle(1)
 	var flight_mode_label: Label = runtime.get_node_or_null("MainMenu/FlightSetupPanel/Rows/Mode")
 	_expect(flight_mode_label != null and flight_mode_label.text == "模式：角度", "Traditional Chinese localizes the dynamic Flight Setup mode")
+	runtime.flight_mode = "UNSUPPORTED_RUNTIME_MODE"
+	runtime.update_fallback_status()
+	_expect(runtime.fallback_status_label != null and runtime.fallback_status_label.text.contains("未知模式"), "Traditional Chinese wraps unknown runtime modes in the catalog")
+	_expect(runtime.fallback_status_label == null or not runtime.fallback_status_label.text.contains("UNSUPPORTED_RUNTIME_MODE"), "Traditional Chinese hides unknown runtime mode tokens")
+	runtime.flight_mode = "ANGLE"
+	runtime.update_fallback_status()
 	_audit_visible_controls(runtime, "flight_setup_zh_tw")
 	runtime.show_settings()
 	await _settle(1)
@@ -707,7 +715,12 @@ func _audit_localization(runtime: Node) -> void:
 	_expect(north_spawn_label != null and north_spawn_label.text == "北側起飛點", "Industrial Yard Label3D localizes with the active locale")
 	runtime.unload_map()
 	var zh_tw_image := await _snapshot("08_zh_tw_settings")
-	_expect(runtime.set_locale("en"), "UI locale switches back to English")
+	var switch_back_started_us := Time.get_ticks_usec()
+	var switched_to_en: bool = runtime.set_locale("en")
+	var switch_back_elapsed_us := Time.get_ticks_usec() - switch_back_started_us
+	_locale_switch_evidence.append({"from": "zh_TW", "to": "en", "elapsed_us": switch_back_elapsed_us, "threshold_us": 100_000})
+	_expect(switched_to_en, "UI locale switches back to English")
+	_expect(switch_back_elapsed_us <= 100_000, "English locale switch does not block input for more than 100 ms")
 	await _settle(2)
 	_expect(settings_title != null and settings_title.text == "SETTINGS", "English locale restores Settings immediately")
 	runtime.show_main_menu()
@@ -881,6 +894,6 @@ func _write_report() -> bool:
 		"gpu_adapter": RenderingServer.get_video_adapter_name(),
 		"vulkan_icd": OS.get_environment("VK_ICD_FILENAMES"),
 	}
-	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
+	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
 	return true

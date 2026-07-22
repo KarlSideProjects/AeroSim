@@ -19,6 +19,20 @@ PLACEHOLDER = re.compile(r"%(?:[-+#0 ]*\d*(?:\.\d+)?)?[a-zA-Z]")
 SINK = re.compile(r"\.(?:text|placeholder_text|tooltip_text)\s*=\s*\"([^\"]*)\"")
 SCENE_TEXT = re.compile(r"^text\s*=\s*\"([^\"]*)\"$")
 KEY_CALL = re.compile(r"\b(?:_t|_format|translate|format)\(\"([^\"]+)\"")
+DYNAMIC_KEY_VALUES = {
+    "ui.menu.%s": ("quick_fly", "lab_mode", "controller", "drone", "map", "settings", "quit"),
+    "ui.wind.%s": ("calm", "light", "moderate", "severe"),
+    "ui.rates.axis.%s": ("rc_rate", "super_rate", "expo"),
+    "ui.controller.role.%s": ("roll", "pitch", "yaw", "throttle"),
+    "ui.license.status.%s": (
+        "online_valid",
+        "offline_grace_valid",
+        "offline_grace_expired",
+        "invalid_token",
+        "not_activated",
+        "revoked",
+    ),
+}
 
 
 def placeholders(value: str) -> list[str]:
@@ -61,6 +75,12 @@ def main() -> int:
             for key in KEY_CALL.findall(line):
                 if "%" not in key and key not in keys:
                     errors.append(f"{path.relative_to(ROOT)}:{line_number}: missing catalog key {key}")
+
+    for template, values in DYNAMIC_KEY_VALUES.items():
+        for value in values:
+            key = template % value
+            if key not in keys:
+                errors.append(f"dynamic catalog family {template} is missing {key}")
 
     if errors:
         print("UI localization check failed:")

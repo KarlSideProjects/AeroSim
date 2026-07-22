@@ -91,6 +91,15 @@ if provenance.get("commit_sha") != expected_commit_sha:
 for field in ("godot_version", "os", "display_driver", "gpu_adapter"):
     if not provenance.get(field):
         raise SystemExit(f"headed acceptance report is missing provenance field {field}: {path}")
+locale_switches = report.get("locale_switches")
+if not isinstance(locale_switches, list) or not locale_switches:
+    raise SystemExit(f"headed acceptance report is missing locale switch evidence: {path}")
+for switch in locale_switches:
+    if not isinstance(switch, dict) or not isinstance(switch.get("elapsed_us"), int):
+        raise SystemExit(f"headed acceptance locale switch evidence is malformed: {path}")
+    threshold_us = switch.get("threshold_us", 100_000)
+    if not isinstance(threshold_us, int) or switch["elapsed_us"] < 0 or switch["elapsed_us"] > threshold_us:
+        raise SystemExit(f"headed acceptance locale switch exceeded its input-blocking threshold: {path}")
 PY
 
 if grep -Eq '^(ERROR:|SCRIPT ERROR:)' "$log_path"; then
