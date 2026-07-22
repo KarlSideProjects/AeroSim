@@ -1995,7 +1995,10 @@ func _verify_runtime_actions() -> bool:
         return false
     _inject_joy_button(known_device_id, JOY_BUTTON_A, false)
     _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.70)
-    for _frame in range(60):
+    # Controlled takeoff assist needs a real acceleration window; 60 frames is
+    # only 250 ms at the fixed 240 Hz physics rate and was calibrated for the
+    # removed one-shot jump velocity rather than the configured hover model.
+    for _frame in range(240):
         await physics_frame
     var high_profile_thrust := float(scene.native.call("flight_control_diagnostics").get("motor_thrust_newtons", 0.0))
     _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.20)

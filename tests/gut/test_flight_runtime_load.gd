@@ -707,6 +707,11 @@ func test_request_takeoff_does_not_inject_jump_velocity() -> void:
     assert_eq(body.global_position, spawn.global_position)
     assert_eq(body.linear_velocity, Vector3.ZERO)
 
+    runtime.session_gamepad_profile = null
+    runtime.request_takeoff()
+    assert_true(runtime.takeoff_assist_active)
+    assert_eq(runtime.takeoff_assist_throttle, 0.38)
+
 
 func test_license_routes_expose_status_actions_and_only_retry_provider_states() -> void:
     var runtime := _runtime_with_license_snapshot("not_activated")
