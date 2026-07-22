@@ -528,6 +528,8 @@ func test_px4_hud_localizes_finite_state_and_diagnostic() -> void:
 
 
 func test_failed_locale_persistence_restores_previous_locale() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(null)
     var store := runtime.settings_store as QualitySettingsStore
     store.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "zh_TW"}
@@ -540,6 +542,8 @@ func test_failed_locale_persistence_restores_previous_locale() -> void:
 
 
 func test_factory_reset_applies_default_locale_after_successful_persistence() -> void:
+    if not _native_runtime_available():
+        return
     var runtime := _graphics_runtime_with_store(null)
     var store := runtime.settings_store as QualitySettingsStore
     store.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "zh_TW"}
