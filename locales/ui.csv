@@ -218,7 +218,7 @@ ui.error.arm_blocked_fallback,Arm blocked: keyboard_fallback_requires_confirmati
 ui.error.arm_blocked_throttle,Arm blocked: throttle_not_low,解鎖受阻：油門未在低位
 ui.error.quick_fly_rejected,Quick Fly cannot arm: %s,快速飛行無法解鎖：%s
 ui.error.flight_setup_unsupported,Flight Setup contains an unsupported selection,飛行設定包含不支援的選項
-ui.error.controller_profile_not_persisted,Controller profile was not persisted: %s,控制器設定檔未儲存：%s
+ui.error.controller_profile_not_persisted,Controller profile was not persisted,控制器設定檔未儲存
 ui.error.fallback_no_prompt,No fallback prompt is active,目前沒有啟用中的備援提示
 ui.error.respawn_blocked_resume,Respawn blocked: controller_resume_required,重生受阻：需要先恢復控制器
 ui.error.resume_blocked_throttle,Resume blocked: throttle_not_low,繼續受阻：油門未在低位

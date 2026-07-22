@@ -1880,7 +1880,7 @@ func accept_controller_confirmation() -> void:
         return
     var save_result := _save_gamepad_profile(profile)
     if not save_result.ok:
-        last_error_message = "Controller profile was not persisted: %s" % save_result.error
+        last_error_message = "Controller profile was not persisted"
         screen = "error"
         _refresh_flight_hud()
         return
@@ -2473,8 +2473,8 @@ func _localize_fallback_message(message: String) -> String:
         return _format("ui.error.quick_fly_rejected", [message.trim_prefix("Quick Fly cannot arm: ")])
     if message == "Flight Setup contains an unsupported selection":
         return _t("ui.error.flight_setup_unsupported")
-    if message.begins_with("Controller profile was not persisted: "):
-        return _format("ui.error.controller_profile_not_persisted", [message.trim_prefix("Controller profile was not persisted: ")])
+    if message == "Controller profile was not persisted" or message.begins_with("Controller profile was not persisted: "):
+        return _t("ui.error.controller_profile_not_persisted")
     if message == "No fallback prompt is active":
         return _t("ui.error.fallback_no_prompt")
     if message == "Respawn blocked: controller_resume_required":
