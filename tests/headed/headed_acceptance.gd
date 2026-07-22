@@ -523,6 +523,8 @@ func _run() -> void:
 		quit(1)
 		return
 	if not _failures.is_empty():
+		for failure in _failures:
+			print("HEADED FAILURE: %s" % failure)
 		quit(1)
 		return
 	quit(0)
