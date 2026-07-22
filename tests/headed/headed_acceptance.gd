@@ -2,6 +2,7 @@ extends SceneTree
 
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
+const OsdProfile = preload("res://common/flight/osd_profile.gd")
 
 class MutableGamepadDeviceState:
 	extends GamepadDeviceState.DeviceState
@@ -355,7 +356,23 @@ func _run() -> void:
 	runtime.screen = "flight"
 	runtime._refresh_flight_hud()
 	var pause_rates_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Rates")
+	var pause_camera_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Camera")
+	var pause_osd_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/OSD")
 	_expect(runtime.paused and pause_rates_button != null, "Pause Overlay exposes Rates")
+	_expect(pause_camera_button != null and pause_osd_button != null, "Pause Overlay exposes Camera and OSD")
+	_expect(runtime.get_node_or_null("FlightHud/FpvOsd") != null and runtime.get_node_or_null("FlightHud/AnalogNoise") != null, "flight HUD owns the FPV OSD and analog-noise overlay")
+	var camera_candidate: Dictionary = runtime.camera_profile.duplicate(true)
+	camera_candidate["camera_angle_deg"] = 35.0
+	camera_candidate["fov_deg"] = 135.0
+	var camera_save: Dictionary = runtime.call("_save_camera_profile", camera_candidate)
+	_expect(camera_save.ok and absf(runtime.chase_camera.fov - 135.0) <= 0.000001, "Camera settings apply immediately to the live FPV camera")
+	var race_profile: Dictionary = OsdProfile.profile_for_preset("Race")
+	var osd_save: Dictionary = runtime.call("_save_osd_profile", race_profile)
+	var persisted_osd: Dictionary = runtime.settings_store.load_document()
+	_expect(osd_save.ok and persisted_osd.ok and persisted_osd.document.osd.preset == "Race", "Race OSD preset persists through SettingsStore")
+	var lap_label: Label = runtime.get_node_or_null("FlightHud/FpvOsd/LapCheckpoint")
+	_expect(lap_label != null and runtime.time_trial != null and lap_label.text.contains("%d/3" % (runtime.time_trial.next_checkpoint_index + 1)), "Race OSD lap/checkpoint uses ordered TimeTrial truth: %s" % (lap_label.text if lap_label != null else "<missing>"))
+	_audit_osd_presets(runtime, "en")
 	var acro_key := InputEventKey.new()
 	acro_key.keycode = KEY_C
 	acro_key.physical_keycode = KEY_C
@@ -757,6 +774,7 @@ func _audit_transient_localization(runtime: Node, locale_suffix: String) -> void
 	runtime.call("_refresh_flight_hud")
 	await _settle(1)
 	_audit_visible_controls(runtime, "pause_%s" % locale_suffix)
+	_audit_osd_presets(runtime, locale_suffix)
 
 	runtime.call("_on_trial_finished", 12.34)
 	await _settle(1)
@@ -793,6 +811,26 @@ func _audit_transient_localization(runtime: Node, locale_suffix: String) -> void
 	runtime.session_gamepad_device_id = -1
 	runtime.show_settings()
 	await _settle(1)
+
+func _audit_osd_presets(runtime: Node, locale_suffix: String) -> void:
+	var viewport_size := root.get_viewport().get_visible_rect().size
+	var center_third := Rect2(viewport_size.x / 3.0, 0.0, viewport_size.x / 3.0, viewport_size.y)
+	for preset in OsdProfile.PRESETS:
+		runtime.osd_profile = OsdProfile.profile_for_preset(preset)
+		runtime.call("_refresh_flight_hud")
+		var visible_area := 0.0
+		for element in OsdProfile.ELEMENTS:
+			var label := runtime.osd_labels[element] as Label
+			if label == null or not label.visible:
+				continue
+			var rect := label.get_global_rect()
+			visible_area += rect.get_area()
+			_expect(root.get_viewport().get_visible_rect().encloses(rect), "OSD %s %s label stays inside the viewport: %s" % [locale_suffix, preset, element])
+			if element == "warnings":
+				var outside_center_third := rect.end.x <= center_third.position.x or rect.position.x >= center_third.end.x
+				_expect(outside_center_third, "OSD %s %s warnings stay out of the center third: %s" % [locale_suffix, preset, rect])
+		var obstruction_ratio := visible_area / (viewport_size.x * viewport_size.y)
+		_expect(obstruction_ratio <= 0.08, "OSD %s %s obstruction stays at or below 8%%" % [locale_suffix, preset])
 
 func _audit_visible_controls(node: Node, screen_name: String) -> void:
 	var viewport_rect := root.get_viewport().get_visible_rect()

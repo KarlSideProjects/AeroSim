@@ -232,3 +232,31 @@ ui.error.license_fatal_failed,License fatal failed: %s,授權重大錯誤：%s
 ui.error.map_reset_no_map,Cannot reset Free Flight: no map is loaded,無法重設 Free Flight：尚未載入地圖
 ui.error.map_reset_failed,Cannot reset Free Flight map,無法重設 Free Flight 地圖
 ui.error.generic,Error,錯誤
+ui.settings.camera,CAMERA,相機
+ui.settings.osd,OSD,OSD
+ui.camera.title,FPV CAMERA,FPV 相機
+ui.camera.angle,UPTILT: %.0f DEG,上仰：%.0f 度
+ui.camera.fov,FOV: %.0f DEG,FOV：%.0f 度
+ui.camera.analog_noise,ANALOG NOISE FILTER,類比雜訊濾鏡
+ui.osd.title,OSD PRESET,OSD 預設
+ui.osd.drag_hint,Drag visible OSD labels to reposition them,拖曳可見 OSD 標籤以重新定位
+ui.osd.preset.minimal,Minimal,極簡
+ui.osd.preset.race,Race,競速
+ui.osd.preset.debug,Debug,除錯
+ui.osd.element.battery,Battery,電池
+ui.osd.element.armed,Armed,解鎖
+ui.osd.element.flight_mode,Flight mode,飛行模式
+ui.osd.element.timer,Timer,計時
+ui.osd.element.lap_checkpoint,Lap/checkpoint,圈／檢查點
+ui.osd.element.signal,Signal,訊號
+ui.osd.element.warnings,Warnings,警告
+ui.osd.element.reset_hint,Reset hint,重設提示
+ui.osd.battery,BAT %.2f V | SAG %.2f V | %.0f mAh,電池 %.2f V｜壓降 %.2f V｜%.0f mAh
+ui.osd.armed,ARM: %s,解鎖：%s
+ui.osd.mode,MODE: %s,模式：%s
+ui.osd.timer,TIME %.2f S,時間 %.2f 秒
+ui.osd.lap,LAP 1 | %s,第 1 圈｜%s
+ui.osd.signal_live,SIGNAL LIVE,訊號即時
+ui.osd.signal_offline,SIGNAL OFFLINE,訊號離線
+ui.osd.ready,READY,就緒
+ui.osd.reset_hint,R RESET,按 R 重設

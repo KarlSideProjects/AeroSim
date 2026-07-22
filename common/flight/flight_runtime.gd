@@ -7,6 +7,8 @@ const LanguageProfile = preload("res://common/flight/language_profile.gd")
 const Localization = preload("res://common/flight/localization.gd")
 const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const QualityProfile = preload("res://common/flight/quality_profile.gd")
+const CameraProfile = preload("res://common/flight/camera_profile.gd")
+const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
@@ -63,6 +65,8 @@ var loaded_map_id := ""
 var loaded_map_wind_preset := "calm"
 var selected_wind_preset := ""
 var time_trial: TimeTrialController
+var camera_profile: Dictionary = CameraProfile.default_profile()
+var osd_profile: Dictionary = OsdProfile.default_profile()
 var paused := false
 var exit_requested := false
 var quit_on_exit := true
@@ -97,6 +101,8 @@ var rates_curve_plot: Control
 var rates_sliders: Dictionary = {}
 var rates_slider_labels: Dictionary = {}
 var rates_return_screen := "settings"
+var camera_return_screen := "settings"
+var osd_return_screen := "settings"
 var render_scale := QualityProfile.DEFAULT_RENDER_SCALE
 var graphics_committed_scale := QualityProfile.DEFAULT_RENDER_SCALE
 var graphics_return_screen := "settings"
@@ -120,6 +126,14 @@ var time_trial_status_label: Label
 var pause_panel: Control
 var finish_panel: Control
 var finish_summary_label: Label
+var camera_panel: Control
+var osd_panel: Control
+var osd_preset_selector: OptionButton
+var osd_labels: Dictionary = {}
+var osd_drag_element := ""
+var osd_drag_offset := Vector2.ZERO
+var analog_noise_overlay: ColorRect
+var camera_profile_persisted := false
 var session_gamepad_profile: InputProfiles.GamepadProfile
 var session_gamepad_device_id := -1
 var gamepad_device_state: GamepadDeviceState.DeviceState = GamepadDeviceState.DeviceState.new()
@@ -270,6 +284,7 @@ func _ready() -> void:
             airsim_rpc_server.stop()
         get_tree().quit(1)
         return
+    _apply_hardware_camera_defaults(hardware_config)
     _begin_complete_replay_recording(startup_settings)
     var ready_file := _cold_start_arg("--airsim-ready-file")
     if not ready_file.is_empty() and _airsim_vehicle_names.size() >= 2 and loaded_map == null:
@@ -986,6 +1001,17 @@ func _load_player_settings() -> void:
         var rates_result: Dictionary = RatesProfile.validate_profile(saved_rates)
         if rates_result.ok:
             rates_profile = rates_result.profile
+    var saved_camera = result.document.get("camera")
+    if saved_camera != null:
+        var camera_result: Dictionary = CameraProfile.validate_profile(saved_camera)
+        if camera_result.ok:
+            camera_profile = camera_result.profile
+            camera_profile_persisted = true
+    var saved_osd = result.document.get("osd")
+    if saved_osd != null:
+        var osd_result: Dictionary = OsdProfile.validate_profile(saved_osd)
+        if osd_result.ok:
+            osd_profile = osd_result.profile
     if not result.ok and result.recovered:
         last_error_message = "Settings recovered to factory defaults: %s" % result.error
 
@@ -1041,6 +1067,51 @@ func _save_quality_profile(profile: Dictionary) -> Dictionary:
     var result: Dictionary = settings_store.save_document(document)
     if result.ok:
         graphics_committed_scale = float(validation.profile.render_scale)
+    return result
+
+
+func _save_camera_profile(profile: Dictionary) -> Dictionary:
+    var validation: Dictionary = CameraProfile.validate_profile(profile)
+    if not validation.ok:
+        return validation
+    var loaded: Dictionary = settings_store.load_document()
+    if not loaded.ok:
+        return {"ok": false, "error": "cannot save camera while settings are unavailable: %s" % loaded.error}
+    loaded.document["camera"] = validation.profile
+    var result: Dictionary = settings_store.save_document(loaded.document)
+    if result.ok:
+        camera_profile = validation.profile
+        camera_profile_persisted = true
+        _apply_camera_profile()
+    return result
+
+
+func _apply_hardware_camera_defaults(hardware_config: RefCounted) -> void:
+    if camera_profile_persisted or hardware_config == null:
+        return
+    var fpv: Variant = hardware_config.current.get("fpv")
+    if typeof(fpv) != TYPE_DICTIONARY:
+        return
+    var candidate := camera_profile.duplicate(true)
+    candidate["camera_angle_deg"] = fpv.get("camera_angle_deg", candidate.camera_angle_deg)
+    candidate["fov_deg"] = fpv.get("fov_deg", candidate.fov_deg)
+    var validation: Dictionary = CameraProfile.validate_profile(candidate)
+    if validation.ok:
+        camera_profile = validation.profile
+
+
+func _save_osd_profile(profile: Dictionary) -> Dictionary:
+    var validation: Dictionary = OsdProfile.validate_profile(profile)
+    if not validation.ok:
+        return validation
+    var loaded: Dictionary = settings_store.load_document()
+    if not loaded.ok:
+        return {"ok": false, "error": "cannot save OSD while settings are unavailable: %s" % loaded.error}
+    loaded.document["osd"] = validation.profile
+    var result: Dictionary = settings_store.save_document(loaded.document)
+    if result.ok:
+        osd_profile = validation.profile
+        _refresh_osd()
     return result
 
 func _run_cold_start_probe() -> void:
@@ -1750,6 +1821,7 @@ func apply_flight_setup(raw_setup: Dictionary) -> bool:
         if not hardware_config.apply_to_runtime(self, String(candidate.hardware_preset)):
             last_error_message = hardware_config.last_error
             return false
+        _apply_hardware_camera_defaults(hardware_config)
     flight_setup = candidate
     flight_mode = String(candidate.mode)
     select_map(String(candidate.map_id), wind_preset)
@@ -2798,6 +2870,16 @@ func _refresh_localized_ui() -> void:
         "MainMenu/SettingsPanel/Rows/Controller": "ui.settings.controller",
         "MainMenu/SettingsPanel/Rows/Rates": "ui.settings.rates",
         "MainMenu/SettingsPanel/Rows/Graphics": "ui.settings.graphics",
+        "FlightHud/PausePanel/Rows/Camera": "ui.settings.camera",
+        "FlightHud/PausePanel/Rows/OSD": "ui.settings.osd",
+        "FlightHud/CameraPanel/Rows/Title": "ui.camera.title",
+        "FlightHud/CameraPanel/Rows/CameraAngleLabel": "ui.camera.angle",
+        "FlightHud/CameraPanel/Rows/FovLabel": "ui.camera.fov",
+        "FlightHud/CameraPanel/Rows/AnalogNoise": "ui.camera.analog_noise",
+        "FlightHud/OsdPanel/Rows/Title": "ui.osd.title",
+        "FlightHud/OsdPanel/Rows/DragHint": "ui.osd.drag_hint",
+        "FlightHud/CameraPanel/Rows/Back": "ui.action.back",
+        "FlightHud/OsdPanel/Rows/Back": "ui.action.back",
         "MainMenu/SettingsPanel/Rows/FactoryReset": "ui.settings.factory_reset",
         "MainMenu/SettingsPanel/Rows/Back": "ui.action.back",
         "MainMenu/GraphicsPanel/Rows/Title": "ui.settings.graphics",
@@ -2861,6 +2943,21 @@ func _refresh_localized_ui() -> void:
             environment_label.text = _t(String(map_environment_labels[node_name]))
     if license_key_input != null:
         license_key_input.placeholder_text = _t("ui.license.key_placeholder")
+    if osd_preset_selector != null:
+        for index in range(OsdProfile.PRESETS.size()):
+            osd_preset_selector.set_item_text(index, _t("ui.osd.preset.%s" % OsdProfile.PRESETS[index].to_snake_case()))
+    if osd_panel != null:
+        for element in OsdProfile.ELEMENTS:
+            var toggle := osd_panel.get_node_or_null("Rows/Elements/%s" % String(element).capitalize()) as CheckButton
+            if toggle != null:
+                toggle.text = _t("ui.osd.element.%s" % element)
+    if camera_panel != null:
+        var angle_label := camera_panel.get_node_or_null("Rows/CameraAngleLabel") as Label
+        var fov_label := camera_panel.get_node_or_null("Rows/FovLabel") as Label
+        if angle_label != null:
+            _refresh_camera_slider_label(angle_label, "ui.camera.angle", float(camera_profile.camera_angle_deg))
+        if fov_label != null:
+            _refresh_camera_slider_label(fov_label, "ui.camera.fov", float(camera_profile.fov_deg))
     _refresh_language_selector()
     _refresh_flight_setup_panel()
     _refresh_flight_hud()
@@ -3266,6 +3363,25 @@ func show_rates(return_screen: String = "settings") -> void:
     _refresh_flight_hud()
 
 
+func show_camera(return_screen: String = "settings") -> void:
+    camera_return_screen = return_screen if return_screen in ["flight", "settings"] else "settings"
+    screen = "camera"
+    _refresh_camera_panel()
+    _refresh_flight_hud()
+    var slider := camera_panel.get_node_or_null("Rows/CameraAngle") as HSlider if camera_panel != null else null
+    if slider != null:
+        slider.grab_focus()
+
+
+func show_osd(return_screen: String = "settings") -> void:
+    osd_return_screen = return_screen if return_screen in ["flight", "settings"] else "settings"
+    screen = "osd"
+    _refresh_osd_panel()
+    _refresh_flight_hud()
+    if osd_preset_selector != null:
+        osd_preset_selector.grab_focus()
+
+
 func show_graphics(return_screen: String = "settings") -> void:
     graphics_return_screen = return_screen
     graphics_committed_scale = render_scale
@@ -3339,6 +3455,10 @@ func factory_reset_player_settings() -> void:
         return
     persisted_gamepad_profile = null
     rates_profile = RatesProfile.default_profile()
+    camera_profile = CameraProfile.default_profile()
+    osd_profile = OsdProfile.default_profile()
+    camera_profile_persisted = false
+    _apply_camera_profile()
     _preview_render_scale(QualityProfile.DEFAULT_RENDER_SCALE)
     graphics_committed_scale = QualityProfile.DEFAULT_RENDER_SCALE
     if rates_json_editor != null:
@@ -3349,6 +3469,7 @@ func factory_reset_player_settings() -> void:
         _refresh_flight_hud()
         return
     _refresh_localized_ui()
+    _refresh_osd_panel()
     last_error_message = "Settings reset to factory defaults"
     screen = "settings"
     _refresh_flight_hud()
@@ -3400,6 +3521,8 @@ func _build_flight_hud() -> void:
     layer.layer = 30
     flight_hud_layer = layer
     add_child(layer)
+    _build_analog_noise_overlay(layer)
+    _build_osd(layer)
 
     var margin := MarginContainer.new()
     margin.name = "StatusMargin"
@@ -3449,9 +3572,210 @@ func _build_flight_hud() -> void:
     acro_mode_button.pressed.connect(toggle_acro_mode)
     rows.add_child(acro_mode_button)
     _build_pause_panel()
+    _build_camera_panel()
+    _build_osd_panel()
     _build_controller_safety_panel()
     _build_finish_panel()
     _build_license_panel()
+
+
+func _build_analog_noise_overlay(layer: CanvasLayer) -> void:
+    analog_noise_overlay = ColorRect.new()
+    analog_noise_overlay.name = "AnalogNoise"
+    analog_noise_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    analog_noise_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    var shader := Shader.new()
+    shader.code = "shader_type canvas_item; void fragment() { float noise = fract(sin(dot(UV + TIME, vec2(12.9898, 78.233))) * 43758.5453); COLOR = vec4(vec3(noise), 0.045); }"
+    var material := ShaderMaterial.new()
+    material.shader = shader
+    analog_noise_overlay.material = material
+    layer.add_child(analog_noise_overlay)
+
+
+func _build_osd(layer: CanvasLayer) -> void:
+    var root := Control.new()
+    root.name = "FpvOsd"
+    root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    layer.add_child(root)
+    for element in OsdProfile.ELEMENTS:
+        var label := Label.new()
+        label.name = String(element).capitalize().replace(" ", "")
+        label.mouse_filter = Control.MOUSE_FILTER_STOP
+        label.gui_input.connect(_on_osd_label_gui_input.bind(element))
+        label.add_theme_color_override("font_color", Color(0.85, 1.0, 0.85))
+        label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
+        label.add_theme_constant_override("shadow_offset_x", 2)
+        label.add_theme_constant_override("shadow_offset_y", 2)
+        root.add_child(label)
+        osd_labels[element] = label
+
+
+func _build_camera_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "CameraPanel"
+    panel.set_anchors_preset(Control.PRESET_CENTER)
+    panel.offset_left = -220.0
+    panel.offset_top = -150.0
+    panel.offset_right = 220.0
+    panel.offset_bottom = 150.0
+    camera_panel = panel
+    flight_hud_layer.add_child(panel)
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 6)
+    panel.add_child(rows)
+    var title := Label.new()
+    title.name = "Title"
+    title.text = _t("ui.camera.title")
+    rows.add_child(title)
+    _add_camera_slider(rows, "CameraAngle", "ui.camera.angle", 0.0, 90.0, 1.0, float(camera_profile.camera_angle_deg), "camera_angle_deg")
+    _add_camera_slider(rows, "Fov", "ui.camera.fov", 30.0, 180.0, 1.0, float(camera_profile.fov_deg), "fov_deg")
+    var noise := CheckButton.new()
+    noise.name = "AnalogNoise"
+    noise.text = _t("ui.camera.analog_noise")
+    noise.button_pressed = bool(camera_profile.analog_noise)
+    noise.toggled.connect(_on_camera_noise_toggled)
+    rows.add_child(noise)
+    var back := Button.new()
+    back.name = "Back"
+    back.text = _t("ui.action.back")
+    back.pressed.connect(_close_camera_panel)
+    rows.add_child(back)
+
+
+func _add_camera_slider(rows: VBoxContainer, node_name: String, label_key: String, minimum: float, maximum: float, step: float, value: float, key: String) -> void:
+    var label := Label.new()
+    label.name = "%sLabel" % node_name
+    rows.add_child(label)
+    var slider := HSlider.new()
+    slider.name = node_name
+    slider.min_value = minimum
+    slider.max_value = maximum
+    slider.step = step
+    slider.value = value
+    slider.value_changed.connect(_on_camera_slider_changed.bind(key, label, label_key))
+    rows.add_child(slider)
+    _refresh_camera_slider_label(label, label_key, value)
+
+
+func _refresh_camera_slider_label(label: Label, label_key: String, value: float) -> void:
+    label.text = _format(label_key, [value])
+
+
+func _on_camera_slider_changed(value: float, key: String, label: Label, label_key: String) -> void:
+    var candidate := camera_profile.duplicate(true)
+    candidate[key] = value
+    var result := _save_camera_profile(candidate)
+    if result.ok:
+        _refresh_camera_slider_label(label, label_key, value)
+    else:
+        label.text = _format(label_key, [camera_profile[key]])
+
+
+func _on_camera_noise_toggled(enabled: bool) -> void:
+    var candidate := camera_profile.duplicate(true)
+    candidate["analog_noise"] = enabled
+    _save_camera_profile(candidate)
+
+
+func _close_camera_panel() -> void:
+    screen = camera_return_screen
+    _refresh_flight_hud()
+
+
+func _build_osd_panel() -> void:
+    var panel := PanelContainer.new()
+    panel.name = "OsdPanel"
+    panel.set_anchors_preset(Control.PRESET_CENTER)
+    panel.offset_left = -240.0
+    panel.offset_top = -210.0
+    panel.offset_right = 240.0
+    panel.offset_bottom = 210.0
+    osd_panel = panel
+    flight_hud_layer.add_child(panel)
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    rows.add_theme_constant_override("separation", 5)
+    panel.add_child(rows)
+    var title := Label.new()
+    title.name = "Title"
+    title.text = _t("ui.osd.title")
+    rows.add_child(title)
+    var hint := Label.new()
+    hint.name = "DragHint"
+    hint.text = _t("ui.osd.drag_hint")
+    hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(hint)
+    osd_preset_selector = OptionButton.new()
+    osd_preset_selector.name = "Preset"
+    for preset in OsdProfile.PRESETS:
+        osd_preset_selector.add_item(_t("ui.osd.preset.%s" % preset.to_snake_case()))
+        osd_preset_selector.set_item_metadata(osd_preset_selector.item_count - 1, preset)
+    osd_preset_selector.item_selected.connect(_on_osd_preset_selected)
+    rows.add_child(osd_preset_selector)
+    var toggles := GridContainer.new()
+    toggles.name = "Elements"
+    toggles.columns = 2
+    rows.add_child(toggles)
+    for element in OsdProfile.ELEMENTS:
+        var toggle := CheckButton.new()
+        toggle.name = String(element).capitalize()
+        toggle.text = _t("ui.osd.element.%s" % element)
+        toggle.button_pressed = bool(osd_profile.elements[element])
+        toggle.toggled.connect(_on_osd_element_toggled.bind(element))
+        toggles.add_child(toggle)
+    var back := Button.new()
+    back.name = "Back"
+    back.text = _t("ui.action.back")
+    back.pressed.connect(_close_osd_panel)
+    rows.add_child(back)
+
+
+func _on_osd_preset_selected(index: int) -> void:
+    if osd_preset_selector == null or index < 0 or index >= osd_preset_selector.item_count:
+        return
+    var preset := String(osd_preset_selector.get_item_metadata(index))
+    var result := _save_osd_profile(OsdProfile.profile_for_preset(preset))
+    if result.ok:
+        _refresh_osd_panel()
+
+
+func _on_osd_element_toggled(enabled: bool, element: String) -> void:
+    var candidate := osd_profile.duplicate(true)
+    candidate.elements[element] = enabled
+    _save_osd_profile(candidate)
+
+
+func _on_osd_label_gui_input(event: InputEvent, element: String) -> void:
+    if screen != "osd" or not bool(osd_profile.elements.get(element, false)):
+        return
+    var label := osd_labels.get(element) as Label
+    if label == null:
+        return
+    if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+        osd_drag_element = element if event.pressed else ""
+        if event.pressed:
+            osd_drag_offset = label.get_global_mouse_position() - label.global_position
+        else:
+            _save_osd_profile(osd_profile.duplicate(true))
+        get_viewport().set_input_as_handled()
+    elif event is InputEventMouseMotion and osd_drag_element == element:
+        var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+        if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+            return
+        var position := label.get_global_mouse_position() - osd_drag_offset
+        osd_profile.positions[element] = {
+            "x": clampf(position.x / viewport_size.x, 0.0, 1.0),
+            "y": clampf(position.y / viewport_size.y, 0.0, 1.0),
+        }
+        _refresh_osd()
+        get_viewport().set_input_as_handled()
+
+
+func _close_osd_panel() -> void:
+    screen = osd_return_screen
+    _refresh_flight_hud()
 
 
 func _build_license_panel() -> void:
@@ -3550,6 +3874,16 @@ func _build_pause_panel() -> void:
     rates.text = _t("ui.settings.rates")
     rates.pressed.connect(show_rates.bind("flight"))
     rows.add_child(rates)
+    var camera := Button.new()
+    camera.name = "Camera"
+    camera.text = _t("ui.settings.camera")
+    camera.pressed.connect(show_camera.bind("flight"))
+    rows.add_child(camera)
+    var osd := Button.new()
+    osd.name = "OSD"
+    osd.text = _t("ui.settings.osd")
+    osd.pressed.connect(show_osd.bind("flight"))
+    rows.add_child(osd)
     var exit := Button.new()
     exit.name = "Exit"
     exit.text = _t("ui.action.exit")
@@ -3617,6 +3951,76 @@ func _build_status_diagram() -> void:
     status_diagram.connect("vehicle_selected", Callable(self, "_on_dashboard_vehicle_selected"))
     add_child(status_diagram)
     status_diagram.call("set_layout_mode", dashboard_layout_mode)
+
+
+func _refresh_camera_panel() -> void:
+    if camera_panel == null:
+        return
+    var angle := camera_panel.get_node_or_null("Rows/CameraAngle") as HSlider
+    var fov := camera_panel.get_node_or_null("Rows/Fov") as HSlider
+    var noise := camera_panel.get_node_or_null("Rows/AnalogNoise") as CheckButton
+    if angle != null and not is_equal_approx(angle.value, float(camera_profile.camera_angle_deg)):
+        angle.set_value_no_signal(float(camera_profile.camera_angle_deg))
+    if fov != null and not is_equal_approx(fov.value, float(camera_profile.fov_deg)):
+        fov.set_value_no_signal(float(camera_profile.fov_deg))
+    if noise != null:
+        noise.set_pressed_no_signal(bool(camera_profile.analog_noise))
+
+
+func _refresh_osd_panel() -> void:
+    if osd_preset_selector == null:
+        return
+    var preset_index := OsdProfile.PRESETS.find(String(osd_profile.preset))
+    osd_preset_selector.select(preset_index)
+    for element in OsdProfile.ELEMENTS:
+        var toggle := osd_panel.get_node_or_null("Rows/Elements/%s" % String(element).capitalize()) as CheckButton
+        if toggle != null:
+            toggle.set_pressed_no_signal(bool(osd_profile.elements[element]))
+
+
+func _osd_snapshot() -> Dictionary:
+    if native != null and native.has_method("telemetry_snapshot"):
+        return native.call("telemetry_snapshot")
+    return {}
+
+
+func _refresh_osd() -> void:
+    if osd_labels.is_empty():
+        return
+    var viewport := get_viewport()
+    if viewport == null:
+        return
+    var active := screen in ["preflight", "flight", "finish", "osd"]
+    var snapshot := _osd_snapshot()
+    var battery: Dictionary = snapshot.get("battery", {})
+    var armed := bool(snapshot.get("armed", _flight_control_armed()))
+    var mode := String(snapshot.get("mode", flight_mode))
+    var lap_text := ""
+    if time_trial != null:
+        var trial_state := _t("ui.hud.time_trial_finished") if time_trial.finished else _format("ui.hud.time_trial_next", [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()])
+        lap_text = _format("ui.osd.lap", [trial_state])
+    var values := {
+        "battery": _format("ui.osd.battery", [float(battery.get("voltage_v", 0.0)), float(battery.get("sag_v", 0.0)), float(battery.get("remaining_mah", 0.0))]),
+        "armed": _format("ui.osd.armed", [_localized_arm_state(armed)]),
+        "flight_mode": _format("ui.osd.mode", [_localized_flight_mode(mode)]),
+        "timer": _format("ui.osd.timer", [time_trial.elapsed_seconds if time_trial != null else 0.0]),
+        "lap_checkpoint": lap_text,
+        "signal": _t("ui.osd.signal_live") if not snapshot.is_empty() else _t("ui.osd.signal_offline"),
+        "warnings": _localize_fallback_message(last_error_message) if not last_error_message.is_empty() else _t("ui.osd.ready"),
+        "reset_hint": _t("ui.osd.reset_hint"),
+    }
+    for element in OsdProfile.ELEMENTS:
+        var label: Label = osd_labels[element]
+        label.text = String(values[element])
+        label.visible = active and bool(osd_profile.elements[element]) and not (time_trial == null and element in ["timer", "lap_checkpoint"])
+        var position: Dictionary = osd_profile.positions[element]
+        label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+        label.position = Vector2(float(position.x) * viewport.get_visible_rect().size.x, float(position.y) * viewport.get_visible_rect().size.y)
+        label.size = Vector2(280.0, 56.0 if element == "warnings" else 28.0)
+        label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if element == "warnings" else TextServer.AUTOWRAP_OFF
+    if analog_noise_overlay != null:
+        analog_noise_overlay.visible = active and bool(camera_profile.analog_noise)
+
 
 
 func set_dashboard_layout_mode(mode: String) -> bool:
@@ -3695,6 +4099,10 @@ func _refresh_flight_hud() -> void:
             status_margin.visible = screen != "controller_confirmation"
     if pause_panel != null:
         pause_panel.visible = paused and screen == "flight"
+    if camera_panel != null:
+        camera_panel.visible = screen == "camera"
+    if osd_panel != null:
+        osd_panel.visible = screen == "osd"
     if controller_safety_panel != null:
         controller_safety_panel.visible = controller_safety_latched and screen != "controller_confirmation"
     if controller_safety_label != null:
@@ -3732,6 +4140,7 @@ func _refresh_flight_hud() -> void:
         if time_trial != null:
             var trial_state := _t("ui.hud.time_trial_finished") if time_trial.finished else _format("ui.hud.time_trial_next", [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()])
             time_trial_status_label.text = _format("ui.hud.time_trial", [trial_state, time_trial.elapsed_seconds])
+    _refresh_osd()
     if screen == "preflight":
         var armed := _flight_control_armed()
         arm_status_label.text = _format("ui.hud.preflight", [_px4_status_text(), _profile_input_status(), _localized_arm_state(armed)])
@@ -3989,11 +4398,26 @@ func _update_chase_camera() -> void:
     if chase_camera == null or drone_body == null:
         return
     chase_camera.current = true
-    chase_camera.global_position = drone_body.global_position + CHASE_CAMERA_OFFSET
-    chase_camera.look_at(drone_body.global_position, Vector3.UP)
+    if screen in ["preflight", "flight", "finish"]:
+        chase_camera.global_position = drone_body.global_position + drone_body.global_basis * Vector3(0.0, 0.03, 0.0)
+        chase_camera.global_basis = drone_body.global_basis * Basis(Vector3.RIGHT, deg_to_rad(float(camera_profile.camera_angle_deg)))
+        chase_camera.fov = float(camera_profile.fov_deg)
+    else:
+        chase_camera.global_position = drone_body.global_position + CHASE_CAMERA_OFFSET
+        chase_camera.look_at(drone_body.global_position, Vector3.UP)
     if secondary_drone_body != null and secondary_chase_camera != null and secondary_drone_body.visible:
-        secondary_chase_camera.global_position = secondary_drone_body.global_position + CHASE_CAMERA_OFFSET
-        secondary_chase_camera.look_at(secondary_drone_body.global_position, Vector3.UP)
+        if screen in ["preflight", "flight", "finish"]:
+            secondary_chase_camera.global_position = secondary_drone_body.global_position + secondary_drone_body.global_basis * Vector3(0.0, 0.03, 0.0)
+            secondary_chase_camera.global_basis = secondary_drone_body.global_basis * Basis(Vector3.RIGHT, deg_to_rad(float(camera_profile.camera_angle_deg)))
+            secondary_chase_camera.fov = float(camera_profile.fov_deg)
+        else:
+            secondary_chase_camera.global_position = secondary_drone_body.global_position + CHASE_CAMERA_OFFSET
+            secondary_chase_camera.look_at(secondary_drone_body.global_position, Vector3.UP)
+
+
+func _apply_camera_profile() -> void:
+    _update_chase_camera()
+    _refresh_camera_panel()
 
 
 func _airsim_camera_source(vehicle_name: String = "") -> Camera3D:
