@@ -750,7 +750,8 @@ func _audit_transient_localization(runtime: Node, locale_suffix: String) -> void
 	await _settle(1)
 	_audit_visible_controls(runtime, "fallback_%s" % locale_suffix)
 
-	runtime.gamepad_device_state.call("replace_snapshot", [0], [0])
+	var connected_devices: Array[int] = [0]
+	runtime.gamepad_device_state.call("replace_snapshot", connected_devices, connected_devices)
 	runtime.call("begin_controller_confirmation", 0)
 	await _settle(1)
 	_expect(runtime.screen == "controller_confirmation", "controller confirmation transient state opens")
@@ -764,7 +765,8 @@ func _audit_transient_localization(runtime: Node, locale_suffix: String) -> void
 
 	runtime.set_paused(false, false)
 	runtime.last_error_message = ""
-	runtime.gamepad_device_state.call("replace_snapshot", [], [])
+	var no_devices: Array[int] = []
+	runtime.gamepad_device_state.call("replace_snapshot", no_devices, no_devices)
 	runtime.session_gamepad_device_id = -1
 	runtime.show_settings()
 	await _settle(1)
