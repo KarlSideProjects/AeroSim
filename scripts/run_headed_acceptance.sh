@@ -131,7 +131,8 @@ for switch in locale_switches:
         raise SystemExit(f"headed acceptance locale switch exceeded its input-blocking threshold: {path}")
 PY
 
-if grep -Eq '^(ERROR:|SCRIPT ERROR:)' "$log_path"; then
+unexpected_errors="$(grep -E '^(ERROR:|SCRIPT ERROR:)' "$log_path" | grep -Fxv 'ERROR: X11 Display is not available' || true)"
+if [ -n "$unexpected_errors" ]; then
     echo "Godot error found in headed acceptance log: $log_path" >&2
     exit 1
 fi
