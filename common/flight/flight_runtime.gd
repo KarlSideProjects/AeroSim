@@ -1394,6 +1394,8 @@ func _physics_process(delta: float) -> void:
         )
         if _handle_native_step_failure(native):
             return
+        if not _refresh_native_imu_sample(native):
+            return
         _record_replay_actuator_command(_airsim_vehicle_name, actuator_outputs, replay_timestamp_us)
         if drone_body != null and drone_body.contact_seen:
             _record_replay_collision(_airsim_vehicle_name, drone_body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
@@ -1463,6 +1465,8 @@ func _physics_process(delta: float) -> void:
             )
         if _handle_native_step_failure(native):
             return
+        if not _refresh_native_imu_sample(native):
+            return
         if drone_body.contact_seen:
             _record_replay_collision(_airsim_vehicle_name, drone_body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
             collision_handoff_count += 1
@@ -1478,6 +1482,8 @@ func _physics_process(delta: float) -> void:
             var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
             row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw)
         if _handle_native_step_failure(native):
+            return
+        if not _refresh_native_imu_sample(native):
             return
     if px4_sitl_bridge == null:
         _record_replay_command(_airsim_vehicle_name, {
@@ -1525,10 +1531,6 @@ func _physics_process(delta: float) -> void:
         _airsim_linear_acceleration = Vector3.ZERO
         _airsim_angular_acceleration = Vector3.ZERO
     _airsim_last_velocity = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
-    if native != null and native.has_method("refresh_imu_sample"):
-        native.call("refresh_imu_sample")
-        if _handle_native_step_failure(native):
-            return
     if time_trial != null and drone_body != null:
         time_trial.advance(drone_body.global_position, 1.0 / float(Engine.physics_ticks_per_second))
     _advance_airsim_sensors()
@@ -1644,6 +1646,8 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             _kinetic(body.linear_velocity, body.angular_velocity))
     if _handle_native_step_failure(_airsim_secondary_native):
         return
+    if not _refresh_native_imu_sample(_airsim_secondary_native):
+        return
     _record_replay_command(vehicle_name, controls, replay_timestamp_us)
     if row.size() >= 17:
         _replay_secondary_row = row
@@ -1674,12 +1678,6 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
     context["angular_acceleration"] = (body_angular_velocity - context.get("last_body_angular_velocity", Vector3.ZERO)) * float(Engine.physics_ticks_per_second)
     context["last_body_angular_velocity"] = body_angular_velocity
     _airsim_vehicle_contexts[vehicle_name] = context
-    if _airsim_secondary_native.has_method("refresh_imu_sample"):
-        _airsim_secondary_native.call("refresh_imu_sample")
-        if _handle_native_step_failure(_airsim_secondary_native):
-            return
-
-
 func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
     var command_state: Dictionary = context.get("command_state", {})
     if command_state.is_empty():
@@ -2681,6 +2679,12 @@ func _handle_native_step_failure(step_native) -> bool:
     set_paused(true, false)
     screen = "error"
     _refresh_flight_hud()
+    return true
+
+func _refresh_native_imu_sample(step_native) -> bool:
+    if step_native != null and step_native.has_method("refresh_imu_sample"):
+        step_native.call("refresh_imu_sample")
+        return not _handle_native_step_failure(step_native)
     return true
 
 func set_paused(value: bool, sync_session: bool = true) -> void:

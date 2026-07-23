@@ -33,12 +33,19 @@ class FakeSecondaryNative extends RefCounted:
     var rate_stick_calls := 0
     var a5_config := {"enabled": false, "prop_radius_m": 0.0, "coeff_1": 0.0, "coeff_2": 0.0, "coeff_3": 0.0}
     var last_a5_source_position := Vector3.ZERO
+    var refresh_error := ""
+    var refresh_calls := 0
+    var refreshed := false
 
     func a5_downwash_configuration() -> Dictionary:
         return a5_config.duplicate(true)
 
     func refresh_imu_sample() -> void:
-        pass
+        refresh_calls += 1
+        refreshed = true
+
+    func last_step_error() -> String:
+        return refresh_error if refreshed else ""
 
     func betaflight_stick_for_rate(_rate: float, _rc_rate: float, _super_rate: float, _expo: float) -> float:
         rate_stick_calls += 1
@@ -336,6 +343,39 @@ func test_secondary_angular_state_tracks_body_acceleration_and_publishes_it() ->
     assert_almost_eq(float(angular_acceleration.x_val), 1.1 * Engine.physics_ticks_per_second, 0.000001)
     assert_almost_eq(float(angular_acceleration.y_val), 3.3 * Engine.physics_ticks_per_second, 0.000001)
     assert_almost_eq(float(angular_acceleration.z_val), -2.2 * Engine.physics_ticks_per_second, 0.000001)
+
+
+func test_secondary_imu_refresh_failure_precedes_contact_body_and_context_mutation() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var primary_body := _body(Vector3.ZERO, 0.0)
+    var secondary_body := _body(Vector3.ZERO, 0.0)
+    secondary_body.contact_seen = true
+    secondary_body.contact_normal = Vector3.UP
+    var secondary_native := FakeSecondaryNative.new()
+    secondary_native.refresh_error = "AeroSimNative.refresh_imu_sample: InvalidState: state"
+    runtime.drone_body = primary_body
+    runtime.secondary_drone_body = secondary_body
+    runtime.native = FakeSecondaryNative.new()
+    runtime._airsim_secondary_native = secondary_native
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime._airsim_vehicle_contexts["DroneB"] = {
+        "api_control": true,
+        "armed": true,
+        "command_state": {"method": "hover", "args": []},
+        "hold_controls": {},
+        "command_remaining_frames": 1,
+        "last_velocity": Vector3.ZERO,
+        "last_body_angular_velocity": Vector3.ZERO,
+    }
+
+    runtime._step_secondary_airsim_vehicle("DroneB")
+
+    assert_eq(secondary_native.refresh_calls, 1)
+    assert_true(runtime.paused)
+    assert_true(secondary_body.contact_seen)
+    assert_eq(secondary_body.angular_velocity, Vector3.ZERO)
+    assert_eq(int(runtime._airsim_vehicle_contexts["DroneB"].command_remaining_frames), 1)
 
 
 func test_secondary_kinematic_context_resets_without_an_acceleration_spike() -> void:

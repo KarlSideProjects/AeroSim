@@ -1066,7 +1066,6 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
         double motor_1,
         double motor_2,
         double motor_3) {
-    const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
         set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
@@ -1081,6 +1080,10 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
+    if (config.mass_kg <= 0.0 || !aerosim::validate_per_motor_config(config.per_motor)) {
+        set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidConfig, "hardware");
+        return {};
+    }
     config.a4_ground_effect = a4_ground_effect_config_;
     config.external_force_world = external_force_world_;
     apply_downwash_provider(config);
@@ -1088,11 +1091,6 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
     const aerosim::TrajectorySample sample = aerosim::step_per_motor_physics_frame(
             simulation_state_, simulation_clock_, config, commands);
-    if (sample.substeps == 0 && physics_hz > 0 && substep_hz > 0) {
-        restore_step(snapshot);
-        set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidControlOutput, "substep");
-        return {};
-    }
     flight_controller_.publish_applied_telemetry(
             sample, config, (motor_0 + motor_1 + motor_2 + motor_3) * 0.25, "PX4_ACTUATOR");
     flight_mode_ = "PX4_ACTUATOR";
