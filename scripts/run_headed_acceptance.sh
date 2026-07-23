@@ -4,6 +4,7 @@ set -euo pipefail
 godot_bin="${GODOT_BIN:-godot}"
 out_dir="build/headed"
 use_xvfb=0
+display_driver_args=()
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -42,7 +43,8 @@ if [ "$use_xvfb" -eq 1 ]; then
     test -r "$lavapipe_icd"
     command -v xvfb-run >/dev/null
     export VK_ICD_FILENAMES="$lavapipe_icd"
-    launcher=(xvfb-run -a --server-args="-screen 0 1920x1080x24")
+    launcher=(xvfb-run -a -e "$out_dir/xvfb.log" --server-args="-screen 0 1920x1080x24")
+    display_driver_args=(--display-driver x11)
 else
     launcher=()
 fi
@@ -52,8 +54,8 @@ mkdir -p .godot
 printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .godot/extension_list.cfg
 export AEROSIM_HEADED_COMMIT_SHA="$(git rev-parse HEAD)"
 log_path="$out_dir/godot.log"
-rm -f "$out_dir"/*.png "$out_dir/report.json" "$log_path"
-timeout 120s "${launcher[@]}" "$godot_bin" --path . --resolution 1280x720 \
+rm -f "$out_dir"/*.png "$out_dir/report.json" "$log_path" "$out_dir/xvfb.log"
+timeout 60s "${launcher[@]}" "$godot_bin" "${display_driver_args[@]}" --path . --resolution 1280x720 \
     --log-file "$log_path" \
     --script res://tests/headed/headed_acceptance.gd -- --out-dir "$out_dir"
 
