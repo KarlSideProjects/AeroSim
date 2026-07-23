@@ -35,6 +35,21 @@ AEROSIM_REPLAY_ARTIFACT=build/replay_task3.json build/tests/test_replay && pytho
 
 All commands passed. The first integration attempt intentionally caught a stale pre-change native `.so`; rebuilding the pinned GDExtension made the schema-v3 integration pass.
 
+## Review-fix evidence
+
+- RED: a full-checkpoint recorder call did not compile because the recorder accepted only `DualAircraftState`.
+- GREEN: the recorder now accepts a complete checkpoint; the existing native binding fills it from live controller, clock, motor, propwash, and first-response state without changing the GDScript call signature.
+- Both session and run comparators now include checkpoint motor/propwash and every first-response rigid-body field. Collision evidence records, serializes, reloads, and bitwise-compares the actual first response rather than executing a second trial.
+- Added explicit schema-v2 rejection and checked finite/capped duration-to-`size_t` frame conversion coverage.
+
+Validation after the review fixes:
+
+```bash
+scripts/test_native.sh
+GODOT_CPP_DIR=/tmp/aerosim-issue36-ci/aerosim-tools-local-1772574-1-verify-issue-11/godot-cpp /tmp/aerosim-issue36-ci/aerosim-tools-local-1772574-1-verify-issue-11/scons-venv/bin/scons -j4 target=template_debug platform=linux
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/test_replay_integration.sh
+```
+
 ## Scope
 
 Implemented only the requested CAP-006 Task 3 behavior in:

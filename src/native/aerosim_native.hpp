@@ -52,6 +52,8 @@ private:
     bool has_last_imu_sample_ = false;
     aerosim::WindField wind_field_;
     std::unique_ptr<aerosim::ReplaySessionRecorder> replay_recorder_;
+    aerosim::TrajectorySample replay_first_response_;
+    bool has_replay_first_response_ = false;
     godot::String wind_preset_name_ = "custom";
     bool imu_noise_enabled_ = false;
     bool imu_bias_enabled_ = false;

@@ -315,6 +315,11 @@ bool test_complete_session_schema() {
     if (unsupported.ok || unsupported.diagnostic.code != aerosim::ReplayDiagnosticCode::UnsupportedSchema) {
         return false;
     }
+    const aerosim::ReplayLoadResult schema_v2 = aerosim::load_replay_session(
+        replace_once(serialized, "\"schema_version\":3", "\"schema_version\":2"));
+    if (schema_v2.ok || schema_v2.diagnostic.code != aerosim::ReplayDiagnosticCode::UnsupportedSchema) {
+        return false;
+    }
     const aerosim::ReplayLoadResult truncated = aerosim::load_replay_session(serialized.substr(0, serialized.size() - 2));
     if (truncated.ok || truncated.diagnostic.code != aerosim::ReplayDiagnosticCode::Truncated) {
         return false;
@@ -430,6 +435,12 @@ bool test_complete_session_schema() {
     motor_mismatch.checkpoints.front().first_response_substeps[0].state.motor_thrust_newtons[0] += 0.25;
     const aerosim::ReplayDivergence motor_divergence = aerosim::compare_replay_runs(first_run, motor_mismatch);
     if (!motor_divergence.diverged || motor_divergence.field != "checkpoint.controller[0].motor[0]") {
+        return false;
+    }
+    aerosim::ReplayRunResult propwash_mismatch = second_run;
+    propwash_mismatch.checkpoints.front().first_response_substeps[0].state.propwash_disturbance_rad_s2.x += 0.25;
+    const aerosim::ReplayDivergence propwash_divergence = aerosim::compare_replay_runs(first_run, propwash_mismatch);
+    if (!propwash_divergence.diverged || propwash_divergence.field != "checkpoint.controller[0].first_response.propwash.x") {
         return false;
     }
     aerosim::ReplayRunResult clock_mismatch = second_run;
@@ -643,6 +654,14 @@ bool test_schema_v3_controller_snapshot_divergence() {
     checkpoint.controllers[0].motor_saturation_latched[2] = true;
     checkpoint.clocks[0].total_substeps = 1;
     checkpoint.first_response_substeps[0].substeps = 1;
+    aerosim::ReplaySessionRecorder checkpoint_recorder(1, "manifest");
+    if (!checkpoint_recorder.add_vehicle("DroneA", "hash-a", "{}") ||
+            !checkpoint_recorder.add_vehicle("DroneB", "hash-b", "{}") ||
+            !checkpoint_recorder.record_environment(0, complete_atmosphere()) ||
+            !checkpoint_recorder.record_checkpoint(1, checkpoint) ||
+            !checkpoint_recorder.finish(1, "completed")) {
+        return false;
+    }
     session.checkpoints.push_back(checkpoint);
     const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(aerosim::serialize_replay_session(session), "manifest");
     if (!loaded.ok || loaded.session.schema_version != 3 ||

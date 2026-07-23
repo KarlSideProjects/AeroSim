@@ -77,6 +77,24 @@ func run() -> Dictionary:
     var altered_manifest: Dictionary = JSON.parse_string(finish.serialized)
     if int(altered_manifest.get("schema_version", 0)) != 3:
         return _failure("replay recording did not emit schema v3")
+    var checkpoints: Array = altered_manifest.get("checkpoints", [])
+    if checkpoints.is_empty():
+        return _failure("replay recording did not emit a checkpoint")
+    var checkpoint: Dictionary = checkpoints[0]
+    var controllers: Array = checkpoint.get("controllers", [])
+    var clocks: Array = checkpoint.get("clocks", [])
+    var responses: Array = checkpoint.get("first_response_substeps", [])
+    if controllers.size() != 2 or clocks.size() != 2 or responses.size() != 2:
+        return _failure("schema-v3 checkpoint state is incomplete")
+    var controller: Dictionary = controllers[0]
+    var response: Dictionary = responses[0]
+    var response_state: Dictionary = response.get("state", {})
+    for field in ["target_angle", "target_rate", "integral", "previous_error", "derivative", "mode", "initialized", "motor_latches", "pid_latches", "motor_total"]:
+        if not controller.has(field):
+            return _failure("schema-v3 controller checkpoint field is missing: %s" % field)
+    if not clocks[0].has("substep_accumulator") or not clocks[0].has("total_substeps") or \
+            not response_state.has("motor_thrust") or not response_state.has("propwash"):
+        return _failure("schema-v3 clock, motor, or first-response state is missing")
     altered_manifest["vehicles"][0]["config"]["mass_kg"] = 1.25
     var strict_manifest_rejection: Dictionary = native.call(
         "replay_complete_session", JSON.stringify(altered_manifest), SETTINGS_HASH, config_hash, config_hash,

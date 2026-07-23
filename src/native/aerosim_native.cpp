@@ -2,6 +2,7 @@
 
 #include "aerosim_aerodynamics.hpp"
 #include "aerosim_probe.hpp"
+#include <algorithm>
 #include <cmath>
 #include <godot_cpp/classes/hashing_context.hpp>
 #include <godot_cpp/classes/json.hpp>
@@ -821,6 +822,8 @@ Dictionary AeroSimNative::begin_complete_replay_recording(
         return replay_status(false, &recorder->diagnostic());
     }
     replay_recorder_ = std::move(recorder);
+    replay_first_response_ = {};
+    has_replay_first_response_ = false;
     return replay_status(true);
 }
 
@@ -1024,8 +1027,23 @@ Dictionary AeroSimNative::record_replay_checkpoint(
         state.angular_velocity = {row[14], row[15], row[16]};
         return state;
     };
-    const aerosim::DualAircraftState state{state_from_row(upper_row), state_from_row(lower_row)};
-    const bool ok = replay_recorder_->record_checkpoint(static_cast<std::uint64_t>(timestamp_us), state);
+    aerosim::ReplayRunCheckpoint checkpoint;
+    checkpoint.state = {state_from_row(upper_row), state_from_row(lower_row)};
+    checkpoint.state.upper.motor_thrust_newtons = simulation_state_.motor_thrust_newtons;
+    checkpoint.state.upper.propwash_disturbance_rad_s2 = simulation_state_.propwash_disturbance_rad_s2;
+    checkpoint.controllers[0] = flight_controller_.control_state();
+    checkpoint.clocks[0] = simulation_clock_;
+    const bool has_motor_response = std::any_of(simulation_state_.motor_thrust_newtons.begin(),
+            simulation_state_.motor_thrust_newtons.end(), [](double value) { return value != 0.0; });
+    if (has_motor_response && !has_replay_first_response_) {
+        replay_first_response_.time_seconds = static_cast<double>(simulation_clock_.total_substeps) /
+                static_cast<double>(std::max(1, hardware_config_.simulation_config().substep_hz));
+        replay_first_response_.state = simulation_state_;
+        replay_first_response_.substeps = simulation_clock_.total_substeps;
+        has_replay_first_response_ = true;
+    }
+    checkpoint.first_response_substeps[0] = replay_first_response_;
+    const bool ok = replay_recorder_->record_checkpoint(static_cast<std::uint64_t>(timestamp_us), std::move(checkpoint));
     return replay_status(ok, &replay_recorder_->diagnostic());
 }
 

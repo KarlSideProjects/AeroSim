@@ -250,6 +250,7 @@ public:
             const Quat &orientation = {});
     bool record_environment(std::uint64_t timestamp_us, std::string environment_json);
     bool record_checkpoint(std::uint64_t timestamp_us, const DualAircraftState &state);
+    bool record_checkpoint(std::uint64_t timestamp_us, ReplayRunCheckpoint checkpoint);
     bool finish(std::uint64_t timestamp_us, std::string reason);
 
     const ReplaySession &session() const;
