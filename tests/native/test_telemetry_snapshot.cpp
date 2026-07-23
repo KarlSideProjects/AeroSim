@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <iostream>
 
@@ -16,6 +17,22 @@ int fail(const char *message) {
 
 bool near(double actual, double expected, double tolerance) {
     return std::abs(actual - expected) <= tolerance;
+}
+
+bool same_bits(double a, double b) {
+    return std::memcmp(&a, &b, sizeof(double)) == 0;
+}
+
+bool same_state_bits(const aerosim::RigidBodyState &a, const aerosim::RigidBodyState &b) {
+    const auto same_vec3 = [](const aerosim::Vec3 &left, const aerosim::Vec3 &right) {
+        return same_bits(left.x, right.x) && same_bits(left.y, right.y) && same_bits(left.z, right.z);
+    };
+    return same_vec3(a.position, b.position) && same_vec3(a.velocity, b.velocity) &&
+            same_bits(a.orientation.x, b.orientation.x) && same_bits(a.orientation.y, b.orientation.y) &&
+            same_bits(a.orientation.z, b.orientation.z) && same_bits(a.orientation.w, b.orientation.w) &&
+            same_vec3(a.angular_velocity, b.angular_velocity) &&
+            same_vec3(a.propwash_disturbance_rad_s2, b.propwash_disturbance_rad_s2) &&
+            std::equal(a.motor_thrust_newtons.begin(), a.motor_thrust_newtons.end(), b.motor_thrust_newtons.begin(), same_bits);
 }
 
 void configure_power_model(aerosim::SimulationConfig &config) {
@@ -213,14 +230,38 @@ int main() {
     if (!invalid_controller.arm(0.0)) {
         return fail("out-of-domain telemetry setup must arm from low throttle");
     }
-    invalid_controller.step_angle_mode(invalid_state, invalid_clock, invalid_config, hover);
+    invalid_controller.step_angle_mode(invalid_state, invalid_clock, windy_config, hover);
+    const aerosim::RigidBodyState invalid_state_before = invalid_state;
+    const aerosim::SimulationClock invalid_clock_before = invalid_clock;
+    const aerosim::TelemetrySnapshot invalid_telemetry_before = invalid_controller.telemetry_snapshot();
+    aerosim::FlightController expected_controller = invalid_controller;
+    aerosim::RigidBodyState expected_state = invalid_state;
+    aerosim::SimulationClock expected_clock = invalid_clock;
+    const aerosim::StepResult invalid_result = invalid_controller.try_step_angle_mode(
+            invalid_state, invalid_clock, invalid_config, hover, invalid_state.orientation);
     const aerosim::TelemetrySnapshot &invalid_snapshot = invalid_controller.telemetry_snapshot();
-    if (invalid_snapshot.body_drag_operating_state != "out_of_domain" ||
-            invalid_snapshot.body_drag_evidence_state != "unavailable" ||
-            invalid_snapshot.body_drag_reason_code != "invalid_configuration" ||
-            std::isfinite(invalid_snapshot.body_drag_force_body_frd_n_mean.x) ||
-            std::isfinite(invalid_snapshot.body_drag_torque_body_frd_nm_mean.x)) {
-        return fail("TelemetrySnapshot must use out_of_domain and unavailable values for invalid body drag");
+    if (invalid_result.status != aerosim::StepStatus::InvalidConfig ||
+            !same_state_bits(invalid_state, invalid_state_before) ||
+            !same_bits(invalid_clock.substep_accumulator, invalid_clock_before.substep_accumulator) ||
+            invalid_clock.total_substeps != invalid_clock_before.total_substeps ||
+            invalid_snapshot.timestamp_us != invalid_telemetry_before.timestamp_us ||
+            invalid_snapshot.publish_count != invalid_telemetry_before.publish_count ||
+            invalid_snapshot.body_drag_operating_state != invalid_telemetry_before.body_drag_operating_state ||
+            invalid_snapshot.body_drag_evidence_state != invalid_telemetry_before.body_drag_evidence_state ||
+            invalid_snapshot.body_drag_reason_code != invalid_telemetry_before.body_drag_reason_code) {
+        return fail("invalid config must leave telemetry, state, and clock unchanged");
+    }
+    const aerosim::StepResult continued_result = invalid_controller.try_step_angle_mode(
+            invalid_state, invalid_clock, windy_config, hover, invalid_state.orientation);
+    const aerosim::StepResult expected_result = expected_controller.try_step_angle_mode(
+            expected_state, expected_clock, windy_config, hover, expected_state.orientation);
+    if (continued_result.status != aerosim::StepStatus::Ok || expected_result.status != aerosim::StepStatus::Ok ||
+            !same_state_bits(invalid_state, expected_state) ||
+            !same_bits(invalid_clock.substep_accumulator, expected_clock.substep_accumulator) ||
+            invalid_clock.total_substeps != expected_clock.total_substeps ||
+            invalid_controller.telemetry_snapshot().timestamp_us != expected_controller.telemetry_snapshot().timestamp_us ||
+            invalid_controller.telemetry_snapshot().publish_count != expected_controller.telemetry_snapshot().publish_count) {
+        return fail("the legal step after an invalid config must match an untouched continuation");
     }
 
     aerosim::RigidBodyState ordering_state;
