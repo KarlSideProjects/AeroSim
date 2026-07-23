@@ -1,4 +1,39 @@
-# Task 3: Complete remaining routes and cold-start evidence
+# Task 3: Replay schema-v3 and collision recovery evidence
+
+## Scope
+
+- Upgraded complete replay artifacts from schema 2 to schema 3 with controller, motor, clock, and first-response checkpoint state.
+- Added checked replay batches returning `status`, `rows`, and `failed_frame`; the hard cap is `kMaxBatchTrajectoryFrames=1'000'000`.
+- Replaced the collision height/angle proxy with the paired neutral/response counterfactual across the existing four scenes, 100 seeds, and Angle/Acro modes.
+
+## TDD evidence
+
+### RED
+
+```bash
+mkdir -p build/tests && g++ -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native tests/native/test_replay.cpp src/native/aerosim_aerodynamics.cpp src/native/aerosim_simulation.cpp src/native/aerosim_flight_control.cpp src/native/aerosim_imu.cpp src/native/aerosim_wind.cpp src/native/aerosim_collision.cpp src/native/aerosim_replay.cpp -o build/tests/test_replay && build/tests/test_replay
+```
+
+Failed as expected because `ReplayBatchResult`, checked batch entry points, schema-v3 controller checkpoints, clocks, and first-response fields did not exist.
+
+```bash
+g++ -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native tests/native/test_replay.cpp src/native/aerosim_aerodynamics.cpp src/native/aerosim_simulation.cpp src/native/aerosim_flight_control.cpp src/native/aerosim_imu.cpp src/native/aerosim_wind.cpp src/native/aerosim_collision.cpp src/native/aerosim_replay.cpp -o build/tests/test_replay && build/tests/test_replay
+```
+
+The second RED exposed the missing field-by-field run comparator for changed controller, motor, and clock checkpoint fields.
+
+### GREEN
+
+```bash
+g++ -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native tests/native/test_replay.cpp src/native/aerosim_aerodynamics.cpp src/native/aerosim_simulation.cpp src/native/aerosim_flight_control.cpp src/native/aerosim_imu.cpp src/native/aerosim_wind.cpp src/native/aerosim_collision.cpp src/native/aerosim_replay.cpp -o build/tests/test_replay && build/tests/test_replay
+g++ -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native tests/native/test_collision.cpp src/native/aerosim_aerodynamics.cpp src/native/aerosim_simulation.cpp src/native/aerosim_flight_control.cpp src/native/aerosim_imu.cpp src/native/aerosim_wind.cpp src/native/aerosim_collision.cpp src/native/aerosim_replay.cpp -o build/tests/test_collision && build/tests/test_collision
+scripts/test_native.sh
+GODOT_CPP_DIR=/tmp/aerosim-issue36-ci/aerosim-tools-local-1772574-1-verify-issue-11/godot-cpp /tmp/aerosim-issue36-ci/aerosim-tools-local-1772574-1-verify-issue-11/scons-venv/bin/scons -j4 target=template_debug platform=linux
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/test_replay_integration.sh
+AEROSIM_REPLAY_ARTIFACT=build/replay_task3.json build/tests/test_replay && python3 scripts/compare_replay_artifacts.py build/replay_task3.json build/replay_task3.json
+```
+
+All commands passed. The first integration attempt intentionally caught a stale pre-change native `.so`; rebuilding the pinned GDExtension made the schema-v3 integration pass.
 
 ## Scope
 
