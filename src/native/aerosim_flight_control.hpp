@@ -102,6 +102,7 @@ struct TelemetrySnapshot {
 
 double betaflight_rate_degrees_per_second(double stick, const RateProfile &profile);
 double betaflight_stick_for_rate_degrees_per_second(double rate_degrees_per_second, const RateProfile &profile);
+double normalize_angle_radians(double angle);
 QuadXMixerResult quad_x_mix_thrust(
         const SimulationConfig &config,
         double collective_thrust_newtons,

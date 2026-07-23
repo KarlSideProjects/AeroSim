@@ -75,6 +75,11 @@ void configure_power_model(aerosim::SimulationConfig &config) {
 } // namespace
 
 int main() {
+    if (!near(aerosim::normalize_angle_radians(1.0e300),
+                    std::remainder(1.0e300, 2.0 * kPi), 1e-12)) {
+        return fail("angle normalization must be constant-time for huge finite angles");
+    }
+
     aerosim::FlightController blocked_controller;
     if (blocked_controller.arm(0.25)) {
         return fail("arm must be rejected unless throttle is low");
@@ -95,6 +100,21 @@ int main() {
     config.physics_hz = 240;
     config.substep_hz = 1000;
     configure_power_model(config);
+
+    aerosim::RigidBodyState first_response_state;
+    aerosim::SimulationClock first_response_clock;
+    aerosim::FlightController first_response_controller;
+    if (!first_response_controller.arm(0.0)) {
+        return fail("first response setup should arm from low throttle");
+    }
+    aerosim::FlightCommand first_response_command;
+    first_response_command.throttle = 0.5;
+    first_response_command.roll_degrees = 30.0;
+    first_response_controller.step_angle_mode(
+            first_response_state, first_response_clock, config, first_response_command);
+    if (!near(first_response_controller.telemetry_snapshot().pid[1].output, -0.0480016, 1e-12)) {
+        return fail("first control response must report the first 1 kHz substep, not the end of the physics frame");
+    }
 
     aerosim::RigidBodyState disarmed_state;
     aerosim::SimulationClock disarmed_clock;

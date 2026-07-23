@@ -287,6 +287,34 @@ struct TrajectorySample {
     double air_density_kg_m3 = 1.225;
     bool body_drag_force_applied = false;
     bool body_drag_torque_applied = false;
+    RigidBodyState first_response_state;
+    double first_response_time_seconds = 0.0;
+    bool has_first_response = false;
+
+    TrajectorySample() = default;
+    TrajectorySample(
+            double time,
+            const RigidBodyState &rigid_body_state,
+            std::uint64_t completed_substeps,
+            const Vec3 &propwash,
+            const Vec3 &airspeed,
+            const Vec3 &body_drag_force,
+            const Vec3 &body_drag_torque,
+            const Vec3 &a3_drag_force,
+            double density,
+            bool body_drag_force_was_applied,
+            bool body_drag_torque_was_applied) :
+            time_seconds(time),
+            state(rigid_body_state),
+            substeps(completed_substeps),
+            propwash_disturbance_rad_s2(propwash),
+            airspeed_body_frd_mps_mean(airspeed),
+            body_drag_force_body_frd_n_mean(body_drag_force),
+            body_drag_torque_body_frd_nm_mean(body_drag_torque),
+            a3_drag_force_body_frd_n_mean(a3_drag_force),
+            air_density_kg_m3(density),
+            body_drag_force_applied(body_drag_force_was_applied),
+            body_drag_torque_applied(body_drag_torque_was_applied) {}
 };
 
 struct DualAircraftTrajectorySample {

@@ -93,6 +93,10 @@ double shaped_rate(double desired, double previous, double dt) {
 
 } // namespace
 
+double normalize_angle_radians(double angle) {
+    return std::isfinite(angle) ? std::remainder(angle, 2.0 * kPi) : 0.0;
+}
+
 QuadXMixerResult quad_x_mix_thrust(
         const SimulationConfig &config,
         double collective_thrust_newtons,
@@ -545,10 +549,13 @@ TrajectorySample FlightController::step_angle_mode(
     pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
+    std::array<double, 3> first_pid_output = pid_output;
+    std::array<bool, 3> first_pid_saturated = pid_saturated;
+    bool have_first_response = false;
     const Vec3 desired_rates_y_up{
-            (radians(command.pitch_degrees) - angle_x(estimated_attitude)) * kAngleP,
+            normalize_angle_radians(radians(command.pitch_degrees) - angle_x(estimated_attitude)) * kAngleP,
             radians(command.yaw_rate_degrees_per_second),
-            (radians(command.roll_degrees) - angle_z(estimated_attitude)) * kAngleP,
+            normalize_angle_radians(radians(command.roll_degrees) - angle_z(estimated_attitude)) * kAngleP,
     };
     const TrajectorySample sample = step_per_motor_physics_frame(state, clock, frame_config, [&](double dt) {
         const MotorCommands commands_for_substep = control_substep(
@@ -559,6 +566,11 @@ TrajectorySample FlightController::step_angle_mode(
                 dt,
                 pid_output,
                 pid_saturated);
+        if (!have_first_response) {
+            first_pid_output = pid_output;
+            first_pid_saturated = pid_saturated;
+            have_first_response = true;
+        }
         const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
         if (armed_ && target_dt > 0.0) {
             pid_timing_stats_.p99_jitter_fraction = std::max(
@@ -572,7 +584,9 @@ TrajectorySample FlightController::step_angle_mode(
     for (double thrust : sample.state.motor_thrust_newtons) {
         motor_thrust_newtons_ += thrust;
     }
-    maybe_publish_telemetry(sample, frame_config, throttle, pid_output, pid_saturated, "ANGLE");
+    maybe_publish_telemetry(sample, frame_config, throttle,
+            have_first_response ? first_pid_output : pid_output,
+            have_first_response ? first_pid_saturated : pid_saturated, "ANGLE");
     return sample;
 }
 
@@ -589,6 +603,9 @@ TrajectorySample FlightController::step_acro_mode(
     pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
+    std::array<double, 3> first_pid_output = pid_output;
+    std::array<bool, 3> first_pid_saturated = pid_saturated;
+    bool have_first_response = false;
     const Vec3 desired_rates_y_up{
             radians(betaflight_rate_degrees_per_second(command.pitch_stick, command.rates)),
             radians(betaflight_rate_degrees_per_second(command.yaw_stick, command.rates)),
@@ -603,6 +620,11 @@ TrajectorySample FlightController::step_acro_mode(
                 dt,
                 pid_output,
                 pid_saturated);
+        if (!have_first_response) {
+            first_pid_output = pid_output;
+            first_pid_saturated = pid_saturated;
+            have_first_response = true;
+        }
         const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
         if (armed_ && target_dt > 0.0) {
             pid_timing_stats_.p99_jitter_fraction = std::max(
@@ -616,7 +638,9 @@ TrajectorySample FlightController::step_acro_mode(
     for (double thrust : sample.state.motor_thrust_newtons) {
         motor_thrust_newtons_ += thrust;
     }
-    maybe_publish_telemetry(sample, frame_config, throttle, pid_output, pid_saturated, "ACRO");
+    maybe_publish_telemetry(sample, frame_config, throttle,
+            have_first_response ? first_pid_output : pid_output,
+            have_first_response ? first_pid_saturated : pid_saturated, "ACRO");
     return sample;
 }
 
@@ -683,10 +707,13 @@ TrajectorySample FlightController::step_altitude_hold_mode(
     pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
+    std::array<double, 3> first_pid_output = pid_output;
+    std::array<bool, 3> first_pid_saturated = pid_saturated;
+    bool have_first_response = false;
     const Vec3 desired_rates_y_up{
-            (radians(command.pitch_degrees) - angle_x(estimated_attitude)) * kAngleP,
+            normalize_angle_radians(radians(command.pitch_degrees) - angle_x(estimated_attitude)) * kAngleP,
             radians(command.yaw_rate_degrees_per_second),
-            (radians(command.roll_degrees) - angle_z(estimated_attitude)) * kAngleP,
+            normalize_angle_radians(radians(command.roll_degrees) - angle_z(estimated_attitude)) * kAngleP,
     };
     const TrajectorySample sample = step_per_motor_physics_frame(state, clock, frame_config, [&](double dt) {
         const MotorCommands commands_for_substep = control_substep(
@@ -699,6 +726,11 @@ TrajectorySample FlightController::step_altitude_hold_mode(
                 pid_saturated);
         if (armed_) {
             pid_saturated[1] = pid_saturated[1] || target_throttle <= 0.0 || target_throttle >= 1.0;
+        }
+        if (!have_first_response) {
+            first_pid_output = pid_output;
+            first_pid_saturated = pid_saturated;
+            have_first_response = true;
         }
         const double target_dt = frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0;
         if (armed_ && target_dt > 0.0) {
@@ -713,7 +745,9 @@ TrajectorySample FlightController::step_altitude_hold_mode(
     for (double thrust : sample.state.motor_thrust_newtons) {
         motor_thrust_newtons_ += thrust;
     }
-    maybe_publish_telemetry(sample, frame_config, target_throttle, pid_output, pid_saturated, "ALTITUDE_HOLD");
+    maybe_publish_telemetry(sample, frame_config, target_throttle,
+            have_first_response ? first_pid_output : pid_output,
+            have_first_response ? first_pid_saturated : pid_saturated, "ALTITUDE_HOLD");
     return sample;
 }
 

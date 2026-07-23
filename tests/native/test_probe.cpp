@@ -70,6 +70,33 @@ int main() {
         return fail("500 Hz mobile orientation integration failed G0.3 drift/finite check");
     }
 
+    const aerosim::Quat enormous_quaternion{
+            1.0e200, -1.0e200, 1.0e200, -1.0e200};
+    if (!near(aerosim::quat_norm(enormous_quaternion), 2.0e200, 1.0e185)) {
+        return fail("quaternion norm must remain finite for scale-safe finite inputs");
+    }
+
+    aerosim::RigidBodyState invalid_timing_state;
+    const aerosim::RigidBodyState invalid_timing_before = invalid_timing_state;
+    aerosim::SimulationClock invalid_timing_clock;
+    invalid_timing_clock.substep_accumulator = INFINITY;
+    const aerosim::TrajectorySample invalid_timing = aerosim::step_physics_frame(
+            invalid_timing_state, invalid_timing_clock, hover);
+    if (invalid_timing.substeps != 0 || invalid_timing_state.position.x != invalid_timing_before.position.x ||
+            !std::isinf(invalid_timing_clock.substep_accumulator)) {
+        return fail("invalid simulation timing must be rejected before scheduling divisions");
+    }
+
+    aerosim::SimulationConfig unschedulable_timing = hover;
+    unschedulable_timing.physics_hz = 1000;
+    unschedulable_timing.substep_hz = 999;
+    aerosim::RigidBodyState unschedulable_state;
+    aerosim::SimulationClock unschedulable_clock;
+    if (aerosim::step_physics_frame(unschedulable_state, unschedulable_clock, unschedulable_timing).substeps != 0 ||
+            unschedulable_clock.substep_accumulator != 0.0) {
+        return fail("physics frames without a control substep must be rejected transactionally");
+    }
+
     aerosim::SimulationConfig freefall;
     freefall.seconds = 60.0;
     freefall.physics_hz = 240;
