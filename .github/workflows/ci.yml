@@ -107,10 +107,12 @@ jobs:
 
       - name: Install build tools
         run: |
-          python3 -m venv build/scons-venv
-          build/scons-venv/bin/python -m pip install --upgrade pip
-          build/scons-venv/bin/python -m pip install scons numpy
-          echo "$PWD/build/scons-venv/bin" >> "$GITHUB_PATH"
+          python3 -m pip install --target "$AEROSIM_TOOL_ROOT/python-packages" scons numpy
+          mkdir -p "$AEROSIM_TOOL_ROOT/bin"
+          printf '#!/usr/bin/env sh\nexec python3 -m SCons.Script "$@"\n' > "$AEROSIM_TOOL_ROOT/bin/scons"
+          chmod +x "$AEROSIM_TOOL_ROOT/bin/scons"
+          echo "PYTHONPATH=$AEROSIM_TOOL_ROOT/python-packages" >> "$GITHUB_ENV"
+          echo "$AEROSIM_TOOL_ROOT/bin" >> "$GITHUB_PATH"
 
       - name: Python pinned oracle cache unit test
         run: python3 tests/test_pinned_oracle.py
