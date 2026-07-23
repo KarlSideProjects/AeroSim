@@ -27,6 +27,29 @@ Godot 4.7 + C++ GDExtension 的最小專案骨架。
 
 任何 Godot engine、export template 或 godot-cpp 升級都必須重跑 G0-G3 全部 Gate。
 
+## 啟動遊戲
+
+專案的主場景是 `levels/smoke/smoke.tscn`。Linux 上可用 Godot 4.7 編輯器啟動：
+
+```bash
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64
+"$GODOT_BIN" --editor --path .
+```
+
+在 Godot 編輯器按 `F6` 執行目前場景，或按 `F5` 執行專案主場景。也可以直接執行遊戲：
+
+```bash
+"$GODOT_BIN" --path .
+```
+
+若第一次啟動時出現找不到 `libaerosim_native`，先建置 Linux debug GDExtension：
+
+```bash
+GODOT_CPP_DIR=/path/to/godot-cpp scons target=template_debug platform=linux
+```
+
+啟動後依畫面上的控制提示操作；Xbox 手把會顯示對應的手把按鍵，未連接手把時可使用鍵盤提示。
+
 ## 建置與測試
 
 ```bash
