@@ -41,6 +41,11 @@ struct PidTimingStats {
     std::uint64_t samples = 0;
 };
 
+struct FlightControlState {
+    Vec3 target_angle_frd;
+    Vec3 target_rate_frd;
+};
+
 constexpr std::int32_t kTelemetrySnapshotSchemaVersion = 2;
 constexpr double kTelemetrySnapshotHz = 30.0;
 
@@ -169,6 +174,7 @@ public:
     double motor_thrust_newtons() const;
     void capture_altitude_hold(double target_altitude_m);
     const PidTimingStats &pid_timing_stats() const;
+    FlightControlState control_state() const;
     const TelemetrySnapshot &telemetry_snapshot() const;
     void publish_unavailable_telemetry(
             const TrajectorySample &sample,

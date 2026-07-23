@@ -113,6 +113,55 @@ int main() {
         return fail("the coupled 30/20/10 degree quaternion fixture must have a zero Angle rate setpoint");
     }
 
+    aerosim::RigidBodyState yaw_coupled_state;
+    yaw_coupled_state.orientation = {0.2392983377447303, -0.03813457647485015, 0.189307857412, 0.9515485246437885};
+    aerosim::SimulationClock yaw_coupled_clock;
+    aerosim::FlightController yaw_coupled_controller;
+    if (!yaw_coupled_controller.arm(0.0)) {
+        return fail("coupled yaw fixture must arm from low throttle");
+    }
+    aerosim::FlightCommand yaw_coupled_command;
+    yaw_coupled_command.throttle = 0.30;
+    yaw_coupled_command.roll_degrees = 30.0;
+    yaw_coupled_command.pitch_degrees = 20.0;
+    yaw_coupled_command.yaw_rate_degrees_per_second = 90.0;
+    for (int frame = 0; frame < 120; ++frame) {
+        yaw_coupled_controller.step_angle_mode(
+                yaw_coupled_state, yaw_coupled_clock, config, yaw_coupled_command, yaw_coupled_state.orientation);
+    }
+    const aerosim::FlightControlState yaw_coupled_control = yaw_coupled_controller.control_state();
+    if (std::abs(yaw_coupled_control.target_angle_frd.z - 10.0 * 3.14159265358979323846 / 180.0) <= 0.1 ||
+            yaw_coupled_control.target_rate_frd.z <= 0.0) {
+        return fail("Angle yaw target must advance from the shaped yaw rate before quaternion error");
+    }
+    const aerosim::TelemetrySnapshot &yaw_coupled_snapshot = yaw_coupled_controller.telemetry_snapshot();
+    if (std::abs(yaw_coupled_snapshot.pid[0].output) > 0.1 ||
+            std::abs(yaw_coupled_snapshot.pid[2].output) > 0.1) {
+        return fail("Angle yaw target must advance without injecting coupled roll or pitch error");
+    }
+
+    aerosim::RigidBodyState shaper_state;
+    aerosim::SimulationClock shaper_clock;
+    aerosim::FlightController shaper_controller;
+    if (!shaper_controller.arm(0.0)) {
+        return fail("shaper snap fixture must arm from low throttle");
+    }
+    aerosim::FlightCommand shaper_command;
+    shaper_command.throttle = 0.30;
+    shaper_command.roll_degrees = 30.0;
+    for (int frame = 0; frame < 3; ++frame) {
+        shaper_controller.step_angle_mode(shaper_state, shaper_clock, config, shaper_command);
+    }
+    shaper_command.roll_degrees = 0.2;
+    for (int frame = 0; frame < 120; ++frame) {
+        shaper_controller.step_angle_mode(shaper_state, shaper_clock, config, shaper_command);
+    }
+    const aerosim::FlightControlState shaper_control = shaper_controller.control_state();
+    if (std::abs(shaper_control.target_angle_frd.x - 0.2 * 3.14159265358979323846 / 180.0) > 1e-12 ||
+            shaper_control.target_rate_frd.x != 0.0) {
+        return fail("Angle target shaper must snap after crossing the desired angle and zero its target rate");
+    }
+
     aerosim::RigidBodyState transition_state;
     aerosim::SimulationClock transition_clock;
     aerosim::FlightController transition_controller;

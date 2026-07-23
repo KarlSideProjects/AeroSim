@@ -27,3 +27,18 @@ Date: 2026-07-23
 ## Concern
 
 The controller gains are fixed controller tuning, not airframe constants; the hardware and motor values remain sourced from the existing configuration path.
+
+## Review follow-up: 2026-07-23
+
+- RED: G2.4/G2.5 initially rejected the zero-lag/no-sag fixture; the validated `HardwareConfig` fixture now carries the shipped 30 ms motor time constant and 0.003 ohm cell resistance, and proves the sagged thrust cap is lower than nominal.
+- RED/GREEN: a coupled nonzero roll/pitch plus yaw-rate fixture initially kept the Angle yaw target stale. The shaped yaw rate now advances `target_angle_frd.z` before quaternion error formation.
+- RED/GREEN: a reversing Angle target initially carried rate past the new desired angle. The shaper now snaps a crossed target and clears its target rate; the test asserts both state values.
+- Removed the interim torque clamp. The final physical G2.4/G2.5 tuning uses the shared 120 rad/s² shaper, Angle P=15, filtered rate D, and an explicit shaped-rate P feed-forward term (default 0); no allocator/governor was introduced.
+
+| Command | Result |
+| --- | --- |
+| focused `test_cascaded_flight_control` | PASS |
+| focused `test_flight_control` | PASS |
+| `scripts/test_native.sh` | PASS |
+| `git diff --check` | PASS |
+| `scripts/check_hardcoded_airframe_constants.sh` | PASS |

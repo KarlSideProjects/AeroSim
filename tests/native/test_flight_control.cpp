@@ -72,6 +72,29 @@ void configure_power_model(aerosim::SimulationConfig &config) {
     config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
 }
 
+aerosim::SimulationConfig shipped_5_inch_6s_config() {
+    aerosim::HardwareConfig hardware;
+    hardware.set_mass_kg(0.72);
+    hardware.set_power_model(64.8, 0.50, 0.030, 22.2, 6.0, 0.003, 108.0);
+    aerosim::PerMotorPhysicsConfig per_motor;
+    per_motor.inertia_kg_m2 = {0.003, 0.003, 0.005};
+    per_motor.max_thrust_per_motor_newtons = 16.2;
+    per_motor.max_current_per_motor_a = 27.0;
+    per_motor.yaw_torque_per_newton = 0.1575 / 16.2;
+    per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    hardware.set_per_motor_model(per_motor);
+    aerosim::SimulationConfig config = hardware.simulation_config();
+    config.physics_hz = 240;
+    config.substep_hz = 1000;
+    return config;
+}
+
 } // namespace
 
 int main() {
@@ -337,9 +360,15 @@ int main() {
         }
     }
 
+    const aerosim::SimulationConfig g2_config = shipped_5_inch_6s_config();
     aerosim::RigidBodyState acro_state;
     aerosim::SimulationClock acro_clock;
     aerosim::FlightController acro_controller;
+    if (!near(g2_config.motor_tau_s, 0.030, 1e-12) ||
+            !near(g2_config.battery_cell_resistance_ohm, 0.003, 1e-12) ||
+            aerosim::available_thrust_cap_newtons(g2_config, 1.0) >= g2_config.max_total_thrust_newtons) {
+        return fail("G2.4/G2.5 must run the shipped 30 ms motor and battery-sag plant");
+    }
     if (!acro_controller.arm(0.0)) {
         return fail("Acro setup should arm from low throttle");
     }
@@ -352,8 +381,8 @@ int main() {
     double acro_reach_time_s = 0.0;
     double acro_band_start_s = 0.0;
     double acro_max_degrees_per_second = 0.0;
-    for (int frame = 0; frame < config.physics_hz / 2; ++frame) {
-        acro_sample = acro_controller.step_acro_mode(acro_state, acro_clock, config, acro_roll);
+    for (int frame = 0; frame < g2_config.physics_hz / 2; ++frame) {
+        acro_sample = acro_controller.step_acro_mode(acro_state, acro_clock, g2_config, acro_roll);
         const double rate = acro_sample.state.angular_velocity.x * 180.0 / kPi;
         acro_max_degrees_per_second = std::max(acro_max_degrees_per_second, rate);
         if (!reached_acro_band && near(rate, 720.0, 720.0 * 0.05)) {
@@ -386,9 +415,9 @@ int main() {
     double rise_time_s = 0.0;
     double max_roll_degrees = 0.0;
     double last_outside_2_percent_s = 0.0;
-    for (int frame = 0; frame < config.physics_hz; ++frame) {
+    for (int frame = 0; frame < g2_config.physics_hz; ++frame) {
         const aerosim::TrajectorySample sample =
-                roll_step_controller.step_angle_mode(roll_step_state, roll_step_clock, config, roll_step);
+                roll_step_controller.step_angle_mode(roll_step_state, roll_step_clock, g2_config, roll_step);
         const double roll = roll_degrees(sample.state.orientation);
         max_roll_degrees = std::max(max_roll_degrees, roll);
         if (!reached_90_percent && roll >= 27.0) {
