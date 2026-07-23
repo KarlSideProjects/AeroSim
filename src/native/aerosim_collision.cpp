@@ -31,6 +31,17 @@ bool finite(const Vec3 &v) {
     return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
+bool finite(const Quat &q) {
+    return finite(Vec3{q.x, q.y, q.z}) && std::isfinite(q.w) && quat_norm(q) > 0.0;
+}
+
+bool valid_contact(const CollisionContact &contact) {
+    return finite(contact.normal) && finite(contact.impulse) && std::isfinite(contact.restitution) &&
+            contact.restitution >= 0.0 && contact.restitution <= 1.0 &&
+            finite(contact.resolved_velocity) && finite(contact.resolved_angular_velocity) &&
+            std::isfinite(contact.max_kinetic_energy_joules);
+}
+
 Vec3 normalized_or_zero(const Vec3 &v) {
     const double norm = length(v);
     if (!std::isfinite(norm) || norm == 0.0) {
@@ -137,10 +148,56 @@ CollisionStepResult CollisionAuthoritySwitch::step(
         const SimulationConfig &config,
         const FlightCommand &command,
         const CollisionContact &contact) {
-    return step(state, clock, controller, config, command, contact, state.orientation);
+    return try_step(state, clock, controller, config, command, contact, state.orientation);
 }
 
 CollisionStepResult CollisionAuthoritySwitch::step(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        FlightController &controller,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const CollisionContact &contact,
+        const Quat &estimated_attitude) {
+    return try_step(state, clock, controller, config, command, contact, estimated_attitude);
+}
+
+CollisionStepResult CollisionAuthoritySwitch::try_step(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        FlightController &controller,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const CollisionContact &contact,
+        const Quat &estimated_attitude) {
+    if (!valid_contact(contact)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
+    }
+    if (!finite(estimated_attitude)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidState};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = controller;
+    CollisionAuthoritySwitch staged_authority = *this;
+    CollisionStepResult result = staged_authority.step_impl(
+            staged_state, staged_clock, staged_controller, config, command, contact, estimated_attitude);
+    if (result.sample.substeps == 0 && config.physics_hz > 0 && config.substep_hz > 0) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidControlOutput};
+    }
+    if (!finite(staged_state.position) || !finite(staged_state.velocity) || !finite(staged_state.orientation) ||
+            !finite(staged_state.angular_velocity)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidControlOutput};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    controller = std::move(staged_controller);
+    *this = staged_authority;
+    result.status = StepStatus::Ok;
+    return result;
+}
+
+CollisionStepResult CollisionAuthoritySwitch::step_impl(
         RigidBodyState &state,
         SimulationClock &clock,
         FlightController &controller,

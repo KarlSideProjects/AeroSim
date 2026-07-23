@@ -46,6 +46,22 @@ struct FlightControlState {
     Vec3 target_rate_frd;
 };
 
+enum class StepStatus {
+    Ok,
+    InvalidCommand,
+    InvalidConfig,
+    InvalidState,
+    InvalidControlOutput,
+    ResourceLimitExceeded,
+};
+
+const char *step_status_code(StepStatus status);
+
+struct StepResult {
+    StepStatus status = StepStatus::Ok;
+    TrajectorySample sample;
+};
+
 constexpr std::int32_t kTelemetrySnapshotSchemaVersion = 2;
 constexpr double kTelemetrySnapshotHz = 30.0;
 
@@ -163,6 +179,24 @@ private:
             double dt,
             std::array<double, 3> &pid_output,
             std::array<bool, 3> &pid_saturated);
+    TrajectorySample step_angle_mode_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const Quat &estimated_attitude);
+    TrajectorySample step_acro_mode_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const AcroCommand &command);
+    TrajectorySample step_altitude_hold_mode_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            double measured_altitude_m,
+            const Quat &estimated_attitude);
 
 public:
     bool arm(double throttle);
@@ -197,12 +231,30 @@ public:
             const SimulationConfig &config,
             const FlightCommand &command,
             const Quat &estimated_attitude);
+    StepResult try_step_angle_mode(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const Quat &estimated_attitude);
     TrajectorySample step_acro_mode(
             RigidBodyState &state,
             SimulationClock &clock,
             const SimulationConfig &config,
             const AcroCommand &command);
+    StepResult try_step_acro_mode(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const AcroCommand &command);
     TrajectorySample step_altitude_hold_mode(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            double measured_altitude_m,
+            const Quat &estimated_attitude);
+    StepResult try_step_altitude_hold_mode(
             RigidBodyState &state,
             SimulationClock &clock,
             const SimulationConfig &config,

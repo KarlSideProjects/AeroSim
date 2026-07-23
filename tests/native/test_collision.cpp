@@ -253,6 +253,19 @@ int main() {
     aerosim::FlightCommand hover;
     hover.throttle = 0.5;
 
+    const aerosim::RigidBodyState state_before_invalid_contact = state;
+    const aerosim::SimulationClock clock_before_invalid_contact = clock;
+    aerosim::CollisionContact atomic_invalid_contact;
+    atomic_invalid_contact.touching = true;
+    atomic_invalid_contact.normal.x = NAN;
+    const aerosim::CollisionStepResult invalid_contact_result = authority.try_step(
+            state, clock, controller, config, hover, atomic_invalid_contact);
+    if (invalid_contact_result.status != aerosim::StepStatus::InvalidCommand ||
+            !same_state_bits(state, state_before_invalid_contact) ||
+            clock.total_substeps != clock_before_invalid_contact.total_substeps) {
+        return fail("invalid collision inputs must be rejected without changing flight state");
+    }
+
     aerosim::SimulationConfig invalid_rate_config = config;
     invalid_rate_config.physics_hz = 0;
     aerosim::CollisionContact invalid_contact;

@@ -149,7 +149,57 @@ double loaded_voltage_v(const SimulationConfig &config, double throttle) {
                     current_a * config.battery_cell_resistance_ohm * config.battery_cells);
 }
 
+bool finite_vec3(const Vec3 &value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+bool finite_quat(const Quat &value) {
+    return finite_vec3({value.x, value.y, value.z}) && std::isfinite(value.w) && quat_norm(value) > 0.0;
+}
+
+bool valid_state(const RigidBodyState &state) {
+    if (!finite_vec3(state.position) || !finite_vec3(state.velocity) || !finite_quat(state.orientation) ||
+            !finite_vec3(state.angular_velocity) || !finite_vec3(state.propwash_disturbance_rad_s2)) {
+        return false;
+    }
+    return std::all_of(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(),
+            [](double value) { return std::isfinite(value) && value >= 0.0; });
+}
+
+bool valid_config(const SimulationConfig &config) {
+    return config.physics_hz > 0 && config.substep_hz > 0 && std::isfinite(config.mass_kg) && config.mass_kg > 0.0 &&
+            std::isfinite(config.gravity_mps2) && config.gravity_mps2 > 0.0 &&
+            std::isfinite(config.hover_throttle) && std::isfinite(config.motor_tau_s) && config.motor_tau_s >= 0.0 &&
+            std::isfinite(config.max_total_thrust_newtons) && std::isfinite(config.max_total_current_a) &&
+            std::isfinite(config.air_density_kg_m3) && config.air_density_kg_m3 > 0.0 &&
+            validate_per_motor_config(config.per_motor);
+}
+
+bool valid_command(const FlightCommand &command) {
+    return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
+            std::isfinite(command.roll_degrees) && std::isfinite(command.pitch_degrees) &&
+            std::isfinite(command.yaw_rate_degrees_per_second);
+}
+
+bool valid_command(const AcroCommand &command) {
+    return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
+            std::isfinite(command.roll_stick) && std::isfinite(command.pitch_stick) && std::isfinite(command.yaw_stick) &&
+            std::isfinite(command.rates.rc_rate) && std::isfinite(command.rates.super_rate) && std::isfinite(command.rates.expo);
+}
+
 } // namespace
+
+const char *step_status_code(StepStatus status) {
+    switch (status) {
+        case StepStatus::Ok: return "Ok";
+        case StepStatus::InvalidCommand: return "InvalidCommand";
+        case StepStatus::InvalidConfig: return "InvalidConfig";
+        case StepStatus::InvalidState: return "InvalidState";
+        case StepStatus::InvalidControlOutput: return "InvalidControlOutput";
+        case StepStatus::ResourceLimitExceeded: return "ResourceLimitExceeded";
+    }
+    return "InvalidControlOutput";
+}
 
 QuadXMixerResult quad_x_mix_thrust(
         const SimulationConfig &config,
@@ -668,10 +718,48 @@ TrajectorySample FlightController::step_angle_mode(
         SimulationClock &clock,
         const SimulationConfig &config,
         const FlightCommand &command) {
-    return step_angle_mode(state, clock, config, command, state.orientation);
+    return try_step_angle_mode(state, clock, config, command, state.orientation).sample;
 }
 
 TrajectorySample FlightController::step_angle_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const Quat &estimated_attitude) {
+    return try_step_angle_mode(state, clock, config, command, estimated_attitude).sample;
+}
+
+StepResult FlightController::try_step_angle_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const Quat &estimated_attitude) {
+    if (!valid_command(command)) {
+        return {StepStatus::InvalidCommand, {}};
+    }
+    if (!valid_config(config)) {
+        return {StepStatus::InvalidConfig, {}};
+    }
+    if (!valid_state(state) || !finite_quat(estimated_attitude)) {
+        return {StepStatus::InvalidState, {}};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = *this;
+    const TrajectorySample sample = staged_controller.step_angle_mode_impl(
+            staged_state, staged_clock, config, command, estimated_attitude);
+    if (!valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+        return {StepStatus::InvalidControlOutput, {}};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    *this = std::move(staged_controller);
+    return {StepStatus::Ok, sample};
+}
+
+TrajectorySample FlightController::step_angle_mode_impl(
         RigidBodyState &state,
         SimulationClock &clock,
         const SimulationConfig &config,
@@ -725,6 +813,41 @@ TrajectorySample FlightController::step_acro_mode(
         SimulationClock &clock,
         const SimulationConfig &config,
         const AcroCommand &command) {
+    return try_step_acro_mode(state, clock, config, command).sample;
+}
+
+StepResult FlightController::try_step_acro_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const AcroCommand &command) {
+    if (!valid_command(command)) {
+        return {StepStatus::InvalidCommand, {}};
+    }
+    if (!valid_config(config)) {
+        return {StepStatus::InvalidConfig, {}};
+    }
+    if (!valid_state(state)) {
+        return {StepStatus::InvalidState, {}};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = *this;
+    const TrajectorySample sample = staged_controller.step_acro_mode_impl(staged_state, staged_clock, config, command);
+    if (!valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+        return {StepStatus::InvalidControlOutput, {}};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    *this = std::move(staged_controller);
+    return {StepStatus::Ok, sample};
+}
+
+TrajectorySample FlightController::step_acro_mode_impl(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const AcroCommand &command) {
     if (!armed_) {
         state.motor_thrust_newtons = {};
     }
@@ -768,6 +891,47 @@ TrajectorySample FlightController::step_acro_mode(
 }
 
 TrajectorySample FlightController::step_altitude_hold_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double measured_altitude_m,
+        const Quat &estimated_attitude) {
+    return try_step_altitude_hold_mode(
+            state, clock, config, command, measured_altitude_m, estimated_attitude).sample;
+}
+
+StepResult FlightController::try_step_altitude_hold_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double measured_altitude_m,
+        const Quat &estimated_attitude) {
+    if (!valid_command(command)) {
+        return {StepStatus::InvalidCommand, {}};
+    }
+    if (!valid_config(config) || !std::isfinite(measured_altitude_m)) {
+        return {StepStatus::InvalidConfig, {}};
+    }
+    if (!valid_state(state) || !finite_quat(estimated_attitude)) {
+        return {StepStatus::InvalidState, {}};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = *this;
+    const TrajectorySample sample = staged_controller.step_altitude_hold_mode_impl(
+            staged_state, staged_clock, config, command, measured_altitude_m, estimated_attitude);
+    if (!valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+        return {StepStatus::InvalidControlOutput, {}};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    *this = std::move(staged_controller);
+    return {StepStatus::Ok, sample};
+}
+
+TrajectorySample FlightController::step_altitude_hold_mode_impl(
         RigidBodyState &state,
         SimulationClock &clock,
         const SimulationConfig &config,

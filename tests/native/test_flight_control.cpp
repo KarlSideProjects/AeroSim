@@ -2,6 +2,7 @@
 #include "aerosim_aerodynamics.hpp"
 
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <iostream>
 
@@ -16,6 +17,10 @@ int fail(const char *message) {
 
 bool near(double actual, double expected, double tolerance) {
     return std::abs(actual - expected) <= tolerance;
+}
+
+bool same_bits(double a, double b) {
+    return std::memcmp(&a, &b, sizeof(double)) == 0;
 }
 
 double vector_length(const aerosim::Vec3 &value) {
@@ -111,6 +116,29 @@ aerosim::SimulationConfig shipped_5_inch_6s_config() {
 } // namespace
 
 int main() {
+    // A rejected command must not advance the controller, clock, or motor state.
+    aerosim::FlightController atomic_controller;
+    aerosim::RigidBodyState atomic_state;
+    aerosim::SimulationClock atomic_clock;
+    aerosim::SimulationConfig atomic_config;
+    atomic_config.physics_hz = 240;
+    atomic_config.substep_hz = 1000;
+    configure_power_model(atomic_config);
+    if (!atomic_controller.arm(0.0)) {
+        return fail("atomic controller setup should arm from low throttle");
+    }
+    const aerosim::RigidBodyState state_before_invalid_command = atomic_state;
+    const aerosim::SimulationClock clock_before_invalid_command = atomic_clock;
+    aerosim::FlightCommand invalid_command;
+    invalid_command.throttle = NAN;
+    const aerosim::StepResult invalid_command_result = atomic_controller.try_step_angle_mode(
+            atomic_state, atomic_clock, atomic_config, invalid_command, aerosim::Quat{});
+    if (invalid_command_result.status != aerosim::StepStatus::InvalidCommand ||
+            !same_bits(atomic_state.position.x, state_before_invalid_command.position.x) ||
+            atomic_clock.total_substeps != clock_before_invalid_command.total_substeps) {
+        return fail("invalid controller commands must be rejected atomically");
+    }
+
     aerosim::FlightController blocked_controller;
     if (blocked_controller.arm(0.25)) {
         return fail("arm must be rejected unless throttle is low");

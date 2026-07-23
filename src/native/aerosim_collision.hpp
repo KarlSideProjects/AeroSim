@@ -25,6 +25,7 @@ struct CollisionStepResult {
     TrajectorySample sample;
     Vec3 normal;
     Vec3 impulse;
+    StepStatus status = StepStatus::Ok;
 };
 
 double kinetic_energy_joules(const RigidBodyState &state, double mass_kg);
@@ -34,6 +35,14 @@ private:
     PhysicsAuthority authority_ = PhysicsAuthority::FlightCore;
     int clear_frames_ = 0;
     int release_frames_ = 3;
+    CollisionStepResult step_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const CollisionContact &contact,
+            const Quat &estimated_attitude);
 
 public:
     CollisionAuthoritySwitch() = default;
@@ -56,6 +65,14 @@ public:
             const FlightCommand &command,
             const CollisionContact &contact,
             const Quat &estimated_attitude);
+    CollisionStepResult try_step(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const CollisionContact &contact,
+            const Quat &estimated_attitude = {});
     CollisionStepResult step_altitude_hold(
             RigidBodyState &state,
             SimulationClock &clock,
