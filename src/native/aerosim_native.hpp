@@ -26,6 +26,8 @@ private:
     struct StepSnapshot {
         aerosim::RigidBodyState simulation_state;
         aerosim::SimulationClock simulation_clock;
+        aerosim::DualAircraftState dual_aircraft_state;
+        aerosim::SimulationClock dual_aircraft_clock;
         aerosim::FlightController flight_controller;
         aerosim::CollisionAuthoritySwitch collision_authority;
         aerosim::ImuSimulator imu;

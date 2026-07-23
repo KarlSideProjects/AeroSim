@@ -21,6 +21,8 @@ func _init() -> void:
             ok = _verify_sparse_px4()
         "negative":
             ok = _verify_negative_step()
+        "legacy_atomic":
+            ok = _verify_legacy_atomic()
         "huge_angle":
             ok = _verify_huge_angle_step()
         "trajectory_contract":
@@ -30,7 +32,7 @@ func _init() -> void:
         "imu_rollback":
             ok = _verify_imu_rollback()
         _:
-            push_error("--scenario sparse_px4, negative, huge_angle, trajectory_contract, hardware_mass, or imu_rollback is required")
+            push_error("--scenario sparse_px4, negative, legacy_atomic, huge_angle, trajectory_contract, hardware_mass, or imu_rollback is required")
     quit(0 if ok else 1)
 
 
@@ -70,6 +72,46 @@ func _verify_negative_step() -> bool:
     if not row.is_empty() or String(native.call("last_step_error")) != expected:
         push_error("invalid public step did not expose the exact native error")
         return false
+    return true
+
+
+func _verify_legacy_atomic() -> bool:
+    for method in ["step_simulation", "step_dual_aircraft_simulation"]:
+        var failed := _native()
+        var untouched := _native()
+        var disarmed := _native()
+        if failed == null or untouched == null or disarmed == null:
+            return false
+        for native in [failed, untouched, disarmed]:
+            if not _configure_airframe(native):
+                return false
+            if method == "step_dual_aircraft_simulation" and not native.call("set_dual_aircraft_positions", 0.0, 1.0, 0.0, 0.0, 0.0, 0.0):
+                push_error("legacy dual setup failed")
+                return false
+        var disarmed_row: PackedFloat64Array = disarmed.callv(method, [240, 1000, 1.0])
+        var expected_size := 11 if method == "step_dual_aircraft_simulation" else 12
+        if disarmed_row.size() != expected_size or not String(disarmed.call("last_step_error")).is_empty():
+            push_error("disarmed legacy step must remain legal")
+            return false
+        if not failed.call("arm_flight_control", 0.0) or not untouched.call("arm_flight_control", 0.0):
+            push_error("legacy atomic setup could not arm")
+            return false
+        var first_failed: PackedFloat64Array = failed.callv(method, [240, 1000, 1.0])
+        var first_untouched: PackedFloat64Array = untouched.callv(method, [240, 1000, 1.0])
+        if first_failed.is_empty() or first_failed != first_untouched:
+            push_error("legacy atomic setup did not produce matching armed steps")
+            return false
+        for thrust in [NAN, -1.0]:
+            var rejected: PackedFloat64Array = failed.callv(method, [240, 1000, thrust])
+            var expected_error := "AeroSimNative.%s: InvalidCommand: thrust" % method
+            if not rejected.is_empty() or String(failed.call("last_step_error")) != expected_error:
+                push_error("legacy invalid thrust must report exactly one native error")
+                return false
+            var continued: PackedFloat64Array = failed.callv(method, [240, 1000, 1.0])
+            var expected: PackedFloat64Array = untouched.callv(method, [240, 1000, 1.0])
+            if continued.is_empty() or continued != expected or not String(failed.call("last_step_error")).is_empty():
+                push_error("legacy rejected thrust must preserve the next legal continuation")
+                return false
     return true
 
 

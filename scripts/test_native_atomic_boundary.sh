@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"
 validate_native_provenance
 
 mkdir -p build/native_atomic_boundary
-for scenario in sparse_px4 negative huge_angle trajectory_contract hardware_mass imu_rollback; do
+for scenario in sparse_px4 negative legacy_atomic huge_angle trajectory_contract hardware_mass imu_rollback; do
     log="build/native_atomic_boundary/${scenario}.log"
     rm -f "$log"
     "$godot_bin" --headless --path . --log-file "$log" \
@@ -31,4 +31,12 @@ if [ "$(grep -Fxc "$expected" "$negative_log" || true)" -ne 1 ] || [ "$(grep -Ec
     exit 1
 fi
 
-echo "native atomic boundary: sparse PX4, runtime hardware mass, public IMU rollback, and one-error acceptance passed"
+legacy_log="build/native_atomic_boundary/legacy_atomic.log"
+single_error='ERROR: AeroSimNative.step_simulation: InvalidCommand: thrust'
+dual_error='ERROR: AeroSimNative.step_dual_aircraft_simulation: InvalidCommand: thrust'
+if [ "$(grep -Fxc "$single_error" "$legacy_log" || true)" -ne 2 ] || [ "$(grep -Fxc "$dual_error" "$legacy_log" || true)" -ne 2 ] || [ "$(grep -Ec '^ERROR:' "$legacy_log" || true)" -ne 4 ]; then
+    echo "legacy public-step acceptance did not produce exactly one native ERROR per rejected thrust" >&2
+    exit 1
+fi
+
+echo "native atomic boundary: sparse PX4, legacy rollback, runtime hardware mass, public IMU rollback, and one-error acceptance passed"

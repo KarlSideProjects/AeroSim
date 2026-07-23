@@ -511,7 +511,7 @@ void AeroSimNative::apply_downwash_provider(aerosim::SimulationConfig &config) c
 
 AeroSimNative::StepSnapshot AeroSimNative::snapshot_step() const {
     return {
-            simulation_state_, simulation_clock_, flight_controller_, collision_authority_, imu_, last_imu_sample_,
+            simulation_state_, simulation_clock_, dual_aircraft_state_, dual_aircraft_clock_, flight_controller_, collision_authority_, imu_, last_imu_sample_,
             has_last_imu_sample_, flight_control_used_estimated_attitude_, flight_mode_,
     };
 }
@@ -519,6 +519,8 @@ AeroSimNative::StepSnapshot AeroSimNative::snapshot_step() const {
 void AeroSimNative::restore_step(const StepSnapshot &snapshot) {
     simulation_state_ = snapshot.simulation_state;
     simulation_clock_ = snapshot.simulation_clock;
+    dual_aircraft_state_ = snapshot.dual_aircraft_state;
+    dual_aircraft_clock_ = snapshot.dual_aircraft_clock;
     flight_controller_ = snapshot.flight_controller;
     collision_authority_ = snapshot.collision_authority;
     imu_ = snapshot.imu;
@@ -561,8 +563,13 @@ PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
         std::int32_t physics_hz,
         std::int32_t substep_hz,
         double total_thrust_newtons) {
-    if (physics_hz <= 0 || substep_hz <= 0 ||
-            !std::isfinite(total_thrust_newtons) || total_thrust_newtons < 0.0) {
+    const StepSnapshot snapshot = snapshot_step();
+    if (!valid_simulation_timing(physics_hz, substep_hz)) {
+        set_step_error("step_dual_aircraft_simulation", aerosim::StepStatus::InvalidConfig, "timing");
+        return {};
+    }
+    if (!std::isfinite(total_thrust_newtons) || total_thrust_newtons < 0.0) {
+        set_step_error("step_dual_aircraft_simulation", aerosim::StepStatus::InvalidCommand, "thrust");
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
@@ -575,7 +582,17 @@ PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
     aerosim::DualAircraftConfig dual_config{config, config};
     apply_wind(dual_config.upper, dual_aircraft_state_.upper, dual_aircraft_clock_, wind_field_);
     apply_wind(dual_config.lower, dual_aircraft_state_.lower, dual_aircraft_clock_, wind_field_);
-    if (dual_config.upper.per_motor.max_thrust_per_motor_newtons <= 0.0) {
+    const aerosim::FlightCommand no_command;
+    const aerosim::StepStatus upper_status = aerosim::validate_angle_step_inputs(
+            dual_aircraft_state_.upper, dual_aircraft_clock_, dual_config.upper, no_command,
+            dual_aircraft_state_.upper.orientation);
+    const aerosim::StepStatus lower_status = aerosim::validate_angle_step_inputs(
+            dual_aircraft_state_.lower, dual_aircraft_clock_, dual_config.lower, no_command,
+            dual_aircraft_state_.lower.orientation);
+    if (upper_status != aerosim::StepStatus::Ok || lower_status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_dual_aircraft_simulation",
+                upper_status != aerosim::StepStatus::Ok ? upper_status : lower_status, "config/state");
         return {};
     }
     const double command_value = config.total_thrust_newtons /
@@ -589,7 +606,9 @@ PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
     };
     const aerosim::DualAircraftTrajectorySample sample = aerosim::step_dual_aircraft_per_motor_physics_frame(
             dual_aircraft_state_, dual_aircraft_clock_, dual_config, commands);
-    if (sample.substeps == 0 && physics_hz > 0 && substep_hz > 0) {
+    if (sample.substeps == 0) {
+        restore_step(snapshot);
+        set_step_error("step_dual_aircraft_simulation", aerosim::StepStatus::InvalidControlOutput, "simulation");
         return {};
     }
     PackedFloat64Array row;
@@ -604,6 +623,7 @@ PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
     row.append(sample.downwash_force_y_newtons);
     row.append(sample.minimum_downwash_force_y_newtons);
     row.append(static_cast<double>(sample.substeps));
+    clear_step_error();
     return row;
 }
 
@@ -611,25 +631,43 @@ PackedFloat64Array AeroSimNative::step_simulation(
         std::int32_t physics_hz,
         std::int32_t substep_hz,
         double total_thrust_newtons) {
+    const StepSnapshot snapshot = snapshot_step();
     if (!valid_simulation_timing(physics_hz, substep_hz)) {
+        set_step_error("step_simulation", aerosim::StepStatus::InvalidConfig, "timing");
+        return {};
+    }
+    if (!std::isfinite(total_thrust_newtons) || total_thrust_newtons < 0.0) {
+        set_step_error("step_simulation", aerosim::StepStatus::InvalidCommand, "thrust");
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
     config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
+    config.a4_ground_effect = a4_ground_effect_config_;
+    config.external_force_world = external_force_world_;
+    apply_downwash_provider(config);
+    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
+    const aerosim::StepStatus input_status = aerosim::validate_angle_step_inputs(
+            simulation_state_, simulation_clock_, config, aerosim::FlightCommand{}, simulation_state_.orientation);
+    if (input_status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_simulation", input_status, "config/state");
+        return {};
+    }
     if (flight_controller_.armed()) {
         simulation_state_.motor_thrust_newtons.fill(total_thrust_newtons / 4.0);
     } else {
         simulation_state_.motor_thrust_newtons = {};
     }
-    config.a4_ground_effect = a4_ground_effect_config_;
-    config.external_force_world = external_force_world_;
-    apply_downwash_provider(config);
-    apply_wind(config, simulation_state_, simulation_clock_, wind_field_);
 
     PackedFloat64Array row;
     const aerosim::TrajectorySample sample = aerosim::step_physics_frame(simulation_state_, simulation_clock_, config);
+    if (sample.substeps == 0) {
+        restore_step(snapshot);
+        set_step_error("step_simulation", aerosim::StepStatus::InvalidControlOutput, "simulation");
+        return {};
+    }
     row.append(sample.time_seconds);
     row.append(sample.state.position.x);
     row.append(sample.state.position.y);
@@ -642,6 +680,7 @@ PackedFloat64Array AeroSimNative::step_simulation(
     row.append(sample.state.velocity.y);
     row.append(sample.state.velocity.z);
     row.append(static_cast<double>(sample.substeps));
+    clear_step_error();
     return row;
 }
 
