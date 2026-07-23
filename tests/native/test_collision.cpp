@@ -266,6 +266,41 @@ int main() {
         return fail("invalid collision inputs must be rejected without changing flight state");
     }
 
+    aerosim::SimulationConfig invalid_mass_config = config;
+    invalid_mass_config.mass_kg = NAN;
+    aerosim::CollisionContact valid_impact;
+    valid_impact.touching = true;
+    valid_impact.normal = {-1.0, 0.0, 0.0};
+    const aerosim::RigidBodyState state_before_invalid_mass = state;
+    const aerosim::SimulationClock clock_before_invalid_mass = clock;
+    const aerosim::PhysicsAuthority authority_before_invalid_mass = authority.current_authority();
+    const aerosim::CollisionStepResult invalid_mass_result = authority.try_step(
+            state, clock, controller, invalid_mass_config, hover, valid_impact);
+    if (invalid_mass_result.status != aerosim::StepStatus::InvalidConfig ||
+            !same_state_bits(state, state_before_invalid_mass) ||
+            !same_bits(clock.substep_accumulator, clock_before_invalid_mass.substep_accumulator) ||
+            clock.total_substeps != clock_before_invalid_mass.total_substeps ||
+            authority.current_authority() != authority_before_invalid_mass) {
+        return fail("invalid collision config must not mutate contact state, clock, or authority");
+    }
+
+    aerosim::SimulationConfig sparse_frame_config = config;
+    sparse_frame_config.physics_hz = 1000;
+    sparse_frame_config.substep_hz = 240;
+    aerosim::RigidBodyState sparse_frame_state;
+    aerosim::SimulationClock sparse_frame_clock;
+    aerosim::FlightController sparse_frame_controller;
+    aerosim::CollisionAuthoritySwitch sparse_frame_authority;
+    if (!sparse_frame_controller.arm(0.0)) {
+        return fail("sparse-frame collision setup should arm from low throttle");
+    }
+    const aerosim::CollisionStepResult sparse_frame_result = sparse_frame_authority.try_step(
+            sparse_frame_state, sparse_frame_clock, sparse_frame_controller, sparse_frame_config, hover, {});
+    if (sparse_frame_result.status != aerosim::StepStatus::Ok || sparse_frame_result.sample.substeps != 0 ||
+            sparse_frame_authority.current_authority() != aerosim::PhysicsAuthority::FlightCore) {
+        return fail("a valid frame with no scheduled substep must remain successful");
+    }
+
     aerosim::SimulationConfig invalid_rate_config = config;
     invalid_rate_config.physics_hz = 0;
     aerosim::CollisionContact invalid_contact;

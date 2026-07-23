@@ -3,8 +3,10 @@
 
 #include <cmath>
 #include <cstring>
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -21,6 +23,38 @@ bool near(double actual, double expected, double tolerance) {
 
 bool same_bits(double a, double b) {
     return std::memcmp(&a, &b, sizeof(double)) == 0;
+}
+
+bool same_state_bits(const aerosim::RigidBodyState &a, const aerosim::RigidBodyState &b) {
+    const auto same_vec3 = [](const aerosim::Vec3 &left, const aerosim::Vec3 &right) {
+        return same_bits(left.x, right.x) && same_bits(left.y, right.y) && same_bits(left.z, right.z);
+    };
+    return same_vec3(a.position, b.position) && same_vec3(a.velocity, b.velocity) &&
+            same_bits(a.orientation.x, b.orientation.x) && same_bits(a.orientation.y, b.orientation.y) &&
+            same_bits(a.orientation.z, b.orientation.z) && same_bits(a.orientation.w, b.orientation.w) &&
+            same_vec3(a.angular_velocity, b.angular_velocity) &&
+            same_vec3(a.propwash_disturbance_rad_s2, b.propwash_disturbance_rad_s2) &&
+            std::equal(a.motor_thrust_newtons.begin(), a.motor_thrust_newtons.end(), b.motor_thrust_newtons.begin(), same_bits);
+}
+
+bool same_clock_bits(const aerosim::SimulationClock &a, const aerosim::SimulationClock &b) {
+    return same_bits(a.substep_accumulator, b.substep_accumulator) && a.total_substeps == b.total_substeps;
+}
+
+bool same_controller_observables(const aerosim::FlightController &a, const aerosim::FlightController &b) {
+    const aerosim::FlightControlState a_state = a.control_state();
+    const aerosim::FlightControlState b_state = b.control_state();
+    return a.armed() == b.armed() && a.arm_reject_code() == b.arm_reject_code() &&
+            a.integrator_reset_count() == b.integrator_reset_count() &&
+            same_bits(a.motor_thrust_newtons(), b.motor_thrust_newtons()) &&
+            same_bits(a_state.target_angle_frd.x, b_state.target_angle_frd.x) &&
+            same_bits(a_state.target_angle_frd.y, b_state.target_angle_frd.y) &&
+            same_bits(a_state.target_angle_frd.z, b_state.target_angle_frd.z) &&
+            same_bits(a_state.target_rate_frd.x, b_state.target_rate_frd.x) &&
+            same_bits(a_state.target_rate_frd.y, b_state.target_rate_frd.y) &&
+            same_bits(a_state.target_rate_frd.z, b_state.target_rate_frd.z) &&
+            a.telemetry_snapshot().timestamp_us == b.telemetry_snapshot().timestamp_us &&
+            a.telemetry_snapshot().publish_count == b.telemetry_snapshot().publish_count;
 }
 
 double vector_length(const aerosim::Vec3 &value) {
@@ -137,6 +171,63 @@ int main() {
             !same_bits(atomic_state.position.x, state_before_invalid_command.position.x) ||
             atomic_clock.total_substeps != clock_before_invalid_command.total_substeps) {
         return fail("invalid controller commands must be rejected atomically");
+    }
+
+    for (double invalid_accumulator : {NAN, INFINITY}) {
+        aerosim::SimulationClock invalid_clock = atomic_clock;
+        invalid_clock.substep_accumulator = invalid_accumulator;
+        const aerosim::SimulationClock invalid_clock_before = invalid_clock;
+        const aerosim::StepResult invalid_clock_result = atomic_controller.try_step_angle_mode(
+                atomic_state, invalid_clock, atomic_config, aerosim::FlightCommand{}, aerosim::Quat{});
+        if (invalid_clock_result.status != aerosim::StepStatus::InvalidState ||
+                !same_clock_bits(invalid_clock, invalid_clock_before)) {
+            return fail("non-finite clocks must be rejected before substep conversion");
+        }
+    }
+    aerosim::SimulationClock overflow_clock = atomic_clock;
+    overflow_clock.total_substeps = std::numeric_limits<std::uint64_t>::max();
+    const aerosim::SimulationClock overflow_clock_before = overflow_clock;
+    const aerosim::StepResult overflow_clock_result = atomic_controller.try_step_angle_mode(
+            atomic_state, overflow_clock, atomic_config, aerosim::FlightCommand{}, aerosim::Quat{});
+    if (overflow_clock_result.status != aerosim::StepStatus::InvalidState ||
+            !same_clock_bits(overflow_clock, overflow_clock_before)) {
+        return fail("overflowing clocks must be rejected before advancing the substep counter");
+    }
+
+    aerosim::FlightController rollback_controller;
+    aerosim::FlightController untouched_controller;
+    aerosim::RigidBodyState rollback_state;
+    aerosim::RigidBodyState untouched_state;
+    aerosim::SimulationClock rollback_clock;
+    aerosim::SimulationClock untouched_clock;
+    if (!rollback_controller.arm(0.0) || !untouched_controller.arm(0.0)) {
+        return fail("rollback controller setup should arm from low throttle");
+    }
+    aerosim::FlightCommand legal_command;
+    legal_command.throttle = 0.5;
+    rollback_controller.step_angle_mode(rollback_state, rollback_clock, atomic_config, legal_command, aerosim::Quat{});
+    untouched_controller.step_angle_mode(untouched_state, untouched_clock, atomic_config, legal_command, aerosim::Quat{});
+    int failing_substep = 0;
+    aerosim::SimulationConfig fourth_substep_failure = atomic_config;
+    fourth_substep_failure.external_force_provider = [&failing_substep](const aerosim::Vec3 &) {
+        ++failing_substep;
+        return failing_substep == 4 ? aerosim::Vec3{NAN, 0.0, 0.0} : aerosim::Vec3{};
+    };
+    const aerosim::RigidBodyState rollback_state_before = rollback_state;
+    const aerosim::SimulationClock rollback_clock_before = rollback_clock;
+    const aerosim::FlightController rollback_controller_before = rollback_controller;
+    const aerosim::StepResult fourth_substep_result = rollback_controller.try_step_angle_mode(
+            rollback_state, rollback_clock, fourth_substep_failure, legal_command, aerosim::Quat{});
+    if (fourth_substep_result.status != aerosim::StepStatus::InvalidControlOutput || failing_substep != 4 ||
+            !same_state_bits(rollback_state, rollback_state_before) || !same_clock_bits(rollback_clock, rollback_clock_before) ||
+            !same_controller_observables(rollback_controller, rollback_controller_before)) {
+        return fail("a fourth-substep failure must restore all controller observables");
+    }
+    rollback_controller.step_angle_mode(rollback_state, rollback_clock, atomic_config, legal_command, aerosim::Quat{});
+    untouched_controller.step_angle_mode(untouched_state, untouched_clock, atomic_config, legal_command, aerosim::Quat{});
+    if (!same_state_bits(rollback_state, untouched_state) || !same_clock_bits(rollback_clock, untouched_clock) ||
+            !same_controller_observables(rollback_controller, untouched_controller)) {
+        return fail("the next legal frame after rollback must equal an untouched continuation");
     }
 
     aerosim::FlightController blocked_controller;

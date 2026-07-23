@@ -166,13 +166,39 @@ bool valid_state(const RigidBodyState &state) {
             [](double value) { return std::isfinite(value) && value >= 0.0; });
 }
 
+bool valid_clock(const SimulationClock &clock, const SimulationConfig &config) {
+    if (!std::isfinite(clock.substep_accumulator) || clock.substep_accumulator < 0.0 ||
+            clock.substep_accumulator >= 1.0) {
+        return false;
+    }
+    const std::uint64_t maximum_frame_substeps =
+            static_cast<std::uint64_t>(config.substep_hz / config.physics_hz) +
+            (config.substep_hz % config.physics_hz == 0 ? 0U : 1U);
+    return clock.total_substeps <= std::numeric_limits<std::uint64_t>::max() - maximum_frame_substeps;
+}
+
 bool valid_config(const SimulationConfig &config) {
-    return config.physics_hz > 0 && config.substep_hz > 0 && std::isfinite(config.mass_kg) && config.mass_kg > 0.0 &&
-            std::isfinite(config.gravity_mps2) && config.gravity_mps2 > 0.0 &&
-            std::isfinite(config.hover_throttle) && std::isfinite(config.motor_tau_s) && config.motor_tau_s >= 0.0 &&
-            std::isfinite(config.max_total_thrust_newtons) && std::isfinite(config.max_total_current_a) &&
-            std::isfinite(config.air_density_kg_m3) && config.air_density_kg_m3 > 0.0 &&
-            validate_per_motor_config(config.per_motor);
+    const double values[] = {
+            config.seconds, config.mass_kg, config.gravity_mps2, config.total_thrust_newtons,
+            config.max_total_thrust_newtons, config.hover_throttle, config.motor_tau_s,
+            config.battery_nominal_voltage_v, config.battery_cells, config.battery_cell_resistance_ohm,
+            config.battery_remaining_mah, config.max_total_current_a, config.max_motor_rpm, config.air_density_kg_m3,
+            config.a4_ground_effect.kf, config.a4_ground_effect.ground_effect_coeff,
+            config.a4_ground_effect.prop_radius_m, config.a4_ground_effect.height_clip_m,
+            config.a5_downwash.prop_radius_m, config.a5_downwash.coeff_1, config.a5_downwash.coeff_2,
+            config.a5_downwash.coeff_3, config.a6_propwash.full_collective_angular_accel_rad_s2,
+            config.a6_propwash.minimum_wake_entry_speed_mps, config.a6_propwash.minimum_transverse_rate_rad_s,
+    };
+    return std::all_of(std::begin(values), std::end(values), [](double value) { return std::isfinite(value); }) &&
+            finite_vec3(config.external_force_world) && finite_vec3(config.wind_world_mps) &&
+            finite_vec3(config.wind_turbulence_mps) && finite_vec3(config.a3_drag.coefficient) &&
+            finite_vec3(config.body_drag.drag_coefficient) && finite_vec3(config.body_drag.frontal_area_m2) &&
+            finite_vec3(config.body_drag.center_of_pressure_frd_m) &&
+            std::all_of(config.a4_ground_effect.motor_rpm.begin(), config.a4_ground_effect.motor_rpm.end(),
+                    [](double value) { return std::isfinite(value); }) &&
+            config.mass_kg > 0.0 && config.gravity_mps2 > 0.0 && config.air_density_kg_m3 > 0.0 &&
+            config.hover_throttle >= 0.0 && config.hover_throttle <= 1.0 && config.motor_tau_s >= 0.0 &&
+            valid_state(config.initial_state) && validate_per_motor_config(config.per_motor);
 }
 
 bool valid_command(const FlightCommand &command) {
@@ -742,7 +768,7 @@ StepResult FlightController::try_step_angle_mode(
     if (!valid_config(config)) {
         return {StepStatus::InvalidConfig, {}};
     }
-    if (!valid_state(state) || !finite_quat(estimated_attitude)) {
+    if (!valid_state(state) || !finite_quat(estimated_attitude) || !valid_clock(clock, config)) {
         return {StepStatus::InvalidState, {}};
     }
     RigidBodyState staged_state = state;
@@ -827,7 +853,7 @@ StepResult FlightController::try_step_acro_mode(
     if (!valid_config(config)) {
         return {StepStatus::InvalidConfig, {}};
     }
-    if (!valid_state(state)) {
+    if (!valid_state(state) || !valid_clock(clock, config)) {
         return {StepStatus::InvalidState, {}};
     }
     RigidBodyState staged_state = state;
@@ -914,7 +940,7 @@ StepResult FlightController::try_step_altitude_hold_mode(
     if (!valid_config(config) || !std::isfinite(measured_altitude_m)) {
         return {StepStatus::InvalidConfig, {}};
     }
-    if (!valid_state(state) || !finite_quat(estimated_attitude)) {
+    if (!valid_state(state) || !finite_quat(estimated_attitude) || !valid_clock(clock, config)) {
         return {StepStatus::InvalidState, {}};
     }
     RigidBodyState staged_state = state;

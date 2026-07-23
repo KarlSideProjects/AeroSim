@@ -42,6 +42,56 @@ bool valid_contact(const CollisionContact &contact) {
             std::isfinite(contact.max_kinetic_energy_joules);
 }
 
+bool valid_state(const RigidBodyState &state) {
+    if (!finite(state.position) || !finite(state.velocity) || !finite(state.orientation) ||
+            !finite(state.angular_velocity) || !finite(state.propwash_disturbance_rad_s2)) {
+        return false;
+    }
+    return std::all_of(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(),
+            [](double value) { return std::isfinite(value) && value >= 0.0; });
+}
+
+bool valid_config(const SimulationConfig &config) {
+    const double values[] = {
+            config.seconds, config.mass_kg, config.gravity_mps2, config.total_thrust_newtons,
+            config.max_total_thrust_newtons, config.hover_throttle, config.motor_tau_s,
+            config.battery_nominal_voltage_v, config.battery_cells, config.battery_cell_resistance_ohm,
+            config.battery_remaining_mah, config.max_total_current_a, config.max_motor_rpm, config.air_density_kg_m3,
+            config.a4_ground_effect.kf, config.a4_ground_effect.ground_effect_coeff,
+            config.a4_ground_effect.prop_radius_m, config.a4_ground_effect.height_clip_m,
+            config.a5_downwash.prop_radius_m, config.a5_downwash.coeff_1, config.a5_downwash.coeff_2,
+            config.a5_downwash.coeff_3, config.a6_propwash.full_collective_angular_accel_rad_s2,
+            config.a6_propwash.minimum_wake_entry_speed_mps, config.a6_propwash.minimum_transverse_rate_rad_s,
+    };
+    return config.physics_hz > 0 && config.substep_hz > 0 &&
+            std::all_of(std::begin(values), std::end(values), [](double value) { return std::isfinite(value); }) &&
+            finite(config.external_force_world) && finite(config.wind_world_mps) && finite(config.wind_turbulence_mps) &&
+            finite(config.a3_drag.coefficient) && finite(config.body_drag.drag_coefficient) &&
+            finite(config.body_drag.frontal_area_m2) && finite(config.body_drag.center_of_pressure_frd_m) &&
+            std::all_of(config.a4_ground_effect.motor_rpm.begin(), config.a4_ground_effect.motor_rpm.end(),
+                    [](double value) { return std::isfinite(value); }) &&
+            config.mass_kg > 0.0 && config.gravity_mps2 > 0.0 && config.air_density_kg_m3 > 0.0 &&
+            config.hover_throttle >= 0.0 && config.hover_throttle <= 1.0 && config.motor_tau_s >= 0.0 &&
+            valid_state(config.initial_state) && validate_per_motor_config(config.per_motor);
+}
+
+bool valid_clock(const SimulationClock &clock, const SimulationConfig &config) {
+    if (!std::isfinite(clock.substep_accumulator) || clock.substep_accumulator < 0.0 ||
+            clock.substep_accumulator >= 1.0) {
+        return false;
+    }
+    const std::uint64_t maximum_frame_substeps =
+            static_cast<std::uint64_t>(config.substep_hz / config.physics_hz) +
+            (config.substep_hz % config.physics_hz == 0 ? 0U : 1U);
+    return clock.total_substeps <= std::numeric_limits<std::uint64_t>::max() - maximum_frame_substeps;
+}
+
+bool valid_command(const FlightCommand &command) {
+    return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
+            std::isfinite(command.roll_degrees) && std::isfinite(command.pitch_degrees) &&
+            std::isfinite(command.yaw_rate_degrees_per_second);
+}
+
 Vec3 normalized_or_zero(const Vec3 &v) {
     const double norm = length(v);
     if (!std::isfinite(norm) || norm == 0.0) {
@@ -173,6 +223,15 @@ CollisionStepResult CollisionAuthoritySwitch::try_step(
     if (!valid_contact(contact)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
     }
+    if (!valid_command(command)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
+    }
+    if (!valid_config(config)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidConfig};
+    }
+    if (!valid_state(state) || !valid_clock(clock, config)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidState};
+    }
     if (!finite(estimated_attitude)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidState};
     }
@@ -182,11 +241,7 @@ CollisionStepResult CollisionAuthoritySwitch::try_step(
     CollisionAuthoritySwitch staged_authority = *this;
     CollisionStepResult result = staged_authority.step_impl(
             staged_state, staged_clock, staged_controller, config, command, contact, estimated_attitude);
-    if (result.sample.substeps == 0 && config.physics_hz > 0 && config.substep_hz > 0) {
-        return {authority_, {}, {}, {}, StepStatus::InvalidControlOutput};
-    }
-    if (!finite(staged_state.position) || !finite(staged_state.velocity) || !finite(staged_state.orientation) ||
-            !finite(staged_state.angular_velocity)) {
+    if (result.status != StepStatus::Ok || !valid_state(staged_state) || !valid_clock(staged_clock, config)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidControlOutput};
     }
     state = staged_state;
@@ -231,7 +286,8 @@ CollisionStepResult CollisionAuthoritySwitch::step_impl(
         authority_ = PhysicsAuthority::FlightCore;
     }
 
-    return {authority_, controller.step_angle_mode(state, clock, config, command, estimated_attitude), {}, {}};
+    const StepResult controller_result = controller.try_step_angle_mode(state, clock, config, command, estimated_attitude);
+    return {authority_, controller_result.sample, {}, {}, controller_result.status};
 }
 
 CollisionStepResult CollisionAuthoritySwitch::step_altitude_hold(
