@@ -881,6 +881,8 @@ func _audit_overlay_geometry(runtime: Node, screen_name: String) -> void:
 		if body_panel != null:
 			var body_surface: Control = body_panel.get("_scroll") if body_panel.get("_scroll") != null else body_panel.get("container")
 			_add_overlay_surface(surfaces, "body_drag", body_surface)
+	_add_overlay_surface(surfaces, "osd_warnings", runtime.osd_labels.get("warnings"))
+	_add_overlay_surface(surfaces, "osd_reset_hint", runtime.osd_labels.get("reset_hint"))
 
 	var viewport_rect := root.get_viewport().get_visible_rect()
 	var geometry: Dictionary = {}
