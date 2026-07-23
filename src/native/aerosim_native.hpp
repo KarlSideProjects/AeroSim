@@ -55,6 +55,8 @@ private:
     aerosim::TrajectorySample replay_first_response_;
     bool has_replay_first_response_ = false;
     bool replay_checkpoint_capture_active_ = false;
+    aerosim::TrajectorySample replay_last_successful_step_;
+    bool has_replay_last_successful_step_ = false;
     godot::String wind_preset_name_ = "custom";
     bool imu_noise_enabled_ = false;
     bool imu_bias_enabled_ = false;
@@ -143,6 +145,7 @@ public:
             const godot::String &lower_config_json,
             std::int32_t lower_controller_authority);
     void begin_replay_checkpoint_capture();
+    void capture_replay_recorded_response(bool non_neutral);
     godot::Dictionary record_replay_command(
             std::int64_t timestamp_us,
             const godot::String &vehicle_name,

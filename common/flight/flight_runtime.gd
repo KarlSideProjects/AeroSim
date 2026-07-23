@@ -734,6 +734,17 @@ func _record_replay_command(vehicle_name: String, controls: Dictionary, timestam
             0)
     if not bool(result.get("ok", false)):
         push_error("Complete replay command recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        return
+    var response_native: Object = _airsim_secondary_native if vehicle_name == String(_airsim_vehicle_names[1]) else native
+    if response_native != null and response_native.has_method("capture_replay_recorded_response"):
+        var non_neutral := float(controls.get("throttle", 0.0)) != 0.5
+        if mode == "ACRO":
+            non_neutral = non_neutral or float(controls.get("acro_roll", 0.0)) != 0.0 or \
+                float(controls.get("acro_pitch", 0.0)) != 0.0 or float(controls.get("acro_yaw", 0.0)) != 0.0
+        else:
+            non_neutral = non_neutral or float(controls.get("roll", 0.0)) != 0.0 or \
+                float(controls.get("pitch", 0.0)) != 0.0 or float(controls.get("yaw_rate", 0.0)) != 0.0
+        response_native.call("capture_replay_recorded_response", non_neutral)
 
 
 func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: PackedFloat32Array, timestamp_us: int) -> void:

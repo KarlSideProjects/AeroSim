@@ -308,6 +308,7 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("begin_complete_replay_recording", "seed", "settings_manifest_hash", "upper_name", "upper_config_manifest_hash", "upper_config_json", "upper_controller_authority", "lower_name", "lower_config_manifest_hash", "lower_config_json", "lower_controller_authority"),
             &AeroSimNative::begin_complete_replay_recording);
     ClassDB::bind_method(D_METHOD("begin_replay_checkpoint_capture"), &AeroSimNative::begin_replay_checkpoint_capture);
+    ClassDB::bind_method(D_METHOD("capture_replay_recorded_response", "non_neutral"), &AeroSimNative::capture_replay_recorded_response);
     ClassDB::bind_method(
             D_METHOD("record_replay_command", "timestamp_us", "vehicle_name", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "controller_authority"),
             &AeroSimNative::record_replay_command);
@@ -791,12 +792,22 @@ String AeroSimNative::replay_manifest_hash(const String &config_json) const {
 void AeroSimNative::begin_replay_checkpoint_capture() {
     replay_first_response_ = {};
     has_replay_first_response_ = false;
+    replay_last_successful_step_ = {};
+    has_replay_last_successful_step_ = false;
     replay_checkpoint_capture_active_ = true;
 }
 
 void AeroSimNative::capture_replay_first_response(const aerosim::TrajectorySample &sample) {
-    if (replay_checkpoint_capture_active_ && !has_replay_first_response_) {
-        replay_first_response_ = sample;
+    if (replay_checkpoint_capture_active_) {
+        replay_last_successful_step_ = sample;
+        has_replay_last_successful_step_ = sample.substeps > 0;
+    }
+}
+
+void AeroSimNative::capture_replay_recorded_response(bool non_neutral) {
+    if (replay_checkpoint_capture_active_ && non_neutral && !has_replay_first_response_ &&
+            has_replay_last_successful_step_) {
+        replay_first_response_ = replay_last_successful_step_;
         has_replay_first_response_ = true;
     }
 }
@@ -1033,20 +1044,8 @@ Dictionary AeroSimNative::record_replay_checkpoint(
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay checkpoint state is invalid or recording is inactive"};
         return replay_status(false, &diagnostic);
     }
-    const auto state_from_row = [](const PackedFloat64Array &row) {
-        aerosim::RigidBodyState state;
-        state.position = {row[1], row[2], row[3]};
-        state.orientation = {row[4], row[5], row[6], row[7]};
-        state.velocity = {row[8], row[9], row[10]};
-        state.angular_velocity = {row[14], row[15], row[16]};
-        return state;
-    };
     aerosim::ReplayRunCheckpoint checkpoint;
-    checkpoint.state = {state_from_row(upper_row), state_from_row(lower_row)};
-    checkpoint.state.upper.motor_thrust_newtons = simulation_state_.motor_thrust_newtons;
-    checkpoint.state.upper.propwash_disturbance_rad_s2 = simulation_state_.propwash_disturbance_rad_s2;
-    checkpoint.state.lower.motor_thrust_newtons = lower_native->simulation_state_.motor_thrust_newtons;
-    checkpoint.state.lower.propwash_disturbance_rad_s2 = lower_native->simulation_state_.propwash_disturbance_rad_s2;
+    checkpoint.state = {simulation_state_, lower_native->simulation_state_};
     checkpoint.controllers[0] = flight_controller_.control_state();
     checkpoint.controllers[1] = lower_native->flight_controller_.control_state();
     checkpoint.clocks[0] = simulation_clock_;

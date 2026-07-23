@@ -49,6 +49,8 @@ All commands passed. The first integration attempt intentionally caught a stale 
 - Zero-tolerance comparator paths now compare the IEEE-754 bit representation of each double. The RED signed-zero replay comparator test failed under numerical comparison and passes with the bitwise implementation; this also preserves distinct NaN payloads/non-finite representations.
 - The 4 scenarios × 100 seeds × Angle/Acro collision matrix enables A6 propwash. Its inverted tumble recovery has a non-zero first-response propwash assertion, and the record/serialize/load/replay path bitwise-compares that sample, including propwash.
 - `test_replay` artifacts now include propwash, controller target/rate/PID/latch state, and first-response time/substeps/motors/propwash. `compare_replay_artifacts.py` rejects divergence in each of those fields. The GDExtension integration verifies both vehicles' checkpoint controller, clock, motor, propwash, and response fields.
+- Comparator reporting now uses the same IEEE-bit predicate for every zero-tolerance floating-point branch, including simulation-time events, collision vectors/scalars, and scene transforms, so signed-zero cannot be silently accepted while selecting a divergence field.
+- Live and replay use the same response definition: the first successful substep associated with a recorded non-neutral command. Native steps retain the returned sample, then the recorder latches it only after that command is recorded; neutral and zero-substep prefixes do not latch. The integration runner uses two distinct armed native instances, steps both with non-neutral input, and records their real live checkpoint state.
 
 Validation after the review fixes:
 

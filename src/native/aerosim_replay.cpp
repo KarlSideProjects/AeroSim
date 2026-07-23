@@ -2471,12 +2471,15 @@ ReplayRunResult replay_session(
                 controller.step_angle_mode(vehicle_state, clock, frame_config, commands[index]);
             }
         }
-        const bool response = command_modes[index] == ReplayCommandMode::Acro ?
+        const bool response = command_modes[index] == ReplayCommandMode::Actuator ?
+                std::any_of(actuator_commands[index].normalized.begin(), actuator_commands[index].normalized.end(), [](double value) {
+                    return value != 0.5;
+                }) : command_modes[index] == ReplayCommandMode::Acro ?
                 (acro_commands[index].throttle != 0.5 || acro_commands[index].roll_stick != 0.0 ||
                  acro_commands[index].pitch_stick != 0.0 || acro_commands[index].yaw_stick != 0.0) :
                 (commands[index].throttle != 0.5 || commands[index].roll_degrees != 0.0 ||
                  commands[index].pitch_degrees != 0.0 || commands[index].yaw_rate_degrees_per_second != 0.0);
-        if (response && !has_first_response[index]) {
+        if (response && clock.total_substeps > 0 && !has_first_response[index]) {
             first_response_substeps[index].time_seconds = static_cast<double>(clock.total_substeps) /
                     static_cast<double>(std::max(1, vehicle_config.substep_hz));
             first_response_substeps[index].state = vehicle_state;
@@ -3270,7 +3273,7 @@ ReplayDivergence compare_replay_sessions(
                 report(left.timestamp_us, {}, "simulation.operation", simulation_operation_name(left.simulation_operation), simulation_operation_name(right.simulation_operation), 0.0);
                 return result;
             }
-            if (left.simulation_value != right.simulation_value) {
+            if (!same_or_close(left.simulation_value, right.simulation_value, tolerance)) {
                 report(left.timestamp_us, {}, "simulation.value", divergence_number(left.simulation_value), divergence_number(right.simulation_value), 0.0);
                 return result;
             }
@@ -3294,15 +3297,15 @@ ReplayDivergence compare_replay_sessions(
                  !same_or_close(left.collision.contact.max_kinetic_energy_joules, right.collision.contact.max_kinetic_energy_joules, tolerance))) {
             if (left.collision.authority != right.collision.authority) {
                 report(left.timestamp_us, left.vehicle_name, "collision.authority", authority_name(left.collision.authority), authority_name(right.collision.authority), 0.0);
-            } else if (left.collision.contact.normal.x != right.collision.contact.normal.x ||
-                    left.collision.contact.normal.y != right.collision.contact.normal.y ||
-                    left.collision.contact.normal.z != right.collision.contact.normal.z) {
+            } else if (!same_or_close(left.collision.contact.normal.x, right.collision.contact.normal.x, tolerance) ||
+                    !same_or_close(left.collision.contact.normal.y, right.collision.contact.normal.y, tolerance) ||
+                    !same_or_close(left.collision.contact.normal.z, right.collision.contact.normal.z, tolerance)) {
                 report(left.timestamp_us, left.vehicle_name, "collision.normal", vec_json(left.collision.contact.normal), vec_json(right.collision.contact.normal), tolerance);
-            } else if (left.collision.contact.impulse.x != right.collision.contact.impulse.x ||
-                    left.collision.contact.impulse.y != right.collision.contact.impulse.y ||
-                    left.collision.contact.impulse.z != right.collision.contact.impulse.z) {
+            } else if (!same_or_close(left.collision.contact.impulse.x, right.collision.contact.impulse.x, tolerance) ||
+                    !same_or_close(left.collision.contact.impulse.y, right.collision.contact.impulse.y, tolerance) ||
+                    !same_or_close(left.collision.contact.impulse.z, right.collision.contact.impulse.z, tolerance)) {
                 report(left.timestamp_us, left.vehicle_name, "collision.impulse", vec_json(left.collision.contact.impulse), vec_json(right.collision.contact.impulse), tolerance);
-            } else if (left.collision.contact.restitution != right.collision.contact.restitution) {
+            } else if (!same_or_close(left.collision.contact.restitution, right.collision.contact.restitution, tolerance)) {
                 report(left.timestamp_us, left.vehicle_name, "collision.restitution",
                         divergence_number(left.collision.contact.restitution), divergence_number(right.collision.contact.restitution), tolerance);
             } else if (left.collision.contact.has_resolved_state != right.collision.contact.has_resolved_state) {
@@ -3328,7 +3331,7 @@ ReplayDivergence compare_replay_sessions(
                         "collision.resolved_angular_velocity.z", "collision.max_kinetic_energy_joules",
                 };
                 for (std::size_t index = 0; index < sizeof(left_values) / sizeof(left_values[0]); ++index) {
-                    if (left_values[index] != right_values[index]) {
+                    if (!same_or_close(left_values[index], right_values[index], tolerance)) {
                         report(left.timestamp_us, left.vehicle_name, fields[index],
                                 divergence_number(left_values[index]), divergence_number(right_values[index]), tolerance);
                         break;
@@ -3366,7 +3369,7 @@ ReplayDivergence compare_replay_sessions(
                         "scene_object.orientation.z", "scene_object.orientation.w",
                 };
                 for (std::size_t index = 0; index < sizeof(left_values) / sizeof(left_values[0]); ++index) {
-                    if (left_values[index] != right_values[index]) {
+                    if (!same_or_close(left_values[index], right_values[index], tolerance)) {
                         report(left.timestamp_us, {}, fields[index],
                                 divergence_number(left_values[index]), divergence_number(right_values[index]), tolerance);
                         break;
