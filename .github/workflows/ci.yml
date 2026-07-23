@@ -110,9 +110,11 @@ jobs:
           python3 -m pip install --target "$AEROSIM_TOOL_ROOT/python-packages" scons numpy
           mkdir -p "$AEROSIM_TOOL_ROOT/bin"
           mkdir -p "$AEROSIM_TOOL_ROOT/tmp"
-          printf '#!/usr/bin/env sh\nexec python3 -m SCons.Script "$@"\n' > "$AEROSIM_TOOL_ROOT/bin/scons"
+          printf '%s\n' '#!/usr/bin/env sh' \
+            'PYTHONPATH="$AEROSIM_TOOL_ROOT/python-packages${PYTHONPATH:+:$PYTHONPATH}"' \
+            'export PYTHONPATH' \
+            'exec python3 -m SCons.Script "$@"' > "$AEROSIM_TOOL_ROOT/bin/scons"
           chmod +x "$AEROSIM_TOOL_ROOT/bin/scons"
-          echo "PYTHONPATH=$AEROSIM_TOOL_ROOT/python-packages" >> "$GITHUB_ENV"
           echo "TMPDIR=$AEROSIM_TOOL_ROOT/tmp" >> "$GITHUB_ENV"
           echo "$AEROSIM_TOOL_ROOT/bin" >> "$GITHUB_PATH"
 
@@ -127,10 +129,10 @@ jobs:
         run: scripts/test_native.sh
 
       - name: Python A3 oracle
-        run: scripts/check_a3_oracle.py build/a3_oracle_cases.csv
+        run: PYTHONPATH="$AEROSIM_TOOL_ROOT/python-packages" scripts/check_a3_oracle.py build/a3_oracle_cases.csv
 
       - name: Python A4/A5 oracle
-        run: scripts/check_a4_a5_oracle.py build/a4_a5_oracle_cases.csv
+        run: PYTHONPATH="$AEROSIM_TOOL_ROOT/python-packages" scripts/check_a4_a5_oracle.py build/a4_a5_oracle_cases.csv
 
       - name: Hardcoded airframe constant scan
         run: scripts/check_hardcoded_airframe_constants.sh
