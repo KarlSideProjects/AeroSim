@@ -104,7 +104,17 @@ bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
         << sample.state.motor_thrust_newtons[0] << ", "
         << sample.state.motor_thrust_newtons[1] << ", "
         << sample.state.motor_thrust_newtons[2] << ", "
-        << sample.state.motor_thrust_newtons[3] << "]\n"
+        << sample.state.motor_thrust_newtons[3] << "],\n"
+        << "  \"propwash\": [" << sample.state.propwash_disturbance_rad_s2.x << ", "
+        << sample.state.propwash_disturbance_rad_s2.y << ", " << sample.state.propwash_disturbance_rad_s2.z << "],\n"
+        << "  \"controller\": {\"target_angle\":[0,0,0],\"target_rate\":[0,0,0],\"integral\":[0,0,0],"
+        << "\"previous_error\":[0,0,0],\"derivative\":[0,0,0],\"mode\":\"ANGLE\",\"initialized\":false,"
+        << "\"motor_latches\":[false,false,false,false],\"pid_latches\":[false,false,false],\"motor_total\":0},\n"
+        << "  \"first_response\": {\"time_seconds\":" << sample.time_seconds << ",\"substeps\":" << sample.substeps
+        << ",\"motor_thrust_newtons\":[" << sample.state.motor_thrust_newtons[0] << ", "
+        << sample.state.motor_thrust_newtons[1] << ", " << sample.state.motor_thrust_newtons[2] << ", "
+        << sample.state.motor_thrust_newtons[3] << "],\"propwash\":[" << sample.state.propwash_disturbance_rad_s2.x << ", "
+        << sample.state.propwash_disturbance_rad_s2.y << ", " << sample.state.propwash_disturbance_rad_s2.z << "]}\n"
         << "}\n";
     return true;
 }
@@ -441,6 +451,12 @@ bool test_complete_session_schema() {
     propwash_mismatch.checkpoints.front().first_response_substeps[0].state.propwash_disturbance_rad_s2.x += 0.25;
     const aerosim::ReplayDivergence propwash_divergence = aerosim::compare_replay_runs(first_run, propwash_mismatch);
     if (!propwash_divergence.diverged || propwash_divergence.field != "checkpoint.controller[0].first_response.propwash.x") {
+        return false;
+    }
+    aerosim::ReplayRunResult signed_zero_mismatch = second_run;
+    signed_zero_mismatch.checkpoints.front().controllers[0].target_angle_frd.x = -0.0;
+    const aerosim::ReplayDivergence signed_zero_divergence = aerosim::compare_replay_runs(first_run, signed_zero_mismatch);
+    if (!signed_zero_divergence.diverged || signed_zero_divergence.field != "checkpoint.controller[0].target_angle_frd.x") {
         return false;
     }
     aerosim::ReplayRunResult clock_mismatch = second_run;

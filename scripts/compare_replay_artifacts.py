@@ -42,6 +42,18 @@ def main():
     if not isinstance(reference_motors, list) or not isinstance(actual_motors, list) or reference_motors != actual_motors:
         print("replay motor state diverged", file=sys.stderr)
         return 1
+    controller_fields = ["target_angle", "target_rate", "integral", "previous_error", "derivative", "mode", "initialized", "motor_latches", "pid_latches", "motor_total"]
+    for field in controller_fields:
+        if reference.get("controller", {}).get(field) != actual.get("controller", {}).get(field):
+            print(f"replay controller state diverged: {field}", file=sys.stderr)
+            return 1
+    for field in ["propwash", "motor_thrust_newtons", "time_seconds", "substeps"]:
+        if reference.get("first_response", {}).get(field) != actual.get("first_response", {}).get(field):
+            print(f"replay first-response state diverged: {field}", file=sys.stderr)
+            return 1
+    if reference.get("propwash") != actual.get("propwash"):
+        print("replay propwash state diverged", file=sys.stderr)
+        return 1
     angle = quat_angle_degrees(reference["orientation_xyzw"], actual["orientation_xyzw"])
     position = position_delta_m(reference["position_m"], actual["position_m"])
     if angle > 0.5 or position > 0.05:

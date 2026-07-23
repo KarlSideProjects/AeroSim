@@ -46,7 +46,7 @@ func run() -> Dictionary:
     error = _expect_ok(native.call("record_replay_command", 0, "DroneB", 0.50, 0.0, 0.0, 0.0, 0), "lower command")
     if not error.is_empty():
         return _failure(error)
-    error = _expect_ok(native.call("record_replay_checkpoint", 0, initial_row, initial_row), "initial checkpoint")
+    error = _expect_ok(native.call("record_replay_checkpoint", 0, initial_row, initial_row, native), "initial checkpoint")
     if not error.is_empty():
         return _failure(error)
     error = _expect_ok(native.call("record_replay_simulation_operation", 0, 0, 0.0), "pause")
@@ -86,15 +86,16 @@ func run() -> Dictionary:
     var responses: Array = checkpoint.get("first_response_substeps", [])
     if controllers.size() != 2 or clocks.size() != 2 or responses.size() != 2:
         return _failure("schema-v3 checkpoint state is incomplete")
-    var controller: Dictionary = controllers[0]
-    var response: Dictionary = responses[0]
-    var response_state: Dictionary = response.get("state", {})
-    for field in ["target_angle", "target_rate", "integral", "previous_error", "derivative", "mode", "initialized", "motor_latches", "pid_latches", "motor_total"]:
-        if not controller.has(field):
-            return _failure("schema-v3 controller checkpoint field is missing: %s" % field)
-    if not clocks[0].has("substep_accumulator") or not clocks[0].has("total_substeps") or \
-            not response_state.has("motor_thrust") or not response_state.has("propwash"):
-        return _failure("schema-v3 clock, motor, or first-response state is missing")
+    for vehicle_index in range(2):
+        var controller: Dictionary = controllers[vehicle_index]
+        var response: Dictionary = responses[vehicle_index]
+        var response_state: Dictionary = response.get("state", {})
+        for field in ["target_angle", "target_rate", "integral", "previous_error", "derivative", "mode", "initialized", "motor_latches", "pid_latches", "motor_total"]:
+            if not controller.has(field):
+                return _failure("schema-v3 controller checkpoint field is missing: %s" % field)
+        if not clocks[vehicle_index].has("substep_accumulator") or not clocks[vehicle_index].has("total_substeps") or \
+                not response_state.has("motor_thrust") or not response_state.has("propwash"):
+            return _failure("schema-v3 clock, motor, or first-response state is missing")
     altered_manifest["vehicles"][0]["config"]["mass_kg"] = 1.25
     var strict_manifest_rejection: Dictionary = native.call(
         "replay_complete_session", JSON.stringify(altered_manifest), SETTINGS_HASH, config_hash, config_hash,

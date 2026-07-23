@@ -40,6 +40,10 @@ bool near(double actual, double expected, double tolerance) {
     return std::abs(actual - expected) <= tolerance;
 }
 
+double vector_length(const aerosim::Vec3 &value) {
+    return std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+}
+
 void configure_power_model(aerosim::SimulationConfig &config) {
     config.hover_throttle = 0.5;
     config.max_total_thrust_newtons = config.mass_kg * config.gravity_mps2 * 2.0;
@@ -58,6 +62,10 @@ void configure_power_model(aerosim::SimulationConfig &config) {
             {0.1125, -0.1125, 0.0},
     }};
     config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    config.a6_propwash.enabled = true;
+    config.a6_propwash.full_collective_angular_accel_rad_s2 = 12.0;
+    config.a6_propwash.minimum_wake_entry_speed_mps = 0.001;
+    config.a6_propwash.minimum_transverse_rate_rad_s = 0.001;
 }
 
 bool same_state_bits(const aerosim::RigidBodyState &a, const aerosim::RigidBodyState &b) {
@@ -157,6 +165,7 @@ TrialSetup setup_trial(Scenario scenario, std::uint32_t seed) {
     } else {
         setup.state.velocity = {rng.next(-2.0, 2.0), -8.0 + rng.next(-0.5, 0.5), rng.next(-2.0, 2.0)};
         setup.state.angular_velocity = {rng.next(-9.0, 9.0), rng.next(-9.0, 9.0), rng.next(-9.0, 9.0)};
+        setup.state.orientation = {1.0, 0.0, 0.0, 0.0};
         setup.contact.normal = {0.0, 1.0, 0.0};
         setup.contact.restitution = 0.2;
     }
@@ -290,6 +299,9 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
                 neutral_state.motor_thrust_newtons[motor]) > epsilon;
     }
     if (!motor_responded) {
+        return {};
+    }
+    if (scenario == Scenario::TumbleGround && vector_length(first_response.state.propwash_disturbance_rad_s2) <= 0.0) {
         return {};
     }
     aerosim::ReplaySessionRecorder recorder(seed, "collision-recovery");

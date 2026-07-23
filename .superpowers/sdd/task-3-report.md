@@ -42,6 +42,14 @@ All commands passed. The first integration attempt intentionally caught a stale 
 - Both session and run comparators now include checkpoint motor/propwash and every first-response rigid-body field. The randomized collision proof uses one direct recovery run to record its commands, collision, release-frame operation, response operation, full checkpoints, and first response; it then calls `ReplaySessionRecorder::serialize()`, `load_replay_session()`, and `replay_session()` on the deserialized session. It bitwise-compares the replay's ready checkpoint, final checkpoint, and first-response sample to the recorded run. It does not invoke the collision simulation helper a second time as a stand-in for replay.
 - Added explicit schema-v2 rejection and checked finite/capped duration-to-`size_t` frame conversion coverage.
 
+## Final review fixes
+
+- Secondary checkpoints now receive the live secondary `AeroSimNative` instance from `FlightRuntime`. The primary recorder copies its controller state, simulation clock, motor/propwash body state, and cached first response; the secondary begins capture alongside the primary recording session, so vehicle 1 is no longer silently defaulted.
+- First-response capture moved to the successful native-step path (Angle, Acro, altitude-hold, collision, and actuator rows). It snapshots the first returned physical substep immediately, before a later checkpoint can observe a different motor state.
+- Zero-tolerance comparator paths now compare the IEEE-754 bit representation of each double. The RED signed-zero replay comparator test failed under numerical comparison and passes with the bitwise implementation; this also preserves distinct NaN payloads/non-finite representations.
+- The 4 scenarios × 100 seeds × Angle/Acro collision matrix enables A6 propwash. Its inverted tumble recovery has a non-zero first-response propwash assertion, and the record/serialize/load/replay path bitwise-compares that sample, including propwash.
+- `test_replay` artifacts now include propwash, controller target/rate/PID/latch state, and first-response time/substeps/motors/propwash. `compare_replay_artifacts.py` rejects divergence in each of those fields. The GDExtension integration verifies both vehicles' checkpoint controller, clock, motor, propwash, and response fields.
+
 Validation after the review fixes:
 
 ```bash

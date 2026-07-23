@@ -307,6 +307,7 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("begin_complete_replay_recording", "seed", "settings_manifest_hash", "upper_name", "upper_config_manifest_hash", "upper_config_json", "upper_controller_authority", "lower_name", "lower_config_manifest_hash", "lower_config_json", "lower_controller_authority"),
             &AeroSimNative::begin_complete_replay_recording);
+    ClassDB::bind_method(D_METHOD("begin_replay_checkpoint_capture"), &AeroSimNative::begin_replay_checkpoint_capture);
     ClassDB::bind_method(
             D_METHOD("record_replay_command", "timestamp_us", "vehicle_name", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "controller_authority"),
             &AeroSimNative::record_replay_command);
@@ -329,7 +330,7 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("record_replay_environment", "timestamp_us", "environment_json"),
             &AeroSimNative::record_replay_environment);
     ClassDB::bind_method(
-            D_METHOD("record_replay_checkpoint", "timestamp_us", "upper_row", "lower_row"),
+            D_METHOD("record_replay_checkpoint", "timestamp_us", "upper_row", "lower_row", "lower_native"),
             &AeroSimNative::record_replay_checkpoint);
     ClassDB::bind_method(
             D_METHOD("record_replay_async_command", "timestamp_us", "vehicle_name", "command_id", "method", "lifecycle"),
@@ -787,6 +788,19 @@ String AeroSimNative::replay_manifest_hash(const String &config_json) const {
     return sha256_string(config_json);
 }
 
+void AeroSimNative::begin_replay_checkpoint_capture() {
+    replay_first_response_ = {};
+    has_replay_first_response_ = false;
+    replay_checkpoint_capture_active_ = true;
+}
+
+void AeroSimNative::capture_replay_first_response(const aerosim::TrajectorySample &sample) {
+    if (replay_checkpoint_capture_active_ && !has_replay_first_response_) {
+        replay_first_response_ = sample;
+        has_replay_first_response_ = true;
+    }
+}
+
 Dictionary AeroSimNative::begin_complete_replay_recording(
         std::int64_t seed,
         const String &settings_manifest_hash,
@@ -822,8 +836,7 @@ Dictionary AeroSimNative::begin_complete_replay_recording(
         return replay_status(false, &recorder->diagnostic());
     }
     replay_recorder_ = std::move(recorder);
-    replay_first_response_ = {};
-    has_replay_first_response_ = false;
+    begin_replay_checkpoint_capture();
     return replay_status(true);
 }
 
@@ -1014,8 +1027,9 @@ Dictionary AeroSimNative::record_replay_environment(
 Dictionary AeroSimNative::record_replay_checkpoint(
         std::int64_t timestamp_us,
         const PackedFloat64Array &upper_row,
-        const PackedFloat64Array &lower_row) {
-    if (replay_recorder_ == nullptr || timestamp_us < 0 || upper_row.size() < 17 || lower_row.size() < 17) {
+        const PackedFloat64Array &lower_row,
+        AeroSimNative *lower_native) {
+    if (replay_recorder_ == nullptr || lower_native == nullptr || timestamp_us < 0 || upper_row.size() < 17 || lower_row.size() < 17) {
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay checkpoint state is invalid or recording is inactive"};
         return replay_status(false, &diagnostic);
     }
@@ -1031,18 +1045,14 @@ Dictionary AeroSimNative::record_replay_checkpoint(
     checkpoint.state = {state_from_row(upper_row), state_from_row(lower_row)};
     checkpoint.state.upper.motor_thrust_newtons = simulation_state_.motor_thrust_newtons;
     checkpoint.state.upper.propwash_disturbance_rad_s2 = simulation_state_.propwash_disturbance_rad_s2;
+    checkpoint.state.lower.motor_thrust_newtons = lower_native->simulation_state_.motor_thrust_newtons;
+    checkpoint.state.lower.propwash_disturbance_rad_s2 = lower_native->simulation_state_.propwash_disturbance_rad_s2;
     checkpoint.controllers[0] = flight_controller_.control_state();
+    checkpoint.controllers[1] = lower_native->flight_controller_.control_state();
     checkpoint.clocks[0] = simulation_clock_;
-    const bool has_motor_response = std::any_of(simulation_state_.motor_thrust_newtons.begin(),
-            simulation_state_.motor_thrust_newtons.end(), [](double value) { return value != 0.0; });
-    if (has_motor_response && !has_replay_first_response_) {
-        replay_first_response_.time_seconds = static_cast<double>(simulation_clock_.total_substeps) /
-                static_cast<double>(std::max(1, hardware_config_.simulation_config().substep_hz));
-        replay_first_response_.state = simulation_state_;
-        replay_first_response_.substeps = simulation_clock_.total_substeps;
-        has_replay_first_response_ = true;
-    }
+    checkpoint.clocks[1] = lower_native->simulation_clock_;
     checkpoint.first_response_substeps[0] = replay_first_response_;
+    checkpoint.first_response_substeps[1] = lower_native->replay_first_response_;
     const bool ok = replay_recorder_->record_checkpoint(static_cast<std::uint64_t>(timestamp_us), std::move(checkpoint));
     return replay_status(ok, &replay_recorder_->diagnostic());
 }
@@ -1130,6 +1140,7 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     row.append(sample.state.angular_velocity.x);
     row.append(sample.state.angular_velocity.y);
     row.append(sample.state.angular_velocity.z);
+    capture_replay_first_response(sample);
     clear_step_error();
     return row;
 }
@@ -1222,6 +1233,7 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
     row.append(sample.state.angular_velocity.x);
     row.append(sample.state.angular_velocity.y);
     row.append(sample.state.angular_velocity.z);
+    capture_replay_first_response(sample);
     clear_step_error();
     return row;
 }
@@ -1841,6 +1853,7 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     row.append(sample.state.velocity.y);
     row.append(sample.state.velocity.z);
     row.append(static_cast<double>(sample.substeps));
+    capture_replay_first_response(sample);
     clear_step_error();
     return row;
 }
@@ -1910,6 +1923,7 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
     row.append(sample.state.velocity.y);
     row.append(sample.state.velocity.z);
     row.append(static_cast<double>(sample.substeps));
+    capture_replay_first_response(sample);
     clear_step_error();
     return row;
 }
@@ -2019,6 +2033,7 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     row.append(result.impulse.x);
     row.append(result.impulse.y);
     row.append(result.impulse.z);
+    capture_replay_first_response(sample);
     clear_step_error();
     return row;
 }
@@ -2086,6 +2101,7 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
     row.append(sample.state.velocity.y);
     row.append(sample.state.velocity.z);
     row.append(static_cast<double>(sample.substeps));
+    capture_replay_first_response(sample);
     clear_step_error();
     return row;
 }
@@ -2240,6 +2256,7 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
     row.append(result.impulse.x);
     row.append(result.impulse.y);
     row.append(result.impulse.z);
+    capture_replay_first_response(sample);
     clear_step_error();
     return row;
 }
@@ -2350,6 +2367,7 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     row.append(result.impulse.x);
     row.append(result.impulse.y);
     row.append(result.impulse.z);
+    capture_replay_first_response(sample);
     clear_step_error();
     return row;
 }

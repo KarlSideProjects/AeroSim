@@ -670,6 +670,8 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     if not bool(result.get("ok", false)):
         push_error("Complete replay recording could not start: %s" % String(result.get("diagnostic_message", "unknown error")))
         return
+    if _airsim_secondary_native.has_method("begin_replay_checkpoint_capture"):
+        _airsim_secondary_native.call("begin_replay_checkpoint_capture")
     _replay_recording_active = true
     if not _record_replay_environment({}):
         _replay_recording_active = false
@@ -816,7 +818,7 @@ func _record_replay_environment(state: Dictionary) -> bool:
 func _record_replay_checkpoint(timestamp_us: int, upper_row: PackedFloat64Array) -> void:
     if not _replay_recording_active or native == null or upper_row.size() < 17 or _replay_secondary_row.size() < 17:
         return
-    var result: Dictionary = native.call("record_replay_checkpoint", timestamp_us, upper_row, _replay_secondary_row)
+    var result: Dictionary = native.call("record_replay_checkpoint", timestamp_us, upper_row, _replay_secondary_row, _airsim_secondary_native)
     if not bool(result.get("ok", false)):
         push_error("Complete replay checkpoint recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
 

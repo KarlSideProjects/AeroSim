@@ -5,6 +5,7 @@
 #include <charconv>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
@@ -1716,6 +1717,14 @@ bool parse_event(const JsonValue &value, ReplayEvent &event) {
 }
 
 bool same_or_close(double expected, double actual, double tolerance) {
+    if (tolerance == 0.0) {
+        std::uint64_t expected_bits = 0;
+        std::uint64_t actual_bits = 0;
+        static_assert(sizeof(expected_bits) == sizeof(expected));
+        std::memcpy(&expected_bits, &expected, sizeof(expected_bits));
+        std::memcpy(&actual_bits, &actual, sizeof(actual_bits));
+        return expected_bits == actual_bits;
+    }
     return std::isfinite(expected) && std::isfinite(actual) && std::abs(expected - actual) <= tolerance;
 }
 
