@@ -41,16 +41,8 @@ func _verify_sparse_px4() -> bool:
         push_error("invalid PX4 call did not establish a retained error")
         return false
     var row: PackedFloat64Array = native.call("step_px4_actuator_mode", 1000, 240, 0.0, 0.0, 0.0, 0.0)
-    if row.size() < 12 or int(row[11]) != 0:
-        push_error("first 1000/240 PX4 frame must succeed with zero substeps")
-        return false
-    if not String(native.call("last_step_error")).is_empty():
-        push_error("successful sparse PX4 frame must clear the retained error")
-        return false
-    for _frame in range(4):
-        row = native.call("step_px4_actuator_mode", 1000, 240, 0.0, 0.0, 0.0, 0.0)
-    if int(row[11]) != 1:
-        push_error("sparse PX4 frames must retain fractional scheduler progress (got %s)" % row[11])
+    if not row.is_empty() or String(native.call("last_step_error")) != "AeroSimNative.step_px4_actuator_mode: InvalidConfig: timing":
+        push_error("unschedulable PX4 timing must be rejected transactionally")
         return false
     return true
 

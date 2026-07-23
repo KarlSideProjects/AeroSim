@@ -611,7 +611,7 @@ PackedFloat64Array AeroSimNative::step_simulation(
         std::int32_t physics_hz,
         std::int32_t substep_hz,
         double total_thrust_newtons) {
-    if (physics_hz <= 0 || substep_hz <= 0) {
+    if (!valid_simulation_timing(physics_hz, substep_hz)) {
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
@@ -1111,7 +1111,7 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
         double motor_1,
         double motor_2,
         double motor_3) {
-    if (physics_hz <= 0 || substep_hz <= 0) {
+    if (!valid_simulation_timing(physics_hz, substep_hz)) {
         set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
     }
@@ -1136,6 +1136,10 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
     const aerosim::TrajectorySample sample = aerosim::step_per_motor_physics_frame(
             simulation_state_, simulation_clock_, config, commands);
+    if (sample.substeps == 0) {
+        set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidControlOutput, "simulation");
+        return {};
+    }
     flight_controller_.publish_applied_telemetry(
             sample, config, (motor_0 + motor_1 + motor_2 + motor_3) * 0.25, "PX4_ACTUATOR");
     flight_mode_ = "PX4_ACTUATOR";
