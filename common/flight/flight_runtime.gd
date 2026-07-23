@@ -2697,15 +2697,16 @@ func _acro_rate(key: String) -> float:
     return float(rates_profile.get(key, RatesProfile.default_profile().get(key, 0.0)))
 
 func _handle_native_step_failure(step_native, row: PackedFloat64Array = PackedFloat64Array(), has_row: bool = false) -> bool:
-    if step_native == null or not step_native.has_method("last_step_error"):
+    if step_native == null:
         return false
-    var native_error := String(step_native.call("last_step_error"))
+    var native_error := String(step_native.call("last_step_error")) if step_native.has_method("last_step_error") else ""
     if native_error.is_empty() and (not has_row or not row.is_empty()):
         return false
-    last_error_message = native_error if not native_error.is_empty() else "AeroSimNative step returned no state"
-    set_paused(true, false)
-    screen = "error"
-    _refresh_flight_hud()
+    last_error_message = native_error if not native_error.is_empty() else "Native simulation step failed"
+    set_paused(true)
+    if not native_error.is_empty():
+        screen = "error"
+        _refresh_flight_hud()
     return true
 
 func _refresh_native_imu_sample(step_native) -> bool:

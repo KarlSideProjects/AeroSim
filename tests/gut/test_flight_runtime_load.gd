@@ -7,6 +7,7 @@ const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const LanguageProfile = preload("res://common/flight/language_profile.gd")
 const Localization = preload("res://common/flight/localization.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
@@ -38,6 +39,56 @@ class FakeNative:
 
     func hardware_power_diagnostics() -> Dictionary:
         return {"hover_throttle": 0.30}
+
+
+class FailingStepNative:
+    extends FakeNative
+
+    var step_calls := 0
+    var sync_calls := 0
+
+    func sync_flight_state(
+        _position_x: float,
+        _position_y: float,
+        _position_z: float,
+        _orientation_x: float,
+        _orientation_y: float,
+        _orientation_z: float,
+        _orientation_w: float,
+        _velocity_x: float,
+        _velocity_y: float,
+        _velocity_z: float,
+        _angular_velocity_x: float,
+        _angular_velocity_y: float,
+        _angular_velocity_z: float
+    ) -> void:
+        sync_calls += 1
+
+    func step_collision_angle_mode(
+        _physics_hz: int,
+        _substep_hz: int,
+        _throttle: float,
+        _roll: float,
+        _pitch: float,
+        _yaw_rate: float,
+        _touching: bool,
+        _normal_x: float,
+        _normal_y: float,
+        _normal_z: float,
+        _impulse_x: float,
+        _impulse_y: float,
+        _impulse_z: float,
+        _restitution: float,
+        _velocity_x: float,
+        _velocity_y: float,
+        _velocity_z: float,
+        _angular_velocity_x: float,
+        _angular_velocity_y: float,
+        _angular_velocity_z: float,
+        _energy_limit: float
+    ) -> PackedFloat64Array:
+        step_calls += 1
+        return PackedFloat64Array()
 
 
 class FailingAtomicNative:
@@ -1356,6 +1407,58 @@ func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void
             JSON.stringify(swapped_manifest), runtime._replay_settings_manifest_hash,
             runtime._replay_upper_config_manifest_hash, runtime._replay_lower_config_manifest_hash)
     assert_false(bool(swapped_result.get("ok", true)))
+
+
+func test_native_failure_freezes_continue_for_frames_session() -> void:
+    _assert_native_failure_freezes_explicit_session(false)
+
+
+func test_native_failure_freezes_continue_for_time_session() -> void:
+    _assert_native_failure_freezes_explicit_session(true)
+
+
+func _assert_native_failure_freezes_explicit_session(use_time: bool) -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var native := FailingStepNative.new()
+    var body := CollisionProbeBody.new()
+    autofree(body)
+    get_tree().root.add_child(body)
+    runtime.native = native
+    runtime.drone_body = body
+    runtime.screen = "flight"
+    runtime.takeoff_requested = true
+    runtime._airsim_vehicle_name = "Drone1"
+    runtime._airsim_vehicle_names = ["Drone1"]
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.airsim_sensor_suite = AirSimSensorSuite.new()
+    assert_true(runtime.airsim_sensor_suite.configure({
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight", "Sensors": {}}},
+    }, ["Drone1"]).ok)
+    var start: Dictionary = runtime.airsim_session.continue_for_time(2.0 / 240.0) if use_time else runtime.airsim_session.continue_for_frames(2)
+    assert_true(start.ok)
+
+    runtime._physics_process(1.0 / 240.0)
+    var frame_after_failure := runtime.airsim_session.frame_index
+    var sensor_samples_after_failure: int = int(runtime.airsim_sensor_suite.stats("Drone1", AirSimSensorSuite.SENSOR_IMU, "").sample_count)
+    var body_position_after_failure := body.global_position
+
+    assert_true(runtime.paused)
+    assert_true(runtime.airsim_session.is_paused())
+    assert_true(body.freeze)
+    assert_true(body.sleeping)
+    assert_eq(runtime.last_error_message, "Native simulation step failed")
+    assert_eq(runtime.screen, "flight")
+
+    runtime._process(0.0)
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(native.step_calls, 1)
+    assert_eq(native.sync_calls, 1)
+    assert_eq(runtime.airsim_session.frame_index, frame_after_failure)
+    assert_eq(runtime.airsim_sensor_suite.stats("Drone1", AirSimSensorSuite.SENSOR_IMU, "").sample_count, sensor_samples_after_failure)
+    assert_eq(body.global_position, body_position_after_failure)
+    assert_true(body.freeze)
 
 
 func test_runtime_rejects_more_than_two_named_vehicles_before_dashboard_setup() -> void:
