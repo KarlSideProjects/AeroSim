@@ -4786,8 +4786,9 @@ func _localized_license_status(status: String) -> String:
     return _format("ui.license.status", [status])
 
 func _pre_impact_energy(body: Object, target_native = native) -> float:
-    if body is CollisionProbeBody:
-        return _kinetic(body.native_linear_velocity, body.native_body_angular_velocity, target_native)
+    for property in body.get_property_list():
+        if property.get("name") == &"native_linear_velocity":
+            return _kinetic(body.get(&"native_linear_velocity"), body.get(&"native_body_angular_velocity"), target_native)
     return _kinetic(body.linear_velocity, _jolt_angular_velocity_body_y_up(body), target_native)
 
 func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, target_native = native) -> float:
