@@ -1,4 +1,5 @@
 .godot/
+.worktrees/
 .import/
 .deps/
 build/
