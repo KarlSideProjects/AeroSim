@@ -57,6 +57,7 @@ int main() {
     }
 
     aerosim::SimulationConfig overflowing_force_config = physics_config;
+    overflowing_force_config.mass_kg = 0.5;
     overflowing_force_config.external_force_world.x = 1.0e308;
     const aerosim::RigidBodyState before_overflow = state;
     const aerosim::SimulationClock clock_before_overflow = clock;
