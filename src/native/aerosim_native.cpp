@@ -2168,7 +2168,7 @@ Dictionary AeroSimNative::simulate_trajectory(
     aerosim::FlightCommand command;
     command.throttle = flight_controller_.armed()
             ? total_thrust_newtons * config.hover_throttle / hover_thrust_newtons : 0.0;
-    const aerosim::ReplayBatchResult batch = aerosim::replay_angle_mode_seconds_batch(config, command, config.seconds);
+    const aerosim::ReplayBatchResult batch = aerosim::replay_angle_mode_seconds_batch(config, command, config.seconds, wind_field_);
     if (batch.status != aerosim::StepStatus::Ok) {
         const std::int64_t failed_frame = batch.failed_frame == aerosim::kNoFailedReplayFrame
                 ? -1 : static_cast<std::int64_t>(batch.failed_frame);

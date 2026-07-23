@@ -77,6 +77,12 @@ bool checked_batch_frame_count(double seconds, std::int32_t physics_hz, std::siz
 
 } // namespace
 
+ReplayBatchResult replay_angle_mode_seconds_batch_with_wind(
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double seconds,
+        const WindField *wind_field);
+
 ReplayRecorder::ReplayRecorder(std::string vehicle_name) {
     sequence_.vehicle_name = std::move(vehicle_name);
 }
@@ -118,7 +124,8 @@ std::vector<TrajectorySample> replay_angle_mode(
 
 ReplayBatchResult replay_angle_mode_batch(
         const SimulationConfig &config,
-        const RecordedInputSequence &inputs) {
+        const RecordedInputSequence &inputs,
+        const WindField *wind_field) {
     if (inputs.frames.size() > kMaxBatchTrajectoryFrames) {
         return {StepStatus::ResourceLimitExceeded, {}, kNoFailedReplayFrame};
     }
@@ -138,7 +145,14 @@ ReplayBatchResult replay_angle_mode_batch(
     FlightController controller;
     controller.arm(0.0);
     for (std::size_t frame = 0; frame < inputs.frames.size(); ++frame) {
-        const StepResult step = controller.try_step_angle_mode(state, clock, config, inputs.frames[frame], state.orientation);
+        SimulationConfig frame_config = config;
+        if (wind_field != nullptr) {
+            const double time_seconds = static_cast<double>(clock.total_substeps) /
+                    static_cast<double>(std::max(1, config.substep_hz));
+            frame_config.wind_world_mps = wind_field->sample(time_seconds, state.position);
+            frame_config.wind_turbulence_mps = wind_field->turbulence(time_seconds);
+        }
+        const StepResult step = controller.try_step_angle_mode(state, clock, frame_config, inputs.frames[frame], state.orientation);
         if (step.status != StepStatus::Ok) {
             result.status = step.status;
             result.failed_frame = frame;
@@ -154,6 +168,22 @@ ReplayBatchResult replay_angle_mode_seconds_batch(
         const SimulationConfig &config,
         const FlightCommand &command,
         double seconds) {
+    return replay_angle_mode_seconds_batch_with_wind(config, command, seconds, nullptr);
+}
+
+ReplayBatchResult replay_angle_mode_seconds_batch(
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double seconds,
+        const WindField &wind_field) {
+    return replay_angle_mode_seconds_batch_with_wind(config, command, seconds, &wind_field);
+}
+
+ReplayBatchResult replay_angle_mode_seconds_batch_with_wind(
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double seconds,
+        const WindField *wind_field) {
     if (!std::isfinite(seconds) || seconds < 0.0 || config.physics_hz <= 0) {
         return {StepStatus::InvalidConfig, {}, kNoFailedReplayFrame};
     }
@@ -171,7 +201,7 @@ ReplayBatchResult replay_angle_mode_seconds_batch(
 #else
     inputs.frames.assign(frame_count, command);
 #endif
-    return replay_angle_mode_batch(config, inputs);
+    return replay_angle_mode_batch(config, inputs, wind_field);
 }
 
 ReplayDelta compare_replay_final_state(
@@ -1121,10 +1151,10 @@ bool parse_trajectory(const JsonValue &value, TrajectorySample &sample) {
     const JsonValue *substeps = field(value, "substeps");
     const JsonValue *state = field(value, "state");
     const JsonValue *propwash = field(value, "propwash_disturbance_rad_s2");
-    return time != nullptr && substeps != nullptr && state != nullptr && number_value(*time, sample.time_seconds) &&
+    return time != nullptr && substeps != nullptr && state != nullptr && propwash != nullptr && number_value(*time, sample.time_seconds) &&
             std::isfinite(sample.time_seconds) && integer_value(*substeps, sample.substeps) &&
             parse_rigid_body_state(*state, sample.state) &&
-            (propwash == nullptr || parse_vec(*propwash, sample.propwash_disturbance_rad_s2));
+            parse_vec(*propwash, sample.propwash_disturbance_rad_s2);
 }
 
 std::string checkpoint_json(const ReplayRunCheckpoint &checkpoint) {
@@ -1174,6 +1204,7 @@ bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint) {
     const JsonValue *scene_objects = field(value, "scene_objects");
     const JsonValue *environment = field(value, "environment");
     if (!(timestamp != nullptr && upper != nullptr && lower != nullptr && controllers != nullptr && clocks != nullptr && responses != nullptr &&
+            collisions != nullptr && scene_objects != nullptr && environment != nullptr &&
             controllers->type == JsonValue::Type::Array && controllers->array.size() == checkpoint.controllers.size() &&
             clocks->type == JsonValue::Type::Array && clocks->array.size() == checkpoint.clocks.size() &&
             responses->type == JsonValue::Type::Array && responses->array.size() == checkpoint.first_response_substeps.size() &&
@@ -1187,11 +1218,10 @@ bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint) {
             parse_trajectory(responses->array[1], checkpoint.first_response_substeps[1]))) {
         return false;
     }
-    if (collisions != nullptr) {
-        if (collisions->type != JsonValue::Type::Array || collisions->array.size() != checkpoint.collisions.size()) {
-            return false;
-        }
-        for (std::size_t index = 0; index < checkpoint.collisions.size(); ++index) {
+    if (collisions->type != JsonValue::Type::Array || collisions->array.size() != checkpoint.collisions.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < checkpoint.collisions.size(); ++index) {
             const JsonValue &collision = collisions->array[index];
             std::string authority;
             bool touching = false;
@@ -1220,13 +1250,11 @@ bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint) {
             }
             parsed.contact.touching = touching;
             parsed.contact.has_resolved_state = has_resolved_state;
-        }
     }
-    if (scene_objects != nullptr) {
-        if (scene_objects->type != JsonValue::Type::Array) {
-            return false;
-        }
-        for (const JsonValue &object : scene_objects->array) {
+    if (scene_objects->type != JsonValue::Type::Array) {
+        return false;
+    }
+    for (const JsonValue &object : scene_objects->array) {
             ReplaySceneObjectState parsed;
             const JsonValue *name = field(object, "name");
             const JsonValue *asset_id = field(object, "asset_id");
@@ -1238,14 +1266,11 @@ bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint) {
                 return false;
             }
             checkpoint.scene_objects.push_back(std::move(parsed));
-        }
     }
-    if (environment != nullptr) {
-        if (environment->type != JsonValue::Type::Object) {
-            return false;
-        }
-        checkpoint.environment_json = compact_json(*environment);
+    if (environment->type != JsonValue::Type::Object) {
+        return false;
     }
+    checkpoint.environment_json = compact_json(*environment);
     return true;
 }
 
@@ -1856,6 +1881,29 @@ const char *rigid_body_difference(const RigidBodyState &expected, const RigidBod
     return nullptr;
 }
 
+const char *trajectory_propwash_difference(
+        const TrajectorySample &expected,
+        const TrajectorySample &actual,
+        double tolerance) {
+    const double expected_values[] = {
+            expected.propwash_disturbance_rad_s2.x,
+            expected.propwash_disturbance_rad_s2.y,
+            expected.propwash_disturbance_rad_s2.z,
+    };
+    const double actual_values[] = {
+            actual.propwash_disturbance_rad_s2.x,
+            actual.propwash_disturbance_rad_s2.y,
+            actual.propwash_disturbance_rad_s2.z,
+    };
+    const char *axes[] = {"x", "y", "z"};
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        if (!same_or_close(expected_values[axis], actual_values[axis], tolerance)) {
+            return axes[axis];
+        }
+    }
+    return nullptr;
+}
+
 std::string divergence_number(double value) {
     return compact_number(value);
 }
@@ -1885,6 +1933,9 @@ bool ReplaySessionRecorder::add_vehicle(
         ReplayControllerAuthority controller_authority) {
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
+    }
+    if (session_.vehicles.size() >= checkpoint_collisions_.size()) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "complete replay supports exactly two vehicles");
     }
     if (!valid_identity(vehicle_name) || has_vehicle(vehicle_name)) {
         return fail(ReplayDiagnosticCode::InvalidIdentity, "invalid or duplicate replay vehicle identity: " + vehicle_name);
@@ -2310,7 +2361,8 @@ ReplayLoadResult load_replay_session(
     if (!expected_settings_manifest_hash.empty() && session.settings_manifest_hash != expected_settings_manifest_hash) {
         return {false, {}, invalid(ReplayDiagnosticCode::IncompatibleManifest, "replay settings manifest hash is incompatible")};
     }
-    if (seed == nullptr || !integer_value(*seed, session.seed) || vehicles == nullptr || vehicles->type != JsonValue::Type::Array) {
+    if (seed == nullptr || !integer_value(*seed, session.seed) || vehicles == nullptr ||
+            vehicles->type != JsonValue::Type::Array || vehicles->array.size() != 2) {
         return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "replay seed and vehicles are required")};
     }
     for (const JsonValue &value : vehicles->array) {
@@ -2366,7 +2418,9 @@ ReplayLoadResult load_replay_session(
             if (environment == nullptr) {
                 return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "replay checkpoint has no atmosphere context")};
             }
-            checkpoint.environment_json = environment->environment_json;
+            if (checkpoint.environment_json != environment->environment_json) {
+                return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "replay checkpoint atmosphere disagrees with event context")};
+            }
             session.checkpoints.push_back(std::move(checkpoint));
         }
     }
@@ -3027,6 +3081,16 @@ ReplayDivergence compare_replay_runs(
                 result.actual = "different";
                 return result;
             }
+            if (const char *axis = trajectory_propwash_difference(left.first_response_substeps[vehicle],
+                    right.first_response_substeps[vehicle], tolerance)) {
+                result.diverged = true;
+                result.timestamp_us = left.timestamp_us;
+                result.field = "checkpoint.controller[" + std::to_string(vehicle) +
+                        "].first_response.propwash_disturbance_rad_s2." + axis;
+                result.expected = "different";
+                result.actual = "different";
+                return result;
+            }
             for (std::size_t axis = 0; axis < 3; ++axis) {
                 if (left_controller.pid_saturation_latched[axis] != right_controller.pid_saturation_latched[axis]) {
                     result.diverged = true;
@@ -3626,6 +3690,13 @@ ReplayDivergence compare_replay_sessions(
             if (const char *field = rigid_body_difference(left.first_response_substeps[vehicle].state,
                     right.first_response_substeps[vehicle].state, tolerance)) {
                 report(left.timestamp_us, {}, "checkpoint.controller[" + std::to_string(vehicle) + "].first_response." + field,
+                        "different", "different", 0.0);
+                return result;
+            }
+            if (const char *axis = trajectory_propwash_difference(left.first_response_substeps[vehicle],
+                    right.first_response_substeps[vehicle], tolerance)) {
+                report(left.timestamp_us, {}, "checkpoint.controller[" + std::to_string(vehicle) +
+                                "].first_response.propwash_disturbance_rad_s2." + axis,
                         "different", "different", 0.0);
                 return result;
             }

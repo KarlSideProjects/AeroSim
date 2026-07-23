@@ -11,6 +11,8 @@
 
 namespace aerosim {
 
+class WindField;
+
 struct RecordedInputSequence {
     std::string vehicle_name;
     std::vector<FlightCommand> frames;
@@ -304,11 +306,17 @@ std::vector<TrajectorySample> replay_angle_mode(
         const RecordedInputSequence &inputs);
 ReplayBatchResult replay_angle_mode_batch(
         const SimulationConfig &config,
-        const RecordedInputSequence &inputs);
+        const RecordedInputSequence &inputs,
+        const WindField *wind_field = nullptr);
 ReplayBatchResult replay_angle_mode_seconds_batch(
         const SimulationConfig &config,
         const FlightCommand &command,
         double seconds);
+ReplayBatchResult replay_angle_mode_seconds_batch(
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double seconds,
+        const WindField &wind_field);
 ReplayDelta compare_replay_final_state(
         const TrajectorySample &reference,
         const TrajectorySample &actual);

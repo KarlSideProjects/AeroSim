@@ -1,4 +1,5 @@
 #include "aerosim_replay.hpp"
+#include "aerosim_wind.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -758,6 +759,86 @@ bool test_schema_v3_controller_snapshot_divergence() {
     return divergence.diverged && divergence.field == "checkpoint.controller[0].target_rate_frd.x";
 }
 
+bool test_schema_v3_checkpoint_requires_complete_state() {
+    aerosim::ReplaySessionRecorder recorder(42, "manifest");
+    aerosim::ReplayRunCheckpoint checkpoint;
+    checkpoint.first_response_substeps[0].propwash_disturbance_rad_s2 = {1.0, -0.0, 3.0};
+    if (!recorder.add_vehicle("DroneA", "hash-a", "{}") ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{}") ||
+            !recorder.record_environment(0, complete_atmosphere(23)) ||
+            !recorder.record_checkpoint(1, checkpoint) || !recorder.finish(1, "completed")) {
+        return false;
+    }
+    const std::string serialized = recorder.serialize();
+    const std::string missing_collisions = replace_once(serialized, ",\"collisions\":[", ",\"missing_collisions\":[");
+    const std::string missing_scene = replace_once(serialized, ",\"scene_objects\":[", ",\"missing_scene_objects\":[");
+    const std::string missing_environment = replace_once(serialized, ",\"environment\":", ",\"missing_environment\":");
+    const std::string missing_propwash = replace_once(serialized,
+            "\"propwash_disturbance_rad_s2\":", "\"missing_propwash_disturbance_rad_s2\":");
+    const std::string disagreeing_environment = replace_once(serialized, "\"seed\":23", "\"seed\":24");
+    const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(serialized, "manifest");
+    if (!loaded.ok || !same_sample_bits(loaded.session.checkpoints[0].first_response_substeps[0], checkpoint.first_response_substeps[0]) ||
+            aerosim::load_replay_session(missing_collisions, "manifest").ok ||
+            aerosim::load_replay_session(missing_scene, "manifest").ok ||
+            aerosim::load_replay_session(missing_environment, "manifest").ok ||
+            aerosim::load_replay_session(missing_propwash, "manifest").ok ||
+            aerosim::load_replay_session(disagreeing_environment, "manifest").ok) {
+        return false;
+    }
+    aerosim::ReplaySession changed = loaded.session;
+    changed.checkpoints[0].first_response_substeps[0].propwash_disturbance_rad_s2.x = 2.0;
+    const aerosim::ReplayDivergence divergence = aerosim::compare_replay_sessions(loaded.session, changed);
+    return divergence.diverged && divergence.field == "checkpoint.controller[0].first_response.propwash_disturbance_rad_s2.x";
+}
+
+bool test_complete_replay_rejects_third_vehicle_before_collision_state() {
+    aerosim::ReplaySessionRecorder recorder(42, "manifest");
+    return recorder.add_vehicle("DroneA", "hash-a", "{}") &&
+            recorder.add_vehicle("DroneB", "hash-b", "{}") &&
+            !recorder.add_vehicle("DroneC", "hash-c", "{}") &&
+            recorder.diagnostic().code == aerosim::ReplayDiagnosticCode::InvalidSession;
+}
+
+bool test_checked_replay_batch_samples_configured_wind_each_frame() {
+    aerosim::SimulationConfig config = replay_test_config();
+    config.physics_hz = 100;
+    config.substep_hz = 100;
+    config.body_drag.enabled = true;
+    config.body_drag.drag_coefficient = {1.0, 1.0, 1.0};
+    config.body_drag.frontal_area_m2 = {1.0, 1.0, 1.0};
+    config.initial_state.position.y = 2.0;
+    config.initial_state.velocity = {4.0, 0.0, 0.0};
+    aerosim::WindConfig wind_config;
+    wind_config.steady_wind_mps = {1.0, 0.0, 0.0};
+    wind_config.shear_enabled = true;
+    wind_config.shear_reference_height_m = 1.0;
+    wind_config.shear_exponent = 1.0;
+    aerosim::WindField wind_field;
+    wind_field.configure(wind_config);
+    aerosim::FlightCommand command;
+    command.throttle = 0.5;
+    const aerosim::ReplayBatchResult actual = aerosim::replay_angle_mode_seconds_batch(config, command, 0.03, wind_field);
+
+    aerosim::RigidBodyState state = config.initial_state;
+    aerosim::SimulationClock clock;
+    aerosim::FlightController controller;
+    controller.arm(0.0);
+    std::vector<aerosim::TrajectorySample> expected;
+    for (int frame = 0; frame < 3; ++frame) {
+        aerosim::SimulationConfig frame_config = config;
+        const double time_seconds = static_cast<double>(clock.total_substeps) / config.substep_hz;
+        frame_config.wind_world_mps = wind_field.sample(time_seconds, state.position);
+        frame_config.wind_turbulence_mps = wind_field.turbulence(time_seconds);
+        const aerosim::StepResult step = controller.try_step_angle_mode(state, clock, frame_config, command, state.orientation);
+        if (step.status != aerosim::StepStatus::Ok) {
+            return false;
+        }
+        expected.push_back(step.sample);
+    }
+    return actual.status == aerosim::StepStatus::Ok && actual.rows.size() == expected.size() &&
+            std::equal(actual.rows.begin(), actual.rows.end(), expected.begin(), same_sample_bits);
+}
+
 } // namespace
 
 int main() {
@@ -908,6 +989,15 @@ int main() {
     }
     if (!test_schema_v3_controller_snapshot_divergence()) {
         return fail("schema-v3 replay must retain and compare controller checkpoint state");
+    }
+    if (!test_schema_v3_checkpoint_requires_complete_state()) {
+        return fail("schema-v3 replay checkpoints must retain required state without environment masking");
+    }
+    if (!test_complete_replay_rejects_third_vehicle_before_collision_state()) {
+        return fail("complete replay must reject a third vehicle before fixed collision state");
+    }
+    if (!test_checked_replay_batch_samples_configured_wind_each_frame()) {
+        return fail("checked replay batches must sample configured wind for every frame");
     }
     if (!test_replay_reconstructs_seeded_atmosphere()) {
         return fail("replay must reconstruct seeded atmosphere inputs instead of static turbulence");
