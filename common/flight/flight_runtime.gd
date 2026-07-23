@@ -4785,8 +4785,10 @@ func _localized_license_status(status: String) -> String:
         return _t(known_key)
     return _format("ui.license.status", [status])
 
-func _pre_impact_energy(body: CollisionProbeBody, target_native = native) -> float:
-    return _kinetic(body.native_linear_velocity, body.native_body_angular_velocity, target_native)
+func _pre_impact_energy(body: Object, target_native = native) -> float:
+    if body is CollisionProbeBody:
+        return _kinetic(body.native_linear_velocity, body.native_body_angular_velocity, target_native)
+    return _kinetic(body.linear_velocity, _jolt_angular_velocity_body_y_up(body), target_native)
 
 func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, target_native = native) -> float:
     var inertia_frd := Vector3.ONE
