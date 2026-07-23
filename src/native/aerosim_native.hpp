@@ -23,6 +23,17 @@ protected:
     static void _bind_methods();
 
 private:
+    struct StepSnapshot {
+        aerosim::RigidBodyState simulation_state;
+        aerosim::SimulationClock simulation_clock;
+        aerosim::FlightController flight_controller;
+        aerosim::CollisionAuthoritySwitch collision_authority;
+        aerosim::ImuSimulator imu;
+        aerosim::ImuSample last_imu_sample;
+        bool has_last_imu_sample = false;
+        bool flight_control_used_estimated_attitude = false;
+        godot::String flight_mode;
+    };
     aerosim::RigidBodyState simulation_state_;
     aerosim::SimulationClock simulation_clock_;
     aerosim::DualAircraftState dual_aircraft_state_;
@@ -48,8 +59,13 @@ private:
     bool imu_delay_enabled_ = false;
     bool flight_control_used_estimated_attitude_ = false;
     godot::String flight_mode_ = "ANGLE";
+    godot::String last_step_error_;
     aerosim::ImuSample sample_imu();
     void apply_downwash_provider(aerosim::SimulationConfig &config) const;
+    StepSnapshot snapshot_step() const;
+    void restore_step(const StepSnapshot &snapshot);
+    void set_step_error(const char *method, aerosim::StepStatus status, const char *reason);
+    void clear_step_error();
 
 public:
     std::int32_t probe_value() const;
@@ -248,6 +264,7 @@ public:
     godot::Dictionary imu_configuration() const;
     godot::Dictionary imu_sample() const;
     void refresh_imu_sample();
+    godot::String last_step_error() const;
     void configure_wind(const godot::Dictionary &config);
     godot::Dictionary wind_configuration() const;
     godot::Vector3 sample_wind(double time_seconds, double position_x, double position_y, double position_z) const;

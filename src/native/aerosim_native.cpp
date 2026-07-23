@@ -6,6 +6,7 @@
 #include <godot_cpp/classes/hashing_context.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/core/error_macros.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
@@ -188,6 +189,13 @@ bool finite_vec3(const aerosim::Vec3 &value) {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
 
+bool valid_imu_state(const aerosim::RigidBodyState &state) {
+    return finite_vec3(state.position) && finite_vec3(state.velocity) && finite_vec3(state.angular_velocity) &&
+            finite_vec3(state.propwash_disturbance_rad_s2) && std::isfinite(state.orientation.x) &&
+            std::isfinite(state.orientation.y) && std::isfinite(state.orientation.z) &&
+            std::isfinite(state.orientation.w) && aerosim::quat_norm(state.orientation) > 0.0;
+}
+
 aerosim::WindConfig preset_config(const String &preset) {
     if (preset == "light") {
         return aerosim::wind_preset(aerosim::WindPreset::Light);
@@ -350,6 +358,7 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("imu_configuration"), &AeroSimNative::imu_configuration);
     ClassDB::bind_method(D_METHOD("imu_sample"), &AeroSimNative::imu_sample);
     ClassDB::bind_method(D_METHOD("refresh_imu_sample"), &AeroSimNative::refresh_imu_sample);
+    ClassDB::bind_method(D_METHOD("last_step_error"), &AeroSimNative::last_step_error);
     ClassDB::bind_method(D_METHOD("configure_wind", "config"), &AeroSimNative::configure_wind);
     ClassDB::bind_method(D_METHOD("wind_configuration"), &AeroSimNative::wind_configuration);
     ClassDB::bind_method(D_METHOD("sample_wind", "time_seconds", "position_x", "position_y", "position_z"), &AeroSimNative::sample_wind);
@@ -453,6 +462,7 @@ void AeroSimNative::reset_simulation() {
     collision_authority_ = {};
     last_imu_sample_ = {};
     has_last_imu_sample_ = false;
+    clear_step_error();
 }
 
 void AeroSimNative::set_external_force_world(double x, double y, double z) {
@@ -481,6 +491,34 @@ void AeroSimNative::apply_downwash_provider(aerosim::SimulationConfig &config) c
     config.external_force_provider = [source_position, downwash_config](const aerosim::Vec3 &target_position) {
         return aerosim::Vec3{0.0, aerosim::a5_downwash_force_y_newtons(downwash_config, source_position, target_position), 0.0};
     };
+}
+
+AeroSimNative::StepSnapshot AeroSimNative::snapshot_step() const {
+    return {
+            simulation_state_, simulation_clock_, flight_controller_, collision_authority_, imu_, last_imu_sample_,
+            has_last_imu_sample_, flight_control_used_estimated_attitude_, flight_mode_,
+    };
+}
+
+void AeroSimNative::restore_step(const StepSnapshot &snapshot) {
+    simulation_state_ = snapshot.simulation_state;
+    simulation_clock_ = snapshot.simulation_clock;
+    flight_controller_ = snapshot.flight_controller;
+    collision_authority_ = snapshot.collision_authority;
+    imu_ = snapshot.imu;
+    last_imu_sample_ = snapshot.last_imu_sample;
+    has_last_imu_sample_ = snapshot.has_last_imu_sample;
+    flight_control_used_estimated_attitude_ = snapshot.flight_control_used_estimated_attitude;
+    flight_mode_ = snapshot.flight_mode;
+}
+
+void AeroSimNative::set_step_error(const char *method, aerosim::StepStatus status, const char *reason) {
+    last_step_error_ = String("AeroSimNative.") + method + ": " + aerosim::step_status_code(status) + ": " + reason;
+    ERR_PRINT(last_step_error_);
+}
+
+void AeroSimNative::clear_step_error() {
+    last_step_error_ = "";
 }
 
 bool AeroSimNative::set_dual_aircraft_positions(
@@ -1096,12 +1134,15 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
         double max_kinetic_energy_joules) {
+    const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
+        set_step_error("step_collision_px4_actuator_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
     }
     const double values[] = {motor_0, motor_1, motor_2, motor_3};
     for (double value : values) {
         if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
+            set_step_error("step_collision_px4_actuator_mode", aerosim::StepStatus::InvalidCommand, "motor command");
             return {};
         }
     }
@@ -1124,6 +1165,11 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
     const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
     const aerosim::CollisionStepResult result = collision_authority_.step_per_motor(
             simulation_state_, simulation_clock_, config, commands, contact);
+    if (result.status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_collision_px4_actuator_mode", result.status, "command/contact/config/state");
+        return {};
+    }
     if (result.authority == aerosim::PhysicsAuthority::Jolt) {
         flight_controller_.publish_unavailable_telemetry(result.sample, config, "PX4_ACTUATOR");
     } else {
@@ -1153,6 +1199,7 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
     row.append(sample.state.angular_velocity.x);
     row.append(sample.state.angular_velocity.y);
     row.append(sample.state.angular_velocity.z);
+    clear_step_error();
     return row;
 }
 
@@ -1209,6 +1256,7 @@ void AeroSimNative::reset_flight() {
     sample_imu();
     flight_control_used_estimated_attitude_ = false;
     flight_mode_ = "ANGLE";
+    clear_step_error();
 }
 
 void AeroSimNative::capture_altitude_hold() {
@@ -1287,7 +1335,16 @@ aerosim::ImuSample AeroSimNative::sample_imu() {
 }
 
 void AeroSimNative::refresh_imu_sample() {
+    if (!valid_imu_state(simulation_state_)) {
+        set_step_error("refresh_imu_sample", aerosim::StepStatus::InvalidState, "state");
+        return;
+    }
     sample_imu();
+    clear_step_error();
+}
+
+String AeroSimNative::last_step_error() const {
+    return last_step_error_;
 }
 
 void AeroSimNative::configure_wind(const Dictionary &config) {
@@ -1683,10 +1740,21 @@ void AeroSimNative::sync_flight_state(
         double angular_velocity_x,
         double angular_velocity_y,
         double angular_velocity_z) {
-    simulation_state_.position = {position_x, position_y, position_z};
-    simulation_state_.orientation = {orientation_x, orientation_y, orientation_z, orientation_w};
-    simulation_state_.velocity = {velocity_x, velocity_y, velocity_z};
-    simulation_state_.angular_velocity = {angular_velocity_x, angular_velocity_y, angular_velocity_z};
+    const aerosim::RigidBodyState candidate{
+            {position_x, position_y, position_z},
+            {velocity_x, velocity_y, velocity_z},
+            {orientation_x, orientation_y, orientation_z, orientation_w},
+            {angular_velocity_x, angular_velocity_y, angular_velocity_z},
+    };
+    if (!valid_imu_state(candidate)) {
+        set_step_error("sync_flight_state", aerosim::StepStatus::InvalidState, "state");
+        return;
+    }
+    simulation_state_.position = candidate.position;
+    simulation_state_.orientation = candidate.orientation;
+    simulation_state_.velocity = candidate.velocity;
+    simulation_state_.angular_velocity = candidate.angular_velocity;
+    clear_step_error();
 }
 
 PackedFloat64Array AeroSimNative::step_angle_mode(
@@ -1696,7 +1764,9 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
         double roll_degrees,
         double pitch_degrees,
         double yaw_rate_degrees_per_second) {
+    const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
+        set_step_error("step_angle_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
@@ -1715,14 +1785,20 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
 
     PackedFloat64Array row;
     const aerosim::ImuSample imu_sample = sample_imu();
-    flight_control_used_estimated_attitude_ = true;
-    flight_mode_ = "ANGLE";
-    const aerosim::TrajectorySample sample = flight_controller_.step_angle_mode(
+    const aerosim::StepResult result = flight_controller_.try_step_angle_mode(
             simulation_state_,
             simulation_clock_,
             config,
             command,
             imu_sample.estimated_attitude);
+    if (result.status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_angle_mode", result.status, "command/config/state");
+        return {};
+    }
+    flight_control_used_estimated_attitude_ = true;
+    flight_mode_ = "ANGLE";
+    const aerosim::TrajectorySample &sample = result.sample;
     row.append(sample.time_seconds);
     row.append(sample.state.position.x);
     row.append(sample.state.position.y);
@@ -1735,6 +1811,7 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     row.append(sample.state.velocity.y);
     row.append(sample.state.velocity.z);
     row.append(static_cast<double>(sample.substeps));
+    clear_step_error();
     return row;
 }
 
@@ -1748,7 +1825,9 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
         double rc_rate,
         double super_rate,
         double expo) {
+    const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
+        set_step_error("step_acro_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
@@ -1767,12 +1846,18 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
     command.rates = {rc_rate, super_rate, expo};
 
     sample_imu();
-    const aerosim::TrajectorySample sample = flight_controller_.step_acro_mode(
+    const aerosim::StepResult result = flight_controller_.try_step_acro_mode(
             simulation_state_,
             simulation_clock_,
             config,
             command);
+    if (result.status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_acro_mode", result.status, "command/config/state");
+        return {};
+    }
     flight_mode_ = "ACRO";
+    const aerosim::TrajectorySample &sample = result.sample;
 
     PackedFloat64Array row;
     row.append(sample.time_seconds);
@@ -1787,6 +1872,7 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
     row.append(sample.state.velocity.y);
     row.append(sample.state.velocity.z);
     row.append(static_cast<double>(sample.substeps));
+    clear_step_error();
     return row;
 }
 
@@ -1812,7 +1898,9 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
         double max_kinetic_energy_joules) {
+    const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
+        set_step_error("step_collision_angle_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
@@ -1840,8 +1928,6 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
 
     const aerosim::ImuSample imu_sample = sample_imu();
-    flight_control_used_estimated_attitude_ = true;
-    flight_mode_ = "ANGLE";
     const aerosim::CollisionStepResult result = collision_authority_.step(
             simulation_state_,
             simulation_clock_,
@@ -1850,6 +1936,13 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
             command,
             contact,
             imu_sample.estimated_attitude);
+    if (result.status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_collision_angle_mode", result.status, "command/contact/config/state");
+        return {};
+    }
+    flight_control_used_estimated_attitude_ = true;
+    flight_mode_ = "ANGLE";
     if (result.authority == aerosim::PhysicsAuthority::Jolt) {
         flight_controller_.publish_unavailable_telemetry(result.sample, config, "ANGLE");
     }
@@ -1880,6 +1973,7 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     row.append(result.impulse.x);
     row.append(result.impulse.y);
     row.append(result.impulse.z);
+    clear_step_error();
     return row;
 }
 
@@ -1890,7 +1984,9 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
         double roll_degrees,
         double pitch_degrees,
         double yaw_rate_degrees_per_second) {
+    const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
+        set_step_error("step_altitude_hold_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
@@ -1909,15 +2005,21 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
 
     PackedFloat64Array row;
     const aerosim::ImuSample imu_sample = sample_imu();
-    flight_control_used_estimated_attitude_ = true;
-    flight_mode_ = "ALTITUDE_HOLD";
-    const aerosim::TrajectorySample sample = flight_controller_.step_altitude_hold_mode(
+    const aerosim::StepResult result = flight_controller_.try_step_altitude_hold_mode(
             simulation_state_,
             simulation_clock_,
             config,
             command,
             imu_sample.barometer_altitude_m,
             imu_sample.estimated_attitude);
+    if (result.status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_altitude_hold_mode", result.status, "command/config/state");
+        return {};
+    }
+    flight_control_used_estimated_attitude_ = true;
+    flight_mode_ = "ALTITUDE_HOLD";
+    const aerosim::TrajectorySample &sample = result.sample;
     row.append(sample.time_seconds);
     row.append(sample.state.position.x);
     row.append(sample.state.position.y);
@@ -1930,6 +2032,7 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
     row.append(sample.state.velocity.y);
     row.append(sample.state.velocity.z);
     row.append(static_cast<double>(sample.substeps));
+    clear_step_error();
     return row;
 }
 
@@ -2001,7 +2104,9 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
         double max_kinetic_energy_joules) {
+    const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
+        set_step_error("step_collision_acro_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
@@ -2030,7 +2135,6 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
     contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
 
     sample_imu();
-    flight_mode_ = "ACRO";
     const aerosim::CollisionStepResult result = collision_authority_.step_acro(
             simulation_state_,
             simulation_clock_,
@@ -2038,6 +2142,12 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
             config,
             command,
             contact);
+    if (result.status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_collision_acro_mode", result.status, "command/contact/config/state");
+        return {};
+    }
+    flight_mode_ = "ACRO";
     if (result.authority == aerosim::PhysicsAuthority::Jolt) {
         flight_controller_.publish_unavailable_telemetry(result.sample, config, "ACRO");
     }
@@ -2068,6 +2178,7 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
     row.append(result.impulse.x);
     row.append(result.impulse.y);
     row.append(result.impulse.z);
+    clear_step_error();
     return row;
 }
 
@@ -2093,7 +2204,9 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
         double max_kinetic_energy_joules) {
+    const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
+        set_step_error("step_collision_altitude_hold_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
@@ -2121,8 +2234,6 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
 
     const aerosim::ImuSample imu_sample = sample_imu();
-    flight_control_used_estimated_attitude_ = true;
-    flight_mode_ = "ALTITUDE_HOLD";
     const aerosim::CollisionStepResult result = collision_authority_.step_altitude_hold(
             simulation_state_,
             simulation_clock_,
@@ -2132,6 +2243,13 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
             imu_sample.barometer_altitude_m,
             contact,
             imu_sample.estimated_attitude);
+    if (result.status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_collision_altitude_hold_mode", result.status, "command/contact/config/state");
+        return {};
+    }
+    flight_control_used_estimated_attitude_ = true;
+    flight_mode_ = "ALTITUDE_HOLD";
     if (result.authority == aerosim::PhysicsAuthority::Jolt) {
         flight_controller_.publish_unavailable_telemetry(result.sample, config, "ALTITUDE_HOLD");
     }
@@ -2162,5 +2280,6 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     row.append(result.impulse.x);
     row.append(result.impulse.y);
     row.append(result.impulse.z);
+    clear_step_error();
     return row;
 }

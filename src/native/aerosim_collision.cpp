@@ -92,6 +92,18 @@ bool valid_command(const FlightCommand &command) {
             std::isfinite(command.yaw_rate_degrees_per_second);
 }
 
+bool valid_command(const AcroCommand &command) {
+    return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
+            std::isfinite(command.roll_stick) && std::isfinite(command.pitch_stick) &&
+            std::isfinite(command.yaw_stick) && std::isfinite(command.rates.rc_rate) &&
+            std::isfinite(command.rates.super_rate) && std::isfinite(command.rates.expo);
+}
+
+bool valid_commands(const MotorCommands &commands) {
+    return std::all_of(commands.normalized.begin(), commands.normalized.end(),
+            [](double value) { return std::isfinite(value) && value >= 0.0 && value <= 1.0; });
+}
+
 Vec3 normalized_or_zero(const Vec3 &v) {
     const double norm = length(v);
     if (!std::isfinite(norm) || norm == 0.0) {
@@ -299,6 +311,52 @@ CollisionStepResult CollisionAuthoritySwitch::step_altitude_hold(
         double measured_altitude_m,
         const CollisionContact &contact,
         const Quat &estimated_attitude) {
+    return try_step_altitude_hold(state, clock, controller, config, command, measured_altitude_m, contact, estimated_attitude);
+}
+
+CollisionStepResult CollisionAuthoritySwitch::try_step_altitude_hold(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        FlightController &controller,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double measured_altitude_m,
+        const CollisionContact &contact,
+        const Quat &estimated_attitude) {
+    if (!valid_contact(contact) || !valid_command(command)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
+    }
+    if (!valid_config(config) || !std::isfinite(measured_altitude_m)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidConfig};
+    }
+    if (!valid_state(state) || !valid_clock(clock, config) || !finite(estimated_attitude)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidState};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = controller;
+    CollisionAuthoritySwitch staged_authority = *this;
+    CollisionStepResult result = staged_authority.step_altitude_hold_impl(
+            staged_state, staged_clock, staged_controller, config, command, measured_altitude_m, contact, estimated_attitude);
+    if (result.status != StepStatus::Ok || !valid_state(staged_state) || !valid_clock(staged_clock, config)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidControlOutput};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    controller = std::move(staged_controller);
+    *this = staged_authority;
+    return result;
+}
+
+CollisionStepResult CollisionAuthoritySwitch::step_altitude_hold_impl(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        FlightController &controller,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double measured_altitude_m,
+        const CollisionContact &contact,
+        const Quat &estimated_attitude) {
     if (config.physics_hz <= 0 || config.substep_hz <= 0) {
         return {authority_, {}, {}, {}};
     }
@@ -345,6 +403,48 @@ CollisionStepResult CollisionAuthoritySwitch::step_acro(
         const SimulationConfig &config,
         const AcroCommand &command,
         const CollisionContact &contact) {
+    return try_step_acro(state, clock, controller, config, command, contact);
+}
+
+CollisionStepResult CollisionAuthoritySwitch::try_step_acro(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        FlightController &controller,
+        const SimulationConfig &config,
+        const AcroCommand &command,
+        const CollisionContact &contact) {
+    if (!valid_contact(contact) || !valid_command(command)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
+    }
+    if (!valid_config(config)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidConfig};
+    }
+    if (!valid_state(state) || !valid_clock(clock, config)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidState};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = controller;
+    CollisionAuthoritySwitch staged_authority = *this;
+    CollisionStepResult result = staged_authority.step_acro_impl(
+            staged_state, staged_clock, staged_controller, config, command, contact);
+    if (result.status != StepStatus::Ok || !valid_state(staged_state) || !valid_clock(staged_clock, config)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidControlOutput};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    controller = std::move(staged_controller);
+    *this = staged_authority;
+    return result;
+}
+
+CollisionStepResult CollisionAuthoritySwitch::step_acro_impl(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        FlightController &controller,
+        const SimulationConfig &config,
+        const AcroCommand &command,
+        const CollisionContact &contact) {
     if (config.physics_hz <= 0 || config.substep_hz <= 0) {
         return {authority_, {}, {}, {}};
     }
@@ -375,6 +475,44 @@ CollisionStepResult CollisionAuthoritySwitch::step_acro(
 }
 
 CollisionStepResult CollisionAuthoritySwitch::step_per_motor(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const MotorCommands &commands,
+        const CollisionContact &contact) {
+    return try_step_per_motor(state, clock, config, commands, contact);
+}
+
+CollisionStepResult CollisionAuthoritySwitch::try_step_per_motor(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const MotorCommands &commands,
+        const CollisionContact &contact) {
+    if (!valid_contact(contact) || !valid_commands(commands)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
+    }
+    if (!valid_config(config)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidConfig};
+    }
+    if (!valid_state(state) || !valid_clock(clock, config)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidState};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    CollisionAuthoritySwitch staged_authority = *this;
+    CollisionStepResult result = staged_authority.step_per_motor_impl(
+            staged_state, staged_clock, config, commands, contact);
+    if (result.status != StepStatus::Ok || !valid_state(staged_state) || !valid_clock(staged_clock, config)) {
+        return {authority_, {}, {}, {}, StepStatus::InvalidControlOutput};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    *this = staged_authority;
+    return result;
+}
+
+CollisionStepResult CollisionAuthoritySwitch::step_per_motor_impl(
         RigidBodyState &state,
         SimulationClock &clock,
         const SimulationConfig &config,

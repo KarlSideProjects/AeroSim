@@ -43,6 +43,28 @@ private:
             const FlightCommand &command,
             const CollisionContact &contact,
             const Quat &estimated_attitude);
+    CollisionStepResult step_altitude_hold_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            double measured_altitude_m,
+            const CollisionContact &contact,
+            const Quat &estimated_attitude);
+    CollisionStepResult step_acro_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const AcroCommand &command,
+            const CollisionContact &contact);
+    CollisionStepResult step_per_motor_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const MotorCommands &commands,
+            const CollisionContact &contact);
 
 public:
     CollisionAuthoritySwitch() = default;
@@ -82,6 +104,15 @@ public:
             double measured_altitude_m,
             const CollisionContact &contact,
             const Quat &estimated_attitude);
+    CollisionStepResult try_step_altitude_hold(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            double measured_altitude_m,
+            const CollisionContact &contact,
+            const Quat &estimated_attitude);
     CollisionStepResult step_acro(
             RigidBodyState &state,
             SimulationClock &clock,
@@ -89,7 +120,20 @@ public:
             const SimulationConfig &config,
             const AcroCommand &command,
             const CollisionContact &contact);
+    CollisionStepResult try_step_acro(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const AcroCommand &command,
+            const CollisionContact &contact);
     CollisionStepResult step_per_motor(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const MotorCommands &commands,
+            const CollisionContact &contact);
+    CollisionStepResult try_step_per_motor(
             RigidBodyState &state,
             SimulationClock &clock,
             const SimulationConfig &config,

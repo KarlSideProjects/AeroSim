@@ -1404,6 +1404,8 @@ func _physics_process(delta: float) -> void:
             drone_body.angular_velocity.z if drone_body != null else 0.0,
             _kinetic(drone_body.linear_velocity, drone_body.angular_velocity) if drone_body != null else -1.0
         )
+        if _handle_native_step_failure(native):
+            return
         if drone_body != null and drone_body.contact_seen:
             _record_replay_collision(_airsim_vehicle_name, drone_body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
             collision_handoff_count += 1
@@ -1469,6 +1471,8 @@ func _physics_process(delta: float) -> void:
                 drone_body.angular_velocity.z,
                 energy_limit
             )
+        if _handle_native_step_failure(native):
+            return
         if drone_body.contact_seen:
             _record_replay_collision(_airsim_vehicle_name, drone_body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
             collision_handoff_count += 1
@@ -1483,6 +1487,8 @@ func _physics_process(delta: float) -> void:
         else:
             var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
             row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw)
+        if _handle_native_step_failure(native):
+            return
     if row.size() >= 13:
         last_collision_authority = int(row[12])
     if drone_body != null and row.size() >= 17:
@@ -1632,6 +1638,8 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             body.angular_velocity.y,
             body.angular_velocity.z,
             _kinetic(body.linear_velocity, body.angular_velocity))
+    if _handle_native_step_failure(_airsim_secondary_native):
+        return
     if row.size() >= 17:
         _replay_secondary_row = row
         body.apply_native_state(
@@ -2654,6 +2662,18 @@ func toggle_acro_mode() -> void:
 
 func _acro_rate(key: String) -> float:
     return float(rates_profile.get(key, RatesProfile.default_profile().get(key, 0.0)))
+
+func _handle_native_step_failure(step_native) -> bool:
+    if step_native == null or not step_native.has_method("last_step_error"):
+        return false
+    var native_error := String(step_native.call("last_step_error"))
+    if native_error.is_empty():
+        return false
+    last_error_message = native_error
+    set_paused(true, false)
+    screen = "error"
+    _refresh_flight_hud()
+    return true
 
 func set_paused(value: bool, sync_session: bool = true) -> void:
     if not value and _airsim_lifecycle_stopped() and (airsim_session == null or not airsim_session.is_explicit_step_active()):

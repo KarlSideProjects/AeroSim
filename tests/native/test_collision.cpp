@@ -352,6 +352,50 @@ int main() {
         return fail("all collision variants must fail closed before touching state or authority for invalid rates");
     }
 
+    aerosim::SimulationClock variant_clock;
+    aerosim::RigidBodyState variant_state;
+    aerosim::FlightController variant_controller;
+    aerosim::CollisionAuthoritySwitch variant_authority;
+    if (!variant_controller.arm(0.0)) {
+        return fail("collision variant atomic setup should arm from low throttle");
+    }
+    aerosim::CollisionContact invalid_variant_contact;
+    invalid_variant_contact.touching = true;
+    invalid_variant_contact.normal.x = NAN;
+    aerosim::AcroCommand valid_acro;
+    valid_acro.throttle = 0.5;
+    aerosim::MotorCommands valid_motors{{0.5, 0.5, 0.5, 0.5}};
+    const aerosim::RigidBodyState variant_state_before = variant_state;
+    const aerosim::SimulationClock variant_clock_before = variant_clock;
+    const aerosim::CollisionStepResult invalid_variant_altitude = variant_authority.step_altitude_hold(
+            variant_state, variant_clock, variant_controller, config, hover, 0.0, invalid_variant_contact, {});
+    const aerosim::CollisionStepResult invalid_variant_acro = variant_authority.step_acro(
+            variant_state, variant_clock, variant_controller, config, valid_acro, invalid_variant_contact);
+    const aerosim::CollisionStepResult invalid_variant_motor = variant_authority.step_per_motor(
+            variant_state, variant_clock, config, valid_motors, invalid_variant_contact);
+    if (invalid_variant_altitude.status != aerosim::StepStatus::InvalidCommand ||
+            invalid_variant_acro.status != aerosim::StepStatus::InvalidCommand ||
+            invalid_variant_motor.status != aerosim::StepStatus::InvalidCommand ||
+            !same_state_bits(variant_state, variant_state_before) ||
+            variant_clock.total_substeps != variant_clock_before.total_substeps ||
+            variant_authority.current_authority() != aerosim::PhysicsAuthority::FlightCore) {
+        return fail("invalid collision variants must retain FlightCore state and report InvalidCommand");
+    }
+    aerosim::RigidBodyState untouched_state = variant_state_before;
+    aerosim::SimulationClock untouched_clock = variant_clock_before;
+    aerosim::FlightController untouched_controller = variant_controller;
+    aerosim::CollisionAuthoritySwitch untouched_authority;
+    const aerosim::CollisionStepResult continued = variant_authority.step_acro(
+            variant_state, variant_clock, variant_controller, config, valid_acro, {});
+    const aerosim::CollisionStepResult untouched = untouched_authority.step_acro(
+            untouched_state, untouched_clock, untouched_controller, config, valid_acro, {});
+    if (continued.status != aerosim::StepStatus::Ok || untouched.status != aerosim::StepStatus::Ok ||
+            !same_state_bits(variant_state, untouched_state) ||
+            variant_clock.total_substeps != untouched_clock.total_substeps ||
+            variant_authority.current_authority() != untouched_authority.current_authority()) {
+        return fail("a legal collision variant after rejection must match an untouched continuation");
+    }
+
     aerosim::CollisionContact wall;
     wall.touching = true;
     wall.normal = {-1.0, 0.0, 0.0};
