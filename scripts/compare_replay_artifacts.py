@@ -54,11 +54,13 @@ def main():
     if not isinstance(reference_bits, dict) or not isinstance(actual_bits, dict) or reference_bits != actual_bits:
         print("IEEE-754 replay bit manifest diverged", file=sys.stderr)
         return 1
-    required_bits = ["upper.propwash.x", "controller[0].target_angle.x", "controller[0].integral[0]",
-                     "controller[0].derivative.x", "clock[0].accumulator", "first_response[0].time",
-                     "first_response[0].propwash.x", "signed_zero_probe"]
+    required_bits = ["vehicle[0].state.position.x", "vehicle[0].state.motor[0]",
+                     "vehicle[0].controller.target_angle.z", "vehicle[0].controller.integral[0]",
+                     "vehicle[0].controller.derivative.x", "vehicle[0].clock.substep_accumulator",
+                     "vehicle[0].first_response.state.propwash.x", "vehicle[1].state.position.x",
+                     "vehicle[1].controller.target_rate.x", "vehicle[1].first_response.time_seconds"]
     if any(not isinstance(reference_bits.get(field), str) or not re.fullmatch(r"[0-9a-f]{16}", reference_bits[field])
-           for field in required_bits) or reference_bits["signed_zero_probe"] != "8000000000000000":
+           for field in required_bits) or reference_bits["vehicle[0].controller.target_angle.z"] != "8000000000000000":
         print("IEEE-754 replay bit manifest is incomplete", file=sys.stderr)
         return 1
     print("schema-v3 replay checkpoint passed")

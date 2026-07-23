@@ -98,23 +98,56 @@ bool write_artifact(const char *path, const aerosim::ReplaySession &session) {
         return false;
     }
     const aerosim::ReplayRunCheckpoint &checkpoint = session.checkpoints.front();
-    const auto bits = [](double value) { return double_bits(value); };
+    std::ostringstream manifest;
+    bool first = true;
+    const auto add = [&](const std::string &name, double value) {
+        if (!first) {
+            manifest << ',';
+        }
+        first = false;
+        manifest << '"' << name << "\":\"" << double_bits(value) << '"';
+    };
+    const auto add_vec = [&](const std::string &prefix, const aerosim::Vec3 &value) {
+        add(prefix + ".x", value.x); add(prefix + ".y", value.y); add(prefix + ".z", value.z);
+    };
+    const auto add_state = [&](const std::string &prefix, const aerosim::RigidBodyState &state) {
+        add_vec(prefix + ".position", state.position);
+        add(prefix + ".orientation.x", state.orientation.x); add(prefix + ".orientation.y", state.orientation.y);
+        add(prefix + ".orientation.z", state.orientation.z); add(prefix + ".orientation.w", state.orientation.w);
+        add_vec(prefix + ".velocity", state.velocity); add_vec(prefix + ".angular_velocity", state.angular_velocity);
+        add_vec(prefix + ".propwash", state.propwash_disturbance_rad_s2);
+        for (std::size_t motor = 0; motor < state.motor_thrust_newtons.size(); ++motor) {
+            add(prefix + ".motor[" + std::to_string(motor) + "]", state.motor_thrust_newtons[motor]);
+        }
+    };
+    const auto add_sample = [&](const std::string &prefix, const aerosim::TrajectorySample &sample) {
+        add(prefix + ".time_seconds", sample.time_seconds); add_state(prefix + ".state", sample.state);
+        add_vec(prefix + ".propwash", sample.propwash_disturbance_rad_s2);
+        add_vec(prefix + ".airspeed", sample.airspeed_body_frd_mps_mean);
+        add_vec(prefix + ".body_drag_force", sample.body_drag_force_body_frd_n_mean);
+        add_vec(prefix + ".body_drag_torque", sample.body_drag_torque_body_frd_nm_mean);
+        add_vec(prefix + ".a3_drag_force", sample.a3_drag_force_body_frd_n_mean);
+        add(prefix + ".air_density", sample.air_density_kg_m3);
+    };
+    for (std::size_t vehicle = 0; vehicle < 2; ++vehicle) {
+        const std::string prefix = "vehicle[" + std::to_string(vehicle) + "]";
+        add_state(prefix + ".state", vehicle == 0 ? checkpoint.state.upper : checkpoint.state.lower);
+        const aerosim::FlightControlState &controller = checkpoint.controllers[vehicle];
+        add_vec(prefix + ".controller.target_angle", controller.target_angle_frd);
+        add_vec(prefix + ".controller.target_rate", controller.target_rate_frd);
+        for (std::size_t axis = 0; axis < 3; ++axis) add(prefix + ".controller.integral[" + std::to_string(axis) + "]", controller.rate_integral[axis]);
+        add_vec(prefix + ".controller.previous_error", controller.previous_rate_error_frd);
+        add_vec(prefix + ".controller.derivative", controller.filtered_rate_derivative_frd);
+        add(prefix + ".controller.motor_total", controller.motor_thrust_newtons);
+        add(prefix + ".clock.substep_accumulator", checkpoint.clocks[vehicle].substep_accumulator);
+        add_sample(prefix + ".first_response", checkpoint.first_response_substeps[vehicle]);
+    }
     std::string serialized = aerosim::serialize_replay_session(session);
     if (serialized.empty() || serialized.back() != '}') {
         return false;
     }
     serialized.pop_back();
-    serialized += ",\"ieee754_bits\":{"
-            "\"upper.propwash.x\":\"" + bits(checkpoint.state.upper.propwash_disturbance_rad_s2.x) + "\","
-            "\"upper.propwash.y\":\"" + bits(checkpoint.state.upper.propwash_disturbance_rad_s2.y) + "\","
-            "\"upper.propwash.z\":\"" + bits(checkpoint.state.upper.propwash_disturbance_rad_s2.z) + "\","
-            "\"controller[0].target_angle.x\":\"" + bits(checkpoint.controllers[0].target_angle_frd.x) + "\","
-            "\"controller[0].integral[0]\":\"" + bits(checkpoint.controllers[0].rate_integral[0]) + "\","
-            "\"controller[0].derivative.x\":\"" + bits(checkpoint.controllers[0].filtered_rate_derivative_frd.x) + "\","
-            "\"clock[0].accumulator\":\"" + bits(checkpoint.clocks[0].substep_accumulator) + "\","
-            "\"first_response[0].time\":\"" + bits(checkpoint.first_response_substeps[0].time_seconds) + "\","
-            "\"first_response[0].propwash.x\":\"" + bits(checkpoint.first_response_substeps[0].state.propwash_disturbance_rad_s2.x) + "\","
-            "\"signed_zero_probe\":\"8000000000000000\"}}";
+    serialized += ",\"ieee754_bits\":{" + manifest.str() + "}}";
     out << serialized;
     return true;
 }
@@ -783,6 +816,7 @@ int main() {
     aerosim::ReplayRunCheckpoint artifact_checkpoint;
     artifact_checkpoint.state = {artifact_state, artifact_state};
     artifact_checkpoint.controllers = {{artifact_controller.control_state(), artifact_controller.control_state()}};
+    artifact_checkpoint.controllers[0].target_angle_frd.z = -0.0;
     artifact_checkpoint.clocks = {{artifact_clock, artifact_clock}};
     artifact_checkpoint.first_response_substeps = {{artifact_response, artifact_response}};
     aerosim::ReplaySessionRecorder artifact_recorder(91, "artifact-manifest");
