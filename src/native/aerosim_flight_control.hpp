@@ -72,6 +72,8 @@ StepStatus validate_angle_step_inputs(
         const SimulationConfig &config,
         const FlightCommand &command,
         const Quat &estimated_attitude);
+bool valid_flight_command(const FlightCommand &command);
+bool valid_acro_command(const AcroCommand &command);
 StepStatus validate_acro_step_inputs(
         const RigidBodyState &state,
         const SimulationClock &clock,

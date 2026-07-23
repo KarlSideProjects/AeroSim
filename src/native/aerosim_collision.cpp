@@ -80,21 +80,6 @@ bool valid_clock(const SimulationClock &clock, const SimulationConfig &config) {
     return clock.total_substeps <= std::numeric_limits<std::uint64_t>::max() - maximum_frame_substeps;
 }
 
-bool valid_command(const FlightCommand &command) {
-    return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
-            std::isfinite(command.roll_degrees) && std::isfinite(command.pitch_degrees) &&
-            std::isfinite(command.yaw_rate_degrees_per_second);
-}
-
-bool valid_command(const AcroCommand &command) {
-    return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
-            std::isfinite(command.roll_stick) && std::isfinite(command.pitch_stick) &&
-            std::isfinite(command.yaw_stick) && std::isfinite(command.rates.rc_rate) &&
-            command.rates.rc_rate >= 0.0 && command.rates.rc_rate <= 3.0 &&
-            std::isfinite(command.rates.super_rate) && command.rates.super_rate >= 0.0 && command.rates.super_rate <= 1.0 &&
-            std::isfinite(command.rates.expo) && command.rates.expo >= 0.0 && command.rates.expo <= 1.0;
-}
-
 bool valid_commands(const MotorCommands &commands) {
     return std::all_of(commands.normalized.begin(), commands.normalized.end(),
             [](double value) { return std::isfinite(value) && value >= 0.0 && value <= 1.0; });
@@ -163,6 +148,7 @@ TrajectorySample sample_jolt_frame(
 }
 
 void resolve_contact(RigidBodyState &state, const CollisionContact &contact, const SimulationConfig &config) {
+    const double pre_impact_energy = kinetic_energy_joules(state, config);
     const Vec3 normal = normalized_or_zero(contact.normal);
     const double normal_speed = dot(state.velocity, normal);
     if (contact.has_resolved_state && finite(contact.resolved_velocity) && finite(contact.resolved_angular_velocity)) {
@@ -178,7 +164,10 @@ void resolve_contact(RigidBodyState &state, const CollisionContact &contact, con
     sanitize(state.velocity);
     sanitize(state.angular_velocity);
 
-    clamp_energy(state, config, contact.max_kinetic_energy_joules);
+    const double energy_limit = contact.max_kinetic_energy_joules >= 0.0
+            ? std::min(pre_impact_energy, contact.max_kinetic_energy_joules)
+            : pre_impact_energy;
+    clamp_energy(state, config, energy_limit);
 }
 
 } // namespace
@@ -255,7 +244,7 @@ CollisionStepResult CollisionAuthoritySwitch::try_step(
     if (!valid_collision_contact(contact)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
     }
-    if (!valid_command(command)) {
+    if (!valid_flight_command(command)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
     }
     if (!valid_config(config)) {
@@ -339,7 +328,7 @@ CollisionStepResult CollisionAuthoritySwitch::try_step_altitude_hold(
         double measured_altitude_m,
         const CollisionContact &contact,
         const Quat &estimated_attitude) {
-    if (!valid_collision_contact(contact) || !valid_command(command)) {
+    if (!valid_collision_contact(contact) || !valid_flight_command(command)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
     }
     if (!valid_config(config) || !std::isfinite(measured_altitude_m)) {
@@ -417,7 +406,7 @@ CollisionStepResult CollisionAuthoritySwitch::try_step_acro(
         const SimulationConfig &config,
         const AcroCommand &command,
         const CollisionContact &contact) {
-    if (!valid_collision_contact(contact) || !valid_command(command)) {
+    if (!valid_collision_contact(contact) || !valid_acro_command(command)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
     }
     if (!valid_config(config)) {

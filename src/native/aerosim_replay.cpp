@@ -107,19 +107,7 @@ const RecordedInputSequence &ReplayRecorder::sequence() const {
 std::vector<TrajectorySample> replay_angle_mode(
         const SimulationConfig &config,
         const RecordedInputSequence &inputs) {
-    std::vector<TrajectorySample> samples;
-    samples.reserve(inputs.frames.size());
-
-    RigidBodyState state = config.initial_state;
-    SimulationClock clock;
-    FlightController controller;
-    controller.arm(0.0);
-
-    for (const FlightCommand &command : inputs.frames) {
-        samples.push_back(controller.step_angle_mode(state, clock, config, command));
-    }
-
-    return samples;
+    return replay_angle_mode_batch(config, inputs).rows;
 }
 
 ReplayBatchResult replay_angle_mode_batch(
@@ -680,16 +668,12 @@ bool valid_identity(const std::string &value) {
     return value.size() <= 64;
 }
 
-bool finite_command(const FlightCommand &command) {
-    return std::isfinite(command.throttle) && std::isfinite(command.roll_degrees) &&
-            std::isfinite(command.pitch_degrees) && std::isfinite(command.yaw_rate_degrees_per_second);
+bool valid_replay_command(const FlightCommand &command) {
+    return valid_flight_command(command);
 }
 
-bool finite_acro_command(const AcroCommand &command) {
-    return std::isfinite(command.throttle) && std::isfinite(command.roll_stick) &&
-            std::isfinite(command.pitch_stick) && std::isfinite(command.yaw_stick) &&
-            std::isfinite(command.rates.rc_rate) && std::isfinite(command.rates.super_rate) &&
-            std::isfinite(command.rates.expo);
+bool valid_replay_acro_command(const AcroCommand &command) {
+    return valid_acro_command(command);
 }
 
 bool finite_vec(const Vec3 &value) {
@@ -1517,12 +1501,12 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
         if (!event.vehicle_name.empty() && std::find(names.begin(), names.end(), event.vehicle_name) == names.end()) {
             return invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name);
         }
-        if (event.type == ReplayEventType::Command && !finite_command(event.command)) {
-            return invalid(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
+        if (event.type == ReplayEventType::Command && !valid_replay_command(event.command)) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "replay command is outside the live input domain");
         }
         if (event.type == ReplayEventType::Command && event.command_mode == ReplayCommandMode::Acro &&
-                !finite_acro_command(event.acro_command)) {
-            return invalid(ReplayDiagnosticCode::InvalidSession, "replay acro command contains a non-finite value");
+                !valid_replay_acro_command(event.acro_command)) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "replay acro command is outside the live input domain");
         }
         if (event.type == ReplayEventType::Command &&
                 (!std::isfinite(event.measured_altitude_m) ||
@@ -1968,8 +1952,8 @@ bool ReplaySessionRecorder::record_command(
             controller_authority != ReplayControllerAuthority::Jolt) {
         return fail(ReplayDiagnosticCode::InvalidSession, "collision replay authority must be flight_core or jolt");
     }
-    if (!finite_command(command)) {
-        return fail(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
+    if (!valid_replay_command(command)) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay command is outside the live input domain");
     }
     ReplayEvent event;
     event.timestamp_us = timestamp_us;
@@ -1997,9 +1981,9 @@ bool ReplaySessionRecorder::record_mode_command(
             command_mode != ReplayCommandMode::AltitudeHold && command_mode != ReplayCommandMode::Actuator) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay command mode is invalid");
     }
-    if (!finite_command(command) || !std::isfinite(measured_altitude_m) ||
-            (command_mode == ReplayCommandMode::Acro && !finite_acro_command(acro_command))) {
-        return fail(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
+    if (!valid_replay_command(command) || !std::isfinite(measured_altitude_m) ||
+            (command_mode == ReplayCommandMode::Acro && !valid_replay_acro_command(acro_command))) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay command is outside the live input domain");
     }
     if (!has_vehicle(vehicle_name)) {
         return fail(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + vehicle_name);
@@ -2582,6 +2566,7 @@ ReplayRunResult replay_session(
     const bool has_recorded_checkpoints = !session.checkpoints.empty();
     std::size_t recorded_checkpoint_index = 0;
     std::uint64_t previous_timestamp_us = 0;
+    StepStatus replay_step_status = StepStatus::Ok;
     const auto vehicle_index = [&](const std::string &name) {
         return name == session.vehicles[0].name ? 0 : name == session.vehicles[1].name ? 1 : -1;
     };
@@ -2618,19 +2603,23 @@ ReplayRunResult replay_session(
         if (has_pending_collision[index]) {
             CollisionStepResult result;
             if (command_modes[index] == ReplayCommandMode::Actuator) {
-                result = collision_switches[index].step_per_motor(vehicle_state, clock, frame_config,
+                result = collision_switches[index].try_step_per_motor(vehicle_state, clock, frame_config,
                         actuator_commands[index], pending_collisions[index]);
             } else if (command_modes[index] == ReplayCommandMode::Acro) {
-                result = collision_switches[index].step_acro(vehicle_state, clock, controller, frame_config,
+                result = collision_switches[index].try_step_acro(vehicle_state, clock, controller, frame_config,
                         acro_commands[index], pending_collisions[index]);
             } else if (command_modes[index] == ReplayCommandMode::AltitudeHold) {
-                result = collision_switches[index].step_altitude_hold(vehicle_state, clock, controller, frame_config,
+                result = collision_switches[index].try_step_altitude_hold(vehicle_state, clock, controller, frame_config,
                         commands[index], measured_altitudes[index], pending_collisions[index], vehicle_state.orientation);
             } else {
-                result = collision_switches[index].step(vehicle_state, clock, controller, frame_config,
+                result = collision_switches[index].try_step(vehicle_state, clock, controller, frame_config,
                         commands[index], pending_collisions[index]);
             }
             has_pending_collision[index] = false;
+            if (result.status != StepStatus::Ok) {
+                replay_step_status = result.status;
+                return false;
+            }
             const ReplayControllerAuthority actual_authority = result.authority == PhysicsAuthority::Jolt ?
                     ReplayControllerAuthority::Jolt : ReplayControllerAuthority::FlightCore;
             if (actual_authority != pending_collision_authorities[index]) {
@@ -2643,15 +2632,29 @@ ReplayRunResult replay_session(
                 })) {
             return true;
         } else {
+            StepResult result;
             if (command_modes[index] == ReplayCommandMode::Actuator) {
-                frame_sample = step_per_motor_physics_frame(vehicle_state, clock, frame_config, actuator_commands[index]);
+                const CollisionStepResult actuator_result = collision_switches[index].try_step_per_motor(
+                        vehicle_state, clock, frame_config, actuator_commands[index], {});
+                if (actuator_result.status != StepStatus::Ok) {
+                    replay_step_status = actuator_result.status;
+                    return false;
+                }
+                frame_sample = actuator_result.sample;
             } else if (command_modes[index] == ReplayCommandMode::Acro) {
-                frame_sample = controller.step_acro_mode(vehicle_state, clock, frame_config, acro_commands[index]);
+                result = controller.try_step_acro_mode(vehicle_state, clock, frame_config, acro_commands[index]);
             } else if (command_modes[index] == ReplayCommandMode::AltitudeHold) {
-                frame_sample = controller.step_altitude_hold_mode(vehicle_state, clock, frame_config, commands[index],
+                result = controller.try_step_altitude_hold_mode(vehicle_state, clock, frame_config, commands[index],
                         measured_altitudes[index], vehicle_state.orientation);
             } else {
-                frame_sample = controller.step_angle_mode(vehicle_state, clock, frame_config, commands[index]);
+                result = controller.try_step_angle_mode(vehicle_state, clock, frame_config, commands[index], vehicle_state.orientation);
+            }
+            if (command_modes[index] != ReplayCommandMode::Actuator) {
+                if (result.status != StepStatus::Ok) {
+                    replay_step_status = result.status;
+                    return false;
+                }
+                frame_sample = result.sample;
             }
         }
         const bool response = command_modes[index] == ReplayCommandMode::Actuator ?
@@ -2672,6 +2675,10 @@ ReplayRunResult replay_session(
             has_first_response[index] = true;
         }
         return true;
+    };
+    const auto replay_step_failure = [&] {
+        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession,
+                std::string("replay runtime step failed: ") + step_status_code(replay_step_status)));
     };
     const auto step_frame = [&](std::uint64_t timestamp_us) {
         if (!step_vehicle(0, state.upper, clocks[0], controllers[0], active_configs[0]) ||
@@ -2740,6 +2747,9 @@ ReplayRunResult replay_session(
         }
         if (!paused && timestamp_us >= previous_timestamp_us &&
                 !advance_us(timestamp_us - previous_timestamp_us, timestamp_us)) {
+            if (replay_step_status != StepStatus::Ok) {
+                return replay_step_failure();
+            }
             return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay timeline interval exceeds runtime frame limit"));
         }
         previous_timestamp_us = timestamp_us;
@@ -2826,11 +2836,17 @@ ReplayRunResult replay_session(
                 break;
             case ReplaySimulationOperation::StepFrames:
                 if (!step_frames(static_cast<std::int64_t>(event.simulation_value), event.timestamp_us)) {
+                    if (replay_step_status != StepStatus::Ok) {
+                        return replay_step_failure();
+                    }
                     return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay collision authority diverged"));
                 }
                 break;
             case ReplaySimulationOperation::StepSeconds:
                 if (!step_seconds(event.simulation_value, event.timestamp_us)) {
+                    if (replay_step_status != StepStatus::Ok) {
+                        return replay_step_failure();
+                    }
                     return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay step seconds exceeds runtime frame limit"));
                 }
                 break;
@@ -2908,6 +2924,9 @@ ReplayRunResult replay_session(
     }
     if (!paused && session.termination_timestamp_us >= previous_timestamp_us &&
             !advance_us(session.termination_timestamp_us - previous_timestamp_us, session.termination_timestamp_us)) {
+        if (replay_step_status != StepStatus::Ok) {
+            return replay_step_failure();
+        }
         return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay termination interval exceeds runtime frame limit"));
     }
     if (!has_recorded_checkpoints) {

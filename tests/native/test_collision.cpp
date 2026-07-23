@@ -680,6 +680,8 @@ int main() {
     aerosim::FlightController clamped_controller;
     clamped_controller.arm(0.0);
     aerosim::CollisionAuthoritySwitch clamped_authority;
+    clamped_state.velocity = {2.0, 0.0, 0.0};
+    const double clamped_energy_before = aerosim::kinetic_energy_joules(clamped_state, config);
     aerosim::CollisionContact energetic_contact;
     energetic_contact.touching = true;
     energetic_contact.normal = {-1.0, 0.0, 0.0};
@@ -687,8 +689,8 @@ int main() {
     energetic_contact.resolved_velocity = {100.0, 0.0, 0.0};
     energetic_contact.max_kinetic_energy_joules = 1000.0;
     clamped_authority.step(clamped_state, clamped_clock, clamped_controller, config, hover, energetic_contact);
-    if (aerosim::kinetic_energy_joules(clamped_state, config) > energetic_contact.max_kinetic_energy_joules * 1.01) {
-        return fail("collision handoff must clamp externally supplied Jolt energy to G0.8 tolerance");
+    if (aerosim::kinetic_energy_joules(clamped_state, config) > clamped_energy_before * 1.01) {
+        return fail("collision handoff must cap Jolt-resolved energy at the pre-impact native energy");
     }
 
     aerosim::CollisionContact zero_energy_contact;
@@ -722,6 +724,7 @@ int main() {
     }
 
     aerosim::RigidBodyState impulse_state;
+    impulse_state.velocity = {1.0, 0.0, 0.0};
     aerosim::SimulationClock impulse_clock;
     aerosim::FlightController impulse_controller;
     impulse_controller.arm(0.0);

@@ -1218,6 +1218,11 @@ func _verify_jolt_collision_scene(native: Object) -> bool:
         push_error("Headless Jolt rotated anisotropic-inertia G0.8 trial failed: %s" % rotated.get("reason", ""))
         return false
     verified_jolt_collision_trials += 1
+    var zero_energy: Dictionary = await _run_jolt_collision_trial(native, "zero_energy_impactor", 0, mass_kg, inertia_frd, "ANGLE")
+    if not zero_energy.ok:
+        push_error("Headless Jolt zero-energy production-contact regression failed: %s" % zero_energy.get("reason", ""))
+        return false
+    verified_jolt_collision_trials += 1
     return true
 
 func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass_kg: float, inertia_frd: Vector3, mode: String) -> Dictionary:
@@ -1448,6 +1453,16 @@ func _setup_jolt_trial_geometry(parent: Node3D, drone: RigidBody3D, scenario: St
         drone.position = Vector3(_jitter(seed, 7, -0.2, 0.2), 0.8, _jitter(seed, 8, -0.2, 0.2))
         drone.linear_velocity = Vector3(_jitter(seed, 9, -2.0, 2.0), -8.0, _jitter(seed, 10, -2.0, 2.0))
         drone.angular_velocity = Vector3(_jitter(seed, 11, -9.0, 9.0), _jitter(seed, 12, -9.0, 9.0), _jitter(seed, 13, -9.0, 9.0))
+    elif scenario == "zero_energy_impactor":
+        drone.position = Vector3.ZERO
+        var impactor := RigidBody3D.new()
+        impactor.gravity_scale = 0.0
+        impactor.mass = drone.mass
+        impactor.set("continuous_cd", true)
+        _add_shape(impactor, _drone_shape(scenario))
+        parent.add_child(impactor)
+        impactor.position = Vector3(-1.0, 0.0, 0.0)
+        impactor.linear_velocity = Vector3(20.0, 0.0, 0.0)
     else:
         var rotated_ground := StaticBody3D.new()
         var rotated_box := BoxShape3D.new()

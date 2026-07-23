@@ -721,6 +721,20 @@ bool test_checked_replay_batches() {
     if (failed.status != aerosim::StepStatus::InvalidCommand || !failed.rows.empty() || failed.failed_frame != 1) {
         return false;
     }
+    aerosim::RecordedInputSequence out_of_domain;
+    out_of_domain.frames.push_back(command);
+    out_of_domain.frames[0].throttle = 2.0;
+    const aerosim::ReplayBatchResult out_of_domain_failed = aerosim::replay_angle_mode_batch(config, out_of_domain);
+    if (out_of_domain_failed.status != aerosim::StepStatus::InvalidCommand || !out_of_domain_failed.rows.empty() ||
+            out_of_domain_failed.failed_frame != 0) {
+        return false;
+    }
+    aerosim::ReplaySessionRecorder recorder(23, "manifest");
+    if (!recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            recorder.record_command(0, "DroneA", out_of_domain.frames[0], aerosim::ReplayControllerAuthority::FlightCore)) {
+        return false;
+    }
     const aerosim::ReplayBatchResult oversized = aerosim::replay_angle_mode_seconds_batch(
             config, command, static_cast<double>(aerosim::kMaxBatchTrajectoryFrames) / config.physics_hz + 1.0);
     const aerosim::ReplayBatchResult overflow = aerosim::replay_angle_mode_seconds_batch(

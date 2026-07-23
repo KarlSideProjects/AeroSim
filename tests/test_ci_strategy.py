@@ -353,21 +353,21 @@ class CiStrategyTest(unittest.TestCase):
         self.assertIsNotNone(store_step)
         self.assertIn("manifest.json", store_step.group(0) if store_step else "")
 
-    def test_known_xbox_path_asserts_signed_angular_response_before_fallback(self):
+    def test_known_xbox_path_keeps_the_indexed_frd_sign_gate_before_fallback(self):
         source = HEADED_ACCEPTANCE.read_text(encoding="utf-8")
         known_xbox_start = source.index("var known_device_id := await _inject_known_gamepad()")
         fallback_start = source.index("var unknown_device_id := known_device_id + 1")
-        for assertion in (
-            "omega_x < 0.0",
-            "omega_z < 0.0",
-            "omega_y < 0.0",
-        ):
-            with self.subTest(assertion=assertion):
-                self.assertIn(assertion, source)
-                if assertion in source:
-                    index = source.index(assertion)
-                    self.assertGreater(index, known_xbox_start)
-                    self.assertLess(index, fallback_start)
+        cases = re.findall(
+            r'\{"role": "(roll|pitch|yaw)", "axis": [^,]+, "value": [^,]+, "component": ([012])\}',
+            source,
+        )
+        self.assertEqual({("roll", "0"), ("pitch", "1"), ("yaw", "2")}, set(cases))
+        sign_gate = re.search(r"_expect\(frd_rates\[axis_case\.component\] < -0\.01,", source)
+        self.assertIsNotNone(sign_gate)
+        self.assertIn("AirSimCoordinateContract.godot_body_to_frd", source)
+        if sign_gate is not None:
+            self.assertGreater(sign_gate.start(), known_xbox_start)
+            self.assertLess(sign_gate.start(), fallback_start)
 
     def test_ci_keeps_evidence_runner_local_without_hosted_artifact_actions(self):
         self.assertNotRegex(self.workflow, re.compile(r"actions/(upload|download)-artifact@"))
@@ -410,7 +410,7 @@ class CiStrategyTest(unittest.TestCase):
             '["physics_ticks_per_second"])\')" = "240"',
             '["simulated_frames"])\')" = "14400"',
             '["desktop_substeps"])\')" = "60000"',
-            '["jolt_collision_trials"])\')" = "801"',
+            '["jolt_collision_trials"])\')" = "802"',
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, step)

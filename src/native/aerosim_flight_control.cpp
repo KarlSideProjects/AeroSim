@@ -197,21 +197,21 @@ bool valid_config(const SimulationConfig &config) {
             valid_state(config.initial_state) && validate_per_motor_config(config.per_motor);
 }
 
-bool valid_command(const FlightCommand &command) {
+} // namespace
+
+bool valid_flight_command(const FlightCommand &command) {
     return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
             std::isfinite(command.roll_degrees) && std::isfinite(command.pitch_degrees) &&
             std::isfinite(command.yaw_rate_degrees_per_second);
 }
 
-bool valid_command(const AcroCommand &command) {
+bool valid_acro_command(const AcroCommand &command) {
     return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
             std::isfinite(command.roll_stick) && std::isfinite(command.pitch_stick) && std::isfinite(command.yaw_stick) &&
             std::isfinite(command.rates.rc_rate) && command.rates.rc_rate >= 0.0 && command.rates.rc_rate <= 3.0 &&
             std::isfinite(command.rates.super_rate) && command.rates.super_rate >= 0.0 && command.rates.super_rate <= 1.0 &&
             std::isfinite(command.rates.expo) && command.rates.expo >= 0.0 && command.rates.expo <= 1.0;
 }
-
-} // namespace
 
 double normalize_angle_radians(double angle) {
     return std::isfinite(angle) ? std::remainder(angle, 2.0 * 3.14159265358979323846) : 0.0;
@@ -235,7 +235,7 @@ StepStatus validate_angle_step_inputs(
         const SimulationConfig &config,
         const FlightCommand &command,
         const Quat &estimated_attitude) {
-    if (!valid_command(command)) return StepStatus::InvalidCommand;
+    if (!valid_flight_command(command)) return StepStatus::InvalidCommand;
     if (!valid_config(config)) return StepStatus::InvalidConfig;
     return valid_state(state) && finite_quat(estimated_attitude) && valid_clock(clock, config)
             ? StepStatus::Ok : StepStatus::InvalidState;
@@ -246,7 +246,7 @@ StepStatus validate_acro_step_inputs(
         const SimulationClock &clock,
         const SimulationConfig &config,
         const AcroCommand &command) {
-    if (!valid_command(command)) return StepStatus::InvalidCommand;
+    if (!valid_acro_command(command)) return StepStatus::InvalidCommand;
     if (!valid_config(config)) return StepStatus::InvalidConfig;
     return valid_state(state) && valid_clock(clock, config) ? StepStatus::Ok : StepStatus::InvalidState;
 }
@@ -258,7 +258,7 @@ StepStatus validate_altitude_hold_step_inputs(
         const FlightCommand &command,
         double measured_altitude_m,
         const Quat &estimated_attitude) {
-    if (!valid_command(command)) return StepStatus::InvalidCommand;
+    if (!valid_flight_command(command)) return StepStatus::InvalidCommand;
     if (!valid_config(config) || !std::isfinite(measured_altitude_m)) return StepStatus::InvalidConfig;
     return valid_state(state) && finite_quat(estimated_attitude) && valid_clock(clock, config)
             ? StepStatus::Ok : StepStatus::InvalidState;

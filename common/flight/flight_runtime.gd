@@ -1409,7 +1409,7 @@ func _physics_process(delta: float) -> void:
             angular_velocity_body.x,
             angular_velocity_body.y,
             angular_velocity_body.z,
-            _kinetic(drone_body.linear_velocity, angular_velocity_body) if drone_body != null else -1.0
+            _pre_impact_energy(drone_body) if drone_body != null else -1.0
         )
         if _handle_native_step_failure(native, row, true):
             return
@@ -1417,7 +1417,7 @@ func _physics_process(delta: float) -> void:
         if not _sync_native_from_drone():
             return
         var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body)
-        var energy_limit := _kinetic(drone_body.linear_velocity, angular_velocity_body)
+        var energy_limit := _pre_impact_energy(drone_body)
         if flight_mode == "ACRO":
             row = native.call(
                 "step_collision_acro_mode",
@@ -1619,7 +1619,7 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             angular_velocity_body.x,
             angular_velocity_body.y,
             angular_velocity_body.z,
-            _kinetic(body.linear_velocity, angular_velocity_body, _airsim_secondary_native))
+            _pre_impact_energy(body, _airsim_secondary_native))
     elif String(controls.get("mode", "ANGLE")) == "ALTITUDE_HOLD":
         row = _airsim_secondary_native.call(
             "step_collision_altitude_hold_mode",
@@ -1643,7 +1643,7 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             angular_velocity_body.x,
             angular_velocity_body.y,
             angular_velocity_body.z,
-            _kinetic(body.linear_velocity, angular_velocity_body, _airsim_secondary_native))
+            _pre_impact_energy(body, _airsim_secondary_native))
     else:
         row = _airsim_secondary_native.call(
             "step_collision_angle_mode",
@@ -1667,7 +1667,7 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             angular_velocity_body.x,
             angular_velocity_body.y,
             angular_velocity_body.z,
-            _kinetic(body.linear_velocity, angular_velocity_body, _airsim_secondary_native))
+            _pre_impact_energy(body, _airsim_secondary_native))
     if _handle_native_step_failure(_airsim_secondary_native, row, true):
         return
     if not _refresh_native_imu_sample(_airsim_secondary_native):
@@ -4784,6 +4784,9 @@ func _localized_license_status(status: String) -> String:
     if Localization.translate(known_key) != known_key:
         return _t(known_key)
     return _format("ui.license.status", [status])
+
+func _pre_impact_energy(body: CollisionProbeBody, target_native = native) -> float:
+    return _kinetic(body.native_linear_velocity, body.native_body_angular_velocity, target_native)
 
 func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, target_native = native) -> float:
     var inertia_frd := Vector3.ONE
