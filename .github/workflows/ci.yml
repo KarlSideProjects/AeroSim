@@ -113,7 +113,7 @@ jobs:
           printf '%s\n' '#!/usr/bin/env sh' \
             'PYTHONPATH="$AEROSIM_TOOL_ROOT/python-packages${PYTHONPATH:+:$PYTHONPATH}"' \
             'export PYTHONPATH' \
-            'exec python3 -m SCons.Script "$@"' > "$AEROSIM_TOOL_ROOT/bin/scons"
+            'exec python3 -c "from SCons.Script.Main import main; main()" "$@"' > "$AEROSIM_TOOL_ROOT/bin/scons"
           chmod +x "$AEROSIM_TOOL_ROOT/bin/scons"
           echo "TMPDIR=$AEROSIM_TOOL_ROOT/tmp" >> "$GITHUB_ENV"
           echo "$AEROSIM_TOOL_ROOT/bin" >> "$GITHUB_PATH"
