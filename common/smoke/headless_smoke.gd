@@ -176,7 +176,20 @@ func _run() -> void:
     var mobile_failed_frame := int(mobile_trajectory_result.get("failed_frame", -1))
     var mobile_trajectory: PackedFloat64Array = mobile_trajectory_result.get("rows", PackedFloat64Array())
 
-    if mobile_status != "ok" or trajectory.is_empty() or mobile_trajectory.is_empty() or stride != 12 or mobile_trajectory.size() % stride != 0:
+    var zero_trajectory_result: Dictionary = native.call("simulate_trajectory", 0.0, 120, 500, 0.0)
+    var zero_rows: PackedFloat64Array = zero_trajectory_result.get("rows", PackedFloat64Array())
+    var limited_trajectory_result: Dictionary = native.call("simulate_trajectory", 1000000.0, 120, 500, 0.0)
+    var limited_rows: PackedFloat64Array = limited_trajectory_result.get("rows", PackedFloat64Array())
+
+    if String(zero_trajectory_result.get("status", "")) != "Ok" or not zero_rows.is_empty() \
+            or int(zero_trajectory_result.get("failed_frame", 0)) != -1 \
+            or String(limited_trajectory_result.get("status", "")) != "ResourceLimitExceeded" \
+            or not limited_rows.is_empty() or int(limited_trajectory_result.get("failed_frame", 0)) != -1:
+        push_error("AeroSimNative.simulate_trajectory violated its StepStatus contract")
+        quit(1)
+        return
+
+    if mobile_status != "Ok" or trajectory.is_empty() or mobile_trajectory.is_empty() or stride != 12 or mobile_trajectory.size() % stride != 0:
         push_error("AeroSimNative.simulate_trajectory failed: status=%s failed_frame=%d" % [mobile_status, mobile_failed_frame])
         quit(1)
         return
@@ -2626,7 +2639,7 @@ func _native_hovers_at_mass(native: Object, mass_kg: float) -> bool:
     var hover_failed_frame := int(hover_result.get("failed_frame", -1))
     var hover: PackedFloat64Array = hover_result.get("rows", PackedFloat64Array())
     var hover_stride := int(native.call("trajectory_stride"))
-    if hover_status != "ok" or hover.is_empty() or hover_stride != 12 or hover.size() % hover_stride != 0:
+    if hover_status != "Ok" or hover.is_empty() or hover_stride != 12 or hover.size() % hover_stride != 0:
         push_error("AeroSimNative.simulate_trajectory failed: status=%s failed_frame=%d" % [hover_status, hover_failed_frame])
         return false
     return abs(float(hover[hover.size() - hover_stride + 2])) <= 1e-6
