@@ -27,6 +27,31 @@ git -C "$godot_cpp_dir" fetch --depth 1 origin "$godot_cpp_commit"
 git -C "$godot_cpp_dir" checkout "$godot_cpp_commit"
 
 GODOT_CPP_DIR="$godot_cpp_dir" "$scons_cmd" target=template_debug platform=linux
+native_provenance="${AEROSIM_NATIVE_PROVENANCE:-build/native_debug_artifact.json}"
+extension="bin/libaerosim_native.linux.template_debug.x86_64.so"
+test -s "$extension"
+native_source_sha256="$({ find src/native -type f -print0; printf 'SConstruct\0'; } | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1)"
+python3 - "$native_provenance" "$extension" "$(git rev-parse HEAD)" "$native_source_sha256" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+artifact = Path(sys.argv[1])
+extension = Path(sys.argv[2])
+artifact.parent.mkdir(parents=True, exist_ok=True)
+artifact.write_text(json.dumps({
+    "commit_sha": sys.argv[3],
+    "gdextension_path": str(extension),
+    "gdextension_sha256": hashlib.sha256(extension.read_bytes()).hexdigest(),
+    "native_source_sha256": sys.argv[4],
+}, separators=(",", ":")) + "\n", encoding="utf-8")
+PY
+export AEROSIM_NATIVE_PROVENANCE="$native_provenance"
+scripts/run_gut_tests.sh
+scripts/test_native_atomic_boundary.sh
+scripts/run_headed_acceptance.sh --xvfb
+scripts/test_replay_integration.sh
 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5
 python3 - <<'PY'
 import json

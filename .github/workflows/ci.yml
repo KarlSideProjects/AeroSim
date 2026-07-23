@@ -193,24 +193,55 @@ jobs:
       - name: Build GDExtension
         run: scons target=template_debug platform=linux
 
+      - name: Record Linux debug artifact provenance
+        run: |
+          artifact=build/native_debug_artifact.json
+          extension=bin/libaerosim_native.linux.template_debug.x86_64.so
+          test -s "$extension"
+          native_source_sha256="$({ find src/native -type f -print0; printf 'SConstruct\0'; } | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1)"
+          python3 - "$artifact" "$extension" "$(git rev-parse HEAD)" "$native_source_sha256" <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          artifact = Path(sys.argv[1])
+          extension = Path(sys.argv[2])
+          artifact.parent.mkdir(parents=True, exist_ok=True)
+          artifact.write_text(json.dumps({
+              "commit_sha": sys.argv[3],
+              "gdextension_path": str(extension),
+              "gdextension_sha256": hashlib.sha256(extension.read_bytes()).hexdigest(),
+              "native_source_sha256": sys.argv[4],
+          }, separators=(",", ":")) + "\n", encoding="utf-8")
+          PY
+
       - name: GUT GDScript unit tests
+        env:
+          AEROSIM_NATIVE_PROVENANCE: build/native_debug_artifact.json
         run: scripts/run_gut_tests.sh
 
+      - name: Native atomic boundary negative process
+        env:
+          AEROSIM_NATIVE_PROVENANCE: build/native_debug_artifact.json
+        run: scripts/test_native_atomic_boundary.sh
+
+      - name: Headed acceptance (Xvfb + lavapipe)
+        env:
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+          AEROSIM_NATIVE_PROVENANCE: build/native_debug_artifact.json
+        run: scripts/run_headed_acceptance.sh --xvfb
+
       - name: Complete-session replay integration
+        env:
+          AEROSIM_NATIVE_PROVENANCE: build/native_debug_artifact.json
         run: scripts/test_replay_integration.sh
 
       - name: AirSim pinned client RPC integration
         run: scripts/test_airsim_rpc_client.sh
 
-      - name: Headed acceptance (Xvfb + lavapipe)
-        env:
-          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
-        run: scripts/run_headed_acceptance.sh --xvfb
-
       - name: Performance harness smoke (Xvfb + lavapipe)
         env:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
           AEROSIM_REQUIRED_GPU_ADAPTER: llvmpipe
+          AEROSIM_NATIVE_PROVENANCE: build/native_debug_artifact.json
         run: xvfb-run -a python3 tests/test_performance_runner.py
 
       - name: Store headed screenshots locally

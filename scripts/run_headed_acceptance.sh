@@ -3,6 +3,7 @@ set -euo pipefail
 
 godot_bin="${GODOT_BIN:-godot}"
 out_dir="build/headed"
+native_provenance="${AEROSIM_NATIVE_PROVENANCE:-build/native_debug_artifact.json}"
 use_xvfb=0
 
 while [ "$#" -gt 0 ]; do
@@ -32,6 +33,41 @@ elif ! command -v "$godot_bin" >/dev/null; then
     exit 1
 fi
 
+provenance_values="$(python3 - "$native_provenance" "$(git rev-parse HEAD)" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(f"native artifact provenance is missing: {path}")
+try:
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as error:
+    raise SystemExit(f"native artifact provenance is invalid: {path}: {error}")
+required = ("commit_sha", "gdextension_path", "gdextension_sha256", "native_source_sha256")
+if any(not isinstance(receipt.get(key), str) or not receipt[key] for key in required):
+    raise SystemExit(f"native artifact provenance is incomplete: {path}")
+if receipt["commit_sha"] != sys.argv[2]:
+    raise SystemExit(f"native artifact provenance is stale for HEAD: {path}")
+extension = Path(receipt["gdextension_path"])
+if not extension.is_file() or hashlib.sha256(extension.read_bytes()).hexdigest() != receipt["gdextension_sha256"]:
+    raise SystemExit(f"native artifact provenance does not match the debug GDExtension: {path}")
+source_paths = [Path("SConstruct"), *sorted(Path("src/native").rglob("*"))]
+digest = hashlib.sha256()
+for source in source_paths:
+    if source.is_file():
+        digest.update(f"{hashlib.sha256(source.read_bytes()).hexdigest()}  {source}\n".encode())
+if digest.hexdigest() != receipt["native_source_sha256"]:
+    raise SystemExit(f"native artifact provenance is stale for native sources: {path}")
+print(receipt["gdextension_sha256"])
+print(receipt["native_source_sha256"])
+PY
+)"
+gdextension_sha256="$(printf '%s\n' "$provenance_values" | sed -n '1p')"
+native_source_sha256="$(printf '%s\n' "$provenance_values" | sed -n '2p')"
+
 if [ "$use_xvfb" -eq 1 ]; then
     lavapipe_icd="${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}"
     test -r "$lavapipe_icd"
@@ -52,6 +88,24 @@ timeout 60s "${launcher[@]}" "$godot_bin" --path . --resolution 1280x720 \
     --log-file "$log_path" \
     --script res://tests/headed/headed_acceptance.gd -- --out-dir "$out_dir"
 
+python3 - "$out_dir/report.json" "$gdextension_sha256" "$native_source_sha256" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    report = json.loads(path.read_text(encoding="utf-8"))
+    provenance = report.get("provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError("provenance is missing")
+except (OSError, json.JSONDecodeError, ValueError) as error:
+    raise SystemExit(f"cannot bind headed acceptance report to native artifact: {path}: {error}")
+provenance["gdextension_sha256"] = sys.argv[2]
+provenance["native_source_sha256"] = sys.argv[3]
+path.write_text(json.dumps(report, separators=(",", ":")), encoding="utf-8")
+PY
+
 for required_file in \
     "$log_path" \
     "$out_dir/report.json" \
@@ -69,12 +123,14 @@ for required_file in \
     fi
 done
 
-python3 - "$out_dir/report.json" "$(git rev-parse HEAD)" <<'PY'
+python3 - "$out_dir/report.json" "$(git rev-parse HEAD)" "$gdextension_sha256" "$native_source_sha256" <<'PY'
 import json
 import sys
 
 path = sys.argv[1]
 expected_commit_sha = sys.argv[2]
+expected_gdextension_sha256 = sys.argv[3]
+expected_native_source_sha256 = sys.argv[4]
 try:
     with open(path, encoding="utf-8") as report_file:
         report = json.load(report_file)
@@ -88,6 +144,10 @@ if not isinstance(provenance, dict):
     raise SystemExit(f"headed acceptance report is missing provenance: {path}")
 if provenance.get("commit_sha") != expected_commit_sha:
     raise SystemExit(f"headed acceptance report commit SHA is not bound to the checkout: {path}")
+if provenance.get("gdextension_sha256") != expected_gdextension_sha256:
+    raise SystemExit(f"headed acceptance report GDExtension SHA is not bound to the debug artifact: {path}")
+if provenance.get("native_source_sha256") != expected_native_source_sha256:
+    raise SystemExit(f"headed acceptance report native source SHA is not bound to the debug artifact: {path}")
 for field in ("godot_version", "os", "display_driver", "gpu_adapter"):
     if not provenance.get(field):
         raise SystemExit(f"headed acceptance report is missing provenance field {field}: {path}")

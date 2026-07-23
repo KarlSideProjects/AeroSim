@@ -141,6 +141,7 @@ var _warmup_seconds := 10.0
 var _seconds := 60.0
 var _effects := "off"
 var _benchmark_mode := "gate"
+var _commit_sha := ""
 var _required_adapter := "NVIDIA"
 var _godot_version := ""
 var _godot_sha256 := ""
@@ -167,7 +168,7 @@ func _run() -> void:
     if _benchmark_mode != "smoke" and (_warmup_seconds != 10.0 or _seconds != 60.0):
         _fail("gate and reference modes require exactly 10s warmup and 60s measurement")
         return
-    if _godot_version.is_empty() or _godot_sha256.length() != 64 or _godot_cpp_revision.length() != 40 or _gdextension_sha256.length() != 64 or _native_source_sha256.length() != 64:
+    if _commit_sha.length() != 40 or _godot_version.is_empty() or _godot_sha256.length() != 64 or _godot_cpp_revision.length() != 40 or _gdextension_sha256.length() != 64 or _native_source_sha256.length() != 64:
         _fail("complete Godot, godot-cpp, GDExtension, and native source provenance is required")
         return
     var adapter := RenderingServer.get_video_adapter_name()
@@ -269,6 +270,7 @@ func _run() -> void:
         "render_gpu_samples_ms": render_gpu_samples,
         "sampling_source": "EngineProfiler._tick",
         "benchmark_mode": _benchmark_mode,
+        "commit_sha": _commit_sha,
         "godot_version": _godot_version,
         "godot_sha256": _godot_sha256,
         "godot_cpp_revision": _godot_cpp_revision,
@@ -333,6 +335,8 @@ func _parse_args() -> void:
                 _effects = args[index + 1]
             "--benchmark-mode":
                 _benchmark_mode = args[index + 1]
+            "--commit-sha":
+                _commit_sha = args[index + 1]
             "--godot-version":
                 _godot_version = args[index + 1]
             "--godot-sha256":
