@@ -93,6 +93,24 @@ double shaped_rate(double desired, double previous, double dt) {
 
 } // namespace
 
+const char *step_status_code(StepStatus status) {
+    switch (status) {
+    case StepStatus::Ok:
+        return "Ok";
+    case StepStatus::InvalidCommand:
+        return "InvalidCommand";
+    case StepStatus::InvalidConfig:
+        return "InvalidConfig";
+    case StepStatus::InvalidState:
+        return "InvalidState";
+    case StepStatus::InvalidControlOutput:
+        return "InvalidControlOutput";
+    case StepStatus::ResourceLimitExceeded:
+        return "ResourceLimitExceeded";
+    }
+    return "InvalidState";
+}
+
 double normalize_angle_radians(double angle) {
     return std::isfinite(angle) ? std::remainder(angle, 2.0 * kPi) : 0.0;
 }

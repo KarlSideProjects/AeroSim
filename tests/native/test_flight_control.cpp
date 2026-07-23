@@ -75,6 +75,13 @@ void configure_power_model(aerosim::SimulationConfig &config) {
 } // namespace
 
 int main() {
+    if (std::string(aerosim::step_status_code(aerosim::StepStatus::Ok)) != "Ok" ||
+            std::string(aerosim::step_status_code(aerosim::StepStatus::InvalidConfig)) != "InvalidConfig" ||
+            std::string(aerosim::step_status_code(aerosim::StepStatus::InvalidState)) != "InvalidState" ||
+            std::string(aerosim::step_status_code(aerosim::StepStatus::ResourceLimitExceeded)) != "ResourceLimitExceeded") {
+        return fail("StepStatus codes must remain stable public contract names");
+    }
+
     if (!near(aerosim::normalize_angle_radians(1.0e300),
                     std::remainder(1.0e300, 2.0 * kPi), 1e-12)) {
         return fail("angle normalization must be constant-time for huge finite angles");

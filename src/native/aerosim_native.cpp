@@ -225,9 +225,9 @@ Dictionary replay_status(bool ok, const aerosim::ReplayDiagnostic *diagnostic = 
     return result;
 }
 
-Dictionary trajectory_status(const char *status, const PackedFloat64Array &rows, std::int64_t failed_frame) {
+Dictionary trajectory_status(aerosim::StepStatus status, const PackedFloat64Array &rows, std::int64_t failed_frame) {
     Dictionary result;
-    result["status"] = status;
+    result["status"] = aerosim::step_status_code(status);
     result["rows"] = rows;
     result["failed_frame"] = failed_frame;
     return result;
@@ -2000,11 +2000,14 @@ Dictionary AeroSimNative::simulate_trajectory(
     config.a4_ground_effect = a4_ground_effect_config_;
 
     PackedFloat64Array rows;
-    if (!std::isfinite(config.seconds) || config.seconds <= 0.0 ||
+    if (!std::isfinite(config.seconds) || config.seconds < 0.0 ||
             !valid_simulation_timing(config.physics_hz, config.substep_hz) ||
             !std::isfinite(config.mass_kg) || config.mass_kg <= 0.0 ||
             !std::isfinite(config.gravity_mps2)) {
-        return trajectory_status("invalid_input", rows, -1);
+        return trajectory_status(aerosim::StepStatus::InvalidConfig, rows, -1);
+    }
+    if (config.seconds == 0.0) {
+        return trajectory_status(aerosim::StepStatus::Ok, rows, -1);
     }
     aerosim::RigidBodyState state = config.initial_state;
     aerosim::SimulationClock clock;
@@ -2014,17 +2017,20 @@ Dictionary AeroSimNative::simulate_trajectory(
             frames_as_double > static_cast<double>(kMaxTrajectoryFrames) ||
             frames_as_double * static_cast<double>(config.substep_hz) /
                     static_cast<double>(config.physics_hz) > static_cast<double>(kMaxTrajectoryFrames)) {
-        return trajectory_status("frame_limit_exceeded", rows, -1);
+        return trajectory_status(aerosim::StepStatus::ResourceLimitExceeded, rows, -1);
     }
     const std::size_t physics_frames = static_cast<std::size_t>(frames_as_double);
-    rows.resize(static_cast<std::int64_t>(physics_frames * static_cast<std::size_t>(trajectory_stride())));
+    const std::size_t stride = static_cast<std::size_t>(trajectory_stride());
+    if (physics_frames > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) / stride ||
+            rows.resize(static_cast<std::int64_t>(physics_frames * stride)) != godot::OK) {
+        return trajectory_status(aerosim::StepStatus::ResourceLimitExceeded, PackedFloat64Array(), -1);
+    }
     std::size_t row_index = 0;
     for (std::size_t frame = 0; frame < physics_frames; ++frame) {
         apply_wind(config, state, clock, wind_field_);
         const aerosim::TrajectorySample sample = aerosim::step_physics_frame(state, clock, config);
         if (sample.substeps == 0) {
-            rows.resize(static_cast<std::int64_t>(row_index));
-            return trajectory_status("simulation_failed", rows, static_cast<std::int64_t>(frame));
+            return trajectory_status(aerosim::StepStatus::InvalidState, PackedFloat64Array(), static_cast<std::int64_t>(frame));
         }
         rows.set(static_cast<std::int64_t>(row_index++), sample.time_seconds);
         rows.set(static_cast<std::int64_t>(row_index++), sample.state.position.x);
@@ -2039,7 +2045,7 @@ Dictionary AeroSimNative::simulate_trajectory(
         rows.set(static_cast<std::int64_t>(row_index++), sample.state.velocity.z);
         rows.set(static_cast<std::int64_t>(row_index++), static_cast<double>(sample.substeps));
     }
-    return trajectory_status("ok", rows, -1);
+    return trajectory_status(aerosim::StepStatus::Ok, rows, -1);
 }
 
 PackedFloat64Array AeroSimNative::step_collision_acro_mode(

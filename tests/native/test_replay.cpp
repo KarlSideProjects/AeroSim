@@ -201,6 +201,60 @@ bool test_checkpoint_round_trip_preserves_atmosphere() {
             loaded.session.checkpoints[0].environment_json == complete_atmosphere(23);
 }
 
+bool test_checkpoint_round_trip_preserves_collision_and_scene_state() {
+    aerosim::ReplaySession session;
+    session.seed = 42;
+    session.settings_manifest_hash = "settings-manifest-v1";
+    session.vehicles = {
+            {"DroneA", "drone-a-hash", "{\"mass_kg\":1.0}"},
+            {"DroneB", "drone-b-hash", "{\"mass_kg\":1.0}"},
+    };
+    aerosim::ReplayEvent environment;
+    environment.type = aerosim::ReplayEventType::Environment;
+    environment.environment_json = complete_atmosphere(23);
+    session.events.push_back(environment);
+    session.termination_timestamp_us = 2000;
+    session.termination_reason = "completed";
+
+    aerosim::ReplayRunCheckpoint checkpoint;
+    checkpoint.timestamp_us = 1000;
+    checkpoint.collisions[1].authority = aerosim::ReplayControllerAuthority::Jolt;
+    checkpoint.collisions[1].contact.touching = true;
+    checkpoint.collisions[1].contact.normal = {0.0, 1.0, 0.0};
+    checkpoint.collisions[1].contact.impulse = {0.0, 2.0, 0.0};
+    checkpoint.collisions[1].contact.restitution = 0.25;
+    checkpoint.collisions[1].contact.has_resolved_state = true;
+    checkpoint.collisions[1].contact.resolved_velocity = {1.0, 2.0, 3.0};
+    checkpoint.collisions[1].contact.resolved_angular_velocity = {4.0, 5.0, 6.0};
+    checkpoint.collisions[1].contact.max_kinetic_energy_joules = 7.0;
+    checkpoint.scene_objects.push_back({"crate", "primitive_box", {1.0, 2.0, 3.0}, {0.0, 0.0, 0.0, 1.0}});
+    checkpoint.environment_json = complete_atmosphere(23);
+    session.checkpoints.push_back(checkpoint);
+
+    const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(
+            aerosim::serialize_replay_session(session), "settings-manifest-v1");
+    if (!loaded.ok || loaded.session.checkpoints.size() != 1 ||
+            loaded.session.checkpoints[0].collisions[1].contact.restitution != 0.25 ||
+            loaded.session.checkpoints[0].scene_objects.size() != 1 ||
+            loaded.session.checkpoints[0].scene_objects[0].name != "crate" ||
+            loaded.session.checkpoints[0].environment_json != complete_atmosphere(23)) {
+        return false;
+    }
+
+    aerosim::ReplaySession collision_changed = loaded.session;
+    collision_changed.checkpoints[0].collisions[1].contact.restitution = 0.5;
+    const aerosim::ReplayDivergence collision_divergence = aerosim::compare_replay_sessions(
+            loaded.session, collision_changed);
+    if (!collision_divergence.diverged || collision_divergence.vehicle_name != "DroneB" ||
+            collision_divergence.field != "checkpoint.collision.restitution") {
+        return false;
+    }
+    aerosim::ReplaySession scene_changed = loaded.session;
+    scene_changed.checkpoints[0].scene_objects[0].position.x = 2.0;
+    const aerosim::ReplayDivergence scene_divergence = aerosim::compare_replay_sessions(loaded.session, scene_changed);
+    return scene_divergence.diverged && scene_divergence.field == "checkpoint.scene_object.position.x";
+}
+
 bool test_sparse_checkpoint_schedule() {
     aerosim::ReplaySessionRecorder recorder(29, "manifest");
     aerosim::FlightCommand command;
@@ -661,6 +715,9 @@ int main() {
     }
     if (!test_checkpoint_round_trip_preserves_atmosphere()) {
         return fail("replay checkpoints must retain the captured atmosphere through serialization");
+    }
+    if (!test_checkpoint_round_trip_preserves_collision_and_scene_state()) {
+        return fail("replay checkpoints must round-trip collision and scene state");
     }
     if (!test_sparse_checkpoint_schedule()) {
         return fail("replay v2 must preserve and compare the recorded sparse checkpoint schedule");

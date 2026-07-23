@@ -165,11 +165,30 @@ func _run() -> void:
         var row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.0)
         trajectory.append_array(row)
 
-    var mobile_trajectory: PackedFloat64Array = native.call("simulate_trajectory", 1.0, 120, 500, 0.0)
+    var mobile_trajectory_result: Variant = native.call("simulate_trajectory", 1.0, 120, 500, 0.0)
     var stride: int = native.call("trajectory_stride")
+    if not (mobile_trajectory_result is Dictionary):
+        push_error("AeroSimNative.simulate_trajectory returned a non-Dictionary result")
+        quit(1)
+        return
+    var mobile_status := String(mobile_trajectory_result.get("status", "missing_status"))
+    var mobile_failed_frame := int(mobile_trajectory_result.get("failed_frame", -1))
+    var mobile_trajectory: PackedFloat64Array = mobile_trajectory_result.get("rows", PackedFloat64Array())
+    var zero_trajectory_result: Dictionary = native.call("simulate_trajectory", 0.0, 120, 500, 0.0)
+    var zero_rows: PackedFloat64Array = zero_trajectory_result.get("rows", PackedFloat64Array())
+    var limited_trajectory_result: Dictionary = native.call("simulate_trajectory", 1000000.0, 120, 500, 0.0)
+    var limited_rows: PackedFloat64Array = limited_trajectory_result.get("rows", PackedFloat64Array())
 
-    if trajectory.is_empty() or mobile_trajectory.is_empty() or stride != 12:
-        push_error("AeroSimNative.simulate_trajectory returned invalid data")
+    if String(zero_trajectory_result.get("status", "")) != "Ok" or not zero_rows.is_empty() \
+            or int(zero_trajectory_result.get("failed_frame", 0)) != -1 \
+            or String(limited_trajectory_result.get("status", "")) != "ResourceLimitExceeded" \
+            or not limited_rows.is_empty() or int(limited_trajectory_result.get("failed_frame", 0)) != -1:
+        push_error("AeroSimNative.simulate_trajectory violated its StepStatus contract")
+        quit(1)
+        return
+
+    if mobile_status != "Ok" or trajectory.is_empty() or mobile_trajectory.is_empty() or stride != 12 or mobile_trajectory.size() % stride != 0:
+        push_error("AeroSimNative.simulate_trajectory failed: status=%s failed_frame=%d" % [mobile_status, mobile_failed_frame])
         quit(1)
         return
 
@@ -2601,14 +2620,23 @@ func _set_hardware_path(config: Dictionary, path: String, value: Variant) -> voi
 func _native_hovers_at_mass(native: Object, mass_kg: float) -> bool:
     native.call("reset_flight")
     native.call("arm_flight_control", 0.0)
-    var hover: PackedFloat64Array = native.call(
+    var hover_result: Variant = native.call(
         "simulate_trajectory",
         1.0,
         Engine.physics_ticks_per_second,
         1000,
         mass_kg * 9.80665
     )
-    return not hover.is_empty() and abs(float(hover[hover.size() - int(native.call("trajectory_stride")) + 2])) <= 1e-6
+    if not (hover_result is Dictionary):
+        push_error("AeroSimNative.simulate_trajectory returned a non-Dictionary result")
+        return false
+    var hover_status := String(hover_result.get("status", "missing_status"))
+    var hover: PackedFloat64Array = hover_result.get("rows", PackedFloat64Array())
+    var hover_stride := int(native.call("trajectory_stride"))
+    if hover_status != "Ok" or hover.is_empty() or hover_stride != 12 or hover.size() % hover_stride != 0:
+        push_error("AeroSimNative.simulate_trajectory failed: status=%s failed_frame=%d" % [hover_status, int(hover_result.get("failed_frame", -1))])
+        return false
+    return abs(float(hover[hover.size() - hover_stride + 2])) <= 1e-6
 
 func _press_key(keycode: int) -> void:
     var event := InputEventKey.new()

@@ -631,6 +631,9 @@ bool parse_vec_object_or_array(const JsonValue &value, Vec3 &result) {
 
 bool integer_value(const JsonValue &value, std::uint64_t &result);
 
+const char *authority_name(ReplayControllerAuthority value);
+bool parse_authority(const std::string &value, ReplayControllerAuthority &result);
+
 bool parse_environment_config(
         const std::string &serialized,
         WindConfig &wind_config,
@@ -916,19 +919,111 @@ bool parse_rigid_body_state(const JsonValue &value, RigidBodyState &state) {
 }
 
 std::string checkpoint_json(const ReplayRunCheckpoint &checkpoint) {
+    const auto collision_json = [](const ReplayCollision &collision) {
+        const CollisionContact &contact = collision.contact;
+        return "{\"authority\":\"" + std::string(authority_name(collision.authority)) +
+                "\",\"touching\":" + (contact.touching ? "true" : "false") +
+                ",\"normal\":" + vec_json(contact.normal) +
+                ",\"impulse\":" + vec_json(contact.impulse) +
+                ",\"restitution\":" + compact_number(contact.restitution) +
+                ",\"resolved_velocity\":" + vec_json(contact.resolved_velocity) +
+                ",\"resolved_angular_velocity\":" + vec_json(contact.resolved_angular_velocity) +
+                ",\"max_kinetic_energy_joules\":" + compact_number(contact.max_kinetic_energy_joules) +
+                ",\"has_resolved_state\":" + (contact.has_resolved_state ? "true" : "false") + '}';
+    };
+    std::string scene_objects = "[";
+    for (std::size_t index = 0; index < checkpoint.scene_objects.size(); ++index) {
+        if (index != 0) {
+            scene_objects += ',';
+        }
+        const ReplaySceneObjectState &object = checkpoint.scene_objects[index];
+        scene_objects += "{\"name\":\"" + escape_json_string(object.name) +
+                "\",\"asset_id\":\"" + escape_json_string(object.asset_id) +
+                "\",\"position\":" + vec_json(object.position) +
+                ",\"orientation\":" + quat_json(object.orientation) + '}';
+    }
+    scene_objects += ']';
     return "{\"timestamp_us\":" + std::to_string(checkpoint.timestamp_us) +
             ",\"upper\":" + rigid_body_state_json(checkpoint.state.upper) +
-            ",\"lower\":" + rigid_body_state_json(checkpoint.state.lower) + '}';
+            ",\"lower\":" + rigid_body_state_json(checkpoint.state.lower) +
+            ",\"collisions\":[" + collision_json(checkpoint.collisions[0]) + ',' +
+            collision_json(checkpoint.collisions[1]) + "],\"scene_objects\":" + scene_objects +
+            ",\"environment\":" + checkpoint.environment_json + '}';
 }
 
 bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint) {
     const JsonValue *timestamp = field(value, "timestamp_us");
     const JsonValue *upper = field(value, "upper");
     const JsonValue *lower = field(value, "lower");
-    return timestamp != nullptr && upper != nullptr && lower != nullptr &&
-            integer_value(*timestamp, checkpoint.timestamp_us) &&
-            parse_rigid_body_state(*upper, checkpoint.state.upper) &&
-            parse_rigid_body_state(*lower, checkpoint.state.lower);
+    const JsonValue *collisions = field(value, "collisions");
+    const JsonValue *scene_objects = field(value, "scene_objects");
+    const JsonValue *environment = field(value, "environment");
+    if (timestamp == nullptr || upper == nullptr || lower == nullptr ||
+            !integer_value(*timestamp, checkpoint.timestamp_us) ||
+            !parse_rigid_body_state(*upper, checkpoint.state.upper) ||
+            !parse_rigid_body_state(*lower, checkpoint.state.lower)) {
+        return false;
+    }
+    if (collisions != nullptr) {
+        if (collisions->type != JsonValue::Type::Array || collisions->array.size() != checkpoint.collisions.size()) {
+            return false;
+        }
+        for (std::size_t index = 0; index < checkpoint.collisions.size(); ++index) {
+            const JsonValue &collision = collisions->array[index];
+            std::string authority;
+            bool touching = false;
+            bool has_resolved_state = false;
+            const JsonValue *authority_value = field(collision, "authority");
+            const JsonValue *touching_value = field(collision, "touching");
+            const JsonValue *normal = field(collision, "normal");
+            const JsonValue *impulse = field(collision, "impulse");
+            const JsonValue *restitution = field(collision, "restitution");
+            const JsonValue *resolved_velocity = field(collision, "resolved_velocity");
+            const JsonValue *resolved_angular_velocity = field(collision, "resolved_angular_velocity");
+            const JsonValue *max_energy = field(collision, "max_kinetic_energy_joules");
+            const JsonValue *has_resolved = field(collision, "has_resolved_state");
+            ReplayCollision &parsed = checkpoint.collisions[index];
+            if (authority_value == nullptr || touching_value == nullptr || normal == nullptr || impulse == nullptr ||
+                    restitution == nullptr || resolved_velocity == nullptr || resolved_angular_velocity == nullptr ||
+                    max_energy == nullptr || has_resolved == nullptr || !string_value(*authority_value, authority) ||
+                    !parse_authority(authority, parsed.authority) || !bool_value(*touching_value, touching) ||
+                    !parse_vec(*normal, parsed.contact.normal) || !parse_vec(*impulse, parsed.contact.impulse) ||
+                    !number_value(*restitution, parsed.contact.restitution) ||
+                    !parse_vec(*resolved_velocity, parsed.contact.resolved_velocity) ||
+                    !parse_vec(*resolved_angular_velocity, parsed.contact.resolved_angular_velocity) ||
+                    !number_value(*max_energy, parsed.contact.max_kinetic_energy_joules) ||
+                    !bool_value(*has_resolved, has_resolved_state)) {
+                return false;
+            }
+            parsed.contact.touching = touching;
+            parsed.contact.has_resolved_state = has_resolved_state;
+        }
+    }
+    if (scene_objects != nullptr) {
+        if (scene_objects->type != JsonValue::Type::Array) {
+            return false;
+        }
+        for (const JsonValue &object : scene_objects->array) {
+            ReplaySceneObjectState parsed;
+            const JsonValue *name = field(object, "name");
+            const JsonValue *asset_id = field(object, "asset_id");
+            const JsonValue *position = field(object, "position");
+            const JsonValue *orientation = field(object, "orientation");
+            if (name == nullptr || asset_id == nullptr || position == nullptr || orientation == nullptr ||
+                    !string_value(*name, parsed.name) || !string_value(*asset_id, parsed.asset_id) ||
+                    !parse_vec(*position, parsed.position) || !parse_quat(*orientation, parsed.orientation)) {
+                return false;
+            }
+            checkpoint.scene_objects.push_back(std::move(parsed));
+        }
+    }
+    if (environment != nullptr) {
+        if (environment->type != JsonValue::Type::Object) {
+            return false;
+        }
+        checkpoint.environment_json = compact_json(*environment);
+    }
+    return true;
 }
 
 const char *authority_name(ReplayControllerAuthority value) {
@@ -1964,17 +2059,19 @@ ReplayLoadResult load_replay_session(
             if (!parse_checkpoint(value, checkpoint)) {
                 return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "invalid replay checkpoint")};
             }
-            const ReplayEvent *environment = nullptr;
-            for (const ReplayEvent &event : session.events) {
-                if (event.type == ReplayEventType::Environment && event.timestamp_us <= checkpoint.timestamp_us &&
-                        (environment == nullptr || event.timestamp_us >= environment->timestamp_us)) {
-                    environment = &event;
+            if (checkpoint.environment_json.empty()) {
+                const ReplayEvent *environment = nullptr;
+                for (const ReplayEvent &event : session.events) {
+                    if (event.type == ReplayEventType::Environment && event.timestamp_us <= checkpoint.timestamp_us &&
+                            (environment == nullptr || event.timestamp_us >= environment->timestamp_us)) {
+                        environment = &event;
+                    }
                 }
+                if (environment == nullptr) {
+                    return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "replay checkpoint has no atmosphere context")};
+                }
+                checkpoint.environment_json = environment->environment_json;
             }
-            if (environment == nullptr) {
-                return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "replay checkpoint has no atmosphere context")};
-            }
-            checkpoint.environment_json = environment->environment_json;
             session.checkpoints.push_back(std::move(checkpoint));
         }
     }
@@ -3050,6 +3147,98 @@ ReplayDivergence compare_replay_sessions(
                         divergence_number(right_values[field_index]), tolerance);
                 return result;
             }
+        }
+        for (std::size_t vehicle_index = 0; vehicle_index < left.collisions.size(); ++vehicle_index) {
+            const ReplayCollision &left_collision = left.collisions[vehicle_index];
+            const ReplayCollision &right_collision = right.collisions[vehicle_index];
+            const std::string &vehicle_name = expected.vehicles[vehicle_index].name;
+            if (left_collision.authority != right_collision.authority) {
+                report(left.timestamp_us, vehicle_name, "checkpoint.collision.authority",
+                        authority_name(left_collision.authority), authority_name(right_collision.authority), 0.0);
+                return result;
+            }
+            if (left_collision.contact.touching != right_collision.contact.touching) {
+                report(left.timestamp_us, vehicle_name, "checkpoint.collision.touching",
+                        left_collision.contact.touching ? "true" : "false",
+                        right_collision.contact.touching ? "true" : "false", 0.0);
+                return result;
+            }
+            const double left_collision_values[] = {
+                    left_collision.contact.normal.x, left_collision.contact.normal.y, left_collision.contact.normal.z,
+                    left_collision.contact.impulse.x, left_collision.contact.impulse.y, left_collision.contact.impulse.z,
+                    left_collision.contact.restitution,
+                    left_collision.contact.resolved_velocity.x, left_collision.contact.resolved_velocity.y, left_collision.contact.resolved_velocity.z,
+                    left_collision.contact.resolved_angular_velocity.x, left_collision.contact.resolved_angular_velocity.y,
+                    left_collision.contact.resolved_angular_velocity.z, left_collision.contact.max_kinetic_energy_joules,
+            };
+            const double right_collision_values[] = {
+                    right_collision.contact.normal.x, right_collision.contact.normal.y, right_collision.contact.normal.z,
+                    right_collision.contact.impulse.x, right_collision.contact.impulse.y, right_collision.contact.impulse.z,
+                    right_collision.contact.restitution,
+                    right_collision.contact.resolved_velocity.x, right_collision.contact.resolved_velocity.y, right_collision.contact.resolved_velocity.z,
+                    right_collision.contact.resolved_angular_velocity.x, right_collision.contact.resolved_angular_velocity.y,
+                    right_collision.contact.resolved_angular_velocity.z, right_collision.contact.max_kinetic_energy_joules,
+            };
+            const char *collision_fields[] = {
+                    "checkpoint.collision.normal.x", "checkpoint.collision.normal.y", "checkpoint.collision.normal.z",
+                    "checkpoint.collision.impulse.x", "checkpoint.collision.impulse.y", "checkpoint.collision.impulse.z",
+                    "checkpoint.collision.restitution",
+                    "checkpoint.collision.resolved_velocity.x", "checkpoint.collision.resolved_velocity.y", "checkpoint.collision.resolved_velocity.z",
+                    "checkpoint.collision.resolved_angular_velocity.x", "checkpoint.collision.resolved_angular_velocity.y",
+                    "checkpoint.collision.resolved_angular_velocity.z", "checkpoint.collision.max_kinetic_energy_joules",
+            };
+            for (std::size_t collision_index = 0; collision_index < sizeof(left_collision_values) / sizeof(left_collision_values[0]); ++collision_index) {
+                if (!same_or_close(left_collision_values[collision_index], right_collision_values[collision_index], tolerance)) {
+                    report(left.timestamp_us, vehicle_name, collision_fields[collision_index],
+                            divergence_number(left_collision_values[collision_index]),
+                            divergence_number(right_collision_values[collision_index]), tolerance);
+                    return result;
+                }
+            }
+            if (left_collision.contact.has_resolved_state != right_collision.contact.has_resolved_state) {
+                report(left.timestamp_us, vehicle_name, "checkpoint.collision.has_resolved_state",
+                        left_collision.contact.has_resolved_state ? "true" : "false",
+                        right_collision.contact.has_resolved_state ? "true" : "false", 0.0);
+                return result;
+            }
+        }
+        if (left.scene_objects.size() != right.scene_objects.size()) {
+            report(left.timestamp_us, {}, "checkpoint.scene_objects.count", std::to_string(left.scene_objects.size()),
+                    std::to_string(right.scene_objects.size()), 0.0);
+            return result;
+        }
+        for (std::size_t object_index = 0; object_index < left.scene_objects.size(); ++object_index) {
+            const ReplaySceneObjectState &left_object = left.scene_objects[object_index];
+            const ReplaySceneObjectState &right_object = right.scene_objects[object_index];
+            if (left_object.name != right_object.name || left_object.asset_id != right_object.asset_id) {
+                report(left.timestamp_us, {}, "checkpoint.scene_object.identity", left_object.name + ":" + left_object.asset_id,
+                        right_object.name + ":" + right_object.asset_id, 0.0);
+                return result;
+            }
+            const double left_transform[] = {
+                    left_object.position.x, left_object.position.y, left_object.position.z,
+                    left_object.orientation.x, left_object.orientation.y, left_object.orientation.z, left_object.orientation.w,
+            };
+            const double right_transform[] = {
+                    right_object.position.x, right_object.position.y, right_object.position.z,
+                    right_object.orientation.x, right_object.orientation.y, right_object.orientation.z, right_object.orientation.w,
+            };
+            const char *transform_fields[] = {
+                    "checkpoint.scene_object.position.x", "checkpoint.scene_object.position.y", "checkpoint.scene_object.position.z",
+                    "checkpoint.scene_object.orientation.x", "checkpoint.scene_object.orientation.y",
+                    "checkpoint.scene_object.orientation.z", "checkpoint.scene_object.orientation.w",
+            };
+            for (std::size_t transform_index = 0; transform_index < sizeof(left_transform) / sizeof(left_transform[0]); ++transform_index) {
+                if (!same_or_close(left_transform[transform_index], right_transform[transform_index], tolerance)) {
+                    report(left.timestamp_us, {}, transform_fields[transform_index], divergence_number(left_transform[transform_index]),
+                            divergence_number(right_transform[transform_index]), tolerance);
+                    return result;
+                }
+            }
+        }
+        if (left.environment_json != right.environment_json) {
+            report(left.timestamp_us, {}, "checkpoint.environment", left.environment_json, right.environment_json, 0.0);
+            return result;
         }
     }
     if (expected.termination_timestamp_us != actual.termination_timestamp_us) {

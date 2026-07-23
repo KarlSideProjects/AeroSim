@@ -28,6 +28,17 @@ struct AcroCommand {
     RateProfile rates;
 };
 
+enum class StepStatus {
+    Ok,
+    InvalidCommand,
+    InvalidConfig,
+    InvalidState,
+    InvalidControlOutput,
+    ResourceLimitExceeded,
+};
+
+const char *step_status_code(StepStatus status);
+
 struct QuadXMixerResult {
     std::array<double, 4> normalized = {0.0, 0.0, 0.0, 0.0};
     std::array<bool, 3> axis_saturated = {false, false, false};
