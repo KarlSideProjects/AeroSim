@@ -40,6 +40,12 @@ All existing thresholds remain frozen.  The implementation must provide RED then
 - FRD evidence includes a one-way `{2,-3,4}->{2,-4,-3}` transform, inverse round-trip, frozen motor-pair roll/pitch/yaw signs, the coupled `(30,20,10)` degree quaternion fixture, and known-device headed signs `omegaX<0`, `omegaZ<0`, `omegaY<0` while preserving the PR #114 GamepadProfile, 0.08 deadzone, session-device, and pitch-reversal behavior.
 - Evidence is produced from the exact tested commit and native binary: build the debug GDExtension, run GUT, run the isolated native-negative process against that exact `.so`, then run headed acceptance.  A missing prerequisite fails loud; no job may skip or reuse an older artifact.  Native unit tests, full headless smoke, the frozen G0.1 effects-off/on performance checks, Ubuntu headed acceptance, and an independent adversarial review all pass with the tested HEAD and native hash recorded.
 
+## Persistent four-motor HUD
+
+The flight HUD always shows a compact Quad-X motor panel during flight; it is not an OSD-profile element and Minimal presets cannot hide it.  Its two-by-two physical layout is `RR` / `FR` on the top row and `RL` / `FL` on the bottom row, matching the frozen motor order.  Each cell displays the existing 30 Hz telemetry for that motor: actual thrust in N, speed converted from rad/s to RPM, and current in A.  A saturated motor is visibly distinguished without relying on colour alone.  The panel uses the existing telemetry snapshot only: it adds no native method, polling path, simulation mutation, or replay field.
+
+The UI labels are localized.  Missing, malformed, non-finite, or incomplete snapshots display an explicit unavailable state for all affected values rather than retaining stale values.  GUT verifies the fixed motor order, units, saturation state, unavailable state, and independence from OSD presets; Ubuntu headed acceptance verifies that the panel remains readable and visible in the flight HUD.
+
 ## Out of scope
 
 No arbitrary mixer geometry, wrench governor, dynamic slew governor, notch filter, D feed-forward, legacy device-0 input behavior, deferred-platform CI, threshold relaxation, or GPL-derived ArduPilot code is introduced.
