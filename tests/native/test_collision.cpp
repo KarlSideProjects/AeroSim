@@ -73,7 +73,23 @@ bool same_state_bits(const aerosim::RigidBodyState &a, const aerosim::RigidBodyS
             same_bits(a.orientation.w, b.orientation.w) &&
             same_bits(a.angular_velocity.x, b.angular_velocity.x) &&
             same_bits(a.angular_velocity.y, b.angular_velocity.y) &&
-            same_bits(a.angular_velocity.z, b.angular_velocity.z);
+            same_bits(a.angular_velocity.z, b.angular_velocity.z) &&
+            same_bits(a.propwash_disturbance_rad_s2.x, b.propwash_disturbance_rad_s2.x) &&
+            same_bits(a.propwash_disturbance_rad_s2.y, b.propwash_disturbance_rad_s2.y) &&
+            same_bits(a.propwash_disturbance_rad_s2.z, b.propwash_disturbance_rad_s2.z) &&
+            same_bits(a.motor_thrust_newtons[0], b.motor_thrust_newtons[0]) &&
+            same_bits(a.motor_thrust_newtons[1], b.motor_thrust_newtons[1]) &&
+            same_bits(a.motor_thrust_newtons[2], b.motor_thrust_newtons[2]) &&
+            same_bits(a.motor_thrust_newtons[3], b.motor_thrust_newtons[3]);
+}
+
+bool same_sample_bits(const aerosim::TrajectorySample &a, const aerosim::TrajectorySample &b) {
+    return same_bits(a.time_seconds, b.time_seconds) &&
+            same_state_bits(a.state, b.state) &&
+            a.substeps == b.substeps &&
+            same_bits(a.propwash_disturbance_rad_s2.x, b.propwash_disturbance_rad_s2.x) &&
+            same_bits(a.propwash_disturbance_rad_s2.y, b.propwash_disturbance_rad_s2.y) &&
+            same_bits(a.propwash_disturbance_rad_s2.z, b.propwash_disturbance_rad_s2.z);
 }
 
 class Lcg {
@@ -109,7 +125,7 @@ struct TrialSetup {
 
 struct TrialResult {
     aerosim::RigidBodyState final_state;
-    aerosim::RigidBodyState first_response_state;
+    aerosim::TrajectorySample first_response;
     std::uint64_t substeps = 0;
     aerosim::ReplaySession replay;
 };
@@ -176,6 +192,7 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
     aerosim::FlightController controller;
     controller.arm(0.0);
     aerosim::CollisionAuthoritySwitch authority;
+    authority.set_release_frames(1);
 
     aerosim::FlightCommand hover;
     hover.throttle = 0.5;
@@ -231,6 +248,10 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
         return {};
     }
 
+    const aerosim::RigidBodyState ready_state = state;
+    const aerosim::SimulationClock ready_clock = clock;
+    const aerosim::FlightControlState ready_controller = controller.control_state();
+
     aerosim::RigidBodyState neutral_state = state;
     aerosim::SimulationClock neutral_clock = clock;
     aerosim::FlightController neutral_controller = controller;
@@ -239,7 +260,9 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
     aerosim::SimulationClock response_clock = clock;
     aerosim::FlightController response_controller = controller;
     aerosim::CollisionAuthoritySwitch response_authority = authority;
-    aerosim::RigidBodyState first_response_state;
+    aerosim::TrajectorySample first_response;
+    bool has_first_response = false;
+    std::uint64_t response_frames = 0;
     const std::uint64_t response_start = response_clock.total_substeps;
     while (response_clock.total_substeps - response_start < 500) {
         const aerosim::CollisionStepResult neutral_step = step_trial_mode(
@@ -251,9 +274,14 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
                 !finite(neutral_controller.control_state()) || !finite(response_controller.control_state())) {
             return {};
         }
-        if (first_response_state.motor_thrust_newtons == std::array<double, 4>{}) {
-            first_response_state = response_state;
+        if (!has_first_response) {
+            first_response.time_seconds = static_cast<double>(response_clock.total_substeps) /
+                    static_cast<double>(config.substep_hz);
+            first_response.state = response_state;
+            first_response.substeps = response_clock.total_substeps;
+            has_first_response = true;
         }
+        ++response_frames;
     }
     const double epsilon = 64.0 * DBL_EPSILON * std::max(1.0, config.per_motor.max_thrust_per_motor_newtons);
     bool motor_responded = false;
@@ -269,24 +297,63 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
             "{\"atmosphere\":{\"preset\":\"calm\",\"steady_wind\":[0,0,0],\"turbulence_sigma\":[0,0,0],"
             "\"reference_airspeed_mps\":30,\"scale_length_m\":200,\"shear_reference_height_m\":1,"
             "\"shear_exponent\":1,\"shear_enabled\":false,\"seed\":1},\"atmosphere_air_density_kg_m3\":1.225}";
+    aerosim::DualAircraftConfig replay_config;
+    replay_config.upper = config;
+    replay_config.upper.initial_state = setup.state;
+    replay_config.lower = config;
+    aerosim::FlightController inactive_controller;
+    inactive_controller.arm(0.0);
     aerosim::ReplayRunCheckpoint checkpoint;
-    checkpoint.state = {response_state, neutral_state};
-    checkpoint.controllers = {{response_controller.control_state(), neutral_controller.control_state()}};
-    checkpoint.clocks = {{response_clock, neutral_clock}};
-    checkpoint.first_response_substeps[0].state = first_response_state;
-    checkpoint.first_response_substeps[0].substeps = response_clock.total_substeps;
-    if (!recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
-            !recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
-            !recorder.record_environment(0, atmosphere) || !recorder.record_checkpoint(1, checkpoint) ||
-            !recorder.finish(1, "completed")) {
+    checkpoint.state = {response_state, replay_config.lower.initial_state};
+    checkpoint.controllers = {{response_controller.control_state(), inactive_controller.control_state()}};
+    checkpoint.clocks[0] = response_clock;
+    checkpoint.first_response_substeps[0] = first_response;
+    aerosim::ReplayRunCheckpoint ready_checkpoint;
+    ready_checkpoint.state = {ready_state, replay_config.lower.initial_state};
+    ready_checkpoint.controllers = {{ready_controller, inactive_controller.control_state()}};
+    ready_checkpoint.clocks[0] = ready_clock;
+    const std::string vehicle_config = "{\"mass_kg\":1.0,\"physics_hz\":240,\"substep_hz\":1000}";
+    if (!recorder.add_vehicle("DroneA", "hash-a", vehicle_config) ||
+            !recorder.add_vehicle("DroneB", "hash-b", vehicle_config) ||
+            !recorder.record_environment(0, atmosphere) ||
+            !recorder.record_mode_command(0, "DroneA",
+                    mode == ControlMode::Acro ? aerosim::ReplayCommandMode::Acro : aerosim::ReplayCommandMode::Angle,
+                    hover, acro_hover, aerosim::ReplayControllerAuthority::FlightCore) ||
+            !recorder.record_collision(0, "DroneA", setup.contact, aerosim::ReplayControllerAuthority::Jolt) ||
+            !recorder.record_simulation_operation(0, aerosim::ReplaySimulationOperation::StepFrames, 1.0) ||
+            !recorder.record_mode_command(1, "DroneA",
+                    mode == ControlMode::Acro ? aerosim::ReplayCommandMode::Acro : aerosim::ReplayCommandMode::Angle,
+                    neutral, acro_neutral, aerosim::ReplayControllerAuthority::FlightCore) ||
+            !recorder.record_simulation_operation(1, aerosim::ReplaySimulationOperation::StepFrames,
+                    static_cast<double>(authority.release_frames())) ||
+            !recorder.record_checkpoint(1, ready_checkpoint) ||
+            !recorder.record_mode_command(2, "DroneA",
+                    mode == ControlMode::Acro ? aerosim::ReplayCommandMode::Acro : aerosim::ReplayCommandMode::Angle,
+                    response, acro_response, aerosim::ReplayControllerAuthority::FlightCore) ||
+            !recorder.record_simulation_operation(2, aerosim::ReplaySimulationOperation::StepFrames,
+                    static_cast<double>(response_frames)) ||
+            !recorder.record_checkpoint(2, checkpoint) || !recorder.finish(2, "completed")) {
         return {};
     }
     const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(recorder.serialize(), "collision-recovery");
     if (!loaded.ok || aerosim::compare_replay_sessions(recorder.session(), loaded.session).diverged ||
-            !same_state_bits(loaded.session.checkpoints[0].first_response_substeps[0].state, first_response_state)) {
+            !same_sample_bits(loaded.session.checkpoints[1].first_response_substeps[0], first_response)) {
         return {};
     }
-    return {response_state, first_response_state, response_clock.total_substeps, loaded.session};
+    const aerosim::ReplayRunResult replayed = aerosim::replay_session(
+            loaded.session, replay_config, "collision-recovery", {{"hash-a", "hash-b"}});
+    const bool same_ready = replayed.checkpoints.size() == 2 &&
+            same_state_bits(replayed.checkpoints[0].state.upper, ready_state);
+    const bool same_final = same_state_bits(replayed.final_state.upper, response_state);
+    const bool same_checkpoint = replayed.checkpoints.size() == 2 &&
+            same_state_bits(replayed.checkpoints[1].state.upper, response_state);
+    const bool same_first_response = replayed.checkpoints.size() == 2 &&
+            same_sample_bits(replayed.checkpoints[1].first_response_substeps[0], first_response);
+    if (!replayed.ok || replayed.checkpoints.size() != 2 || !same_ready || !same_final ||
+            replayed.final_clock.total_substeps != response_clock.total_substeps || !same_checkpoint || !same_first_response) {
+        return {};
+    }
+    return {response_state, first_response, response_clock.total_substeps, loaded.session};
 }
 
 } // namespace

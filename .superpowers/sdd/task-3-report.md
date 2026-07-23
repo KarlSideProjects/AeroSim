@@ -39,7 +39,7 @@ All commands passed. The first integration attempt intentionally caught a stale 
 
 - RED: a full-checkpoint recorder call did not compile because the recorder accepted only `DualAircraftState`.
 - GREEN: the recorder now accepts a complete checkpoint; the existing native binding fills it from live controller, clock, motor, propwash, and first-response state without changing the GDScript call signature.
-- Both session and run comparators now include checkpoint motor/propwash and every first-response rigid-body field. Collision evidence records, serializes, reloads, and bitwise-compares the actual first response rather than executing a second trial.
+- Both session and run comparators now include checkpoint motor/propwash and every first-response rigid-body field. The randomized collision proof uses one direct recovery run to record its commands, collision, release-frame operation, response operation, full checkpoints, and first response; it then calls `ReplaySessionRecorder::serialize()`, `load_replay_session()`, and `replay_session()` on the deserialized session. It bitwise-compares the replay's ready checkpoint, final checkpoint, and first-response sample to the recorded run. It does not invoke the collision simulation helper a second time as a stand-in for replay.
 - Added explicit schema-v2 rejection and checked finite/capped duration-to-`size_t` frame conversion coverage.
 
 Validation after the review fixes:
