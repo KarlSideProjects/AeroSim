@@ -37,7 +37,7 @@ if [ "$use_xvfb" -eq 1 ]; then
     test -r "$lavapipe_icd"
     command -v xvfb-run >/dev/null
     export VK_ICD_FILENAMES="$lavapipe_icd"
-    launcher=(xvfb-run -a --server-args="-screen 0 1280x720x24")
+    launcher=(xvfb-run -a --server-args="-screen 0 1920x1080x24")
 else
     launcher=()
 fi

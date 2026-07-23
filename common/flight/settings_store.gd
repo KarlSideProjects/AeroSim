@@ -199,6 +199,12 @@ func _normalize_loaded_document(candidate: Variant) -> Variant:
             var normalized_slot_profile: Dictionary = slot_profile.duplicate(true)
             if typeof(normalized_slot_profile.get("schema_version")) in [TYPE_INT, TYPE_FLOAT]:
                 normalized_slot_profile["schema_version"] = _normalize_integer_json_value(normalized_slot_profile["schema_version"])
+            var positions = normalized_slot_profile.get("positions")
+            if slot == "osd" and normalized_slot_profile.get("schema_version") == OsdProfile.SCHEMA_VERSION and typeof(positions) == TYPE_DICTIONARY \
+                    and positions.get("warnings") == {"x": 0.03, "y": 0.78} \
+                    and positions.get("reset_hint") == {"x": 0.03, "y": 0.90}:
+                normalized_slot_profile["positions"]["warnings"] = OsdProfile.DEFAULT_POSITIONS["warnings"].duplicate(true)
+                normalized_slot_profile["positions"]["reset_hint"] = OsdProfile.DEFAULT_POSITIONS["reset_hint"].duplicate(true)
             normalized[slot] = normalized_slot_profile
     return normalized
 

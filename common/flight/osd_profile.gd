@@ -18,8 +18,8 @@ const DEFAULT_POSITIONS := {
     "timer": {"x": 0.35, "y": 0.04},
     "lap_checkpoint": {"x": 0.35, "y": 0.10},
     "signal": {"x": 0.68, "y": 0.66},
-    "warnings": {"x": 0.03, "y": 0.78},
-    "reset_hint": {"x": 0.03, "y": 0.90},
+    "warnings": {"x": 0.03, "y": 0.25},
+    "reset_hint": {"x": 0.68, "y": 0.90},
 }
 
 
