@@ -1459,10 +1459,10 @@ func _row_normal(row: PackedFloat64Array) -> Vector3:
     return Vector3(row[18], row[19], row[20])
 
 func _row_roll_degrees(row: PackedFloat64Array) -> float:
-    return rad_to_deg(2.0 * atan2(float(row[6]), float(row[7])))
+    return rad_to_deg(2.0 * atan2(float(row[4]), float(row[7])))
 
 func _row_pitch_degrees(row: PackedFloat64Array) -> float:
-    return rad_to_deg(2.0 * atan2(float(row[4]), float(row[7])))
+    return rad_to_deg(2.0 * atan2(float(row[6]), float(row[7])))
 
 func _body_state_finite(body: RigidBody3D) -> bool:
     var q := body.global_transform.basis.get_rotation_quaternion()
@@ -2273,7 +2273,7 @@ func _verify_runtime_actions() -> bool:
     var acro_rate_observed := false
     for _frame in range(Engine.physics_ticks_per_second / 2):
         await physics_frame
-        if absf(scene.drone_body.angular_velocity.z) > 1.0:
+        if absf(scene.drone_body.angular_velocity.x) > 1.0:
             acro_rate_observed = true
             break
     scene.acro_roll_stick = 0.0
@@ -2282,7 +2282,7 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     if scene.last_collision_authority != 0 or not acro_rate_observed:
-        push_error("flight runtime ACRO path must hand back and respond to rates input within 0.5 seconds; authority=%d angular_z=%f" % [scene.last_collision_authority, scene.drone_body.angular_velocity.z])
+        push_error("flight runtime ACRO path must hand back and respond to rates input within 0.5 seconds; authority=%d angular_x=%f" % [scene.last_collision_authority, scene.drone_body.angular_velocity.x])
         scene.queue_free()
         return false
     scene.flight_mode = "ANGLE"
