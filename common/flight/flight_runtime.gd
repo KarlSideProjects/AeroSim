@@ -1575,6 +1575,9 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
     var body = _secondary_body(vehicle_name)
     if body == null or _airsim_secondary_native == null:
         return
+    if _airsim_secondary_native.has_method("flight_control_armed") and not bool(_airsim_secondary_native.call("flight_control_armed")) and not bool(_airsim_secondary_native.call("arm_flight_control", 0.0)):
+        push_error("Secondary AirSim vehicle could not arm: %s" % String(_airsim_secondary_native.call("flight_control_arm_reject_code")))
+        return
     body.freeze = false
     body.sleeping = false
     if not _sync_named_native(body, _airsim_secondary_native):

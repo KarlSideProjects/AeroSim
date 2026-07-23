@@ -1215,6 +1215,7 @@ func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void
     runtime._begin_complete_replay_recording({"SettingsVersion": 1.2, "SimMode": "Multirotor"})
     assert_true(runtime._replay_recording_active)
     runtime._physics_process(1.0 / 240.0)
+    assert_true(bool(lower.call("flight_control_armed")))
     var finish: Dictionary = runtime._finish_complete_replay_recording("gut-runtime")
     assert_true(bool(finish.get("ok", false)))
     var recorded: Dictionary = JSON.parse_string(String(finish.get("serialized", "")))
