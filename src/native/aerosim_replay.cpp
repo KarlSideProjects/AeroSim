@@ -2063,6 +2063,10 @@ bool ReplaySessionRecorder::record_simulation_operation(
     event.simulation_operation = operation;
     event.simulation_value = value;
     session_.events.push_back(std::move(event));
+    if (operation == ReplaySimulationOperation::Reset || operation == ReplaySimulationOperation::Respawn) {
+        checkpoint_collisions_ = {};
+        checkpoint_scene_objects_.clear();
+    }
     diagnostic_ = {};
     return true;
 }
@@ -2088,6 +2092,10 @@ bool ReplaySessionRecorder::record_collision(
     event.type = ReplayEventType::Collision;
     event.vehicle_name = vehicle_name;
     event.collision = {controller_authority, contact};
+    const auto vehicle = std::find_if(session_.vehicles.begin(), session_.vehicles.end(), [&](const ReplayVehicleConfig &entry) {
+        return entry.name == vehicle_name;
+    });
+    checkpoint_collisions_[static_cast<std::size_t>(std::distance(session_.vehicles.begin(), vehicle))] = event.collision;
     session_.events.push_back(std::move(event));
     diagnostic_ = {};
     return true;
@@ -2115,6 +2123,24 @@ bool ReplaySessionRecorder::record_scene_object(
     event.object_asset_id = std::move(asset_id);
     event.object_position = position;
     event.object_orientation = orientation;
+    if (operation == ReplaySceneObjectOperation::Reset) {
+        checkpoint_scene_objects_.clear();
+    } else {
+        const auto existing = std::find_if(checkpoint_scene_objects_.begin(), checkpoint_scene_objects_.end(), [&](const ReplaySceneObjectState &object) {
+            return object.name == event.object_name;
+        });
+        if (operation == ReplaySceneObjectOperation::Destroy) {
+            if (existing != checkpoint_scene_objects_.end()) {
+                checkpoint_scene_objects_.erase(existing);
+            }
+        } else if (existing == checkpoint_scene_objects_.end()) {
+            checkpoint_scene_objects_.push_back({event.object_name, event.object_asset_id, event.object_position, event.object_orientation});
+        } else {
+            existing->asset_id = event.object_asset_id;
+            existing->position = event.object_position;
+            existing->orientation = event.object_orientation;
+        }
+    }
     session_.events.push_back(std::move(event));
     diagnostic_ = {};
     return true;
@@ -2164,6 +2190,8 @@ bool ReplaySessionRecorder::record_checkpoint(std::uint64_t timestamp_us, Replay
         return fail(ReplayDiagnosticCode::InvalidSession, "replay checkpoints must be monotonic");
     }
     checkpoint.timestamp_us = timestamp_us;
+    checkpoint.collisions = checkpoint_collisions_;
+    checkpoint.scene_objects = checkpoint_scene_objects_;
     checkpoint.environment_json = environment_json_;
     session_.checkpoints.push_back(std::move(checkpoint));
     diagnostic_ = {};
@@ -2606,9 +2634,6 @@ ReplayRunResult replay_session(
                 return false;
             }
         }
-        if (has_recorded_checkpoints && count > 0) {
-            checkpoint_recorded_at(timestamp_us);
-        }
         return true;
     };
     const auto step_seconds = [&](double seconds, std::uint64_t timestamp_us) {
@@ -2642,6 +2667,7 @@ ReplayRunResult replay_session(
             if (!advance_segment(checkpoint_timestamp_us - cursor_us, checkpoint_timestamp_us)) {
                 return false;
             }
+            checkpoint_recorded_at(checkpoint_timestamp_us);
             cursor_us = checkpoint_timestamp_us;
         }
         if (!advance_segment(timestamp_us - cursor_us, timestamp_us)) {

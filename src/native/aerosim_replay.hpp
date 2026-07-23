@@ -195,6 +195,8 @@ private:
     std::unordered_map<std::string, ReplayAsyncLifecycle> async_lifecycle_;
     std::unordered_map<std::string, std::string> async_methods_;
     std::string environment_json_;
+    std::array<ReplayCollision, 2> checkpoint_collisions_;
+    std::vector<ReplaySceneObjectState> checkpoint_scene_objects_;
     bool finished_ = false;
 
     bool fail(ReplayDiagnosticCode code, std::string message);

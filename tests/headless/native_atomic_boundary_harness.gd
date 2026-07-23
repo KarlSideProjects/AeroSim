@@ -13,10 +13,14 @@ func _init() -> void:
             ok = _verify_sparse_px4()
         "negative":
             ok = _verify_negative_step()
+        "huge_angle":
+            ok = _verify_huge_angle_step()
+        "trajectory_contract":
+            ok = _verify_trajectory_contract()
         "imu_rollback":
             ok = _verify_imu_rollback()
         _:
-            push_error("--scenario sparse_px4, negative, or imu_rollback is required")
+            push_error("--scenario sparse_px4, negative, huge_angle, trajectory_contract, or imu_rollback is required")
     quit(0 if ok else 1)
 
 
@@ -56,6 +60,29 @@ func _verify_negative_step() -> bool:
     if not row.is_empty() or String(native.call("last_step_error")) != expected:
         push_error("invalid public step did not expose the exact native error")
         return false
+    return true
+
+
+func _verify_huge_angle_step() -> bool:
+    var native := _native()
+    if native == null or not _configure_airframe(native) or not native.call("arm_flight_control", 0.0):
+        return false
+    var row: PackedFloat64Array = native.call("step_angle_mode", 240, 1000, 0.5, 1.0e300, 0.0, 0.0)
+    if row.size() != 12 or not String(native.call("last_step_error")).is_empty():
+        push_error("huge finite public angle command must complete without an error")
+        return false
+    return true
+
+
+func _verify_trajectory_contract() -> bool:
+    var native := _native()
+    if native == null or not _configure_airframe(native):
+        return false
+    for thrust in [NAN, -1.0, 5.0]:
+        var result: Dictionary = native.call("simulate_trajectory", 1.0, 240, 1000, thrust)
+        if String(result.get("status", "")) != "InvalidCommand" or not PackedFloat64Array(result.get("rows", PackedFloat64Array())).is_empty() or int(result.get("failed_frame", -2)) != -1:
+            push_error("trajectory must reject invalid public thrust commands without rows")
+            return false
     return true
 
 

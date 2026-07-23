@@ -59,13 +59,7 @@ Quat normalized_quat(const Quat &q) {
 }
 
 double wrap_pi(double angle) {
-    while (angle > kPi) {
-        angle -= 2.0 * kPi;
-    }
-    while (angle < -kPi) {
-        angle += 2.0 * kPi;
-    }
-    return angle;
+    return normalize_angle_radians(angle);
 }
 
 double move_toward(double current, double target, double maximum_delta) {

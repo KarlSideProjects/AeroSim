@@ -49,10 +49,13 @@ func run() -> Dictionary:
     if not native.call("arm_flight_control", 0.0) or not lower_native.call("arm_flight_control", 0.0):
         return _failure("distinct native replay controllers did not arm")
     var initial_row: PackedFloat64Array = native.call("step_angle_mode", 240, 1000, 0.65, 2.0, -1.0, 5.0)
-    var lower_row: PackedFloat64Array = lower_native.call("step_angle_mode", 240, 1000, 0.70, -2.0, 1.0, -5.0)
+    var lower_row: PackedFloat64Array = lower_native.call(
+        "step_collision_angle_mode", 240, 1000, 0.70, -2.0, 1.0, -5.0,
+        true, 0.0, 1.0, 0.0, 0.0, 2.0, 0.0, 0.25,
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)
     native.call("capture_replay_recorded_response", true)
     lower_native.call("capture_replay_recorded_response", true)
-    if initial_row.size() != 12 or lower_row.size() != 12:
+    if initial_row.size() != 12 or lower_row.is_empty():
         return _failure("distinct native replay steps failed")
     error = _expect_ok(native.call("record_replay_command", 0, "DroneA", 0.65, 2.0, -1.0, 5.0, 0), "upper command")
     if not error.is_empty():
@@ -60,13 +63,19 @@ func run() -> Dictionary:
     error = _expect_ok(native.call("record_replay_command", 0, "DroneB", 0.70, -2.0, 1.0, -5.0, 0), "lower command")
     if not error.is_empty():
         return _failure(error)
+    error = _expect_ok(native.call(
+        "record_replay_collision", 2000, "DroneB", true,
+        0.0, 1.0, 0.0, 0.0, 2.0, 0.0, 0.25,
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, true, 1), "collision")
+    if not error.is_empty():
+        return _failure(error)
     error = _expect_ok(native.call("record_replay_simulation_operation", 2000, 2, 1.0), "step")
     if not error.is_empty():
         return _failure(error)
-    error = _expect_ok(native.call("record_replay_checkpoint", 2000, initial_row, lower_row, lower_native), "stepped checkpoint")
+    error = _expect_ok(native.call("record_replay_scene_object", 2000, 0, "crate", "primitive_box", Vector3(1.0, 2.0, 3.0), Quaternion.IDENTITY), "scene")
     if not error.is_empty():
         return _failure(error)
-    error = _expect_ok(native.call("record_replay_scene_object", 2000, 0, "crate", "primitive_box", Vector3(1.0, 2.0, 3.0), Quaternion.IDENTITY), "scene")
+    error = _expect_ok(native.call("record_replay_checkpoint", 2500, initial_row, lower_row, lower_native), "stepped checkpoint")
     if not error.is_empty():
         return _failure(error)
     atmosphere["rain"] = 0.25
@@ -95,7 +104,10 @@ func run() -> Dictionary:
     var controllers: Array = checkpoint.get("controllers", [])
     var clocks: Array = checkpoint.get("clocks", [])
     var responses: Array = checkpoint.get("first_response_substeps", [])
-    if controllers.size() != 2 or clocks.size() != 2 or responses.size() != 2:
+    var collisions: Array = checkpoint.get("collisions", [])
+    var scene_objects: Array = checkpoint.get("scene_objects", [])
+    if controllers.size() != 2 or clocks.size() != 2 or responses.size() != 2 or collisions.size() != 2 or scene_objects.size() != 1 \
+            or not bool((collisions[1] as Dictionary).get("touching", false)) or String((scene_objects[0] as Dictionary).get("name", "")) != "crate":
         return _failure("schema-v3 checkpoint state is incomplete")
     for vehicle_index in range(2):
         var controller: Dictionary = controllers[vehicle_index]

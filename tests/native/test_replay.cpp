@@ -247,37 +247,29 @@ bool test_checkpoint_round_trip_preserves_atmosphere() {
 }
 
 bool test_checkpoint_round_trip_preserves_collision_and_scene_state() {
-    aerosim::ReplaySession session;
-    session.seed = 42;
-    session.settings_manifest_hash = "settings-manifest-v1";
-    session.vehicles = {
-            {"DroneA", "drone-a-hash", "{\"mass_kg\":1.0}"},
-            {"DroneB", "drone-b-hash", "{\"mass_kg\":1.0}"},
-    };
-    aerosim::ReplayEvent environment;
-    environment.type = aerosim::ReplayEventType::Environment;
-    environment.environment_json = complete_atmosphere(23);
-    session.events.push_back(environment);
-    session.termination_timestamp_us = 2000;
-    session.termination_reason = "completed";
-
-    aerosim::ReplayRunCheckpoint checkpoint;
-    checkpoint.timestamp_us = 1000;
-    checkpoint.collisions[1].authority = aerosim::ReplayControllerAuthority::Jolt;
-    checkpoint.collisions[1].contact.touching = true;
-    checkpoint.collisions[1].contact.normal = {0.0, 1.0, 0.0};
-    checkpoint.collisions[1].contact.impulse = {0.0, 2.0, 0.0};
-    checkpoint.collisions[1].contact.restitution = 0.25;
-    checkpoint.collisions[1].contact.has_resolved_state = true;
-    checkpoint.collisions[1].contact.resolved_velocity = {1.0, 2.0, 3.0};
-    checkpoint.collisions[1].contact.resolved_angular_velocity = {4.0, 5.0, 6.0};
-    checkpoint.collisions[1].contact.max_kinetic_energy_joules = 7.0;
-    checkpoint.scene_objects.push_back({"crate", "primitive_box", {1.0, 2.0, 3.0}, {0.0, 0.0, 0.0, 1.0}});
-    checkpoint.environment_json = complete_atmosphere(23);
-    session.checkpoints.push_back(checkpoint);
+    aerosim::ReplaySessionRecorder recorder(42, "settings-manifest-v1");
+    aerosim::CollisionContact contact;
+    contact.touching = true;
+    contact.normal = {0.0, 1.0, 0.0};
+    contact.impulse = {0.0, 2.0, 0.0};
+    contact.restitution = 0.25;
+    contact.has_resolved_state = true;
+    contact.resolved_velocity = {1.0, 2.0, 3.0};
+    contact.resolved_angular_velocity = {4.0, 5.0, 6.0};
+    contact.max_kinetic_energy_joules = 7.0;
+    aerosim::DualAircraftState state;
+    if (!recorder.add_vehicle("DroneA", "drone-a-hash", "{\"mass_kg\":1.0}") ||
+            !recorder.add_vehicle("DroneB", "drone-b-hash", "{\"mass_kg\":1.0}") ||
+            !recorder.record_environment(0, complete_atmosphere(23)) ||
+            !recorder.record_collision(1000, "DroneB", contact, aerosim::ReplayControllerAuthority::Jolt) ||
+            !recorder.record_scene_object(1000, aerosim::ReplaySceneObjectOperation::Spawn,
+                    "crate", "primitive_box", {1.0, 2.0, 3.0}) ||
+            !recorder.record_checkpoint(1000, state) || !recorder.finish(2000, "completed")) {
+        return false;
+    }
 
     const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(
-            aerosim::serialize_replay_session(session), "settings-manifest-v1");
+            recorder.serialize(), "settings-manifest-v1");
     if (!loaded.ok || loaded.session.checkpoints.size() != 1 ||
             loaded.session.checkpoints[0].collisions[1].contact.restitution != 0.25 ||
             loaded.session.checkpoints[0].scene_objects.size() != 1 ||
@@ -739,17 +731,6 @@ bool test_checked_replay_batches() {
 }
 
 bool test_schema_v3_controller_snapshot_divergence() {
-    aerosim::ReplaySession session;
-    session.schema_version = aerosim::kCompleteReplaySchemaVersion;
-    session.seed = 1;
-    session.settings_manifest_hash = "manifest";
-    session.vehicles = {{"DroneA", "hash-a", "{}"}, {"DroneB", "hash-b", "{}"}};
-    aerosim::ReplayEvent environment;
-    environment.type = aerosim::ReplayEventType::Environment;
-    environment.environment_json = complete_atmosphere();
-    session.events.push_back(environment);
-    session.termination_timestamp_us = 1;
-    session.termination_reason = "completed";
     aerosim::ReplayRunCheckpoint checkpoint;
     checkpoint.timestamp_us = 1;
     checkpoint.controllers[0].target_rate_frd.x = 0.25;
@@ -765,8 +746,7 @@ bool test_schema_v3_controller_snapshot_divergence() {
             !checkpoint_recorder.finish(1, "completed")) {
         return false;
     }
-    session.checkpoints.push_back(checkpoint);
-    const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(aerosim::serialize_replay_session(session), "manifest");
+    const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(checkpoint_recorder.serialize(), "manifest");
     if (!loaded.ok || loaded.session.schema_version != 3 ||
             loaded.session.checkpoints[0].controllers[0].rate_integral[1] != 0.5 ||
             !loaded.session.checkpoints[0].controllers[0].motor_saturation_latched[2]) {

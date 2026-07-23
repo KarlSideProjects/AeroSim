@@ -2136,15 +2136,14 @@ Dictionary AeroSimNative::simulate_trajectory(
     config.seconds = seconds;
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
-    config.total_thrust_newtons = flight_controller_.armed() ? total_thrust_newtons : 0.0;
-    if (flight_controller_.armed()) {
-        config.initial_state.motor_thrust_newtons.fill(total_thrust_newtons / 4.0);
-    } else {
-        config.initial_state.motor_thrust_newtons = {};
-    }
     config.a4_ground_effect = a4_ground_effect_config_;
 
     PackedFloat64Array rows;
+    if (!std::isfinite(total_thrust_newtons) || total_thrust_newtons < 0.0 ||
+            !std::isfinite(config.max_total_thrust_newtons) ||
+            total_thrust_newtons > config.max_total_thrust_newtons) {
+        return trajectory_status(aerosim::StepStatus::InvalidCommand, rows, -1);
+    }
     if (!std::isfinite(config.seconds) || config.seconds < 0.0 ||
             !valid_simulation_timing(config.physics_hz, config.substep_hz) ||
             !std::isfinite(config.mass_kg) || config.mass_kg <= 0.0 ||
@@ -2154,29 +2153,34 @@ Dictionary AeroSimNative::simulate_trajectory(
     if (config.seconds == 0.0) {
         return trajectory_status(aerosim::StepStatus::Ok, rows, -1);
     }
-    aerosim::RigidBodyState state = config.initial_state;
-    aerosim::SimulationClock clock;
-    constexpr std::size_t kMaxTrajectoryFrames = 1000000;
-    const double frames_as_double = std::ceil(config.seconds * static_cast<double>(config.physics_hz));
-    if (!std::isfinite(frames_as_double) || frames_as_double <= 0.0 ||
-            frames_as_double > static_cast<double>(kMaxTrajectoryFrames) ||
-            frames_as_double * static_cast<double>(config.substep_hz) /
-                    static_cast<double>(config.physics_hz) > static_cast<double>(kMaxTrajectoryFrames)) {
+    const long double requested_frames = std::ceil(
+            static_cast<long double>(config.seconds) * static_cast<long double>(config.physics_hz));
+    if (!std::isfinite(requested_frames) || requested_frames > static_cast<long double>(aerosim::kMaxBatchTrajectoryFrames) ||
+            requested_frames * static_cast<long double>(config.substep_hz) / static_cast<long double>(config.physics_hz) >
+                    static_cast<long double>(aerosim::kMaxBatchTrajectoryFrames)) {
         return trajectory_status(aerosim::StepStatus::ResourceLimitExceeded, rows, -1);
     }
-    const std::size_t physics_frames = static_cast<std::size_t>(frames_as_double);
+    const double hover_thrust_newtons = config.mass_kg * config.gravity_mps2;
+    if (!std::isfinite(hover_thrust_newtons) || hover_thrust_newtons <= 0.0 ||
+            !std::isfinite(config.hover_throttle) || config.hover_throttle <= 0.0) {
+        return trajectory_status(aerosim::StepStatus::InvalidConfig, rows, -1);
+    }
+    aerosim::FlightCommand command;
+    command.throttle = flight_controller_.armed()
+            ? total_thrust_newtons * config.hover_throttle / hover_thrust_newtons : 0.0;
+    const aerosim::ReplayBatchResult batch = aerosim::replay_angle_mode_seconds_batch(config, command, config.seconds);
+    if (batch.status != aerosim::StepStatus::Ok) {
+        const std::int64_t failed_frame = batch.failed_frame == aerosim::kNoFailedReplayFrame
+                ? -1 : static_cast<std::int64_t>(batch.failed_frame);
+        return trajectory_status(batch.status, PackedFloat64Array(), failed_frame);
+    }
     const std::size_t stride = static_cast<std::size_t>(trajectory_stride());
-    if (physics_frames > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) / stride ||
-            rows.resize(static_cast<std::int64_t>(physics_frames * stride)) != godot::OK) {
+    if (batch.rows.size() > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) / stride ||
+            rows.resize(static_cast<std::int64_t>(batch.rows.size() * stride)) != godot::OK) {
         return trajectory_status(aerosim::StepStatus::ResourceLimitExceeded, PackedFloat64Array(), -1);
     }
     std::size_t row_index = 0;
-    for (std::size_t frame = 0; frame < physics_frames; ++frame) {
-        apply_wind(config, state, clock, wind_field_);
-        const aerosim::TrajectorySample sample = aerosim::step_physics_frame(state, clock, config);
-        if (sample.substeps == 0) {
-            return trajectory_status(aerosim::StepStatus::InvalidState, PackedFloat64Array(), static_cast<std::int64_t>(frame));
-        }
+    for (const aerosim::TrajectorySample &sample : batch.rows) {
         rows.set(static_cast<std::int64_t>(row_index++), sample.time_seconds);
         rows.set(static_cast<std::int64_t>(row_index++), sample.state.position.x);
         rows.set(static_cast<std::int64_t>(row_index++), sample.state.position.y);
