@@ -2109,7 +2109,7 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     row.append(sample.state.angular_velocity.x);
     row.append(sample.state.angular_velocity.y);
     row.append(sample.state.angular_velocity.z);
-    row.append(aerosim::kinetic_energy_joules(sample.state, config.mass_kg));
+    row.append(aerosim::kinetic_energy_joules(sample.state, config));
     row.append(result.normal.x);
     row.append(result.normal.y);
     row.append(result.normal.z);
@@ -2359,7 +2359,7 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
     row.append(sample.state.angular_velocity.x);
     row.append(sample.state.angular_velocity.y);
     row.append(sample.state.angular_velocity.z);
-    row.append(aerosim::kinetic_energy_joules(sample.state, config.mass_kg));
+    row.append(aerosim::kinetic_energy_joules(sample.state, config));
     row.append(result.normal.x);
     row.append(result.normal.y);
     row.append(result.normal.z);
@@ -2470,7 +2470,7 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     row.append(sample.state.angular_velocity.x);
     row.append(sample.state.angular_velocity.y);
     row.append(sample.state.angular_velocity.z);
-    row.append(aerosim::kinetic_energy_joules(sample.state, config.mass_kg));
+    row.append(aerosim::kinetic_energy_joules(sample.state, config));
     row.append(result.normal.x);
     row.append(result.normal.y);
     row.append(result.normal.z);

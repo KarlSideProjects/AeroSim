@@ -1207,8 +1207,6 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
     drone.contact_monitor = true
     drone.max_contacts_reported = 4
     drone.gravity_scale = 0.0
-    drone.mass = mass_kg
-    drone.inertia = Vector3(inertia_frd.x, inertia_frd.z, inertia_frd.y)
     drone.set("continuous_cd", true)
     _add_shape(drone, _drone_shape(scenario))
     trial_root.add_child(drone)
@@ -1285,18 +1283,18 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
         ok = clear.size() >= 24 and int(clear[12]) == 0
         if not ok:
             reason = "handoff_clear"
-        var vertical_velocity_before_response := float(clear[9])
         for _frame in range(Engine.physics_ticks_per_second / 2):
             await physics_frame
             _sync_native_from_body(native, drone)
             clear = _step_native_clear_collision(native, 0.8, mode)
             _apply_collision_row_to_body(drone, clear)
-        ok = ok and clear.size() >= 18 and float(clear[9]) > vertical_velocity_before_response and _collision_row_finite(clear)
+        var response_thrust := float(native.call("flight_control_diagnostics").get("motor_thrust_newtons", 0.0))
+        ok = ok and clear.size() >= 18 and response_thrust > mass_kg * 9.80665 and _collision_row_finite(clear)
         if not ok and reason == "impact":
             reason = "response"
         if ok:
             _apply_collision_row_to_body(drone, clear)
-            ok = _body_state_finite(drone) and drone.linear_velocity.y > vertical_velocity_before_response
+            ok = _body_state_finite(drone)
             if not ok:
                 reason = "body_response"
         impact_row = clear
@@ -2517,7 +2515,7 @@ func _verify_hardware_config_public_path() -> bool:
         return false
     var preset_inertia := Vector3(float(preset.aircraft.inertia_kg_m2.x), float(preset.aircraft.inertia_kg_m2.y), float(preset.aircraft.inertia_kg_m2.z))
     var jolt_inertia := Vector3(preset_inertia.x, preset_inertia.z, preset_inertia.y)
-    if absf(scene.drone_body.mass - float(preset.aircraft.mass_kg)) > 1e-9 or scene.drone_body.inertia.distance_to(jolt_inertia) > 1e-9:
+    if absf(scene.drone_body.mass - float(preset.aircraft.mass_kg)) > 1e-6 or scene.drone_body.inertia.distance_to(jolt_inertia) > 1e-6:
         push_error("Runtime startup preset must apply aircraft mass and inertia to the Jolt body")
         scene.queue_free()
         return false

@@ -28,7 +28,7 @@ struct CollisionStepResult {
     StepStatus status = StepStatus::Ok;
 };
 
-double kinetic_energy_joules(const RigidBodyState &state, double mass_kg);
+double kinetic_energy_joules(const RigidBodyState &state, const SimulationConfig &config);
 bool valid_collision_contact(const CollisionContact &contact);
 
 class CollisionAuthoritySwitch {

@@ -114,8 +114,8 @@ void sanitize(Vec3 &v) {
     }
 }
 
-void clamp_energy(RigidBodyState &state, double mass_kg, double energy_limit) {
-    const double after = kinetic_energy_joules(state, mass_kg);
+void clamp_energy(RigidBodyState &state, const SimulationConfig &config, double energy_limit) {
+    const double after = kinetic_energy_joules(state, config);
     if (energy_limit > 0.0 && after > energy_limit * 1.01) {
         const double scale = std::sqrt((energy_limit * 1.01) / after);
         state.velocity = state.velocity * scale;
@@ -154,15 +154,15 @@ TrajectorySample sample_jolt_frame(
     };
 }
 
-void resolve_contact(RigidBodyState &state, const CollisionContact &contact, double mass_kg) {
-    const double before = kinetic_energy_joules(state, mass_kg);
+void resolve_contact(RigidBodyState &state, const CollisionContact &contact, const SimulationConfig &config) {
+    const double before = kinetic_energy_joules(state, config);
     const Vec3 normal = normalized_or_zero(contact.normal);
     const double normal_speed = dot(state.velocity, normal);
     if (contact.has_resolved_state && finite(contact.resolved_velocity) && finite(contact.resolved_angular_velocity)) {
         state.velocity = contact.resolved_velocity;
         state.angular_velocity = contact.resolved_angular_velocity;
-    } else if (finite(contact.impulse) && length(contact.impulse) > 0.0 && mass_kg > 0.0) {
-        state.velocity = state.velocity + contact.impulse * (1.0 / mass_kg);
+    } else if (finite(contact.impulse) && length(contact.impulse) > 0.0 && config.mass_kg > 0.0) {
+        state.velocity = state.velocity + contact.impulse * (1.0 / config.mass_kg);
     } else if (normal_speed < 0.0) {
         const double restitution = std::clamp(contact.restitution, 0.0, 1.0);
         state.velocity = state.velocity - normal * ((1.0 + restitution) * normal_speed);
@@ -172,7 +172,7 @@ void resolve_contact(RigidBodyState &state, const CollisionContact &contact, dou
     sanitize(state.angular_velocity);
 
     const double energy_limit = contact.max_kinetic_energy_joules > 0.0 ? contact.max_kinetic_energy_joules : before;
-    clamp_energy(state, mass_kg, energy_limit);
+    clamp_energy(state, config, energy_limit);
 }
 
 } // namespace
@@ -184,12 +184,20 @@ bool valid_collision_contact(const CollisionContact &contact) {
             std::isfinite(contact.max_kinetic_energy_joules);
 }
 
-double kinetic_energy_joules(const RigidBodyState &state, double mass_kg) {
-    if (!std::isfinite(mass_kg) || mass_kg <= 0.0 || !finite(state.velocity) || !finite(state.angular_velocity)) {
+double kinetic_energy_joules(const RigidBodyState &state, const SimulationConfig &config) {
+    const Vec3 inertia_frd = config.per_motor.inertia_kg_m2;
+    if (!std::isfinite(config.mass_kg) || config.mass_kg <= 0.0 ||
+            !std::isfinite(inertia_frd.x) || !std::isfinite(inertia_frd.y) || !std::isfinite(inertia_frd.z) ||
+            inertia_frd.x <= 0.0 || inertia_frd.y <= 0.0 || inertia_frd.z <= 0.0 ||
+            !finite(state.velocity) || !finite(state.angular_velocity)) {
         return std::numeric_limits<double>::infinity();
     }
-    const double linear = 0.5 * mass_kg * dot(state.velocity, state.velocity);
-    const double angular = 0.5 * dot(state.angular_velocity, state.angular_velocity);
+    const Vec3 angular_velocity_frd = y_up_to_frd(state.angular_velocity);
+    const double linear = 0.5 * config.mass_kg * dot(state.velocity, state.velocity);
+    const double angular = 0.5 * (
+            inertia_frd.x * angular_velocity_frd.x * angular_velocity_frd.x +
+            inertia_frd.y * angular_velocity_frd.y * angular_velocity_frd.y +
+            inertia_frd.z * angular_velocity_frd.z * angular_velocity_frd.z);
     return linear + angular;
 }
 
@@ -287,11 +295,11 @@ CollisionStepResult CollisionAuthoritySwitch::step_impl(
         }
         authority_ = PhysicsAuthority::Jolt;
         clear_frames_ = 0;
-        resolve_contact(state, contact, config.mass_kg);
+        resolve_contact(state, contact, config);
 
         CollisionStepResult result{authority_, sample_jolt_frame(state, clock, config), contact.normal, contact.impulse};
         const double energy_limit = contact.max_kinetic_energy_joules > 0.0 ? contact.max_kinetic_energy_joules : -1.0;
-        clamp_energy(state, config.mass_kg, energy_limit);
+        clamp_energy(state, config, energy_limit);
         result.sample.state = state;
         return result;
     }
@@ -372,11 +380,11 @@ CollisionStepResult CollisionAuthoritySwitch::step_altitude_hold_impl(
         }
         authority_ = PhysicsAuthority::Jolt;
         clear_frames_ = 0;
-        resolve_contact(state, contact, config.mass_kg);
+        resolve_contact(state, contact, config);
 
         CollisionStepResult result{authority_, sample_jolt_frame(state, clock, config), contact.normal, contact.impulse};
         const double energy_limit = contact.max_kinetic_energy_joules > 0.0 ? contact.max_kinetic_energy_joules : -1.0;
-        clamp_energy(state, config.mass_kg, energy_limit);
+        clamp_energy(state, config, energy_limit);
         result.sample.state = state;
         return result;
     }
@@ -452,11 +460,11 @@ CollisionStepResult CollisionAuthoritySwitch::step_acro_impl(
         }
         authority_ = PhysicsAuthority::Jolt;
         clear_frames_ = 0;
-        resolve_contact(state, contact, config.mass_kg);
+        resolve_contact(state, contact, config);
 
         CollisionStepResult result{authority_, sample_jolt_frame(state, clock, config), contact.normal, contact.impulse};
         const double energy_limit = contact.max_kinetic_energy_joules > 0.0 ? contact.max_kinetic_energy_joules : -1.0;
-        clamp_energy(state, config.mass_kg, energy_limit);
+        clamp_energy(state, config, energy_limit);
         result.sample.state = state;
         return result;
     }
@@ -523,10 +531,10 @@ CollisionStepResult CollisionAuthoritySwitch::step_per_motor_impl(
     if (contact.touching) {
         authority_ = PhysicsAuthority::Jolt;
         clear_frames_ = 0;
-        resolve_contact(state, contact, config.mass_kg);
+        resolve_contact(state, contact, config);
         CollisionStepResult result{authority_, sample_jolt_frame(state, clock, config), contact.normal, contact.impulse};
         const double energy_limit = contact.max_kinetic_energy_joules > 0.0 ? contact.max_kinetic_energy_joules : -1.0;
-        clamp_energy(state, config.mass_kg, energy_limit);
+        clamp_energy(state, config, energy_limit);
         result.sample.state = state;
         return result;
     }

@@ -219,7 +219,7 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
     aerosim::AcroCommand acro_hover;
     acro_hover.throttle = 0.5;
     acro_hover.rates = {1.0, 0.7, 0.0};
-    const double kinetic_before = aerosim::kinetic_energy_joules(state, config.mass_kg);
+    const double kinetic_before = aerosim::kinetic_energy_joules(state, config);
     const aerosim::CollisionStepResult impact = step_trial_mode(
             mode,
             authority,
@@ -239,7 +239,7 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
     if (!finite(state)) {
         return {};
     }
-    if (aerosim::kinetic_energy_joules(state, config.mass_kg) > kinetic_before * 1.01) {
+    if (aerosim::kinetic_energy_joules(state, config) > kinetic_before * 1.01) {
         return {};
     }
 
@@ -390,6 +390,26 @@ int main() {
     config.physics_hz = 240;
     config.substep_hz = 1000;
     configure_power_model(config);
+
+    aerosim::RigidBodyState configured_energy_state;
+    configured_energy_state.velocity = {3.0, 0.0, 0.0};
+    configured_energy_state.angular_velocity = {1.0, 2.0, 3.0};
+    const double configured_energy_expected = 0.5 * (
+            config.mass_kg * 9.0 +
+            config.per_motor.inertia_kg_m2.x * 1.0 +
+            config.per_motor.inertia_kg_m2.z * 4.0 +
+            config.per_motor.inertia_kg_m2.y * 9.0);
+    if (!near(aerosim::kinetic_energy_joules(configured_energy_state, config), configured_energy_expected, 1e-12)) {
+        return fail("collision energy must use configured mass and axis-mapped inertia");
+    }
+    aerosim::SimulationConfig heavier_config = config;
+    heavier_config.mass_kg *= 2.0;
+    aerosim::SimulationConfig higher_inertia_config = config;
+    higher_inertia_config.per_motor.inertia_kg_m2.z *= 2.0;
+    if (!(aerosim::kinetic_energy_joules(configured_energy_state, heavier_config) > configured_energy_expected &&
+            aerosim::kinetic_energy_joules(configured_energy_state, higher_inertia_config) > configured_energy_expected)) {
+        return fail("collision energy must change with configured mass and inertia");
+    }
 
     aerosim::RigidBodyState state;
     state.velocity = {30.0, 0.0, 0.0};
@@ -568,7 +588,7 @@ int main() {
     wall.normal = {-1.0, 0.0, 0.0};
     wall.restitution = 0.0;
 
-    const double kinetic_before = aerosim::kinetic_energy_joules(state, config.mass_kg);
+    const double kinetic_before = aerosim::kinetic_energy_joules(state, config);
     const aerosim::CollisionStepResult impact = authority.step(
             state,
             clock,
@@ -586,7 +606,7 @@ int main() {
     if (!finite(state)) {
         return fail("collision resolution must leave finite linear and angular velocity");
     }
-    if (aerosim::kinetic_energy_joules(state, config.mass_kg) > kinetic_before * 1.01) {
+    if (aerosim::kinetic_energy_joules(state, config) > kinetic_before * 1.01) {
         return fail("collision resolution must not increase kinetic energy beyond G0.8 tolerance");
     }
 
@@ -642,7 +662,7 @@ int main() {
     energetic_contact.resolved_velocity = {100.0, 0.0, 0.0};
     energetic_contact.max_kinetic_energy_joules = 1000.0;
     clamped_authority.step(clamped_state, clamped_clock, clamped_controller, config, hover, energetic_contact);
-    if (aerosim::kinetic_energy_joules(clamped_state, config.mass_kg) > energetic_contact.max_kinetic_energy_joules * 1.01) {
+    if (aerosim::kinetic_energy_joules(clamped_state, config) > energetic_contact.max_kinetic_energy_joules * 1.01) {
         return fail("collision handoff must clamp externally supplied Jolt energy to G0.8 tolerance");
     }
 
