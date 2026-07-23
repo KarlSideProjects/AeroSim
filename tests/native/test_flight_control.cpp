@@ -1,5 +1,6 @@
 #include "aerosim_flight_control.hpp"
 #include "aerosim_aerodynamics.hpp"
+#include "aerosim_imu.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -513,6 +514,36 @@ int main() {
             !near(g2_config.hover_throttle, shipped_hover_throttle(), 1e-12) ||
             aerosim::available_thrust_cap_newtons(g2_config, 1.0) >= g2_config.max_total_thrust_newtons) {
         return fail("G2.4/G2.5 must run the shipped 30 ms motor and battery-sag plant");
+    }
+
+    aerosim::ImuConfig g2_6_imu_config;
+    g2_6_imu_config.barometer_noise_stddev_m = 0.10;
+    aerosim::ImuSimulator g2_6_imu(g2_6_imu_config);
+    aerosim::RigidBodyState g2_6_state;
+    aerosim::SimulationClock g2_6_clock;
+    aerosim::FlightController g2_6_controller;
+    aerosim::FlightCommand g2_6_command;
+    g2_6_command.throttle = g2_config.hover_throttle;
+    g2_6_imu.sample(g2_6_state);
+    if (!g2_6_controller.arm(0.0)) {
+        return fail("G2.6 IMU altitude-hold setup should arm from low throttle");
+    }
+    for (int frame = 0; frame < g2_config.physics_hz * 2; ++frame) {
+        const aerosim::ImuSample sample = g2_6_imu.sample(g2_6_state);
+        g2_6_controller.step_angle_mode(g2_6_state, g2_6_clock, g2_config, g2_6_command, sample.estimated_attitude);
+    }
+    g2_6_state = {};
+    g2_6_controller.capture_altitude_hold(g2_6_state.position.y);
+    double g2_6_max_drift_m = 0.0;
+    for (int frame = 0; frame < g2_config.physics_hz * 60; ++frame) {
+        const aerosim::ImuSample sample = g2_6_imu.sample(g2_6_state);
+        const aerosim::TrajectorySample trajectory = g2_6_controller.step_altitude_hold_mode(
+                g2_6_state, g2_6_clock, g2_config, g2_6_command,
+                sample.barometer_altitude_m, sample.estimated_attitude);
+        g2_6_max_drift_m = std::max(g2_6_max_drift_m, std::abs(trajectory.state.position.y));
+    }
+    if (g2_6_max_drift_m > 0.15) {
+        return fail("G2.6 Altitude Hold must remain within 15 cm with the public IMU barometer stream");
     }
     if (!acro_controller.arm(0.0)) {
         return fail("Acro setup should arm from low throttle");

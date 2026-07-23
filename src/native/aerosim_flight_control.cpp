@@ -40,7 +40,7 @@ constexpr double kDerivativeFilterTimeConstantS = 0.003;
 constexpr double kAltitudeHoldEstimateTauS = 2.0;
 constexpr double kAltitudeHoldKp = 0.08;
 constexpr double kAltitudeHoldKd = 0.20;
-constexpr double kAltitudeHoldNoiseDeadbandM = 0.15;
+constexpr double kAltitudeHoldNoiseDeadbandM = 0.10;
 
 double radians(double degrees) {
     return degrees * kPi / 180.0;
