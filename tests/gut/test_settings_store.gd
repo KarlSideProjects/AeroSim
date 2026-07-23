@@ -138,6 +138,42 @@ func test_osd_presets_are_complete_and_keep_bottom_labels_out_of_center_third() 
     assert_true(OsdProfile.profile_for_preset("Debug").elements.signal)
 
 
+func test_load_migrates_only_shipped_legacy_osd_coordinates() -> void:
+    var store = SettingsStoreScript.new(test_path)
+    var legacy := store.default_document()
+    legacy["osd"] = OsdProfile.default_profile()
+    legacy["osd"]["positions"]["warnings"] = {"x": 0.03, "y": 0.78}
+    legacy["osd"]["positions"]["reset_hint"] = {"x": 0.03, "y": 0.90}
+    var file := FileAccess.open(test_path, FileAccess.WRITE)
+    file.store_string(JSON.stringify(legacy))
+    file.close()
+    if OS.has_feature("linux"):
+        FileAccess.set_unix_permissions(test_path, 384)
+
+    var migrated: Dictionary = store.load_document()
+
+    assert_true(migrated.ok, migrated.error)
+    assert_eq(migrated.document.osd.positions.warnings, OsdProfile.DEFAULT_POSITIONS.warnings)
+    assert_eq(migrated.document.osd.positions.reset_hint, OsdProfile.DEFAULT_POSITIONS.reset_hint)
+
+    for custom_positions in [
+        {"warnings": {"x": 0.04, "y": 0.77}, "reset_hint": {"x": 0.03, "y": 0.90}},
+        {"warnings": {"x": 0.03, "y": 0.78}, "reset_hint": {"x": 0.70, "y": 0.88}},
+    ]:
+        var custom := legacy.duplicate(true)
+        custom["osd"]["positions"].merge(custom_positions, true)
+        file = FileAccess.open(test_path, FileAccess.WRITE)
+        file.store_string(JSON.stringify(custom))
+        file.close()
+        if OS.has_feature("linux"):
+            FileAccess.set_unix_permissions(test_path, 384)
+
+        var preserved: Dictionary = store.load_document()
+
+        assert_true(preserved.ok, preserved.error)
+        assert_eq(preserved.document.osd.positions, custom.osd.positions)
+
+
 func test_camera_and_osd_settings_round_trip_and_factory_reset() -> void:
     var store = SettingsStoreScript.new(test_path)
     var document := store.default_document()

@@ -374,7 +374,6 @@ func _run() -> void:
 	_expect(osd_save.ok and persisted_osd.ok and persisted_osd.document.osd.preset == "Race", "Race OSD preset persists through SettingsStore")
 	var lap_label: Label = runtime.get_node_or_null("FlightHud/FpvOsd/LapCheckpoint")
 	_expect(lap_label != null and runtime.time_trial != null and lap_label.text.contains("%d/3" % (runtime.time_trial.next_checkpoint_index + 1)), "Race OSD lap/checkpoint uses ordered TimeTrial truth: %s" % (lap_label.text if lap_label != null else "<missing>"))
-	_audit_osd_presets(runtime, "en")
 	var acro_key := InputEventKey.new()
 	acro_key.keycode = KEY_C
 	acro_key.physical_keycode = KEY_C
@@ -777,7 +776,7 @@ func _audit_transient_localization(runtime: Node, locale_suffix: String) -> void
 	runtime.call("_refresh_flight_hud")
 	await _settle(1)
 	_audit_visible_controls(runtime, "pause_%s" % locale_suffix)
-	_audit_osd_presets(runtime, locale_suffix)
+	await _audit_osd_presets(runtime, locale_suffix)
 
 	runtime.call("_on_trial_finished", 12.34)
 	await _settle(1)
@@ -816,24 +815,32 @@ func _audit_transient_localization(runtime: Node, locale_suffix: String) -> void
 	await _settle(1)
 
 func _audit_osd_presets(runtime: Node, locale_suffix: String) -> void:
-	var viewport_size := root.get_viewport().get_visible_rect().size
-	var center_third := Rect2(viewport_size.x / 3.0, 0.0, viewport_size.x / 3.0, viewport_size.y)
-	for preset in OsdProfile.PRESETS:
-		runtime.osd_profile = OsdProfile.profile_for_preset(preset)
-		runtime.call("_refresh_flight_hud")
-		var visible_area := 0.0
-		for element in OsdProfile.ELEMENTS:
-			var label := runtime.osd_labels[element] as Label
-			if label == null or not label.visible:
-				continue
-			var rect := label.get_global_rect()
-			visible_area += rect.get_area()
-			_expect(root.get_viewport().get_visible_rect().encloses(rect), "OSD %s %s label stays inside the viewport: %s" % [locale_suffix, preset, element])
-			if element == "warnings":
-				var outside_center_third := rect.end.x <= center_third.position.x or rect.position.x >= center_third.end.x
-				_expect(outside_center_third, "OSD %s %s warnings stay out of the center third: %s" % [locale_suffix, preset, rect])
-		var obstruction_ratio := visible_area / (viewport_size.x * viewport_size.y)
-		_expect(obstruction_ratio <= 0.08, "OSD %s %s obstruction stays at or below 8%%" % [locale_suffix, preset])
+	var original_size := root.size
+	for requested_size in [Vector2i(1152, 648), Vector2i(1280, 720), Vector2i(1280, 800), Vector2i(1920, 1080)]:
+		root.size = requested_size
+		await _settle(2)
+		var viewport_size := root.get_viewport().get_visible_rect().size
+		var center_third := Rect2(viewport_size.x / 3.0, 0.0, viewport_size.x / 3.0, viewport_size.y)
+		_expect(Vector2i(viewport_size) == requested_size, "OSD %s audit uses %s viewport" % [locale_suffix, requested_size])
+		for preset in OsdProfile.PRESETS:
+			runtime.osd_profile = OsdProfile.profile_for_preset(preset)
+			runtime.call("_refresh_flight_hud")
+			var visible_area := 0.0
+			for element in OsdProfile.ELEMENTS:
+				var label := runtime.osd_labels[element] as Label
+				if label == null or not label.visible:
+					continue
+				var rect := label.get_global_rect()
+				visible_area += rect.get_area()
+				_expect(root.get_viewport().get_visible_rect().encloses(rect), "OSD %s %s %s label stays inside the viewport: %s" % [locale_suffix, requested_size, preset, element])
+				if element == "warnings":
+					var outside_center_third := rect.end.x <= center_third.position.x or rect.position.x >= center_third.end.x
+					_expect(outside_center_third, "OSD %s %s %s warnings stay out of the center third: %s" % [locale_suffix, requested_size, preset, rect])
+			var obstruction_ratio := visible_area / (viewport_size.x * viewport_size.y)
+			_expect(obstruction_ratio <= 0.08, "OSD %s %s %s obstruction %.4f stays at or below 8%%" % [locale_suffix, requested_size, preset, obstruction_ratio])
+			_audit_overlay_geometry(runtime, "osd_%s_%s_%s" % [locale_suffix, preset.to_lower(), requested_size])
+	root.size = original_size
+	await _settle(2)
 
 func _audit_visible_controls(node: Node, screen_name: String) -> void:
 	var viewport_rect := root.get_viewport().get_visible_rect()
