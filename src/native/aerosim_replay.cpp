@@ -861,7 +861,7 @@ bool json_config_matches(const std::string &serialized, const SimulationConfig &
             {"motor_tau_s", expected.motor_tau_s}, {"battery_nominal_voltage_v", expected.battery_nominal_voltage_v},
             {"battery_cells", expected.battery_cells}, {"battery_cell_resistance_ohm", expected.battery_cell_resistance_ohm},
             {"battery_remaining_mah", expected.battery_remaining_mah}, {"max_total_current_a", expected.max_total_current_a},
-            {"max_motor_rpm", expected.max_motor_rpm},
+            {"max_motor_rpm", expected.max_motor_rpm}, {"altitude_hold_noise_deadband_m", expected.altitude_hold_noise_deadband_m},
     };
     for (const auto &scalar : scalars) {
         if (!json_number_matches(root, scalar.first, scalar.second)) {
@@ -2544,6 +2544,7 @@ ReplayRunResult replay_session(
                 {"battery_remaining_mah", runtime_configs[index].battery_remaining_mah, "vehicle battery capacity"},
                 {"max_total_current_a", runtime_configs[index].max_total_current_a, "vehicle max current"},
                 {"max_motor_rpm", runtime_configs[index].max_motor_rpm, "vehicle max motor speed"},
+                {"altitude_hold_noise_deadband_m", runtime_configs[index].altitude_hold_noise_deadband_m, "vehicle altitude noise deadband"},
         };
         for (const OptionalManifestField &optional : optional_fields) {
             const JsonValue *value = field(parsed, optional.name);

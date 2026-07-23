@@ -339,6 +339,10 @@ func _configure_default_power_model(native: Object) -> bool:
         ):
         push_error("Default hardware preset must apply native telemetry metadata")
         return false
+    if not native.has_method("set_hardware_altitude_hold_noise_deadband") or not native.call(
+            "set_hardware_altitude_hold_noise_deadband", float(preset.sensors.barometer_noise_m)):
+        push_error("Default hardware preset must apply native altitude-hold noise tuning")
+        return false
     if native.has_method("set_config_hash") and native.has_method("replay_vehicle_config_manifest") and native.has_method("replay_manifest_hash"):
         var canonicalizer := FlightRuntime.new()
         var config_json: String = canonicalizer._replay_canonical_json(native.call("replay_vehicle_config_manifest"))
@@ -1176,20 +1180,25 @@ func _verify_jolt_collision_scene(native: Object) -> bool:
     if mass_kg <= 0.0:
         push_error("Jolt collision smoke requires a positive configured hardware mass")
         return false
+    var per_motor: Dictionary = native.call("hardware_per_motor_diagnostics")
+    var inertia_frd: Vector3 = per_motor.get("inertia_frd", Vector3.ZERO)
+    if inertia_frd.x <= 0.0 or inertia_frd.y <= 0.0 or inertia_frd.z <= 0.0:
+        push_error("Jolt collision smoke requires positive configured hardware inertia")
+        return false
 
     verified_jolt_collision_trials = 0
     for mode in ["ANGLE", "ACRO"]:
         for scenario in ["wall", "glancing_ground", "pole", "tumble_ground"]:
             for seed in range(100):
-                var first: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg, mode)
-                var second: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg, mode)
+                var first: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg, inertia_frd, mode)
+                var second: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg, inertia_frd, mode)
                 if not first.ok or not second.ok or not _same_collision_row(first.row, second.row):
                     push_error("Headless Jolt G0.8 trial failed: %s %s seed %d first=%s second=%s" % [mode, scenario, seed, first.get("reason", ""), second.get("reason", "")])
                     return false
                 verified_jolt_collision_trials += 1
     return true
 
-func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass_kg: float, mode: String) -> Dictionary:
+func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass_kg: float, inertia_frd: Vector3, mode: String) -> Dictionary:
     var trial_root := Node3D.new()
     trial_root.name = "JoltCollisionTrial"
     root.add_child(trial_root)
@@ -1198,12 +1207,14 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
     drone.contact_monitor = true
     drone.max_contacts_reported = 4
     drone.gravity_scale = 0.0
+    drone.mass = mass_kg
+    drone.inertia = Vector3(inertia_frd.x, inertia_frd.z, inertia_frd.y)
     drone.set("continuous_cd", true)
     _add_shape(drone, _drone_shape(scenario))
     trial_root.add_child(drone)
 
     _setup_jolt_trial_geometry(trial_root, drone, scenario, seed)
-    var energy_before := _kinetic(drone.linear_velocity, drone.angular_velocity, mass_kg)
+    var energy_before := _kinetic(drone.linear_velocity, drone.angular_velocity, mass_kg, inertia_frd)
 
     if drone.get("continuous_cd") != true:
         trial_root.queue_free()
@@ -1257,7 +1268,7 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
         reason = "energy row=%f limit=%f" % [float(impact_row[17]), energy_before * 1.01]
     if ok:
         _apply_collision_row_to_body(drone, impact_row)
-        var body_energy := _kinetic(drone.linear_velocity, drone.angular_velocity, mass_kg)
+        var body_energy := _kinetic(drone.linear_velocity, drone.angular_velocity, mass_kg, inertia_frd)
         ok = _body_state_finite(drone) and body_energy <= energy_before * 1.01 + 1e-4
         if not ok:
             reason = "body_impact_state body=%f limit=%f finite=%s" % [body_energy, energy_before * 1.01, str(_body_state_finite(drone))]
@@ -1507,8 +1518,11 @@ func _same_motor_debug_values(a: Array, b: Array) -> bool:
             return false
     return true
 
-func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, mass_kg: float) -> float:
-    return 0.5 * mass_kg * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()
+func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, mass_kg: float, inertia_frd: Vector3) -> float:
+    return 0.5 * mass_kg * linear_velocity.length_squared() + 0.5 * (
+        inertia_frd.x * angular_velocity.x * angular_velocity.x +
+        inertia_frd.z * angular_velocity.y * angular_velocity.y +
+        inertia_frd.y * angular_velocity.z * angular_velocity.z)
 
 func _vector_finite(value: Vector3) -> bool:
     return is_finite(value.x) and is_finite(value.y) and is_finite(value.z)
@@ -2501,8 +2515,18 @@ func _verify_hardware_config_public_path() -> bool:
         push_error("Runtime startup preset must apply aircraft mass to native")
         scene.queue_free()
         return false
+    var preset_inertia := Vector3(float(preset.aircraft.inertia_kg_m2.x), float(preset.aircraft.inertia_kg_m2.y), float(preset.aircraft.inertia_kg_m2.z))
+    var jolt_inertia := Vector3(preset_inertia.x, preset_inertia.z, preset_inertia.y)
+    if absf(scene.drone_body.mass - float(preset.aircraft.mass_kg)) > 1e-9 or scene.drone_body.inertia.distance_to(jolt_inertia) > 1e-9:
+        push_error("Runtime startup preset must apply aircraft mass and inertia to the Jolt body")
+        scene.queue_free()
+        return false
     if abs(float(startup_power.hover_throttle) - float(power_model.hover_throttle)) > 1e-9:
         push_error("Runtime startup preset must apply derived hover throttle to native")
+        scene.queue_free()
+        return false
+    if abs(float(startup_power.altitude_hold_noise_deadband_m) - float(preset.sensors.barometer_noise_m)) > 1e-9:
+        push_error("Runtime startup preset must apply validated barometer noise as native altitude-hold tuning")
         scene.queue_free()
         return false
     if float(startup_power.full_throttle_cap_newtons) >= float(power_model.max_total_thrust_n):

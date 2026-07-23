@@ -90,7 +90,7 @@ bool simulation_config_manifest_value(
             "mass_kg", "gravity_mps2", "physics_hz", "substep_hz",
             "max_total_thrust_newtons", "hover_throttle", "motor_tau_s",
             "battery_nominal_voltage_v", "battery_cells", "battery_cell_resistance_ohm",
-            "battery_remaining_mah", "max_total_current_a", "max_motor_rpm",
+            "battery_remaining_mah", "max_total_current_a", "max_motor_rpm", "altitude_hold_noise_deadband_m",
     };
     for (const char *key : required_scalars) {
         if (!manifest.has(key) || (manifest[key].get_type() != Variant::FLOAT &&
@@ -111,6 +111,7 @@ bool simulation_config_manifest_value(
     config.battery_remaining_mah = static_cast<double>(manifest["battery_remaining_mah"]);
     config.max_total_current_a = static_cast<double>(manifest["max_total_current_a"]);
     config.max_motor_rpm = static_cast<double>(manifest["max_motor_rpm"]);
+    config.altitude_hold_noise_deadband_m = static_cast<double>(manifest["altitude_hold_noise_deadband_m"]);
     const Variant per_motor_variant = manifest.get("per_motor", Variant());
     if (per_motor_variant.get_type() != Variant::DICTIONARY ||
             !per_motor_model_value(static_cast<Dictionary>(per_motor_variant), config.per_motor)) {
@@ -284,6 +285,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("set_hardware_telemetry_model", "max_motor_rpm", "battery_remaining_mah"),
             &AeroSimNative::set_hardware_telemetry_model);
+    ClassDB::bind_method(
+            D_METHOD("set_hardware_altitude_hold_noise_deadband", "value_m"),
+            &AeroSimNative::set_hardware_altitude_hold_noise_deadband);
     ClassDB::bind_method(D_METHOD("set_hardware_per_motor_model", "model"), &AeroSimNative::set_hardware_per_motor_model);
     ClassDB::bind_method(
             D_METHOD("set_body_drag_model", "enabled", "coefficient_x", "coefficient_y", "coefficient_z",
@@ -460,6 +464,10 @@ bool AeroSimNative::set_hardware_power_model(
 
 bool AeroSimNative::set_hardware_telemetry_model(double max_motor_rpm, double battery_remaining_mah) {
     return hardware_config_.set_telemetry_model(max_motor_rpm, battery_remaining_mah);
+}
+
+bool AeroSimNative::set_hardware_altitude_hold_noise_deadband(double value_m) {
+    return hardware_config_.set_altitude_hold_noise_deadband_m(value_m);
 }
 
 bool AeroSimNative::set_hardware_per_motor_model(const Dictionary &model) {
@@ -823,6 +831,7 @@ Dictionary AeroSimNative::replay_vehicle_config_manifest() const {
     result["battery_remaining_mah"] = config.battery_remaining_mah;
     result["max_total_current_a"] = config.max_total_current_a;
     result["max_motor_rpm"] = config.max_motor_rpm;
+    result["altitude_hold_noise_deadband_m"] = config.altitude_hold_noise_deadband_m;
     result["external_force_world"] = godot_vec3(external_force_world_);
     result["a3_drag"] = a3_drag_configuration();
     result["a6_propwash"] = a6_propwash_configuration();
@@ -1536,6 +1545,7 @@ Dictionary AeroSimNative::hardware_power_diagnostics() const {
     diagnostics["battery_cell_resistance_ohm"] = config.battery_cell_resistance_ohm;
     diagnostics["max_total_current_a"] = config.max_total_current_a;
     diagnostics["max_motor_rpm"] = config.max_motor_rpm;
+    diagnostics["altitude_hold_noise_deadband_m"] = config.altitude_hold_noise_deadband_m;
     diagnostics["battery_remaining_mah"] = config.battery_remaining_mah;
     return diagnostics;
 }

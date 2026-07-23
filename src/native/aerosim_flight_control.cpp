@@ -40,7 +40,6 @@ constexpr double kDerivativeFilterTimeConstantS = 0.003;
 constexpr double kAltitudeHoldEstimateTauS = 2.0;
 constexpr double kAltitudeHoldKp = 0.08;
 constexpr double kAltitudeHoldKd = 0.20;
-constexpr double kAltitudeHoldNoiseDeadbandM = 0.10;
 
 double radians(double degrees) {
     return degrees * kPi / 180.0;
@@ -176,7 +175,8 @@ bool valid_config(const SimulationConfig &config) {
             config.seconds, config.mass_kg, config.gravity_mps2, config.total_thrust_newtons,
             config.max_total_thrust_newtons, config.hover_throttle, config.motor_tau_s,
             config.battery_nominal_voltage_v, config.battery_cells, config.battery_cell_resistance_ohm,
-            config.battery_remaining_mah, config.max_total_current_a, config.max_motor_rpm, config.air_density_kg_m3,
+            config.battery_remaining_mah, config.max_total_current_a, config.max_motor_rpm,
+            config.altitude_hold_noise_deadband_m, config.air_density_kg_m3,
             config.a4_ground_effect.kf, config.a4_ground_effect.ground_effect_coeff,
             config.a4_ground_effect.prop_radius_m, config.a4_ground_effect.height_clip_m,
             config.a5_downwash.prop_radius_m, config.a5_downwash.coeff_1, config.a5_downwash.coeff_2,
@@ -192,7 +192,7 @@ bool valid_config(const SimulationConfig &config) {
             finite_vec3(config.body_drag.center_of_pressure_frd_m) &&
             std::all_of(config.a4_ground_effect.motor_rpm.begin(), config.a4_ground_effect.motor_rpm.end(),
                     [](double value) { return std::isfinite(value); }) &&
-            config.mass_kg > 0.0 && config.gravity_mps2 > 0.0 && config.air_density_kg_m3 > 0.0 &&
+            config.mass_kg > 0.0 && config.gravity_mps2 > 0.0 && config.altitude_hold_noise_deadband_m >= 0.0 && config.air_density_kg_m3 > 0.0 &&
             config.hover_throttle >= 0.0 && config.hover_throttle <= 1.0 && config.motor_tau_s >= 0.0 &&
             valid_state(config.initial_state) && validate_per_motor_config(config.per_motor);
 }
@@ -1024,7 +1024,7 @@ TrajectorySample FlightController::step_altitude_hold_mode_impl(
                 ? std::clamp(motor_thrust_newtons_ * frame_config.hover_throttle / hover_thrust, 0.0, 1.0)
                 : std::clamp(command.throttle, 0.0, 1.0);
         double altitude_error_m = altitude_hold_target_m_ - altitude_hold_filtered_altitude_m_;
-        const bool inside_noise_band = std::abs(altitude_error_m) <= kAltitudeHoldNoiseDeadbandM;
+        const bool inside_noise_band = std::abs(altitude_error_m) <= frame_config.altitude_hold_noise_deadband_m;
         if (inside_noise_band) {
             altitude_error_m = 0.0;
         }

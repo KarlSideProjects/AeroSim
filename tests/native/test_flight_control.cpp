@@ -129,6 +129,7 @@ aerosim::SimulationConfig shipped_5_inch_6s_config() {
     aerosim::HardwareConfig hardware;
     hardware.set_mass_kg(0.72);
     hardware.set_power_model(64.8, shipped_hover_throttle(), 0.030, 22.2, 6.0, 0.003, 108.0);
+    hardware.set_altitude_hold_noise_deadband_m(0.10);
     aerosim::PerMotorPhysicsConfig per_motor;
     per_motor.inertia_kg_m2 = {0.003, 0.003, 0.005};
     per_motor.max_thrust_per_motor_newtons = 16.2;
@@ -528,12 +529,13 @@ int main() {
     if (!near(g2_config.motor_tau_s, 0.030, 1e-12) ||
             !near(g2_config.battery_cell_resistance_ohm, 0.003, 1e-12) ||
             !near(g2_config.hover_throttle, shipped_hover_throttle(), 1e-12) ||
+            !near(g2_config.altitude_hold_noise_deadband_m, 0.10, 1e-12) ||
             aerosim::available_thrust_cap_newtons(g2_config, 1.0) >= g2_config.max_total_thrust_newtons) {
-        return fail("G2.4/G2.5 must run the shipped 30 ms motor and battery-sag plant");
+        return fail("G2.4/G2.5/G2.6 must run the shipped hardware and altitude-noise tuning");
     }
 
     aerosim::ImuConfig g2_6_imu_config;
-    g2_6_imu_config.barometer_noise_stddev_m = 0.10;
+    g2_6_imu_config.barometer_noise_stddev_m = g2_config.altitude_hold_noise_deadband_m;
     aerosim::ImuSimulator g2_6_imu(g2_6_imu_config);
     aerosim::RigidBodyState g2_6_state;
     aerosim::SimulationClock g2_6_clock;

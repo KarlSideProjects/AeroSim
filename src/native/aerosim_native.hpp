@@ -88,6 +88,7 @@ public:
             double battery_cell_resistance_ohm,
             double max_total_current_a);
     bool set_hardware_telemetry_model(double max_motor_rpm, double battery_remaining_mah);
+    bool set_hardware_altitude_hold_noise_deadband(double value_m);
     bool set_hardware_per_motor_model(const godot::Dictionary &model);
     bool set_body_drag_model(
             bool enabled,

@@ -1,6 +1,7 @@
 extends SceneTree
 
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const AirSimCoordinateContract = preload("res://common/rpc/airsim_coordinate_contract.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 
@@ -302,16 +303,33 @@ func _run() -> void:
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
-	_inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.25)
-	await _settle(10)
-	var known_xbox_diagnostics: Dictionary = runtime.native.call("flight_control_diagnostics")
-	var omega_x := float(known_xbox_diagnostics.get("angular_velocity_x_rad_s", 0.0))
-	var omega_y := float(known_xbox_diagnostics.get("angular_velocity_y_rad_s", 0.0))
-	var omega_z := float(known_xbox_diagnostics.get("angular_velocity_z_rad_s", 0.0))
-	_known_xbox_physical_evidence = {"omega_x_rad_s": omega_x, "omega_y_rad_s": omega_y, "omega_z_rad_s": omega_z}
-	_expect(omega_x < 0.0, "known Xbox physical roll input produces omegaX < 0")
-	_expect(omega_z < 0.0, "known Xbox physical pitch input produces omegaZ < 0")
-	_expect(omega_y < 0.0, "known Xbox physical yaw input produces omegaY < 0")
+	var xbox_frd_axis_cases := [
+		{"role": "roll", "axis": JOY_AXIS_LEFT_X, "value": -0.5, "component": 0},
+		{"role": "pitch", "axis": JOY_AXIS_LEFT_Y, "value": 0.5, "component": 1},
+		{"role": "yaw", "axis": JOY_AXIS_RIGHT_X, "value": -0.25, "component": 2},
+	]
+	for axis_case in xbox_frd_axis_cases:
+		for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X]:
+			_inject_joy_axis(known_device_id, axis, 0.0)
+		runtime.native.call("reset_flight")
+		runtime.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+		runtime.drone_body.reset_contact()
+		_inject_joy_axis(known_device_id, axis_case.axis, axis_case.value)
+		await _settle(10)
+		for role in ["roll", "pitch", "yaw"]:
+			if role != axis_case.role:
+				_expect(is_zero_approx(runtime._profile_axis(role)), "known Xbox %s FRD gate neutralizes %s input" % [axis_case.role, role])
+		var known_xbox_diagnostics: Dictionary = runtime.native.call("flight_control_diagnostics")
+		var frd_rates := AirSimCoordinateContract.godot_body_to_frd(Vector3(
+			float(known_xbox_diagnostics.get("angular_velocity_x_rad_s", 0.0)),
+			float(known_xbox_diagnostics.get("angular_velocity_y_rad_s", 0.0)),
+			float(known_xbox_diagnostics.get("angular_velocity_z_rad_s", 0.0))
+		))
+		_known_xbox_physical_evidence[axis_case.role] = {
+			"raw": axis_case.value,
+			"frd_omega_rad_s": {"roll": frd_rates.x, "pitch": frd_rates.y, "yaw": frd_rates.z},
+		}
+		_expect(frd_rates[axis_case.component] < -0.01, "known Xbox physical %s input produces negative FRD %s response" % [axis_case.role, axis_case.role])
 	runtime.set_paused(true)
 	await _settle(2)
 	var paused_position: Vector3 = runtime.drone_body.global_position
