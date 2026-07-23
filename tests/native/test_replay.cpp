@@ -78,6 +78,14 @@ aerosim::RecordedInputSequence standard_maneuver(std::int32_t frames) {
     return recorder.sequence();
 }
 
+std::string double_bits(double value) {
+    std::uint64_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    std::ostringstream out;
+    out << std::hex << std::setw(16) << std::setfill('0') << bits;
+    return out.str();
+}
+
 bool write_artifact(const char *path, const aerosim::ReplaySession &session) {
     if (path == nullptr || path[0] == '\0') {
         return true;
@@ -86,7 +94,28 @@ bool write_artifact(const char *path, const aerosim::ReplaySession &session) {
     if (!out) {
         return false;
     }
-    out << aerosim::serialize_replay_session(session);
+    if (session.checkpoints.empty()) {
+        return false;
+    }
+    const aerosim::ReplayRunCheckpoint &checkpoint = session.checkpoints.front();
+    const auto bits = [](double value) { return double_bits(value); };
+    std::string serialized = aerosim::serialize_replay_session(session);
+    if (serialized.empty() || serialized.back() != '}') {
+        return false;
+    }
+    serialized.pop_back();
+    serialized += ",\"ieee754_bits\":{"
+            "\"upper.propwash.x\":\"" + bits(checkpoint.state.upper.propwash_disturbance_rad_s2.x) + "\","
+            "\"upper.propwash.y\":\"" + bits(checkpoint.state.upper.propwash_disturbance_rad_s2.y) + "\","
+            "\"upper.propwash.z\":\"" + bits(checkpoint.state.upper.propwash_disturbance_rad_s2.z) + "\","
+            "\"controller[0].target_angle.x\":\"" + bits(checkpoint.controllers[0].target_angle_frd.x) + "\","
+            "\"controller[0].integral[0]\":\"" + bits(checkpoint.controllers[0].rate_integral[0]) + "\","
+            "\"controller[0].derivative.x\":\"" + bits(checkpoint.controllers[0].filtered_rate_derivative_frd.x) + "\","
+            "\"clock[0].accumulator\":\"" + bits(checkpoint.clocks[0].substep_accumulator) + "\","
+            "\"first_response[0].time\":\"" + bits(checkpoint.first_response_substeps[0].time_seconds) + "\","
+            "\"first_response[0].propwash.x\":\"" + bits(checkpoint.first_response_substeps[0].state.propwash_disturbance_rad_s2.x) + "\","
+            "\"signed_zero_probe\":\"8000000000000000\"}}";
+    out << serialized;
     return true;
 }
 
