@@ -38,6 +38,13 @@ enum class StepStatus {
 };
 
 const char *step_status_code(StepStatus status);
+bool valid_angle_command(const FlightCommand &command);
+bool valid_acro_command(const AcroCommand &command);
+
+struct StepResult {
+    StepStatus status = StepStatus::Ok;
+    TrajectorySample sample;
+};
 
 struct QuadXMixerResult {
     std::array<double, 4> normalized = {0.0, 0.0, 0.0, 0.0};
@@ -189,7 +196,18 @@ public:
             const SimulationConfig &config,
             const FlightCommand &command,
             const Quat &estimated_attitude);
+    StepResult try_step_angle_mode(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const Quat &estimated_attitude);
     TrajectorySample step_acro_mode(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const AcroCommand &command);
+    StepResult try_step_acro_mode(
             RigidBodyState &state,
             SimulationClock &clock,
             const SimulationConfig &config,

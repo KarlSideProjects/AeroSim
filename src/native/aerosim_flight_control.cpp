@@ -91,6 +91,30 @@ double shaped_rate(double desired, double previous, double dt) {
     return std::clamp(limited_desired, previous - maximum_delta, previous + maximum_delta);
 }
 
+bool finite_vec3(const Vec3 &value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+bool finite_quat(const Quat &value) {
+    return finite_vec3({value.x, value.y, value.z}) && std::isfinite(value.w) && quat_norm(value) > 0.0;
+}
+
+bool valid_state(const RigidBodyState &state) {
+    return finite_vec3(state.position) && finite_vec3(state.velocity) && finite_quat(state.orientation) &&
+            finite_vec3(state.angular_velocity) && finite_vec3(state.propwash_disturbance_rad_s2) &&
+            std::all_of(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(), [](double value) {
+                return std::isfinite(value) && value >= 0.0;
+            });
+}
+
+bool valid_config(const SimulationConfig &config) {
+    return config.physics_hz > 0 && config.substep_hz >= config.physics_hz &&
+            valid_state(config.initial_state) &&
+            std::isfinite(config.mass_kg) && config.mass_kg > 0.0 &&
+            std::isfinite(config.hover_throttle) && config.hover_throttle >= 0.0 && config.hover_throttle <= 1.0 &&
+            validate_per_motor_config(config.per_motor);
+}
+
 } // namespace
 
 const char *step_status_code(StepStatus status) {
@@ -109,6 +133,19 @@ const char *step_status_code(StepStatus status) {
         return "ResourceLimitExceeded";
     }
     return "InvalidState";
+}
+
+bool valid_angle_command(const FlightCommand &command) {
+    return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
+            std::isfinite(command.roll_degrees) && std::isfinite(command.pitch_degrees) &&
+            std::isfinite(command.yaw_rate_degrees_per_second);
+}
+
+bool valid_acro_command(const AcroCommand &command) {
+    return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
+            std::isfinite(command.roll_stick) && std::isfinite(command.pitch_stick) &&
+            std::isfinite(command.yaw_stick) && std::isfinite(command.rates.rc_rate) &&
+            std::isfinite(command.rates.super_rate) && std::isfinite(command.rates.expo);
 }
 
 double normalize_angle_radians(double angle) {
@@ -608,6 +645,36 @@ TrajectorySample FlightController::step_angle_mode(
     return sample;
 }
 
+StepResult FlightController::try_step_angle_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const Quat &estimated_attitude) {
+    if (!valid_angle_command(command)) {
+        return {StepStatus::InvalidCommand, {}};
+    }
+    if (!valid_config(config)) {
+        return {StepStatus::InvalidConfig, {}};
+    }
+    if (!valid_state(state) || !finite_quat(estimated_attitude) || !std::isfinite(clock.substep_accumulator) ||
+            clock.substep_accumulator < 0.0 || clock.substep_accumulator >= 1.0) {
+        return {StepStatus::InvalidState, {}};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = *this;
+    const TrajectorySample sample = staged_controller.step_angle_mode(
+            staged_state, staged_clock, config, command, estimated_attitude);
+    if (sample.substeps == 0 || !valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+        return {StepStatus::InvalidControlOutput, {}};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    *this = staged_controller;
+    return {StepStatus::Ok, sample};
+}
+
 TrajectorySample FlightController::step_acro_mode(
         RigidBodyState &state,
         SimulationClock &clock,
@@ -660,6 +727,34 @@ TrajectorySample FlightController::step_acro_mode(
             have_first_response ? first_pid_output : pid_output,
             have_first_response ? first_pid_saturated : pid_saturated, "ACRO");
     return sample;
+}
+
+StepResult FlightController::try_step_acro_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const AcroCommand &command) {
+    if (!valid_acro_command(command)) {
+        return {StepStatus::InvalidCommand, {}};
+    }
+    if (!valid_config(config)) {
+        return {StepStatus::InvalidConfig, {}};
+    }
+    if (!valid_state(state) || !std::isfinite(clock.substep_accumulator) ||
+            clock.substep_accumulator < 0.0 || clock.substep_accumulator >= 1.0) {
+        return {StepStatus::InvalidState, {}};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = *this;
+    const TrajectorySample sample = staged_controller.step_acro_mode(staged_state, staged_clock, config, command);
+    if (sample.substeps == 0 || !valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+        return {StepStatus::InvalidControlOutput, {}};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    *this = staged_controller;
+    return {StepStatus::Ok, sample};
 }
 
 TrajectorySample FlightController::step_altitude_hold_mode(

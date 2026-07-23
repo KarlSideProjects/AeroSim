@@ -576,18 +576,6 @@ bool valid_identity(const std::string &value) {
     return value.size() <= 64;
 }
 
-bool finite_command(const FlightCommand &command) {
-    return std::isfinite(command.throttle) && std::isfinite(command.roll_degrees) &&
-            std::isfinite(command.pitch_degrees) && std::isfinite(command.yaw_rate_degrees_per_second);
-}
-
-bool finite_acro_command(const AcroCommand &command) {
-    return std::isfinite(command.throttle) && std::isfinite(command.roll_stick) &&
-            std::isfinite(command.pitch_stick) && std::isfinite(command.yaw_stick) &&
-            std::isfinite(command.rates.rc_rate) && std::isfinite(command.rates.super_rate) &&
-            std::isfinite(command.rates.expo);
-}
-
 bool finite_vec(const Vec3 &value) {
     return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
@@ -951,7 +939,7 @@ std::string checkpoint_json(const ReplayRunCheckpoint &checkpoint) {
             ",\"environment\":" + checkpoint.environment_json + '}';
 }
 
-bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint) {
+bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint, bool require_complete_state) {
     const JsonValue *timestamp = field(value, "timestamp_us");
     const JsonValue *upper = field(value, "upper");
     const JsonValue *lower = field(value, "lower");
@@ -959,6 +947,7 @@ bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint) {
     const JsonValue *scene_objects = field(value, "scene_objects");
     const JsonValue *environment = field(value, "environment");
     if (timestamp == nullptr || upper == nullptr || lower == nullptr ||
+            (require_complete_state && (collisions == nullptr || scene_objects == nullptr || environment == nullptr)) ||
             !integer_value(*timestamp, checkpoint.timestamp_us) ||
             !parse_rigid_body_state(*upper, checkpoint.state.upper) ||
             !parse_rigid_body_state(*lower, checkpoint.state.lower)) {
@@ -1217,7 +1206,7 @@ ReplayRunResult failed_run(const ReplayDiagnostic &diagnostic) {
 }
 
 ReplayDiagnostic validate_session(const ReplaySession &session, bool require_termination) {
-    if (session.schema_version != kCompleteReplaySchemaVersion) {
+    if (session.schema_version != 2 && session.schema_version != kCompleteReplaySchemaVersion) {
         return invalid(ReplayDiagnosticCode::UnsupportedSchema, "unsupported replay schema version");
     }
     if (session.settings_manifest_hash.empty()) {
@@ -1269,11 +1258,12 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
         if (!event.vehicle_name.empty() && std::find(names.begin(), names.end(), event.vehicle_name) == names.end()) {
             return invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name);
         }
-        if (event.type == ReplayEventType::Command && !finite_command(event.command)) {
+        if (event.type == ReplayEventType::Command && event.command_mode != ReplayCommandMode::Acro &&
+                event.command_mode != ReplayCommandMode::Actuator && !valid_angle_command(event.command)) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
         }
         if (event.type == ReplayEventType::Command && event.command_mode == ReplayCommandMode::Acro &&
-                !finite_acro_command(event.acro_command)) {
+                !valid_acro_command(event.acro_command)) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "replay acro command contains a non-finite value");
         }
         if (event.type == ReplayEventType::Command &&
@@ -1625,6 +1615,9 @@ bool ReplaySessionRecorder::add_vehicle(
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
     }
+    if (session_.vehicles.size() >= 2) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "complete replay supports at most two vehicles");
+    }
     if (!valid_identity(vehicle_name) || has_vehicle(vehicle_name)) {
         return fail(ReplayDiagnosticCode::InvalidIdentity, "invalid or duplicate replay vehicle identity: " + vehicle_name);
     }
@@ -1656,8 +1649,8 @@ bool ReplaySessionRecorder::record_command(
             controller_authority != ReplayControllerAuthority::Jolt) {
         return fail(ReplayDiagnosticCode::InvalidSession, "collision replay authority must be flight_core or jolt");
     }
-    if (!finite_command(command)) {
-        return fail(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
+    if (!valid_angle_command(command)) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay angle command is outside the live command domain");
     }
     ReplayEvent event;
     event.timestamp_us = timestamp_us;
@@ -1685,9 +1678,11 @@ bool ReplaySessionRecorder::record_mode_command(
             command_mode != ReplayCommandMode::AltitudeHold && command_mode != ReplayCommandMode::Actuator) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay command mode is invalid");
     }
-    if (!finite_command(command) || !std::isfinite(measured_altitude_m) ||
-            (command_mode == ReplayCommandMode::Acro && !finite_acro_command(acro_command))) {
-        return fail(ReplayDiagnosticCode::InvalidSession, "replay command contains a non-finite value");
+    if ((command_mode == ReplayCommandMode::Acro && !valid_acro_command(acro_command)) ||
+            ((command_mode == ReplayCommandMode::Angle || command_mode == ReplayCommandMode::AltitudeHold) &&
+                    !valid_angle_command(command)) ||
+            !std::isfinite(measured_altitude_m)) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay command is outside the live command domain");
     }
     if (!has_vehicle(vehicle_name)) {
         return fail(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + vehicle_name);
@@ -2004,7 +1999,7 @@ ReplayLoadResult load_replay_session(
         return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "replay schema_version is required")};
     }
     session.schema_version = static_cast<std::int32_t>(schema_number);
-    if (session.schema_version != kCompleteReplaySchemaVersion) {
+    if (session.schema_version != 2 && session.schema_version != kCompleteReplaySchemaVersion) {
         return {false, {}, invalid(ReplayDiagnosticCode::UnsupportedSchema, "unsupported replay schema version: " + std::to_string(session.schema_version))};
     }
     if (manifest == nullptr || !string_value(*manifest, session.settings_manifest_hash) || session.settings_manifest_hash.empty()) {
@@ -2056,7 +2051,7 @@ ReplayLoadResult load_replay_session(
         }
         for (const JsonValue &value : checkpoints->array) {
             ReplayRunCheckpoint checkpoint;
-            if (!parse_checkpoint(value, checkpoint)) {
+            if (!parse_checkpoint(value, checkpoint, session.schema_version >= 3)) {
                 return {false, {}, invalid(ReplayDiagnosticCode::Corrupt, "invalid replay checkpoint")};
             }
             if (checkpoint.environment_json.empty()) {
@@ -2230,6 +2225,11 @@ ReplayRunResult replay_session(
     const bool has_recorded_checkpoints = !session.checkpoints.empty();
     std::size_t recorded_checkpoint_index = 0;
     std::uint64_t previous_timestamp_us = 0;
+    StepStatus replay_step_status = StepStatus::Ok;
+    const auto replay_step_failure = [&]() {
+        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession,
+                "replay step failed: " + std::string(step_status_code(replay_step_status))));
+    };
     const auto vehicle_index = [&](const std::string &name) {
         return name == session.vehicles[0].name ? 0 : name == session.vehicles[1].name ? 1 : -1;
     };
@@ -2283,12 +2283,21 @@ ReplayRunResult replay_session(
             if (command_modes[index] == ReplayCommandMode::Actuator) {
                 step_per_motor_physics_frame(vehicle_state, clock, frame_config, actuator_commands[index]);
             } else if (command_modes[index] == ReplayCommandMode::Acro) {
-                controller.step_acro_mode(vehicle_state, clock, frame_config, acro_commands[index]);
+                const StepResult step = controller.try_step_acro_mode(vehicle_state, clock, frame_config, acro_commands[index]);
+                if (step.status != StepStatus::Ok) {
+                    replay_step_status = step.status;
+                    return false;
+                }
             } else if (command_modes[index] == ReplayCommandMode::AltitudeHold) {
                 controller.step_altitude_hold_mode(vehicle_state, clock, frame_config, commands[index],
                         measured_altitudes[index], vehicle_state.orientation);
             } else {
-                controller.step_angle_mode(vehicle_state, clock, frame_config, commands[index]);
+                const StepResult step = controller.try_step_angle_mode(
+                        vehicle_state, clock, frame_config, commands[index], vehicle_state.orientation);
+                if (step.status != StepStatus::Ok) {
+                    replay_step_status = step.status;
+                    return false;
+                }
             }
         }
         return true;
@@ -2362,6 +2371,9 @@ ReplayRunResult replay_session(
         }
         if (!paused && timestamp_us >= previous_timestamp_us &&
                 !advance_us(timestamp_us - previous_timestamp_us, timestamp_us)) {
+            if (replay_step_status != StepStatus::Ok) {
+                return replay_step_failure();
+            }
             return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay timeline interval exceeds runtime frame limit"));
         }
         previous_timestamp_us = timestamp_us;
@@ -2448,11 +2460,17 @@ ReplayRunResult replay_session(
                 break;
             case ReplaySimulationOperation::StepFrames:
                 if (!step_frames(static_cast<std::int64_t>(event.simulation_value), event.timestamp_us)) {
+                    if (replay_step_status != StepStatus::Ok) {
+                        return replay_step_failure();
+                    }
                     return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay collision authority diverged"));
                 }
                 break;
             case ReplaySimulationOperation::StepSeconds:
                 if (!step_seconds(event.simulation_value, event.timestamp_us)) {
+                    if (replay_step_status != StepStatus::Ok) {
+                        return replay_step_failure();
+                    }
                     return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay step seconds exceeds runtime frame limit"));
                 }
                 break;
@@ -2530,6 +2548,9 @@ ReplayRunResult replay_session(
     }
     if (!paused && session.termination_timestamp_us >= previous_timestamp_us &&
             !advance_us(session.termination_timestamp_us - previous_timestamp_us, session.termination_timestamp_us)) {
+        if (replay_step_status != StepStatus::Ok) {
+            return replay_step_failure();
+        }
         return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay termination interval exceeds runtime frame limit"));
     }
     if (!has_recorded_checkpoints) {

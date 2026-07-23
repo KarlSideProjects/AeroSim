@@ -20,7 +20,7 @@ struct ReplayDelta {
     double position_meters = 0.0;
 };
 
-constexpr std::int32_t kCompleteReplaySchemaVersion = 2;
+constexpr std::int32_t kCompleteReplaySchemaVersion = 3;
 
 enum class ReplayControllerAuthority {
     FlightCore,
