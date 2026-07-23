@@ -6,6 +6,8 @@
 
 #91 owns the migration from the historical direct-rate controller to the shipped 5-inch-6S, 30 ms per-motor plant.  #24 stays closed as the historical direct-rate tuning slice.  The Betaflight SITL bridge remains deferred and is not an acceptance prerequisite.  Ubuntu Linux x86_64 is the only blocking runtime.
 
+Xbox gamepad is the primary pilot input.  The implementation preserves the existing confirmed `GamepadProfile`, 0.08 deadzone, session gamepad device selection, and pitch-reversal path.  Keyboard remains only the existing fallback; no device-0 scan or legacy gamepad helper is reintroduced.
+
 ## Control architecture
 
 The controller stores and computes command, target, error, rate, torque, integral, derivative, and saturation state in FRD order: roll, pitch, yaw.  A named, single boundary maps FRD vectors to Godot Y-up vectors as `{F, -D, R}` and the inverse as `{X, Z, -Y}`.  No controller path performs an additional axis or sign conversion.  The public telemetry schema remains frozen as `pid=[pitch,yaw,roll]`; roll saturation is therefore public index 2 even though internal controller state is FRD.
