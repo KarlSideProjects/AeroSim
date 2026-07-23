@@ -1109,15 +1109,19 @@ bool parse_clock(const JsonValue &value, SimulationClock &clock) {
 std::string trajectory_json(const TrajectorySample &sample) {
     return "{\"time_seconds\":" + compact_number(sample.time_seconds) +
             ",\"substeps\":" + std::to_string(sample.substeps) +
-            ",\"state\":" + rigid_body_state_json(sample.state) + '}';
+            ",\"state\":" + rigid_body_state_json(sample.state) +
+            ",\"propwash_disturbance_rad_s2\":" + vec_json(sample.propwash_disturbance_rad_s2) + '}';
 }
 
 bool parse_trajectory(const JsonValue &value, TrajectorySample &sample) {
     const JsonValue *time = field(value, "time_seconds");
     const JsonValue *substeps = field(value, "substeps");
     const JsonValue *state = field(value, "state");
+    const JsonValue *propwash = field(value, "propwash_disturbance_rad_s2");
     return time != nullptr && substeps != nullptr && state != nullptr && number_value(*time, sample.time_seconds) &&
-            std::isfinite(sample.time_seconds) && integer_value(*substeps, sample.substeps) && parse_rigid_body_state(*state, sample.state);
+            std::isfinite(sample.time_seconds) && integer_value(*substeps, sample.substeps) &&
+            parse_rigid_body_state(*state, sample.state) &&
+            (propwash == nullptr || parse_vec(*propwash, sample.propwash_disturbance_rad_s2));
 }
 
 std::string checkpoint_json(const ReplayRunCheckpoint &checkpoint) {

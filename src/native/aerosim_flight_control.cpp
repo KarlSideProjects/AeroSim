@@ -189,7 +189,9 @@ bool valid_config(const SimulationConfig &config) {
             config.a5_downwash.coeff_3, config.a6_propwash.full_collective_angular_accel_rad_s2,
             config.a6_propwash.minimum_wake_entry_speed_mps, config.a6_propwash.minimum_transverse_rate_rad_s,
     };
-    return std::all_of(std::begin(values), std::end(values), [](double value) { return std::isfinite(value); }) &&
+    return config.physics_hz > 0 && config.substep_hz >= config.physics_hz &&
+            static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz) <= 1000000.0 &&
+            std::all_of(std::begin(values), std::end(values), [](double value) { return std::isfinite(value); }) &&
             finite_vec3(config.external_force_world) && finite_vec3(config.wind_world_mps) &&
             finite_vec3(config.wind_turbulence_mps) && finite_vec3(config.a3_drag.coefficient) &&
             finite_vec3(config.body_drag.drag_coefficient) && finite_vec3(config.body_drag.frontal_area_m2) &&
@@ -812,7 +814,7 @@ StepResult FlightController::try_step_angle_mode(
     FlightController staged_controller = *this;
     const TrajectorySample sample = staged_controller.step_angle_mode_impl(
             staged_state, staged_clock, config, command, estimated_attitude);
-    if (!valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+    if (sample.substeps == 0 || !valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
         return {StepStatus::InvalidControlOutput, {}};
     }
     state = staged_state;
@@ -891,7 +893,7 @@ StepResult FlightController::try_step_acro_mode(
     SimulationClock staged_clock = clock;
     FlightController staged_controller = *this;
     const TrajectorySample sample = staged_controller.step_acro_mode_impl(staged_state, staged_clock, config, command);
-    if (!valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+    if (sample.substeps == 0 || !valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
         return {StepStatus::InvalidControlOutput, {}};
     }
     state = staged_state;
@@ -975,7 +977,7 @@ StepResult FlightController::try_step_altitude_hold_mode(
     FlightController staged_controller = *this;
     const TrajectorySample sample = staged_controller.step_altitude_hold_mode_impl(
             staged_state, staged_clock, config, command, measured_altitude_m, estimated_attitude);
-    if (!valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+    if (sample.substeps == 0 || !valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
         return {StepStatus::InvalidControlOutput, {}};
     }
     state = staged_state;

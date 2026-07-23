@@ -56,7 +56,8 @@ bool valid_config(const SimulationConfig &config) {
             config.a5_downwash.coeff_3, config.a6_propwash.full_collective_angular_accel_rad_s2,
             config.a6_propwash.minimum_wake_entry_speed_mps, config.a6_propwash.minimum_transverse_rate_rad_s,
     };
-    return config.physics_hz > 0 && config.substep_hz > 0 &&
+    return config.physics_hz > 0 && config.substep_hz >= config.physics_hz &&
+            static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz) <= 1000000.0 &&
             std::all_of(std::begin(values), std::end(values), [](double value) { return std::isfinite(value); }) &&
             finite(config.external_force_world) && finite(config.wind_world_mps) && finite(config.wind_turbulence_mps) &&
             finite(config.a3_drag.coefficient) && finite(config.body_drag.drag_coefficient) &&

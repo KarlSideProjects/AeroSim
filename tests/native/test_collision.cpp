@@ -284,10 +284,12 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
             return {};
         }
         if (!has_first_response) {
-            first_response.time_seconds = static_cast<double>(response_clock.total_substeps) /
-                    static_cast<double>(config.substep_hz);
-            first_response.state = response_state;
-            first_response.substeps = response_clock.total_substeps;
+            first_response = response_step.sample;
+            if (response_step.sample.first_substeps > 0) {
+                first_response.time_seconds = response_step.sample.first_substep_time_seconds;
+                first_response.state = response_step.sample.first_substep_state;
+                first_response.substeps = response_step.sample.first_substeps;
+            }
             has_first_response = true;
         }
         ++response_frames;
@@ -432,9 +434,9 @@ int main() {
     }
     const aerosim::CollisionStepResult sparse_frame_result = sparse_frame_authority.try_step(
             sparse_frame_state, sparse_frame_clock, sparse_frame_controller, sparse_frame_config, hover, {});
-    if (sparse_frame_result.status != aerosim::StepStatus::Ok || sparse_frame_result.sample.substeps != 0 ||
+    if (sparse_frame_result.status != aerosim::StepStatus::InvalidConfig || sparse_frame_result.sample.substeps != 0 ||
             sparse_frame_authority.current_authority() != aerosim::PhysicsAuthority::FlightCore) {
-        return fail("a valid frame with no scheduled substep must remain successful");
+        return fail("an unschedulable frame must be rejected without changing collision authority");
     }
 
     aerosim::SimulationConfig invalid_rate_config = config;
