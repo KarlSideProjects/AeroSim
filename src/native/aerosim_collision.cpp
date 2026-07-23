@@ -90,7 +90,9 @@ bool valid_command(const AcroCommand &command) {
     return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
             std::isfinite(command.roll_stick) && std::isfinite(command.pitch_stick) &&
             std::isfinite(command.yaw_stick) && std::isfinite(command.rates.rc_rate) &&
-            std::isfinite(command.rates.super_rate) && std::isfinite(command.rates.expo);
+            command.rates.rc_rate >= 0.0 && command.rates.rc_rate <= 3.0 &&
+            std::isfinite(command.rates.super_rate) && command.rates.super_rate >= 0.0 && command.rates.super_rate <= 1.0 &&
+            std::isfinite(command.rates.expo) && command.rates.expo >= 0.0 && command.rates.expo <= 1.0;
 }
 
 bool valid_commands(const MotorCommands &commands) {

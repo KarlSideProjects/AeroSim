@@ -595,6 +595,11 @@ PackedFloat64Array AeroSimNative::step_dual_aircraft_simulation(
                 upper_status != aerosim::StepStatus::Ok ? upper_status : lower_status, "config/state");
         return {};
     }
+    if (flight_controller_.armed() &&
+            total_thrust_newtons > 4.0 * dual_config.upper.per_motor.max_thrust_per_motor_newtons) {
+        set_step_error("step_dual_aircraft_simulation", aerosim::StepStatus::InvalidCommand, "thrust");
+        return {};
+    }
     const double command_value = config.total_thrust_newtons /
             (4.0 * dual_config.upper.per_motor.max_thrust_per_motor_newtons);
     if (!std::isfinite(command_value) || command_value < 0.0 || command_value > 1.0) {
@@ -653,6 +658,10 @@ PackedFloat64Array AeroSimNative::step_simulation(
     if (input_status != aerosim::StepStatus::Ok) {
         restore_step(snapshot);
         set_step_error("step_simulation", input_status, "config/state");
+        return {};
+    }
+    if (flight_controller_.armed() && total_thrust_newtons > config.max_total_thrust_newtons) {
+        set_step_error("step_simulation", aerosim::StepStatus::InvalidCommand, "thrust");
         return {};
     }
     if (flight_controller_.armed()) {
@@ -1263,15 +1272,17 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
         set_step_error("step_collision_px4_actuator_mode", result.status, "command/contact/config/state");
         return {};
     }
+    if (result.sample.substeps == 0) {
+        restore_step(snapshot);
+        set_step_error("step_collision_px4_actuator_mode", aerosim::StepStatus::InvalidControlOutput,
+                "command/contact/config/state");
+        return {};
+    }
     if (result.authority == aerosim::PhysicsAuthority::Jolt) {
         flight_controller_.publish_unavailable_telemetry(result.sample, config, "PX4_ACTUATOR");
     } else {
         flight_controller_.publish_applied_telemetry(
                 result.sample, config, (motor_0 + motor_1 + motor_2 + motor_3) * 0.25, "PX4_ACTUATOR");
-    }
-    if (result.sample.substeps == 0 && !touching && physics_hz > 0 && substep_hz > 0) {
-        clear_step_error();
-        return {};
     }
     flight_mode_ = "PX4_ACTUATOR";
     PackedFloat64Array row;

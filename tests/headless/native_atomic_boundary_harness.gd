@@ -23,6 +23,8 @@ func _init() -> void:
             ok = _verify_negative_step()
         "legacy_atomic":
             ok = _verify_legacy_atomic()
+        "collision_px4_rollback":
+            ok = _verify_collision_px4_rollback()
         "huge_angle":
             ok = _verify_huge_angle_step()
         "trajectory_contract":
@@ -32,7 +34,7 @@ func _init() -> void:
         "imu_rollback":
             ok = _verify_imu_rollback()
         _:
-            push_error("--scenario sparse_px4, negative, legacy_atomic, huge_angle, trajectory_contract, hardware_mass, or imu_rollback is required")
+            push_error("--scenario sparse_px4, negative, legacy_atomic, collision_px4_rollback, huge_angle, trajectory_contract, hardware_mass, or imu_rollback is required")
     quit(0 if ok else 1)
 
 
@@ -101,7 +103,7 @@ func _verify_legacy_atomic() -> bool:
         if first_failed.is_empty() or first_failed != first_untouched:
             push_error("legacy atomic setup did not produce matching armed steps")
             return false
-        for thrust in [NAN, -1.0]:
+        for thrust in [NAN, -1.0, 5.0]:
             var rejected: PackedFloat64Array = failed.callv(method, [240, 1000, thrust])
             var expected_error := "AeroSimNative.%s: InvalidCommand: thrust" % method
             if not rejected.is_empty() or String(failed.call("last_step_error")) != expected_error:
@@ -112,6 +114,37 @@ func _verify_legacy_atomic() -> bool:
             if continued.is_empty() or continued != expected or not String(failed.call("last_step_error")).is_empty():
                 push_error("legacy rejected thrust must preserve the next legal continuation")
                 return false
+    return true
+
+
+func _verify_collision_px4_rollback() -> bool:
+    var native := _native()
+    if native == null or not _configure_airframe(native):
+        return false
+    var args := [240, 1000, 0.5, 0.5, 0.5, 0.5, false,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0]
+    var initial: PackedFloat64Array = native.callv("step_collision_px4_actuator_mode", args)
+    if initial.is_empty():
+        push_error("collision PX4 rollback setup did not produce a legal frame")
+        return false
+    var snapshot: Dictionary = native.call("telemetry_snapshot")
+    native.call("set_external_force_world", 1.0e308, 0.0, 0.0)
+    args[0] = 1
+    args[1] = 1
+    var priming: PackedFloat64Array = native.callv("step_collision_px4_actuator_mode", args)
+    if priming.is_empty():
+        push_error("collision PX4 overflow setup did not produce a finite first frame")
+        return false
+    snapshot = native.call("telemetry_snapshot")
+    var rejected: PackedFloat64Array = native.callv("step_collision_px4_actuator_mode", args)
+    var expected_error := "AeroSimNative.step_collision_px4_actuator_mode: InvalidControlOutput: command/contact/config/state"
+    var after: Dictionary = native.call("telemetry_snapshot")
+    if not rejected.is_empty() or String(native.call("last_step_error")) != expected_error or \
+            int(after.get("publish_count", -1)) != int(snapshot.get("publish_count", -2)) or \
+            int(after.get("timestamp_us", -1)) != int(snapshot.get("timestamp_us", -2)):
+        push_error("overflowed collision PX4 frame must roll back without publishing telemetry")
+        return false
     return true
 
 

@@ -144,6 +144,17 @@ bool finite(const aerosim::FlightControlState &state) {
             std::all_of(state.rate_integral.begin(), state.rate_integral.end(), [](double value) { return std::isfinite(value); });
 }
 
+bool within_configured_control_bounds(
+        const aerosim::RigidBodyState &state,
+        const aerosim::FlightControlState &controller,
+        const aerosim::SimulationConfig &config) {
+    return controller.motor_thrust_newtons >= 0.0 &&
+            controller.motor_thrust_newtons <= config.max_total_thrust_newtons &&
+            std::all_of(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(), [&config](double thrust) {
+                return thrust >= 0.0 && thrust <= config.per_motor.max_thrust_per_motor_newtons;
+            });
+}
+
 TrialSetup setup_trial(Scenario scenario, std::uint32_t seed) {
     constexpr double kPi = 3.14159265358979323846;
     Lcg rng(seed);
@@ -280,7 +291,9 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
                 mode, response_authority, response_state, response_clock, response_controller, config, response, acro_response, clear);
         if (neutral_step.authority != aerosim::PhysicsAuthority::FlightCore ||
                 response_step.authority != aerosim::PhysicsAuthority::FlightCore || !finite(neutral_state) || !finite(response_state) ||
-                !finite(neutral_controller.control_state()) || !finite(response_controller.control_state())) {
+                !finite(neutral_controller.control_state()) || !finite(response_controller.control_state()) ||
+                !within_configured_control_bounds(neutral_state, neutral_controller.control_state(), config) ||
+                !within_configured_control_bounds(response_state, response_controller.control_state(), config)) {
             return {};
         }
         if (!has_first_response) {
@@ -519,6 +532,22 @@ int main() {
             variant_authority.current_authority() != aerosim::PhysicsAuthority::FlightCore) {
         return fail("invalid collision variants must retain FlightCore state and report InvalidCommand");
     }
+    for (const aerosim::RateProfile invalid_rates : {
+                 aerosim::RateProfile{-0.1, 0.7, 0.0}, aerosim::RateProfile{3.1, 0.7, 0.0},
+                 aerosim::RateProfile{1.0, -0.1, 0.0}, aerosim::RateProfile{1.0, 1.1, 0.0},
+                 aerosim::RateProfile{1.0, 0.7, -0.1}, aerosim::RateProfile{1.0, 0.7, 1.1},
+         }) {
+        valid_acro.rates = invalid_rates;
+        const aerosim::CollisionStepResult invalid_tuning = variant_authority.step_acro(
+                variant_state, variant_clock, variant_controller, config, valid_acro, {});
+        if (invalid_tuning.status != aerosim::StepStatus::InvalidCommand ||
+                !same_state_bits(variant_state, variant_state_before) ||
+                variant_clock.total_substeps != variant_clock_before.total_substeps ||
+                variant_authority.current_authority() != aerosim::PhysicsAuthority::FlightCore) {
+            return fail("collision Acro rate profiles outside the public bounds must fail closed");
+        }
+    }
+    valid_acro.rates = {1.0, 0.0, 0.0};
     aerosim::RigidBodyState untouched_state = variant_state_before;
     aerosim::SimulationClock untouched_clock = variant_clock_before;
     aerosim::FlightController untouched_controller = variant_controller;

@@ -185,6 +185,22 @@ int main() {
             atomic_clock.total_substeps != clock_before_invalid_command.total_substeps) {
         return fail("invalid controller commands must be rejected atomically");
     }
+    for (const aerosim::RateProfile invalid_rates : {
+                 aerosim::RateProfile{-0.1, 0.7, 0.0}, aerosim::RateProfile{3.1, 0.7, 0.0},
+                 aerosim::RateProfile{1.0, -0.1, 0.0}, aerosim::RateProfile{1.0, 1.1, 0.0},
+                 aerosim::RateProfile{1.0, 0.7, -0.1}, aerosim::RateProfile{1.0, 0.7, 1.1},
+         }) {
+        aerosim::AcroCommand invalid_acro;
+        invalid_acro.throttle = 0.5;
+        invalid_acro.rates = invalid_rates;
+        const aerosim::StepResult invalid_acro_result = atomic_controller.try_step_acro_mode(
+                atomic_state, atomic_clock, atomic_config, invalid_acro);
+        if (invalid_acro_result.status != aerosim::StepStatus::InvalidCommand ||
+                !same_state_bits(atomic_state, state_before_invalid_command) ||
+                !same_clock_bits(atomic_clock, clock_before_invalid_command)) {
+            return fail("Acro rate profiles outside the public bounds must be rejected atomically");
+        }
+    }
 
     for (double invalid_accumulator : {NAN, INFINITY}) {
         aerosim::SimulationClock invalid_clock = atomic_clock;
