@@ -179,7 +179,7 @@ func _motor_hud_motor_is_valid(motor: Dictionary) -> bool:
             return false
         if not is_finite(float(motor[key])) or float(motor[key]) < 0.0:
             return false
-    return not motor.has("saturated") or typeof(motor.saturated) == TYPE_BOOL
+    return motor.has("saturated") and typeof(motor.saturated) == TYPE_BOOL
 
 
 func set_vehicle_names(names: Array) -> void:

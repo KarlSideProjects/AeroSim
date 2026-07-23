@@ -692,10 +692,10 @@ func test_motor_hud_stays_visible_for_minimal_osd_and_shows_paused_or_error_stat
         "snapshot_hz": 30.0,
         "source": "native_double_buffer",
         "motors": [
-            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
-            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
-            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
-            {"thrust_newtons": 4.0, "speed_rad_s": 20.0 * PI, "current_a": 5.0},
+            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+            {"thrust_newtons": 4.0, "speed_rad_s": 20.0 * PI, "current_a": 5.0, "saturated": false},
         ],
     }
     runtime.status_diagram.update_from_snapshot(snapshot, 1_000_000)

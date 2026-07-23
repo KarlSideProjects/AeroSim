@@ -52,11 +52,7 @@ func run() -> Dictionary:
     var lower_row: PackedFloat64Array = lower_native.call("step_angle_mode", 240, 1000, 0.70, -2.0, 1.0, -5.0)
     native.call("capture_replay_recorded_response", true)
     lower_native.call("capture_replay_recorded_response", true)
-    while initial_row.size() < 17:
-        initial_row.append(0.0)
-    while lower_row.size() < 17:
-        lower_row.append(0.0)
-    if initial_row.size() != 17 or lower_row.size() != 17:
+    if initial_row.size() != 12 or lower_row.size() != 12:
         return _failure("distinct native replay steps failed")
     error = _expect_ok(native.call("record_replay_command", 0, "DroneA", 0.65, 2.0, -1.0, 5.0, 0), "upper command")
     if not error.is_empty():

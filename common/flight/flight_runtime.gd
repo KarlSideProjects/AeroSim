@@ -835,7 +835,7 @@ func _record_replay_environment(state: Dictionary) -> bool:
 
 
 func _record_replay_checkpoint(timestamp_us: int, upper_row: PackedFloat64Array) -> void:
-    if not _replay_recording_active or native == null or upper_row.size() < 17 or _replay_secondary_row.size() < 17:
+    if not _replay_recording_active or native == null or upper_row.size() < 12 or _replay_secondary_row.size() < 12:
         return
     var result: Dictionary = native.call("record_replay_checkpoint", timestamp_us, upper_row, _replay_secondary_row, _airsim_secondary_native)
     if not bool(result.get("ok", false)):

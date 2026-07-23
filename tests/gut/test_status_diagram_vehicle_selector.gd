@@ -167,9 +167,9 @@ func test_motor_hud_uses_physical_nose_up_order_and_converts_radians_to_rpm() ->
     dashboard._ready()
     var snapshot := _live_snapshot("DroneA", 1_000_000)
     snapshot["motors"] = [
-        {"thrust_newtons": 1.0, "speed_rad_s": 10.0, "current_a": 2.0}, # RR
-        {"thrust_newtons": 2.0, "speed_rad_s": 20.0, "current_a": 3.0}, # FR
-        {"thrust_newtons": 3.0, "speed_rad_s": 30.0, "current_a": 4.0}, # RL
+        {"thrust_newtons": 1.0, "speed_rad_s": 10.0, "current_a": 2.0, "saturated": false}, # RR
+        {"thrust_newtons": 2.0, "speed_rad_s": 20.0, "current_a": 3.0, "saturated": false}, # FR
+        {"thrust_newtons": 3.0, "speed_rad_s": 30.0, "current_a": 4.0, "saturated": false}, # RL
         {"thrust_newtons": 4.0, "speed_rad_s": 20.0 * PI, "current_a": 5.0, "saturated": true}, # FL
     ]
 
@@ -184,16 +184,35 @@ func test_motor_hud_uses_physical_nose_up_order_and_converts_radians_to_rpm() ->
     assert_string_contains(String(motor_hud.cells[0].text), "SAT")
 
 
+func test_motor_hud_marks_missing_saturation_as_unavailable() -> void:
+    var dashboard := StatusDiagramDebug.new()
+    autofree(dashboard)
+    dashboard._ready()
+    var snapshot := _live_snapshot("DroneA", 1_000_000)
+    snapshot["motors"] = [
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+    ]
+
+    dashboard.update_from_snapshot(snapshot, 1_000_000)
+    var motor_hud: Dictionary = dashboard.get_motor_hud_state(false, "")
+
+    assert_eq(motor_hud.state, "unavailable")
+    assert_eq(motor_hud.reason, "invalid")
+
+
 func test_motor_hud_rejects_invalid_stale_paused_and_error_values() -> void:
     var dashboard := StatusDiagramDebug.new()
     autofree(dashboard)
     dashboard._ready()
     var snapshot := _live_snapshot("DroneA", 1_000_000)
     snapshot["motors"] = [
-        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
-        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
-        {"thrust_newtons": 1.0, "speed_rad_s": INF, "current_a": 3.0},
-        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+        {"thrust_newtons": 1.0, "speed_rad_s": INF, "current_a": 3.0, "saturated": false},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
     ]
     dashboard.update_from_snapshot(snapshot, 1_000_000)
     var invalid: Dictionary = dashboard.get_motor_hud_state(false, "")
@@ -208,10 +227,10 @@ func test_motor_hud_rejects_invalid_stale_paused_and_error_values() -> void:
     assert_eq(dashboard.get_motor_hud_state(false, "").reason, "malformed")
 
     snapshot["motors"] = [
-        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
-        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
-        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
-        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
     ]
     snapshot["motors"][2]["speed_rad_s"] = 2.0
     dashboard.update_from_snapshot(snapshot, 1_000_000)
@@ -231,9 +250,9 @@ func test_motor_hud_localizes_labels_and_saturation_marker() -> void:
     var snapshot := _live_snapshot("DroneA", 1_000_000)
     snapshot["motors"] = [
         {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": true},
-        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
-        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
-        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
     ]
     dashboard.update_from_snapshot(snapshot, 1_000_000)
 

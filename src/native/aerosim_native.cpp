@@ -1040,7 +1040,7 @@ Dictionary AeroSimNative::record_replay_checkpoint(
         const PackedFloat64Array &upper_row,
         const PackedFloat64Array &lower_row,
         AeroSimNative *lower_native) {
-    if (replay_recorder_ == nullptr || lower_native == nullptr || timestamp_us < 0 || upper_row.size() < 17 || lower_row.size() < 17) {
+    if (replay_recorder_ == nullptr || lower_native == nullptr || timestamp_us < 0 || upper_row.size() < 12 || lower_row.size() < 12) {
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay checkpoint state is invalid or recording is inactive"};
         return replay_status(false, &diagnostic);
     }

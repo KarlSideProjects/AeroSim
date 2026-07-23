@@ -1,6 +1,7 @@
 extends SceneTree
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const AirSimCoordinateContract = preload("res://common/rpc/airsim_coordinate_contract.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
@@ -589,7 +590,7 @@ func _verify_flight_control_public_path(native: Object) -> bool:
     for _frame in range(Engine.physics_ticks_per_second / 2):
         native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, 0.5, 1.0, 0.0, 0.0, 1.0, 0.722222222222, 0.0)
     var acro: Dictionary = native.call("flight_control_diagnostics")
-    var roll_rate_dps := rad_to_deg(float(acro.get("angular_velocity_z_rad_s", 0.0)))
+    var roll_rate_dps := rad_to_deg(float(acro.get("angular_velocity_x_rad_s", 0.0)))
     if absf(roll_rate_dps - 720.0) > 720.0 * 0.05:
         push_error("G2.5 public Acro full-stick roll must reach 720 deg/s within 5%%")
         return false
@@ -2016,8 +2017,9 @@ func _verify_runtime_actions() -> bool:
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
     )
-    if angle_rates.length() <= 0.01:
-        push_error("Xbox roll, pitch, and yaw axes must drive the Angle runtime path")
+    var angle_rates_frd := AirSimCoordinateContract.godot_body_to_frd(angle_rates)
+    if angle_rates_frd.x <= 0.01 or angle_rates_frd.y <= 0.01 or angle_rates_frd.z <= 0.01:
+        push_error("Xbox positive roll, pitch, and yaw axes must produce positive FRD angular velocity in Angle mode")
         scene.queue_free()
         return false
     button_clock.milliseconds = 100
@@ -2074,8 +2076,9 @@ func _verify_runtime_actions() -> bool:
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
     )
-    if altitude_hold_rates.length() <= 0.01:
-        push_error("Xbox roll, pitch, and yaw axes must drive the Altitude Hold runtime path")
+    var altitude_hold_rates_frd := AirSimCoordinateContract.godot_body_to_frd(altitude_hold_rates)
+    if altitude_hold_rates_frd.x >= -0.01 or altitude_hold_rates_frd.y >= -0.01 or altitude_hold_rates_frd.z >= -0.01:
+        push_error("Xbox negative roll, pitch, and yaw axes must produce negative FRD angular velocity in Altitude Hold")
         scene.queue_free()
         return false
     scene.native.call("reset_flight")
@@ -2102,8 +2105,9 @@ func _verify_runtime_actions() -> bool:
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
     )
-    if acro_rates.z <= 0.01 or absf(acro_rates.z) <= absf(acro_rates.x) or absf(acro_rates.z) <= absf(acro_rates.y):
-        push_error("Fresh Xbox roll profile input must produce the expected dominant positive ACRO roll response")
+    var acro_rates_frd := AirSimCoordinateContract.godot_body_to_frd(acro_rates)
+    if acro_rates_frd.x <= 0.01 or absf(acro_rates_frd.x) <= absf(acro_rates_frd.y) or absf(acro_rates_frd.x) <= absf(acro_rates_frd.z):
+        push_error("Fresh Xbox roll profile input must produce the expected dominant positive FRD ACRO roll response")
         scene.queue_free()
         return false
     scene.queue_free()
