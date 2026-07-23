@@ -93,6 +93,19 @@ func _body(velocity: Vector3, yaw: float) -> FakeBody:
     return result
 
 
+func test_jolt_boundary_converts_world_angular_velocity_to_the_body_frame() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+    body.global_transform = Transform3D(Basis.from_euler(Vector3(0.0, 0.0, PI * 0.5)), Vector3.ZERO)
+    body.angular_velocity = Vector3(0.0, 1.0, 0.0)
+
+    var angular_body: Vector3 = runtime._jolt_angular_velocity_body_y_up(body)
+    assert_almost_eq(angular_body.x, 1.0, 0.000001)
+    assert_almost_eq(angular_body.y, 0.0, 0.000001)
+    assert_almost_eq(angular_body.z, 0.0, 0.000001)
+
+
 func test_native_step_error_pauses_freezes_and_displays_without_reemitting() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)

@@ -774,6 +774,7 @@ func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: Pac
 func _record_replay_collision(vehicle_name: String, body, authority: int = 1, timestamp_us: int = -1) -> void:
     if not _replay_recording_active or native == null or body == null or not body.contact_seen:
         return
+    var angular_velocity_body := _jolt_angular_velocity_body_y_up(body)
     var result: Dictionary = native.call(
         "record_replay_collision",
         _replay_timestamp_us() if timestamp_us < 0 else _replay_timestamp_for_recorded_frame(timestamp_us),
@@ -789,10 +790,10 @@ func _record_replay_collision(vehicle_name: String, body, authority: int = 1, ti
         body.linear_velocity.x,
         body.linear_velocity.y,
         body.linear_velocity.z,
-        body.angular_velocity.x,
-        body.angular_velocity.y,
-        body.angular_velocity.z,
-            _kinetic(body.linear_velocity, body.angular_velocity, _airsim_secondary_native if vehicle_name != _airsim_vehicle_name else native),
+        angular_velocity_body.x,
+        angular_velocity_body.y,
+        angular_velocity_body.z,
+        _kinetic(body.linear_velocity, angular_velocity_body, _airsim_secondary_native if vehicle_name != _airsim_vehicle_name else native),
         true,
         authority)
     if not bool(result.get("ok", false)):
@@ -1385,6 +1386,7 @@ func _physics_process(delta: float) -> void:
         if drone_body != null:
             if not _sync_native_from_drone():
                 return
+        var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body) if drone_body != null else Vector3.ZERO
         row = native.call(
             "step_collision_px4_actuator_mode",
             Engine.physics_ticks_per_second,
@@ -1404,17 +1406,18 @@ func _physics_process(delta: float) -> void:
             drone_body.linear_velocity.x if drone_body != null else 0.0,
             drone_body.linear_velocity.y if drone_body != null else 0.0,
             drone_body.linear_velocity.z if drone_body != null else 0.0,
-            drone_body.angular_velocity.x if drone_body != null else 0.0,
-            drone_body.angular_velocity.y if drone_body != null else 0.0,
-            drone_body.angular_velocity.z if drone_body != null else 0.0,
-            _kinetic(drone_body.linear_velocity, drone_body.angular_velocity) if drone_body != null else -1.0
+            angular_velocity_body.x,
+            angular_velocity_body.y,
+            angular_velocity_body.z,
+            _kinetic(drone_body.linear_velocity, angular_velocity_body) if drone_body != null else -1.0
         )
         if _handle_native_step_failure(native, row, true):
             return
     elif drone_body != null:
         if not _sync_native_from_drone():
             return
-        var energy_limit := _kinetic(drone_body.linear_velocity, drone_body.angular_velocity)
+        var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body)
+        var energy_limit := _kinetic(drone_body.linear_velocity, angular_velocity_body)
         if flight_mode == "ACRO":
             row = native.call(
                 "step_collision_acro_mode",
@@ -1438,9 +1441,9 @@ func _physics_process(delta: float) -> void:
                 drone_body.linear_velocity.x,
                 drone_body.linear_velocity.y,
                 drone_body.linear_velocity.z,
-                drone_body.angular_velocity.x,
-                drone_body.angular_velocity.y,
-                drone_body.angular_velocity.z,
+                angular_velocity_body.x,
+                angular_velocity_body.y,
+                angular_velocity_body.z,
                 energy_limit
             )
         else:
@@ -1464,9 +1467,9 @@ func _physics_process(delta: float) -> void:
                 drone_body.linear_velocity.x,
                 drone_body.linear_velocity.y,
                 drone_body.linear_velocity.z,
-                drone_body.angular_velocity.x,
-                drone_body.angular_velocity.y,
-                drone_body.angular_velocity.z,
+                angular_velocity_body.x,
+                angular_velocity_body.y,
+                angular_velocity_body.z,
                 energy_limit
             )
         if _handle_native_step_failure(native, row, true):
@@ -1588,6 +1591,7 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             drone_body.global_position.z)
     var controls := _airsim_secondary_controls(context, body)
     controls["altitude_m"] = body.global_position.y
+    var angular_velocity_body := _jolt_angular_velocity_body_y_up(body)
     var row: PackedFloat64Array
     if String(controls.get("mode", "ANGLE")) == "ACRO":
         row = _airsim_secondary_native.call(
@@ -1612,10 +1616,10 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             body.linear_velocity.x,
             body.linear_velocity.y,
             body.linear_velocity.z,
-            body.angular_velocity.x,
-            body.angular_velocity.y,
-            body.angular_velocity.z,
-            _kinetic(body.linear_velocity, body.angular_velocity, _airsim_secondary_native))
+            angular_velocity_body.x,
+            angular_velocity_body.y,
+            angular_velocity_body.z,
+            _kinetic(body.linear_velocity, angular_velocity_body, _airsim_secondary_native))
     elif String(controls.get("mode", "ANGLE")) == "ALTITUDE_HOLD":
         row = _airsim_secondary_native.call(
             "step_collision_altitude_hold_mode",
@@ -1636,10 +1640,10 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             body.linear_velocity.x,
             body.linear_velocity.y,
             body.linear_velocity.z,
-            body.angular_velocity.x,
-            body.angular_velocity.y,
-            body.angular_velocity.z,
-            _kinetic(body.linear_velocity, body.angular_velocity, _airsim_secondary_native))
+            angular_velocity_body.x,
+            angular_velocity_body.y,
+            angular_velocity_body.z,
+            _kinetic(body.linear_velocity, angular_velocity_body, _airsim_secondary_native))
     else:
         row = _airsim_secondary_native.call(
             "step_collision_angle_mode",
@@ -1660,10 +1664,10 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             body.linear_velocity.x,
             body.linear_velocity.y,
             body.linear_velocity.z,
-            body.angular_velocity.x,
-            body.angular_velocity.y,
-            body.angular_velocity.z,
-            _kinetic(body.linear_velocity, body.angular_velocity, _airsim_secondary_native))
+            angular_velocity_body.x,
+            angular_velocity_body.y,
+            angular_velocity_body.z,
+            _kinetic(body.linear_velocity, angular_velocity_body, _airsim_secondary_native))
     if _handle_native_step_failure(_airsim_secondary_native, row, true):
         return
     if not _refresh_native_imu_sample(_airsim_secondary_native):
@@ -1764,6 +1768,7 @@ func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
 
 func _sync_named_native(body: Object, target_native: Object) -> bool:
     var q: Quaternion = body.global_transform.basis.get_rotation_quaternion()
+    var angular_velocity_body := _jolt_angular_velocity_body_y_up(body)
     target_native.call(
         "sync_flight_state",
         body.global_position.x,
@@ -1776,9 +1781,9 @@ func _sync_named_native(body: Object, target_native: Object) -> bool:
         body.linear_velocity.x,
         body.linear_velocity.y,
         body.linear_velocity.z,
-        body.angular_velocity.x,
-        body.angular_velocity.y,
-        body.angular_velocity.z)
+        angular_velocity_body.x,
+        angular_velocity_body.y,
+        angular_velocity_body.z)
     return not _handle_native_step_failure(target_native)
 
 
@@ -4789,6 +4794,14 @@ func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, target_native
     var rotational_energy := inertia_frd.x * angular_velocity.x * angular_velocity.x + inertia_frd.z * angular_velocity.y * angular_velocity.y + inertia_frd.y * angular_velocity.z * angular_velocity.z
     return 0.5 * _mass_kg(target_native) * linear_velocity.length_squared() + 0.5 * rotational_energy
 
+
+func _jolt_angular_velocity_body_y_up(body: Object) -> Vector3:
+    var basis: Basis = body.global_transform.basis
+    if body is Node3D and not body.is_inside_tree():
+        basis = body.transform.basis
+    return basis.inverse() * body.angular_velocity
+
+
 func _mass_kg(target_native = native) -> float:
     if target_native == null or not target_native.has_method("hardware_power_diagnostics"):
         return 1.0
@@ -5416,6 +5429,7 @@ func _acro_yaw_stick() -> float:
 
 func _sync_native_from_drone() -> bool:
     var q: Quaternion = drone_body.global_transform.basis.get_rotation_quaternion()
+    var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body)
     native.call(
         "sync_flight_state",
         drone_body.global_position.x,
@@ -5428,8 +5442,8 @@ func _sync_native_from_drone() -> bool:
         drone_body.linear_velocity.x,
         drone_body.linear_velocity.y,
         drone_body.linear_velocity.z,
-        drone_body.angular_velocity.x,
-        drone_body.angular_velocity.y,
-        drone_body.angular_velocity.z
+        angular_velocity_body.x,
+        angular_velocity_body.y,
+        angular_velocity_body.z
     )
     return not _handle_native_step_failure(native)

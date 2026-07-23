@@ -24,7 +24,7 @@ func apply_native_state(
     native_position = position
     native_orientation = orientation.normalized()
     native_linear_velocity = linear
-    native_angular_velocity = angular
+    native_angular_velocity = Basis(native_orientation) * angular
     global_transform = Transform3D(Basis(native_orientation), native_position)
     linear_velocity = native_linear_velocity
     angular_velocity = native_angular_velocity

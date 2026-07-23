@@ -1196,6 +1196,11 @@ func _verify_jolt_collision_scene(native: Object) -> bool:
                     push_error("Headless Jolt G0.8 trial failed: %s %s seed %d first=%s second=%s" % [mode, scenario, seed, first.get("reason", ""), second.get("reason", "")])
                     return false
                 verified_jolt_collision_trials += 1
+    var rotated: Dictionary = await _run_jolt_collision_trial(native, "rotated_anisotropic", 0, mass_kg, inertia_frd, "ANGLE")
+    if not rotated.ok:
+        push_error("Headless Jolt rotated anisotropic-inertia G0.8 trial failed: %s" % rotated.get("reason", ""))
+        return false
+    verified_jolt_collision_trials += 1
     return true
 
 func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass_kg: float, inertia_frd: Vector3, mode: String) -> Dictionary:
@@ -1208,11 +1213,13 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
     drone.max_contacts_reported = 4
     drone.gravity_scale = 0.0
     drone.set("continuous_cd", true)
+    drone.mass = mass_kg
+    drone.inertia = Vector3(inertia_frd.x, inertia_frd.z, inertia_frd.y)
     _add_shape(drone, _drone_shape(scenario))
     trial_root.add_child(drone)
 
     _setup_jolt_trial_geometry(trial_root, drone, scenario, seed)
-    var energy_before := _kinetic(drone.linear_velocity, drone.angular_velocity, mass_kg, inertia_frd)
+    var energy_before := _kinetic(drone.linear_velocity, _jolt_angular_velocity_body_y_up(drone), mass_kg, inertia_frd)
 
     if drone.get("continuous_cd") != true:
         trial_root.queue_free()
@@ -1233,7 +1240,7 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
                 break
             _sync_native_from_body(native, drone)
             var solved_linear: Vector3 = drone.linear_velocity
-            var solved_angular: Vector3 = drone.angular_velocity
+            var solved_angular := _jolt_angular_velocity_body_y_up(drone)
             impact_row = _step_native_collision(
                 native,
                 0.5,
@@ -1266,7 +1273,7 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
         reason = "energy row=%f limit=%f" % [float(impact_row[17]), energy_before * 1.01]
     if ok:
         _apply_collision_row_to_body(drone, impact_row)
-        var body_energy := _kinetic(drone.linear_velocity, drone.angular_velocity, mass_kg, inertia_frd)
+        var body_energy := _kinetic(drone.linear_velocity, _jolt_angular_velocity_body_y_up(drone), mass_kg, inertia_frd)
         ok = _body_state_finite(drone) and body_energy <= energy_before * 1.01 + 1e-4
         if not ok:
             reason = "body_impact_state body=%f limit=%f finite=%s" % [body_energy, energy_before * 1.01, str(_body_state_finite(drone))]
@@ -1414,7 +1421,7 @@ func _setup_jolt_trial_geometry(parent: Node3D, drone: RigidBody3D, scenario: St
         var z_offset := _jitter(seed, 6, -0.12, 0.12)
         drone.position = Vector3(-1.0, 0.0, z_offset)
         drone.linear_velocity = Vector3(14.0, 0.0, -z_offset * 3.0)
-    else:
+    elif scenario == "tumble_ground":
         var tumble_ground := StaticBody3D.new()
         tumble_ground.position = Vector3.ZERO
         var tumble_box := BoxShape3D.new()
@@ -1424,9 +1431,19 @@ func _setup_jolt_trial_geometry(parent: Node3D, drone: RigidBody3D, scenario: St
         drone.position = Vector3(_jitter(seed, 7, -0.2, 0.2), 0.8, _jitter(seed, 8, -0.2, 0.2))
         drone.linear_velocity = Vector3(_jitter(seed, 9, -2.0, 2.0), -8.0, _jitter(seed, 10, -2.0, 2.0))
         drone.angular_velocity = Vector3(_jitter(seed, 11, -9.0, 9.0), _jitter(seed, 12, -9.0, 9.0), _jitter(seed, 13, -9.0, 9.0))
+    else:
+        var rotated_ground := StaticBody3D.new()
+        var rotated_box := BoxShape3D.new()
+        rotated_box.size = Vector3(4.0, 0.1, 4.0)
+        _add_shape(rotated_ground, rotated_box)
+        parent.add_child(rotated_ground)
+        drone.rotation = Vector3(0.0, 0.0, PI * 0.5)
+        drone.position = Vector3(0.0, 0.8, 0.0)
+        drone.linear_velocity = Vector3(0.0, -8.0, 0.0)
+        drone.angular_velocity = Vector3(0.0, 9.0, 0.0)
 
 func _drone_shape(scenario: String) -> Shape3D:
-    if scenario == "tumble_ground":
+    if scenario == "tumble_ground" or scenario == "rotated_anisotropic":
         var box := BoxShape3D.new()
         box.size = Vector3(0.24, 0.08, 0.24)
         return box
@@ -1457,6 +1474,7 @@ func _apply_collision_row_to_body(body: Object, row: PackedFloat64Array) -> void
 
 func _sync_native_from_body(native: Object, body: RigidBody3D) -> void:
     var q := body.global_transform.basis.get_rotation_quaternion()
+    var angular_velocity_body := _jolt_angular_velocity_body_y_up(body)
     native.call(
         "sync_flight_state",
         body.global_position.x,
@@ -1469,10 +1487,13 @@ func _sync_native_from_body(native: Object, body: RigidBody3D) -> void:
         body.linear_velocity.x,
         body.linear_velocity.y,
         body.linear_velocity.z,
-        body.angular_velocity.x,
-        body.angular_velocity.y,
-        body.angular_velocity.z
+        angular_velocity_body.x,
+        angular_velocity_body.y,
+        angular_velocity_body.z
     )
+
+func _jolt_angular_velocity_body_y_up(body: RigidBody3D) -> Vector3:
+    return body.global_transform.basis.inverse() * body.angular_velocity
 
 func _row_impulse(row: PackedFloat64Array) -> Vector3:
     return Vector3(row[21], row[22], row[23])

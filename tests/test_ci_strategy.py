@@ -410,7 +410,7 @@ class CiStrategyTest(unittest.TestCase):
             '["physics_ticks_per_second"])\')" = "240"',
             '["simulated_frames"])\')" = "14400"',
             '["desktop_substeps"])\')" = "60000"',
-            '["jolt_collision_trials"])\')" = "800"',
+            '["jolt_collision_trials"])\')" = "801"',
         ):
             with self.subTest(contract=contract):
                 self.assertIn(contract, step)
