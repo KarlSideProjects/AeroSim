@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"
 validate_native_provenance
 
 mkdir -p build/native_atomic_boundary
-for scenario in sparse_px4 negative huge_angle trajectory_contract imu_rollback; do
+for scenario in sparse_px4 negative huge_angle trajectory_contract hardware_mass imu_rollback; do
     log="build/native_atomic_boundary/${scenario}.log"
     rm -f "$log"
     "$godot_bin" --headless --path . --log-file "$log" \
@@ -31,4 +31,4 @@ if [ "$(grep -Fxc "$expected" "$negative_log" || true)" -ne 1 ] || [ "$(grep -Ec
     exit 1
 fi
 
-echo "native atomic boundary: sparse PX4, public IMU rollback, and one-error acceptance passed"
+echo "native atomic boundary: sparse PX4, runtime hardware mass, public IMU rollback, and one-error acceptance passed"

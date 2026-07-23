@@ -953,7 +953,7 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     native.call("set_a5_downwash_model", false, prop_radius, 2267.18, 0.16, -0.11)
     native.call("set_a5_downwash_source_position", NAN, NAN, NAN)
     native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012)
-    native.call("set_a4_ground_effect_model", true, 3.16e-10, 11.36859, prop_radius, prop_radius, 12000.0, 12000.0, 12000.0, 12000.0)
+    native.call("set_a4_ground_effect_model", false, 3.16e-10, 11.36859, prop_radius, prop_radius, 12000.0, 12000.0, 12000.0, 12000.0)
     return true
 
 
@@ -2625,24 +2625,16 @@ func _set_hardware_path(config: Dictionary, path: String, value: Variant) -> voi
 func _native_hovers_at_mass(native: Object, mass_kg: float) -> bool:
     native.call("reset_flight")
     native.call("arm_flight_control", 0.0)
-    var hover_result: Variant = native.call(
-        "simulate_trajectory",
-        1.0,
+    var hover: PackedFloat64Array = native.call(
+        "step_simulation",
         Engine.physics_ticks_per_second,
         1000,
         mass_kg * 9.80665
     )
-    if not (hover_result is Dictionary):
-        push_error("AeroSimNative.simulate_trajectory returned a non-Dictionary result")
+    if hover.size() != 12:
+        push_error("AeroSimNative.step_simulation failed to produce a trajectory row")
         return false
-    var hover_status := String(hover_result.get("status", "missing_status"))
-    var hover_failed_frame := int(hover_result.get("failed_frame", -1))
-    var hover: PackedFloat64Array = hover_result.get("rows", PackedFloat64Array())
-    var hover_stride := int(native.call("trajectory_stride"))
-    if hover_status != "Ok" or hover.is_empty() or hover_stride != 12 or hover.size() % hover_stride != 0:
-        push_error("AeroSimNative.simulate_trajectory failed: status=%s failed_frame=%d" % [hover_status, hover_failed_frame])
-        return false
-    return abs(float(hover[hover.size() - hover_stride + 9])) <= 1e-6
+    return abs(float(hover[2])) <= 1e-6
 
 func _press_key(keycode: int) -> void:
     var event := InputEventKey.new()

@@ -1,5 +1,13 @@
 extends SceneTree
 
+const HardwareConfig = preload("res://common/flight/hardware_config.gd")
+
+
+class RuntimeFixture:
+    extends RefCounted
+
+    var native: Object
+
 
 func _init() -> void:
     var scenario := ""
@@ -17,10 +25,12 @@ func _init() -> void:
             ok = _verify_huge_angle_step()
         "trajectory_contract":
             ok = _verify_trajectory_contract()
+        "hardware_mass":
+            ok = _verify_hardware_mass()
         "imu_rollback":
             ok = _verify_imu_rollback()
         _:
-            push_error("--scenario sparse_px4, negative, huge_angle, trajectory_contract, or imu_rollback is required")
+            push_error("--scenario sparse_px4, negative, huge_angle, trajectory_contract, hardware_mass, or imu_rollback is required")
     quit(0 if ok else 1)
 
 
@@ -83,6 +93,30 @@ func _verify_trajectory_contract() -> bool:
         if String(result.get("status", "")) != "InvalidCommand" or not PackedFloat64Array(result.get("rows", PackedFloat64Array())).is_empty() or int(result.get("failed_frame", -2)) != -1:
             push_error("trajectory must reject invalid public thrust commands without rows")
             return false
+    return true
+
+
+func _verify_hardware_mass() -> bool:
+    var native := _native()
+    if native == null:
+        return false
+    var runtime := RuntimeFixture.new()
+    runtime.native = native
+    var hardware_config := HardwareConfig.new()
+    if not hardware_config.apply_to_runtime(runtime, "res://config/drones/5_inch_6s.json"):
+        push_error("runtime hardware preset could not configure native mass: %s" % hardware_config.last_error)
+        return false
+    var mass_kg := float(hardware_config.current.aircraft.mass_kg)
+    if absf(float(native.call("hardware_power_diagnostics").get("mass_kg", 0.0)) - mass_kg) > 1e-9:
+        push_error("runtime hardware preset did not reach native mass diagnostics")
+        return false
+    if not native.call("arm_flight_control", 0.0):
+        push_error("runtime hardware mass check could not arm native flight control")
+        return false
+    var row: PackedFloat64Array = native.call("step_simulation", 240, 1000, mass_kg * 9.80665)
+    if row.size() != 12 or absf(float(row[2])) > 1e-6:
+        push_error("runtime hardware preset mass must produce a native hover trajectory")
+        return false
     return true
 
 
