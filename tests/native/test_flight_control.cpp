@@ -150,6 +150,11 @@ aerosim::SimulationConfig shipped_5_inch_6s_config() {
 } // namespace
 
 int main() {
+    if (!near(aerosim::normalize_angle_radians(1.0e300),
+                    std::remainder(1.0e300, 2.0 * kPi), 1e-12)) {
+        return fail("angle normalization must be constant-time for huge finite angles");
+    }
+
     // A rejected command must not advance the controller, clock, or motor state.
     aerosim::FlightController atomic_controller;
     aerosim::RigidBodyState atomic_state;

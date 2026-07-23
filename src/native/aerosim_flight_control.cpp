@@ -215,6 +215,10 @@ bool valid_command(const AcroCommand &command) {
 
 } // namespace
 
+double normalize_angle_radians(double angle) {
+    return std::isfinite(angle) ? std::remainder(angle, 2.0 * 3.14159265358979323846) : 0.0;
+}
+
 const char *step_status_code(StepStatus status) {
     switch (status) {
         case StepStatus::Ok: return "Ok";

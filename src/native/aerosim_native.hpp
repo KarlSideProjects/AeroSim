@@ -422,7 +422,7 @@ public:
             double resolved_angular_velocity_y,
             double resolved_angular_velocity_z,
             double max_kinetic_energy_joules);
-    godot::PackedFloat64Array simulate_trajectory(
+    godot::Dictionary simulate_trajectory(
             double seconds,
             std::int32_t physics_hz,
             std::int32_t substep_hz,
