@@ -78,7 +78,7 @@ aerosim::RecordedInputSequence standard_maneuver(std::int32_t frames) {
     return recorder.sequence();
 }
 
-bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
+bool write_artifact(const char *path, const aerosim::ReplaySession &session) {
     if (path == nullptr || path[0] == '\0') {
         return true;
     }
@@ -86,36 +86,7 @@ bool write_artifact(const char *path, const aerosim::TrajectorySample &sample) {
     if (!out) {
         return false;
     }
-    out << std::setprecision(17)
-        << "{\n"
-        << "  \"schema_version\": 3,\n"
-        << "  \"time_seconds\": " << sample.time_seconds << ",\n"
-        << "  \"substeps\": " << sample.substeps << ",\n"
-        << "  \"position_m\": ["
-        << sample.state.position.x << ", "
-        << sample.state.position.y << ", "
-        << sample.state.position.z << "],\n"
-        << "  \"orientation_xyzw\": ["
-        << sample.state.orientation.x << ", "
-        << sample.state.orientation.y << ", "
-        << sample.state.orientation.z << ", "
-        << sample.state.orientation.w << "],\n"
-        << "  \"motor_thrust_newtons\": ["
-        << sample.state.motor_thrust_newtons[0] << ", "
-        << sample.state.motor_thrust_newtons[1] << ", "
-        << sample.state.motor_thrust_newtons[2] << ", "
-        << sample.state.motor_thrust_newtons[3] << "],\n"
-        << "  \"propwash\": [" << sample.state.propwash_disturbance_rad_s2.x << ", "
-        << sample.state.propwash_disturbance_rad_s2.y << ", " << sample.state.propwash_disturbance_rad_s2.z << "],\n"
-        << "  \"controller\": {\"target_angle\":[0,0,0],\"target_rate\":[0,0,0],\"integral\":[0,0,0],"
-        << "\"previous_error\":[0,0,0],\"derivative\":[0,0,0],\"mode\":\"ANGLE\",\"initialized\":false,"
-        << "\"motor_latches\":[false,false,false,false],\"pid_latches\":[false,false,false],\"motor_total\":0},\n"
-        << "  \"first_response\": {\"time_seconds\":" << sample.time_seconds << ",\"substeps\":" << sample.substeps
-        << ",\"motor_thrust_newtons\":[" << sample.state.motor_thrust_newtons[0] << ", "
-        << sample.state.motor_thrust_newtons[1] << ", " << sample.state.motor_thrust_newtons[2] << ", "
-        << sample.state.motor_thrust_newtons[3] << "],\"propwash\":[" << sample.state.propwash_disturbance_rad_s2.x << ", "
-        << sample.state.propwash_disturbance_rad_s2.y << ", " << sample.state.propwash_disturbance_rad_s2.z << "]}\n"
-        << "}\n";
+    out << aerosim::serialize_replay_session(session);
     return true;
 }
 
@@ -764,8 +735,44 @@ int main() {
     if (!aerosim::within_g06a_tolerance(delta)) {
         return fail("G0.6a cross-platform final-state tolerance check rejected the standard maneuver");
     }
-    if (!write_artifact(std::getenv("AEROSIM_REPLAY_ARTIFACT"), platform_run.back())) {
-        return fail("failed to write replay terminal-state artifact");
+    aerosim::SimulationConfig artifact_config = standard_config;
+    artifact_config.a6_propwash.enabled = true;
+    artifact_config.a6_propwash.full_collective_angular_accel_rad_s2 = 12.0;
+    artifact_config.a6_propwash.minimum_wake_entry_speed_mps = 0.001;
+    artifact_config.a6_propwash.minimum_transverse_rate_rad_s = 0.001;
+    aerosim::RigidBodyState artifact_state;
+    artifact_state.velocity.y = -6.0;
+    artifact_state.angular_velocity = {3.0, 4.0, 0.0};
+    aerosim::SimulationClock artifact_clock;
+    aerosim::FlightController artifact_controller;
+    artifact_controller.arm(0.0);
+    aerosim::FlightCommand artifact_command;
+    artifact_command.throttle = 0.8;
+    artifact_command.roll_degrees = 4.0;
+    const aerosim::TrajectorySample artifact_response = artifact_controller.step_angle_mode(
+            artifact_state, artifact_clock, artifact_config, artifact_command);
+    aerosim::ReplayRunCheckpoint artifact_checkpoint;
+    artifact_checkpoint.state = {artifact_state, artifact_state};
+    artifact_checkpoint.controllers = {{artifact_controller.control_state(), artifact_controller.control_state()}};
+    artifact_checkpoint.clocks = {{artifact_clock, artifact_clock}};
+    artifact_checkpoint.first_response_substeps = {{artifact_response, artifact_response}};
+    aerosim::ReplaySessionRecorder artifact_recorder(91, "artifact-manifest");
+    if (!artifact_recorder.add_vehicle("DroneA", "artifact-a", "{\"mass_kg\":1.0}") ||
+            !artifact_recorder.add_vehicle("DroneB", "artifact-b", "{\"mass_kg\":1.0}") ||
+            !artifact_recorder.record_environment(0, complete_atmosphere()) ||
+            !artifact_recorder.record_command(0, "DroneA", artifact_command, aerosim::ReplayControllerAuthority::FlightCore) ||
+            !artifact_recorder.record_checkpoint(1, artifact_checkpoint) || !artifact_recorder.finish(1, "completed")) {
+        return fail("failed to create schema-v3 replay artifact checkpoint");
+    }
+    const aerosim::ReplayLoadResult artifact_loaded = aerosim::load_replay_session(
+            artifact_recorder.serialize(), "artifact-manifest");
+    if (!artifact_loaded.ok || artifact_loaded.session.checkpoints.size() != 1 ||
+            artifact_loaded.session.checkpoints[0].first_response_substeps[0].substeps == 0 ||
+            artifact_loaded.session.checkpoints[0].state.upper.propwash_disturbance_rad_s2.x == 0.0) {
+        return fail("schema-v3 replay artifact must retain an actual response checkpoint");
+    }
+    if (!write_artifact(std::getenv("AEROSIM_REPLAY_ARTIFACT"), artifact_loaded.session)) {
+        return fail("failed to write schema-v3 replay checkpoint artifact");
     }
 
     if (!test_complete_session_schema()) {

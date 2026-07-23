@@ -761,6 +761,12 @@ func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: Pac
         2)
     if not bool(result.get("ok", false)):
         push_error("Complete replay actuator recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        return
+    if native.has_method("capture_replay_recorded_response"):
+        var non_neutral := false
+        for output in actuator_outputs:
+            non_neutral = non_neutral or absf(float(output) - 0.5) > 0.0
+        native.call("capture_replay_recorded_response", non_neutral)
 
 
 func _record_replay_collision(vehicle_name: String, body, authority: int = 1, timestamp_us: int = -1) -> void:
