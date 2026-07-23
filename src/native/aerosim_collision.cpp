@@ -145,6 +145,9 @@ TrajectorySample sample_jolt_frame(
             config.air_density_kg_m3,
             false,
             false,
+            {},
+            0.0,
+            0,
     };
 }
 

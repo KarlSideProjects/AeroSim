@@ -478,6 +478,8 @@ TrajectorySample step_per_motor_physics_frame(
     const SimulationClock initial_clock = clock;
     Vec3 propwash_sum;
     AerodynamicStepValues aerodynamic_sum;
+    RigidBodyState first_substep_state;
+    bool has_first_substep = false;
     const double substeps_per_frame = static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz);
     const double dt = 1.0 / static_cast<double>(config.substep_hz);
     clock.substep_accumulator += substeps_per_frame;
@@ -491,6 +493,10 @@ TrajectorySample step_per_motor_physics_frame(
             return {};
         }
         const AerodynamicStepValues aerodynamic = integrate_per_motor(state, config, commands, {}, dt);
+        if (!has_first_substep) {
+            first_substep_state = state;
+            has_first_substep = true;
+        }
         aerodynamic_sum = add_aerodynamic_values(aerodynamic_sum, aerodynamic);
         propwash_sum = propwash_sum + state.propwash_disturbance_rad_s2;
     }
@@ -511,6 +517,9 @@ TrajectorySample step_per_motor_physics_frame(
             config.air_density_kg_m3,
             aerodynamic_sum.body_drag_force_applied,
             aerodynamic_sum.body_drag_torque_applied,
+            first_substep_state,
+            has_first_substep ? static_cast<double>(initial_clock.total_substeps + 1U) * dt : 0.0,
+            has_first_substep ? initial_clock.total_substeps + 1U : 0U,
     };
 }
 
@@ -618,6 +627,9 @@ TrajectorySample step_physics_frame(
             config.air_density_kg_m3,
             aerodynamic_sum.body_drag_force_applied,
             aerodynamic_sum.body_drag_torque_applied,
+            {},
+            0.0,
+            0,
     };
 }
 

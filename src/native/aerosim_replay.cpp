@@ -2433,6 +2433,7 @@ ReplayRunResult replay_session(
                 static_cast<double>(std::max(1, vehicle_config.substep_hz));
         frame_config.wind_world_mps = wind_fields[index].sample(time_seconds, vehicle_state.position);
         frame_config.wind_turbulence_mps = wind_fields[index].turbulence(time_seconds);
+        TrajectorySample frame_sample;
         if (has_pending_collision[index]) {
             CollisionStepResult result;
             if (command_modes[index] == ReplayCommandMode::Actuator) {
@@ -2454,6 +2455,7 @@ ReplayRunResult replay_session(
             if (actual_authority != pending_collision_authorities[index]) {
                 return false;
             }
+            frame_sample = result.sample;
         } else if (command_modes[index] == ReplayCommandMode::Actuator &&
                 std::all_of(actuator_commands[index].normalized.begin(), actuator_commands[index].normalized.end(), [](double value) {
                     return std::abs(value) <= 0.05;
@@ -2461,14 +2463,14 @@ ReplayRunResult replay_session(
             return true;
         } else {
             if (command_modes[index] == ReplayCommandMode::Actuator) {
-                step_per_motor_physics_frame(vehicle_state, clock, frame_config, actuator_commands[index]);
+                frame_sample = step_per_motor_physics_frame(vehicle_state, clock, frame_config, actuator_commands[index]);
             } else if (command_modes[index] == ReplayCommandMode::Acro) {
-                controller.step_acro_mode(vehicle_state, clock, frame_config, acro_commands[index]);
+                frame_sample = controller.step_acro_mode(vehicle_state, clock, frame_config, acro_commands[index]);
             } else if (command_modes[index] == ReplayCommandMode::AltitudeHold) {
-                controller.step_altitude_hold_mode(vehicle_state, clock, frame_config, commands[index],
+                frame_sample = controller.step_altitude_hold_mode(vehicle_state, clock, frame_config, commands[index],
                         measured_altitudes[index], vehicle_state.orientation);
             } else {
-                controller.step_angle_mode(vehicle_state, clock, frame_config, commands[index]);
+                frame_sample = controller.step_angle_mode(vehicle_state, clock, frame_config, commands[index]);
             }
         }
         const bool response = command_modes[index] == ReplayCommandMode::Actuator ?
@@ -2480,10 +2482,12 @@ ReplayRunResult replay_session(
                 (commands[index].throttle != 0.5 || commands[index].roll_degrees != 0.0 ||
                  commands[index].pitch_degrees != 0.0 || commands[index].yaw_rate_degrees_per_second != 0.0);
         if (response && clock.total_substeps > 0 && !has_first_response[index]) {
-            first_response_substeps[index].time_seconds = static_cast<double>(clock.total_substeps) /
-                    static_cast<double>(std::max(1, vehicle_config.substep_hz));
-            first_response_substeps[index].state = vehicle_state;
-            first_response_substeps[index].substeps = clock.total_substeps;
+            first_response_substeps[index] = frame_sample;
+            if (frame_sample.first_substeps > 0) {
+                first_response_substeps[index].time_seconds = frame_sample.first_substep_time_seconds;
+                first_response_substeps[index].state = frame_sample.first_substep_state;
+                first_response_substeps[index].substeps = frame_sample.first_substeps;
+            }
             has_first_response[index] = true;
         }
         return true;

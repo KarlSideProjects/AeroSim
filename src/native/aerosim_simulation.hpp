@@ -287,6 +287,9 @@ struct TrajectorySample {
     double air_density_kg_m3 = 1.225;
     bool body_drag_force_applied = false;
     bool body_drag_torque_applied = false;
+    RigidBodyState first_substep_state;
+    double first_substep_time_seconds = 0.0;
+    std::uint64_t first_substeps = 0;
 };
 
 struct DualAircraftTrajectorySample {

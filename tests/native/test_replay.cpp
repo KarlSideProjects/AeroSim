@@ -797,6 +797,22 @@ int main() {
     if (!aerosim::within_g06a_tolerance(delta)) {
         return fail("G0.6a cross-platform final-state tolerance check rejected the standard maneuver");
     }
+    aerosim::SimulationConfig first_response_config = replay_test_config();
+    first_response_config.physics_hz = 240;
+    first_response_config.substep_hz = 1000;
+    aerosim::RigidBodyState first_response_state;
+    aerosim::SimulationClock first_response_clock;
+    aerosim::FlightController first_response_controller;
+    first_response_controller.arm(0.0);
+    aerosim::FlightCommand first_response_command;
+    first_response_command.throttle = 0.7;
+    first_response_command.roll_degrees = 3.0;
+    const aerosim::TrajectorySample first_response_frame = first_response_controller.step_angle_mode(
+            first_response_state, first_response_clock, first_response_config, first_response_command);
+    if (first_response_frame.substeps != 4 || first_response_frame.first_substeps != 1 ||
+            std::abs(first_response_frame.first_substep_time_seconds - 0.001) > 1e-12) {
+        return fail("replay first response must capture the first 1 kHz substep rather than the frame endpoint");
+    }
     aerosim::SimulationConfig artifact_config = standard_config;
     artifact_config.a6_propwash.enabled = true;
     artifact_config.a6_propwash.full_collective_angular_accel_rad_s2 = 12.0;

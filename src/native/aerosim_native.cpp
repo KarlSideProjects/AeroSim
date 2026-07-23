@@ -800,7 +800,12 @@ void AeroSimNative::begin_replay_checkpoint_capture() {
 void AeroSimNative::capture_replay_first_response(const aerosim::TrajectorySample &sample) {
     if (replay_checkpoint_capture_active_) {
         replay_last_successful_step_ = sample;
-        has_replay_last_successful_step_ = sample.substeps > 0;
+        if (sample.first_substeps > 0) {
+            replay_last_successful_step_.time_seconds = sample.first_substep_time_seconds;
+            replay_last_successful_step_.state = sample.first_substep_state;
+            replay_last_successful_step_.substeps = sample.first_substeps;
+        }
+        has_replay_last_successful_step_ = replay_last_successful_step_.substeps > 0;
     }
 }
 
