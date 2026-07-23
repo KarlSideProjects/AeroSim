@@ -888,8 +888,8 @@ func _audit_overlay_geometry(runtime: Node, screen_name: String) -> void:
 		if body_panel != null:
 			var body_surface: Control = body_panel.get("_scroll") if body_panel.get("_scroll") != null else body_panel.get("container")
 			_add_overlay_surface(surfaces, "body_drag", body_surface)
-	_add_overlay_surface(surfaces, "osd_warnings", runtime.osd_labels.get("warnings"))
-	_add_overlay_surface(surfaces, "osd_reset_hint", runtime.osd_labels.get("reset_hint"))
+	for element in OsdProfile.ELEMENTS:
+		_add_overlay_surface(surfaces, "osd_%s" % element, runtime.osd_labels.get(element))
 
 	var viewport_rect := root.get_viewport().get_visible_rect()
 	var geometry: Dictionary = {}
@@ -909,6 +909,19 @@ func _audit_overlay_geometry(runtime: Node, screen_name: String) -> void:
 		var first: Control = surfaces[first_index].control
 		for second_index in range(first_index + 1, surfaces.size()):
 			var second: Control = surfaces[second_index].control
+			var first_name := String(surfaces[first_index].name)
+			var second_name := String(surfaces[second_index].name)
+			var first_is_osd := first_name.begins_with("osd_")
+			var second_is_osd := second_name.begins_with("osd_")
+			var checks_requested_geometry := (
+				first_is_osd == second_is_osd
+				or (first_is_osd and second_name in ["operations_dashboard", "body_drag"])
+				or (second_is_osd and first_name in ["operations_dashboard", "body_drag"])
+				or first_name in ["osd_warnings", "osd_reset_hint"]
+				or second_name in ["osd_warnings", "osd_reset_hint"]
+			)
+			if not checks_requested_geometry:
+				continue
 			var first_rect := first.get_global_rect()
 			var second_rect := second.get_global_rect()
 			_expect(first_rect.grow(8.0).intersection(second_rect).get_area() <= 0.5,

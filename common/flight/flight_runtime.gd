@@ -4058,6 +4058,14 @@ func _refresh_osd() -> void:
     var viewport := get_viewport()
     if viewport == null:
         return
+    var viewport_size := viewport.get_visible_rect().size
+    var dashboard_panel := status_diagram.get_node_or_null("DashboardMargin/DashboardPanel") as Control if status_diagram != null else null
+    var status_panel := flight_hud_layer.get_node_or_null("StatusMargin/StatusPanel") as Control if flight_hud_layer != null else null
+    var body_panel := body_drag_debug_panel.get("_panel") as Control if body_drag_debug_panel != null else null
+    var body_surface := body_panel.get("_scroll") as Control if body_panel != null else null
+    var default_right_stack_offset_y := 0.0
+    if dashboard_panel != null and dashboard_panel.is_visible_in_tree():
+        default_right_stack_offset_y = maxf(0.0, dashboard_panel.get_global_rect().end.y + 8.0 - float(OsdProfile.DEFAULT_POSITIONS["battery"].y) * viewport_size.y)
     var active := screen in ["preflight", "flight", "finish", "osd"]
     var snapshot := _osd_snapshot()
     var battery: Dictionary = snapshot.get("battery", {})
@@ -4083,18 +4091,17 @@ func _refresh_osd() -> void:
         label.visible = active and bool(osd_profile.elements[element]) and not (time_trial == null and element in ["timer", "lap_checkpoint"])
         var position: Dictionary = osd_profile.positions[element]
         label.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-        label.size = Vector2(minf(280.0, viewport.get_visible_rect().size.x * 0.24), 56.0 if element == "warnings" else 28.0)
+        label.size = Vector2(minf(280.0, viewport_size.x * 0.24), 56.0 if element == "warnings" else 28.0)
         label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if element == "warnings" else TextServer.AUTOWRAP_OFF
-        var label_position := Vector2(float(position.x) * viewport.get_visible_rect().size.x, float(position.y) * viewport.get_visible_rect().size.y)
-        if element == "warnings" and position == OsdProfile.DEFAULT_POSITIONS["warnings"] and body_drag_debug_panel != null:
-            var body_panel := body_drag_debug_panel.get("_panel") as Control
-            var body_surface := body_panel.get("_scroll") as Control if body_panel != null else null
-            var rendered_size := Vector2(label.size.x, maxf(label.size.y, label.get_combined_minimum_size().y))
-            if body_surface != null and body_surface.is_visible_in_tree() and Rect2(label_position, rendered_size).grow(8.0).intersects(body_surface.get_global_rect()):
-                label_position.x = float(OsdProfile.DEFAULT_POSITIONS["reset_hint"].x) * viewport.get_visible_rect().size.x
-                var dashboard_panel := status_diagram.get_node_or_null("DashboardMargin/DashboardPanel") as Control if status_diagram != null else null
-                if dashboard_panel != null:
-                    label_position.y = dashboard_panel.get_global_rect().end.y + 8.0
+        var label_position := Vector2(float(position.x) * viewport_size.x, float(position.y) * viewport_size.y)
+        if element in ["battery", "armed", "flight_mode", "signal"] and position == OsdProfile.DEFAULT_POSITIONS[element]:
+            label_position.y += default_right_stack_offset_y
+        if element == "warnings" and position == OsdProfile.DEFAULT_POSITIONS["warnings"]:
+            var rendered_height := maxf(label.size.y, label.get_combined_minimum_size().y)
+            if status_panel != null and status_panel.is_visible_in_tree():
+                label_position.y = maxf(label_position.y, status_panel.get_global_rect().end.y + 8.0)
+            if body_surface != null and body_surface.is_visible_in_tree():
+                label_position.y = minf(label_position.y, body_surface.get_global_rect().position.y - rendered_height - 8.0)
         label.position = label_position
     if analog_noise_overlay != null:
         analog_noise_overlay.visible = active and bool(camera_profile.analog_noise)

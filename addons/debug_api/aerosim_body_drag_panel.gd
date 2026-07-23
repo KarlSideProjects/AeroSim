@@ -23,7 +23,7 @@ func _ready() -> void:
         "anchor": DebugPanel.ANCHOR_BOTTOM_LEFT,
         "edge_margin": Vector2(8, 8),
         "min_width": 380,
-        "max_height": 420,
+        "max_height": 400,
         "show_title": true,
         "title_text": "AeroSim aerodynamic snapshot",
         "click_through": true,
