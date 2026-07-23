@@ -2642,7 +2642,7 @@ func _native_hovers_at_mass(native: Object, mass_kg: float) -> bool:
     if hover_status != "Ok" or hover.is_empty() or hover_stride != 12 or hover.size() % hover_stride != 0:
         push_error("AeroSimNative.simulate_trajectory failed: status=%s failed_frame=%d" % [hover_status, hover_failed_frame])
         return false
-    return abs(float(hover[hover.size() - hover_stride + 2])) <= 1e-6
+    return abs(float(hover[hover.size() - hover_stride + 9])) <= 1e-6
 
 func _press_key(keycode: int) -> void:
     var event := InputEventKey.new()

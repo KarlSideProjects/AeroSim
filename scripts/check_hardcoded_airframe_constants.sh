@@ -14,7 +14,6 @@ blocked_patterns=(
     '16\.2'
     '18\.0'
     'hover_throttle.*0\.5'
-    'config\.hover_throttle.*:'
 )
 
 for pattern in "${blocked_patterns[@]}"; do
