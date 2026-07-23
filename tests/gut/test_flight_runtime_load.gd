@@ -40,6 +40,68 @@ class FakeNative:
         return {"hover_throttle": 0.30}
 
 
+class FailingAtomicNative:
+    extends RefCounted
+
+    var step_calls := 0
+    var error := ""
+
+    func flight_control_armed() -> bool:
+        return true
+
+    func step_angle_mode(_physics_hz: int, _substep_hz: int, _throttle: float, _roll: float, _pitch: float, _yaw: float) -> PackedFloat64Array:
+        step_calls += 1
+        error = "AeroSimNative.step_angle_mode: InvalidControlOutput: simulation"
+        return PackedFloat64Array()
+
+    func last_step_error() -> String:
+        return error
+
+
+class SuccessfulAtomicNative:
+    extends RefCounted
+
+    var step_calls := 0
+
+    func flight_control_armed() -> bool:
+        return true
+
+    func step_angle_mode(_physics_hz: int, _substep_hz: int, _throttle: float, _roll: float, _pitch: float, _yaw: float) -> PackedFloat64Array:
+        step_calls += 1
+        var row := PackedFloat64Array()
+        row.resize(17)
+        row[7] = 1.0
+        return row
+
+    func a5_downwash_configuration() -> Dictionary:
+        return {}
+
+    func last_step_error() -> String:
+        return ""
+
+
+class SecondaryAtomicNative:
+    extends RefCounted
+
+    var sync_calls := 0
+    var step_calls := 0
+    var error := ""
+
+    func flight_control_armed() -> bool:
+        return true
+
+    func sync_flight_state(_position_x: float, _position_y: float, _position_z: float, _orientation_x: float, _orientation_y: float, _orientation_z: float, _orientation_w: float, _velocity_x: float, _velocity_y: float, _velocity_z: float, _angular_x: float, _angular_y: float, _angular_z: float) -> void:
+        sync_calls += 1
+
+    func step_collision_angle_mode(_physics_hz: int, _substep_hz: int, _throttle: float, _roll: float, _pitch: float, _yaw: float, _touching: bool, _normal_x: float, _normal_y: float, _normal_z: float, _impulse_x: float, _impulse_y: float, _impulse_z: float, _restitution: float, _velocity_x: float, _velocity_y: float, _velocity_z: float, _angular_x: float, _angular_y: float, _angular_z: float, _energy_limit: float) -> PackedFloat64Array:
+        step_calls += 1
+        error = "AeroSimNative.step_collision_angle_mode: InvalidControlOutput: simulation"
+        return PackedFloat64Array()
+
+    func last_step_error() -> String:
+        return error
+
+
 class FakeBodyDragPanel extends Node:
     var blind_mode := false
     var paused := false
@@ -1161,6 +1223,61 @@ func test_exported_replay_runner_is_available_to_the_main_scene() -> void:
     var runner_script := load("res://common/flight/replay_integration_runner.gd")
 
     assert_not_null(runner_script)
+
+
+func test_native_failure_freezes_before_airsim_runtime_side_effects() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var primary := FailingAtomicNative.new()
+    var secondary := SecondaryAtomicNative.new()
+    var secondary_body := RigidBody3D.new()
+    runtime.add_child(secondary_body)
+    runtime.native = primary
+    runtime._airsim_secondary_native = secondary
+    runtime.secondary_drone_body = secondary_body
+    runtime._airsim_vehicle_name = "DroneA"
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.takeoff_requested = true
+    runtime._airsim_vehicle_contexts["DroneB"] = {"api_control": true, "armed": true}
+
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(primary.step_calls, 1)
+    assert_eq(secondary.sync_calls, 0)
+    assert_eq(runtime.airsim_session.frame_index, 0)
+    assert_true(runtime.paused)
+    assert_true(secondary_body.freeze)
+    assert_true(secondary_body.sleeping)
+    assert_eq(runtime.last_error_message, "AeroSimNative.step_angle_mode: InvalidControlOutput: simulation")
+
+
+func test_secondary_native_failure_freezes_before_airsim_runtime_side_effects() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var primary := SuccessfulAtomicNative.new()
+    var secondary := SecondaryAtomicNative.new()
+    var secondary_body := RigidBody3D.new()
+    runtime.add_child(secondary_body)
+    runtime.native = primary
+    runtime._airsim_secondary_native = secondary
+    runtime.secondary_drone_body = secondary_body
+    runtime._airsim_vehicle_name = "DroneA"
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.takeoff_requested = true
+    runtime._airsim_vehicle_contexts["DroneB"] = {"api_control": true, "armed": true}
+
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(primary.step_calls, 1)
+    assert_eq(secondary.sync_calls, 1)
+    assert_eq(secondary.step_calls, 1)
+    assert_eq(runtime.airsim_session.frame_index, 0)
+    assert_true(runtime.paused)
+    assert_true(secondary_body.freeze)
+    assert_true(secondary_body.sleeping)
+    assert_eq(runtime.last_error_message, "AeroSimNative.step_collision_angle_mode: InvalidControlOutput: simulation")
 
 
 func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void:

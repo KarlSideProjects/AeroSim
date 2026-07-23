@@ -1159,6 +1159,7 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
         double motor_1,
         double motor_2,
         double motor_3) {
+    const StepSnapshot snapshot = snapshot_step();
     if (!valid_simulation_timing(physics_hz, substep_hz)) {
         set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
@@ -1185,6 +1186,7 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     const aerosim::TrajectorySample sample = aerosim::step_per_motor_physics_frame(
             simulation_state_, simulation_clock_, config, commands);
     if (sample.substeps == 0) {
+        restore_step(snapshot);
         set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidControlOutput, "simulation");
         return {};
     }

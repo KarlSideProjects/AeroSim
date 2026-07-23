@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
 
 namespace aerosim {
@@ -514,10 +515,13 @@ TrajectorySample step_per_motor_physics_frame(
     bool has_first_substep = false;
     const double substeps_per_frame = static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz);
     const double dt = 1.0 / static_cast<double>(config.substep_hz);
-    clock.substep_accumulator += substeps_per_frame;
-    const auto frame_substeps = static_cast<std::int32_t>(std::floor(clock.substep_accumulator + 1e-12));
-    clock.substep_accumulator -= frame_substeps;
-    for (std::int32_t step = 0; step < frame_substeps; ++step) {
+    const double next_accumulator = clock.substep_accumulator + substeps_per_frame;
+    const auto frame_substeps = static_cast<std::uint64_t>(std::floor(next_accumulator + 1e-12));
+    if (frame_substeps > std::numeric_limits<std::uint64_t>::max() - clock.total_substeps) {
+        return {};
+    }
+    clock.substep_accumulator = next_accumulator - static_cast<double>(frame_substeps);
+    for (std::uint64_t step = 0; step < frame_substeps; ++step) {
         const MotorCommands commands = command_for_substep(dt);
         if (!valid_motor_commands(commands)) {
             state = initial_state;
