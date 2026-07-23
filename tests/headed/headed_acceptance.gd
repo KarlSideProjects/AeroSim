@@ -37,6 +37,7 @@ var _failures: Array[String] = []
 var _out_dir := "build/headed"
 var _channel_monitor_evidence: Dictionary = {}
 var _motor_hud_evidence: Dictionary = {}
+var _known_xbox_physical_evidence: Dictionary = {}
 var _layout_audit_evidence: Dictionary = {}
 var _screenshot_comparison: Dictionary = {}
 var _ui_animation_count := 0
@@ -301,6 +302,16 @@ func _run() -> void:
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
+	_inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.25)
+	await _settle(10)
+	var known_xbox_diagnostics: Dictionary = runtime.native.call("flight_control_diagnostics")
+	var omega_x := float(known_xbox_diagnostics.get("angular_velocity_x_rad_s", 0.0))
+	var omega_y := float(known_xbox_diagnostics.get("angular_velocity_y_rad_s", 0.0))
+	var omega_z := float(known_xbox_diagnostics.get("angular_velocity_z_rad_s", 0.0))
+	_known_xbox_physical_evidence = {"omega_x_rad_s": omega_x, "omega_y_rad_s": omega_y, "omega_z_rad_s": omega_z}
+	_expect(omega_x < 0.0, "known Xbox physical roll input produces omegaX < 0")
+	_expect(omega_z < 0.0, "known Xbox physical pitch input produces omegaZ < 0")
+	_expect(omega_y < 0.0, "known Xbox physical yaw input produces omegaY < 0")
 	runtime.set_paused(true)
 	await _settle(2)
 	var paused_position: Vector3 = runtime.drone_body.global_position
@@ -1018,6 +1029,6 @@ func _write_report() -> bool:
 		"gpu_adapter": RenderingServer.get_video_adapter_name(),
 		"vulkan_icd": OS.get_environment("VK_ICD_FILENAMES"),
 	}
-	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "motor_hud": _motor_hud_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
+	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "motor_hud": _motor_hud_evidence, "known_xbox_physical": _known_xbox_physical_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
 	return true

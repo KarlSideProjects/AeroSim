@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 PERFORMANCE_GPU_WORKFLOW = ROOT / ".github" / "workflows" / "performance-gpu.yml"
 HEADED_RUNNER = ROOT / "scripts" / "run_headed_acceptance.sh"
+HEADED_ACCEPTANCE = ROOT / "tests" / "headed" / "headed_acceptance.gd"
 HEADLESS_RUNNER = ROOT / "scripts" / "run_headless_smoke.sh"
 PERFORMANCE_RUNNER = ROOT / "scripts" / "run_performance_benchmark.sh"
 GUT_RUNNER = ROOT / "scripts" / "run_gut_tests.sh"
@@ -322,6 +323,51 @@ class CiStrategyTest(unittest.TestCase):
         )
         self.assertIsNotNone(gate)
         self.assertIn("AEROSIM_NATIVE_PROVENANCE", gate.group(0) if gate else "")
+
+    def test_gpu_effects_artifacts_include_a_receipt_bound_manifest(self):
+        workflow = PERFORMANCE_GPU_WORKFLOW.read_text(encoding="utf-8")
+        manifest = re.search(
+            r"^      - name: Write GPU performance artifact manifest\n"
+            r"(?:(?!^      - ).)*(?=^      - |\Z)",
+            workflow,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(manifest)
+        manifest_step = manifest.group(0) if manifest else ""
+        for contract in (
+            'Path("build/performance-gpu")',
+            'f"effects-{mode}.json"',
+            '"manifest.json"',
+            "commit_sha",
+            "gdextension_sha256",
+            "native_source_sha256",
+        ):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, manifest_step)
+        store_step = re.search(
+            r"^      - name: Store GPU performance artifacts locally\n"
+            r"(?:(?!^      - ).)*(?=^      - |\Z)",
+            workflow,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(store_step)
+        self.assertIn("manifest.json", store_step.group(0) if store_step else "")
+
+    def test_known_xbox_path_asserts_signed_angular_response_before_fallback(self):
+        source = HEADED_ACCEPTANCE.read_text(encoding="utf-8")
+        known_xbox_start = source.index("var known_device_id := await _inject_known_gamepad()")
+        fallback_start = source.index("var unknown_device_id := known_device_id + 1")
+        for assertion in (
+            "omega_x < 0.0",
+            "omega_z < 0.0",
+            "omega_y < 0.0",
+        ):
+            with self.subTest(assertion=assertion):
+                self.assertIn(assertion, source)
+                if assertion in source:
+                    index = source.index(assertion)
+                    self.assertGreater(index, known_xbox_start)
+                    self.assertLess(index, fallback_start)
 
     def test_ci_keeps_evidence_runner_local_without_hosted_artifact_actions(self):
         self.assertNotRegex(self.workflow, re.compile(r"actions/(upload|download)-artifact@"))

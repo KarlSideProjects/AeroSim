@@ -131,11 +131,43 @@ jobs:
           assert candidate["comparison_to_baseline"]["g3_7_increase_within_limit"] is True
           PY
 
+      - name: Write GPU performance artifact manifest
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          directory = Path("build/performance-gpu")
+          reports = {
+              mode: json.loads((directory / f"effects-{mode}.json").read_text())
+              for mode in ("off", "on")
+          }
+          provenance = {
+              mode: {
+                  "commit_sha": report["environment"]["git_revision"],
+                  "gdextension_sha256": report["measurement"]["gdextension_sha256"],
+                  "native_source_sha256": report["measurement"]["native_source_sha256"],
+              }
+              for mode, report in reports.items()
+          }
+          if provenance["off"] != provenance["on"]:
+              raise SystemExit("effects reports do not share one native-artifact receipt")
+          (directory / "manifest.json").write_text(json.dumps({
+              "schema_version": 1,
+              "provenance": provenance["off"],
+              "artifacts": {
+                  mode: f"effects-{mode}.json"
+                  for mode in ("off", "on")
+              },
+          }, separators=(",", ":")) + "\n", encoding="utf-8")
+          PY
+
       - name: Store GPU performance artifacts locally
         if: always()
         run: |
           destination="$AEROSIM_CI_ARTIFACT_RUN_DIR/performance-gpu"
           install -d "$destination"
+          test -s build/performance-gpu/manifest.json
           if compgen -G 'build/performance-gpu/*.json' > /dev/null; then
             cp build/performance-gpu/*.json "$destination/"
           fi
