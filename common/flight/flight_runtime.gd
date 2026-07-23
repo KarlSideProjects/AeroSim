@@ -116,6 +116,8 @@ var graphics_panel: Control
 var graphics_value_label: Label
 var controller_settings_panel: Control
 var flight_hud_layer: CanvasLayer
+var motor_hud_panel: PanelContainer
+var motor_hud_labels: Dictionary = {}
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
@@ -3635,6 +3637,7 @@ func _build_flight_hud() -> void:
     add_child(layer)
     _build_analog_noise_overlay(layer)
     _build_osd(layer)
+    _build_motor_hud(layer)
 
     var margin := MarginContainer.new()
     margin.name = "StatusMargin"
@@ -3689,6 +3692,49 @@ func _build_flight_hud() -> void:
     _build_controller_safety_panel()
     _build_finish_panel()
     _build_license_panel()
+
+
+func _build_motor_hud(layer: CanvasLayer) -> void:
+    var margin := MarginContainer.new()
+    margin.name = "MotorHudMargin"
+    margin.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+    margin.offset_left = -292.0
+    margin.offset_top = -202.0
+    margin.offset_right = -10.0
+    margin.offset_bottom = -10.0
+    margin.add_theme_constant_override("margin_left", 6)
+    margin.add_theme_constant_override("margin_top", 6)
+    margin.add_theme_constant_override("margin_right", 6)
+    margin.add_theme_constant_override("margin_bottom", 6)
+    layer.add_child(margin)
+
+    motor_hud_panel = PanelContainer.new()
+    motor_hud_panel.name = "MotorHudPanel"
+    margin.add_child(motor_hud_panel)
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    motor_hud_panel.add_child(rows)
+    var title := Label.new()
+    title.name = "Title"
+    title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    title.add_theme_font_size_override("font_size", 14)
+    title.text = _t("ui.motor_hud.title")
+    rows.add_child(title)
+    var grid := GridContainer.new()
+    grid.name = "Grid"
+    grid.columns = 2
+    rows.add_child(grid)
+    for label_name in ["FL", "FR", "RL", "RR"]:
+        var label := Label.new()
+        label.name = label_name
+        label.custom_minimum_size = Vector2(132.0, 64.0)
+        label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+        label.add_theme_font_size_override("font_size", 13)
+        label.add_theme_constant_override("line_spacing", -2)
+        label.text = _format("ui.motor_hud.unavailable", [label_name])
+        grid.add_child(label)
+        motor_hud_labels[label_name] = label
 
 
 func _build_analog_noise_overlay(layer: CanvasLayer) -> void:
@@ -4112,6 +4158,7 @@ func _refresh_osd() -> void:
     var viewport_size := viewport.get_visible_rect().size
     var dashboard_panel := status_diagram.get_node_or_null("DashboardMargin/DashboardPanel") as Control if status_diagram != null else null
     var status_panel := flight_hud_layer.get_node_or_null("StatusMargin/StatusPanel") as Control if flight_hud_layer != null else null
+    var motor_hud_visible := motor_hud_panel != null and motor_hud_panel.is_visible_in_tree()
     var body_panel := body_drag_debug_panel.get("_panel") as Control if body_drag_debug_panel != null else null
     var body_surface := body_panel.get("_scroll") as Control if body_panel != null else null
     var default_right_stack_offset_y := 0.0
@@ -4153,6 +4200,8 @@ func _refresh_osd() -> void:
                 label_position.y = maxf(label_position.y, status_panel.get_global_rect().end.y + 8.0)
             if body_surface != null and body_surface.is_visible_in_tree():
                 label_position.y = minf(label_position.y, body_surface.get_global_rect().position.y - rendered_height - 8.0)
+        if element == "reset_hint" and motor_hud_visible and position == OsdProfile.DEFAULT_POSITIONS["reset_hint"]:
+            label_position = Vector2(viewport_size.x * 0.35, maxf(viewport_size.y * 0.16, status_panel.get_global_rect().end.y + 8.0) if status_panel != null and status_panel.is_visible_in_tree() else viewport_size.y * 0.16)
         label.position = label_position
     if analog_noise_overlay != null:
         analog_noise_overlay.visible = active and bool(camera_profile.analog_noise)
@@ -4194,6 +4243,7 @@ func _update_status_diagram() -> void:
             }
     var now_timestamp_us := Time.get_ticks_usec()
     status_diagram.call("set_vehicle_snapshots", snapshots, _dashboard_vehicle_name, now_timestamp_us)
+    _refresh_motor_hud()
     if body_drag_debug_panel != null and body_drag_debug_panel.has_method("update_from_snapshot"):
         body_drag_debug_panel.call("update_from_snapshot", primary_snapshot)
     if environment_state != null and status_diagram.has_method("update_environment"):
@@ -4282,6 +4332,7 @@ func _refresh_flight_hud() -> void:
         if time_trial != null:
             var trial_state := _t("ui.hud.time_trial_finished") if time_trial.finished else _format("ui.hud.time_trial_next", [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()])
             time_trial_status_label.text = _format("ui.hud.time_trial", [trial_state, time_trial.elapsed_seconds])
+    _refresh_motor_hud()
     _refresh_osd()
     if screen == "preflight":
         var armed := _flight_control_armed()
@@ -4303,6 +4354,8 @@ func _refresh_flight_hud() -> void:
     elif screen == "exit":
         arm_status_label.text = _t("ui.hud.exit_requested")
         arm_takeoff_button.text = _t("ui.action.exit")
+
+
     elif screen == "finish":
         arm_status_label.text = _t("ui.hud.time_trial_complete")
         arm_takeoff_button.text = _t("ui.action.retry")
@@ -4315,6 +4368,22 @@ func _refresh_flight_hud() -> void:
     else:
         arm_status_label.text = _t("ui.hud.quick_fly_hint")
         arm_takeoff_button.text = _t("ui.hud.arm_takeoff")
+
+
+func _refresh_motor_hud() -> void:
+    if motor_hud_panel == null:
+        return
+    motor_hud_panel.visible = screen in ["flight", "error"]
+    var title := motor_hud_panel.get_node_or_null("Rows/Title") as Label
+    if title != null:
+        title.text = _t("ui.motor_hud.title")
+    var motor_hud := {"cells": []}
+    if status_diagram != null and status_diagram.has_method("get_motor_hud_state"):
+        motor_hud = status_diagram.call("get_motor_hud_state", paused, last_error_message if screen == "error" else "")
+    for cell in motor_hud.cells:
+        var label := motor_hud_labels.get(String(cell.label)) as Label
+        if label != null:
+            label.text = String(cell.text)
 
 func _handle_primary_action() -> void:
     if screen == "fallback_prompt":

@@ -36,6 +36,7 @@ class HeadedLicenseProvider:
 var _failures: Array[String] = []
 var _out_dir := "build/headed"
 var _channel_monitor_evidence: Dictionary = {}
+var _motor_hud_evidence: Dictionary = {}
 var _layout_audit_evidence: Dictionary = {}
 var _screenshot_comparison: Dictionary = {}
 var _ui_animation_count := 0
@@ -519,6 +520,22 @@ func _run() -> void:
 	_audit_overlay_geometry(runtime, "flight")
 	await _snapshot("03_takeoff")
 	_expect(runtime.takeoff_requested, "T requests takeoff after Quick Fly")
+	var motor_panel: PanelContainer = runtime.get_node_or_null("FlightHud/MotorHudMargin/MotorHudPanel")
+	var motor_labels: Array[Label] = []
+	for motor_label in ["FL", "FR", "RL", "RR"]:
+		var cell: Label = runtime.get_node_or_null("FlightHud/MotorHudMargin/MotorHudPanel/Rows/Grid/%s" % motor_label)
+		motor_labels.append(cell)
+		_expect(cell != null and cell.is_visible_in_tree() and cell.text.begins_with("%s\n" % motor_label), "Motor HUD renders physical %s cell" % motor_label)
+		_expect(cell != null and cell.text.contains(" N\n") and cell.text.contains(" RPM\n") and cell.text.contains(" A"), "Motor HUD %s cell is readable in N/RPM/A" % motor_label)
+	runtime.osd_profile = OsdProfile.profile_for_preset("Minimal")
+	runtime.call("_refresh_flight_hud")
+	_expect(motor_panel != null and motor_panel.is_visible_in_tree(), "Minimal OSD cannot hide the persistent Motor HUD")
+	_motor_hud_evidence = {
+		"visible": motor_panel != null and motor_panel.is_visible_in_tree(),
+		"minimal_visible": motor_panel != null and motor_panel.is_visible_in_tree(),
+		"labels": motor_labels.map(func(cell: Label) -> String: return cell.text.split("\n")[0] if cell != null else ""),
+		"screenshot_path": "%s/03_takeoff.png" % _out_dir,
+	}
 
 	_tap(KEY_P)
 	await _settle(10)
@@ -1001,6 +1018,6 @@ func _write_report() -> bool:
 		"gpu_adapter": RenderingServer.get_video_adapter_name(),
 		"vulkan_icd": OS.get_environment("VK_ICD_FILENAMES"),
 	}
-	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
+	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "motor_hud": _motor_hud_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
 	return true

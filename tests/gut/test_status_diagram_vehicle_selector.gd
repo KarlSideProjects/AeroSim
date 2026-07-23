@@ -161,6 +161,87 @@ func test_px4_unavailable_authority_fields_are_not_rendered_as_disarmed_or_unsat
     assert_string_contains(dashboard._labels.pid.text, "UNAVAILABLE")
 
 
+func test_motor_hud_uses_physical_nose_up_order_and_converts_radians_to_rpm() -> void:
+    var dashboard := StatusDiagramDebug.new()
+    autofree(dashboard)
+    dashboard._ready()
+    var snapshot := _live_snapshot("DroneA", 1_000_000)
+    snapshot["motors"] = [
+        {"thrust_newtons": 1.0, "speed_rad_s": 10.0, "current_a": 2.0}, # RR
+        {"thrust_newtons": 2.0, "speed_rad_s": 20.0, "current_a": 3.0}, # FR
+        {"thrust_newtons": 3.0, "speed_rad_s": 30.0, "current_a": 4.0}, # RL
+        {"thrust_newtons": 4.0, "speed_rad_s": 20.0 * PI, "current_a": 5.0, "saturated": true}, # FL
+    ]
+
+    dashboard.update_from_snapshot(snapshot, 1_000_000)
+    var motor_hud: Dictionary = dashboard.get_motor_hud_state(false, "")
+
+    assert_eq(motor_hud.state, "live")
+    assert_eq(motor_hud.cells.map(func(cell: Dictionary) -> String: return cell.label), ["FL", "FR", "RL", "RR"])
+    assert_string_contains(String(motor_hud.cells[0].text), "4.00 N")
+    assert_string_contains(String(motor_hud.cells[0].text), "600 RPM")
+    assert_string_contains(String(motor_hud.cells[0].text), "5.00 A")
+    assert_string_contains(String(motor_hud.cells[0].text), "SAT")
+
+
+func test_motor_hud_rejects_invalid_stale_paused_and_error_values() -> void:
+    var dashboard := StatusDiagramDebug.new()
+    autofree(dashboard)
+    dashboard._ready()
+    var snapshot := _live_snapshot("DroneA", 1_000_000)
+    snapshot["motors"] = [
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": INF, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+    ]
+    dashboard.update_from_snapshot(snapshot, 1_000_000)
+    var invalid: Dictionary = dashboard.get_motor_hud_state(false, "")
+    assert_eq(invalid.state, "unavailable")
+    assert_string_contains(String(invalid.cells[0].text), "UNAVAILABLE")
+
+    snapshot["motors"] = [{}, {}, {}]
+    dashboard.update_from_snapshot(snapshot, 1_000_000)
+    assert_eq(dashboard.get_motor_hud_state(false, "").reason, "incomplete")
+    snapshot["motors"] = "bad"
+    dashboard.update_from_snapshot(snapshot, 1_000_000)
+    assert_eq(dashboard.get_motor_hud_state(false, "").reason, "malformed")
+
+    snapshot["motors"] = [
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+    ]
+    snapshot["motors"][2]["speed_rad_s"] = 2.0
+    dashboard.update_from_snapshot(snapshot, 1_000_000)
+    dashboard.update_from_snapshot(snapshot, 1_120_001)
+    var stale: Dictionary = dashboard.get_motor_hud_state(false, "")
+    assert_eq(stale.state, "unavailable")
+    assert_eq(stale.reason, "stale")
+    assert_eq(dashboard.get_motor_hud_state(true, "").state, "unavailable")
+    assert_eq(dashboard.get_motor_hud_state(false, "AeroSimNative.step: InvalidState").state, "error")
+
+
+func test_motor_hud_localizes_labels_and_saturation_marker() -> void:
+    var dashboard := StatusDiagramDebug.new()
+    autofree(dashboard)
+    dashboard._ready()
+    dashboard.set_locale("zh_TW")
+    var snapshot := _live_snapshot("DroneA", 1_000_000)
+    snapshot["motors"] = [
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": true},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+        {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+    ]
+    dashboard.update_from_snapshot(snapshot, 1_000_000)
+
+    var motor_hud: Dictionary = dashboard.get_motor_hud_state(false, "")
+    assert_string_contains(String(motor_hud.cells[3].text), "飽和")
+    assert_string_contains(String(motor_hud.cells[3].text), "轉/分")
+
+
 func test_dashboard_localizes_environment_after_locale_switch() -> void:
     var dashboard := StatusDiagramDebug.new()
     autofree(dashboard)

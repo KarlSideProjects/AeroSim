@@ -5,6 +5,12 @@ const Localization = preload("res://common/flight/localization.gd")
 signal vehicle_selected(vehicle_name: String)
 
 const MOTOR_KEYS := ["M1", "M2", "M3", "M4"]
+const MOTOR_HUD_ORDER := [
+    {"label": "FL", "telemetry_index": 3},
+    {"label": "FR", "telemetry_index": 1},
+    {"label": "RL", "telemetry_index": 2},
+    {"label": "RR", "telemetry_index": 0},
+]
 const STALE_AFTER_US := 100_000
 
 var debug_values: Dictionary = {}
@@ -122,6 +128,60 @@ func get_render_evidence() -> Dictionary:
     }
 
 
+func get_motor_hud_state(paused: bool, error_message: String) -> Dictionary:
+    if not error_message.is_empty():
+        return _motor_hud_unavailable("error", "error")
+    if paused:
+        return _motor_hud_unavailable("unavailable", "paused")
+    if String(debug_values.get("connection_state", "disconnected")) != "live":
+        return _motor_hud_unavailable("unavailable", String(debug_values.get("connection_state", "disconnected")))
+    var motors_value = debug_values.get("motors", [])
+    if typeof(motors_value) != TYPE_ARRAY:
+        return _motor_hud_unavailable("unavailable", "malformed")
+    var motors: Array = motors_value
+    if motors.size() != MOTOR_HUD_ORDER.size():
+        return _motor_hud_unavailable("unavailable", "incomplete")
+    var cells: Array[Dictionary] = []
+    for position in MOTOR_HUD_ORDER:
+        var motor_value = motors[int(position.telemetry_index)]
+        if typeof(motor_value) != TYPE_DICTIONARY:
+            return _motor_hud_unavailable("unavailable", "malformed")
+        var motor: Dictionary = motor_value
+        if not _motor_hud_motor_is_valid(motor):
+            return _motor_hud_unavailable("unavailable", "invalid")
+        var saturation_suffix := _t("ui.motor_hud.saturated") if bool(motor.get("saturated", false)) else ""
+        cells.append({
+            "label": String(position.label),
+            "text": _format("ui.motor_hud.cell", [
+                String(position.label),
+                float(motor.thrust_newtons),
+                float(motor.speed_rad_s) * 60.0 / TAU,
+                float(motor.current_a),
+                saturation_suffix,
+            ]),
+        })
+    return {"state": "live", "reason": "", "cells": cells}
+
+
+func _motor_hud_unavailable(state: String, reason: String) -> Dictionary:
+    var cells: Array[Dictionary] = []
+    for position in MOTOR_HUD_ORDER:
+        cells.append({
+            "label": String(position.label),
+            "text": _format("ui.motor_hud.error" if state == "error" else "ui.motor_hud.unavailable", [String(position.label)]),
+        })
+    return {"state": state, "reason": reason, "cells": cells}
+
+
+func _motor_hud_motor_is_valid(motor: Dictionary) -> bool:
+    for key in ["thrust_newtons", "speed_rad_s", "current_a"]:
+        if not motor.has(key) or typeof(motor[key]) not in [TYPE_FLOAT, TYPE_INT]:
+            return false
+        if not is_finite(float(motor[key])) or float(motor[key]) < 0.0:
+            return false
+    return not motor.has("saturated") or typeof(motor.saturated) == TYPE_BOOL
+
+
 func set_vehicle_names(names: Array) -> void:
     _vehicle_names.clear()
     for name_variant in names:
@@ -190,7 +250,8 @@ func _on_vehicle_selector_item_selected(index: int) -> void:
 func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> void:
     if snapshot.is_empty():
         return
-    var motors: Array = snapshot.get("motors", [])
+    var motors_value = snapshot.get("motors", [])
+    var motors: Array = motors_value if motors_value is Array else []
     var battery: Dictionary = snapshot.get("battery", {})
     var wind_body: Vector3 = snapshot.get("wind_body_mps", Vector3.ZERO)
     var pid: Array = snapshot.get("pid", [])
@@ -220,7 +281,7 @@ func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> v
         "armed": bool(snapshot.get("armed", false)) if armed_available else false,
         "armed_available": armed_available,
         "mode": str(snapshot.get("mode", "")),
-        "motors": motors,
+        "motors": motors_value,
         "battery": battery,
         "wind_body_mps": wind_body,
         "pid": pid,
@@ -243,6 +304,8 @@ func update_from_snapshot(snapshot: Dictionary, now_timestamp_us: int = -1) -> v
         _localized_flight_mode(String(debug_values.mode)),
     ])
     for index in range(min(motors.size(), MOTOR_KEYS.size())):
+        if not (motors[index] is Dictionary):
+            continue
         var motor: Dictionary = motors[index]
         _labels[MOTOR_KEYS[index]].text = _format("ui.dashboard.motor", [
             MOTOR_KEYS[index],

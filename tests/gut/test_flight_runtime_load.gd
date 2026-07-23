@@ -8,8 +8,10 @@ const LanguageProfile = preload("res://common/flight/language_profile.gd")
 const Localization = preload("res://common/flight/localization.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
+const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 
 
 class FakeNative:
@@ -676,6 +678,50 @@ func test_flight_hud_hints_follow_active_input_profile() -> void:
     assert_string_contains(runtime.key_hints_label.text, "A Arm/Takeoff")
     assert_string_contains(runtime.key_hints_label.text, "RB ACRO")
     assert_false(runtime.key_hints_label.text.contains("T Arm/Takeoff"))
+
+
+func test_motor_hud_stays_visible_for_minimal_osd_and_shows_paused_or_error_state() -> void:
+    var runtime := _attach_runtime_ui(_licensed_runtime())
+    runtime.status_diagram = StatusDiagramDebug.new()
+    autofree(runtime.status_diagram)
+    runtime.status_diagram._ready()
+    var snapshot := {
+        "vehicle_name": "DroneA",
+        "timestamp_us": 1_000_000,
+        "publish_count": 1,
+        "snapshot_hz": 30.0,
+        "source": "native_double_buffer",
+        "motors": [
+            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0},
+            {"thrust_newtons": 4.0, "speed_rad_s": 20.0 * PI, "current_a": 5.0},
+        ],
+    }
+    runtime.status_diagram.update_from_snapshot(snapshot, 1_000_000)
+    runtime.screen = "flight"
+    runtime.osd_profile = OsdProfile.profile_for_preset("Minimal")
+    runtime._refresh_flight_hud()
+
+    var panel := runtime.flight_hud_layer.get_node_or_null("MotorHudMargin/MotorHudPanel") as PanelContainer
+    var fl := runtime.flight_hud_layer.get_node_or_null("MotorHudMargin/MotorHudPanel/Rows/Grid/FL") as Label
+    assert_not_null(panel)
+    assert_not_null(fl)
+    if panel == null or fl == null:
+        return
+    assert_true(panel.is_visible_in_tree())
+    assert_string_contains(fl.text, "FL")
+    assert_string_contains(fl.text, "600 RPM")
+
+    runtime.paused = true
+    runtime._refresh_flight_hud()
+    assert_string_contains(fl.text, "UNAVAILABLE")
+    runtime.paused = false
+    runtime.screen = "error"
+    runtime.last_error_message = "AeroSimNative.step: InvalidState"
+    runtime._refresh_flight_hud()
+    assert_true(panel.is_visible_in_tree())
+    assert_string_contains(fl.text, "ERROR")
 
 
 func test_request_takeoff_does_not_inject_jump_velocity() -> void:
