@@ -1234,6 +1234,9 @@ bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint) {
             }
             parsed.contact.touching = touching;
             parsed.contact.has_resolved_state = has_resolved_state;
+            if (!valid_collision_contact(parsed.contact)) {
+                return false;
+            }
     }
     if (scene_objects->type != JsonValue::Type::Array) {
         return false;
@@ -1521,6 +1524,9 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
                  event.collision.authority != ReplayControllerAuthority::Jolt)) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "replay collision authority is invalid");
         }
+        if (event.type == ReplayEventType::Collision && !valid_collision_contact(event.collision.contact)) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "replay collision contact is outside the live domain");
+        }
         if (event.type == ReplayEventType::Collision && event.collision.contact.touching &&
                 event.collision.authority != ReplayControllerAuthority::Jolt) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "touching replay collision must use jolt authority");
@@ -1558,6 +1564,11 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
             if (!finite_vec(state->position) || !finite_quat(state->orientation) ||
                     !finite_vec(state->velocity) || !finite_vec(state->angular_velocity)) {
                 return invalid(ReplayDiagnosticCode::InvalidSession, "replay checkpoint contains non-finite state");
+            }
+        }
+        for (const ReplayCollision &collision : checkpoint.collisions) {
+            if (!valid_collision_contact(collision.contact)) {
+                return invalid(ReplayDiagnosticCode::InvalidSession, "replay checkpoint collision contact is outside the live domain");
             }
         }
         previous_checkpoint_timestamp_us = checkpoint.timestamp_us;
@@ -2117,10 +2128,8 @@ bool ReplaySessionRecorder::record_collision(
     if (!has_vehicle(vehicle_name)) {
         return fail(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + vehicle_name);
     }
-    if (!finite_vec(contact.normal) || !finite_vec(contact.impulse) || !finite_vec(contact.resolved_velocity) ||
-            !finite_vec(contact.resolved_angular_velocity) || !std::isfinite(contact.restitution) ||
-            !std::isfinite(contact.max_kinetic_energy_joules)) {
-        return fail(ReplayDiagnosticCode::InvalidSession, "collision replay data must be finite");
+    if (!valid_collision_contact(contact)) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "collision replay contact is outside the live domain");
     }
     ReplayEvent event;
     event.timestamp_us = timestamp_us;

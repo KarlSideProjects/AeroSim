@@ -805,6 +805,40 @@ bool test_schema_v3_checkpoint_requires_complete_state() {
     return divergence.diverged && divergence.field == "checkpoint.controller[0].first_response.propwash_disturbance_rad_s2.x";
 }
 
+bool test_replay_rejects_collision_contacts_outside_live_domain() {
+    aerosim::ReplaySessionRecorder recorder(42, "manifest");
+    aerosim::CollisionContact contact;
+    contact.touching = true;
+    contact.normal = {0.0, 1.0, 0.0};
+    contact.restitution = 0.25;
+    if (!recorder.add_vehicle("DroneA", "hash-a", "{}") ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{}")) {
+        return false;
+    }
+
+    aerosim::CollisionContact invalid = contact;
+    invalid.restitution = 1.1;
+    if (recorder.record_collision(0, "DroneA", invalid, aerosim::ReplayControllerAuthority::Jolt)) {
+        return false;
+    }
+    if (!recorder.record_environment(0, complete_atmosphere(42)) ||
+            !recorder.record_collision(0, "DroneA", contact, aerosim::ReplayControllerAuthority::Jolt) ||
+            !recorder.record_checkpoint(0, aerosim::DualAircraftState{}) || !recorder.finish(1, "completed")) {
+        return false;
+    }
+
+    const std::string serialized = recorder.serialize();
+    const std::string invalid_event = replace_once(serialized, "\"restitution\":0.25", "\"restitution\":1.1");
+    std::string invalid_checkpoint = serialized;
+    const std::size_t checkpoint_restitution = invalid_checkpoint.rfind("\"restitution\":0.25");
+    if (checkpoint_restitution == std::string::npos) {
+        return false;
+    }
+    invalid_checkpoint.replace(checkpoint_restitution, std::strlen("\"restitution\":0.25"), "\"restitution\":1.1");
+    return !aerosim::load_replay_session(invalid_event, "manifest").ok &&
+            !aerosim::load_replay_session(invalid_checkpoint, "manifest").ok;
+}
+
 bool test_complete_replay_rejects_third_vehicle_before_collision_state() {
     aerosim::ReplaySessionRecorder recorder(42, "manifest");
     return recorder.add_vehicle("DroneA", "hash-a", "{}") &&
@@ -1006,6 +1040,9 @@ int main() {
     }
     if (!test_schema_v3_checkpoint_requires_complete_state()) {
         return fail("schema-v3 replay checkpoints must retain required state without environment masking");
+    }
+    if (!test_replay_rejects_collision_contacts_outside_live_domain()) {
+        return fail("replay must reject collision contacts outside the live domain before execution");
     }
     if (!test_complete_replay_rejects_third_vehicle_before_collision_state()) {
         return fail("complete replay must reject a third vehicle before fixed collision state");
