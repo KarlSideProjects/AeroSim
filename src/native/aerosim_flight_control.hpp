@@ -46,6 +46,12 @@ struct StepResult {
     TrajectorySample sample;
 };
 
+struct FlightControlState {
+    std::array<double, 3> rate_integral = {0.0, 0.0, 0.0};
+    std::array<double, 3> target_rates_y_up = {0.0, 0.0, 0.0};
+    double motor_thrust_newtons = 0.0;
+};
+
 struct QuadXMixerResult {
     std::array<double, 4> normalized = {0.0, 0.0, 0.0, 0.0};
     std::array<bool, 3> axis_saturated = {false, false, false};
@@ -174,6 +180,7 @@ public:
     double motor_thrust_newtons() const;
     void capture_altitude_hold(double target_altitude_m);
     const PidTimingStats &pid_timing_stats() const;
+    FlightControlState control_state() const;
     const TelemetrySnapshot &telemetry_snapshot() const;
     void publish_unavailable_telemetry(
             const TrajectorySample &sample,

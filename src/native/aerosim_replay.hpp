@@ -114,6 +114,8 @@ struct ReplaySceneObjectState {
 struct ReplayRunCheckpoint {
     std::uint64_t timestamp_us = 0;
     DualAircraftState state;
+    std::array<FlightControlState, 2> controllers;
+    std::array<SimulationClock, 2> clocks;
     std::array<ReplayCollision, 2> collisions;
     std::vector<ReplaySceneObjectState> scene_objects;
     std::string environment_json;
@@ -244,6 +246,7 @@ public:
             const Quat &orientation = {});
     bool record_environment(std::uint64_t timestamp_us, std::string environment_json);
     bool record_checkpoint(std::uint64_t timestamp_us, const DualAircraftState &state);
+    bool record_checkpoint(std::uint64_t timestamp_us, const ReplayRunCheckpoint &checkpoint);
     bool finish(std::uint64_t timestamp_us, std::string reason);
 
     const ReplaySession &session() const;

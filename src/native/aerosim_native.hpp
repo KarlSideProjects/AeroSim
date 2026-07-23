@@ -188,7 +188,8 @@ public:
     godot::Dictionary record_replay_checkpoint(
             std::int64_t timestamp_us,
             const godot::PackedFloat64Array &upper_row,
-            const godot::PackedFloat64Array &lower_row);
+            const godot::PackedFloat64Array &lower_row,
+            AeroSimNative *lower_native);
     godot::Dictionary record_replay_async_command(
             std::int64_t timestamp_us,
             const godot::String &vehicle_name,

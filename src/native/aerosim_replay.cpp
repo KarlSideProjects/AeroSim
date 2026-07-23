@@ -906,6 +906,40 @@ bool parse_rigid_body_state(const JsonValue &value, RigidBodyState &state) {
             parse_vec(*velocity, state.velocity) && parse_vec(*angular_velocity, state.angular_velocity);
 }
 
+std::string controller_state_json(const FlightControlState &state) {
+    return "{\"integral\":" + vec_json({state.rate_integral[0], state.rate_integral[1], state.rate_integral[2]}) +
+            ",\"target_rates\":" + vec_json({state.target_rates_y_up[0], state.target_rates_y_up[1], state.target_rates_y_up[2]}) +
+            ",\"motor_total\":" + compact_number(state.motor_thrust_newtons) + '}';
+}
+
+bool parse_controller_state(const JsonValue &value, FlightControlState &state) {
+    const JsonValue *integral = field(value, "integral");
+    const JsonValue *target_rates = field(value, "target_rates");
+    const JsonValue *motor_total = field(value, "motor_total");
+    Vec3 integral_values;
+    Vec3 target_rate_values;
+    if (integral == nullptr || target_rates == nullptr || motor_total == nullptr ||
+            !parse_vec(*integral, integral_values) || !parse_vec(*target_rates, target_rate_values) ||
+            !number_value(*motor_total, state.motor_thrust_newtons) || !std::isfinite(state.motor_thrust_newtons)) {
+        return false;
+    }
+    state.rate_integral = {integral_values.x, integral_values.y, integral_values.z};
+    state.target_rates_y_up = {target_rate_values.x, target_rate_values.y, target_rate_values.z};
+    return true;
+}
+
+std::string clock_json(const SimulationClock &clock) {
+    return "{\"substep_accumulator\":" + compact_number(clock.substep_accumulator) +
+            ",\"total_substeps\":" + std::to_string(clock.total_substeps) + '}';
+}
+
+bool parse_clock(const JsonValue &value, SimulationClock &clock) {
+    const JsonValue *accumulator = field(value, "substep_accumulator");
+    const JsonValue *substeps = field(value, "total_substeps");
+    return accumulator != nullptr && substeps != nullptr && number_value(*accumulator, clock.substep_accumulator) &&
+            std::isfinite(clock.substep_accumulator) && integer_value(*substeps, clock.total_substeps);
+}
+
 std::string checkpoint_json(const ReplayRunCheckpoint &checkpoint) {
     const auto collision_json = [](const ReplayCollision &collision) {
         const CollisionContact &contact = collision.contact;
@@ -934,7 +968,9 @@ std::string checkpoint_json(const ReplayRunCheckpoint &checkpoint) {
     return "{\"timestamp_us\":" + std::to_string(checkpoint.timestamp_us) +
             ",\"upper\":" + rigid_body_state_json(checkpoint.state.upper) +
             ",\"lower\":" + rigid_body_state_json(checkpoint.state.lower) +
-            ",\"collisions\":[" + collision_json(checkpoint.collisions[0]) + ',' +
+            ",\"controllers\":[" + controller_state_json(checkpoint.controllers[0]) + ',' + controller_state_json(checkpoint.controllers[1]) +
+            "],\"clocks\":[" + clock_json(checkpoint.clocks[0]) + ',' + clock_json(checkpoint.clocks[1]) +
+            "],\"collisions\":[" + collision_json(checkpoint.collisions[0]) + ',' +
             collision_json(checkpoint.collisions[1]) + "],\"scene_objects\":" + scene_objects +
             ",\"environment\":" + checkpoint.environment_json + '}';
 }
@@ -943,15 +979,30 @@ bool parse_checkpoint(const JsonValue &value, ReplayRunCheckpoint &checkpoint, b
     const JsonValue *timestamp = field(value, "timestamp_us");
     const JsonValue *upper = field(value, "upper");
     const JsonValue *lower = field(value, "lower");
+    const JsonValue *controllers = field(value, "controllers");
+    const JsonValue *clocks = field(value, "clocks");
     const JsonValue *collisions = field(value, "collisions");
     const JsonValue *scene_objects = field(value, "scene_objects");
     const JsonValue *environment = field(value, "environment");
     if (timestamp == nullptr || upper == nullptr || lower == nullptr ||
-            (require_complete_state && (collisions == nullptr || scene_objects == nullptr || environment == nullptr)) ||
+            (require_complete_state && (controllers == nullptr || clocks == nullptr || collisions == nullptr || scene_objects == nullptr || environment == nullptr)) ||
             !integer_value(*timestamp, checkpoint.timestamp_us) ||
             !parse_rigid_body_state(*upper, checkpoint.state.upper) ||
             !parse_rigid_body_state(*lower, checkpoint.state.lower)) {
         return false;
+    }
+    if (controllers != nullptr) {
+        if (controllers->type != JsonValue::Type::Array || controllers->array.size() != checkpoint.controllers.size() ||
+                !parse_controller_state(controllers->array[0], checkpoint.controllers[0]) ||
+                !parse_controller_state(controllers->array[1], checkpoint.controllers[1])) {
+            return false;
+        }
+    }
+    if (clocks != nullptr) {
+        if (clocks->type != JsonValue::Type::Array || clocks->array.size() != checkpoint.clocks.size() ||
+                !parse_clock(clocks->array[0], checkpoint.clocks[0]) || !parse_clock(clocks->array[1], checkpoint.clocks[1])) {
+            return false;
+        }
     }
     if (collisions != nullptr) {
         if (collisions->type != JsonValue::Type::Array || collisions->array.size() != checkpoint.collisions.size()) {
@@ -1879,19 +1930,29 @@ bool ReplaySessionRecorder::record_environment(std::uint64_t timestamp_us, std::
 }
 
 bool ReplaySessionRecorder::record_checkpoint(std::uint64_t timestamp_us, const DualAircraftState &state) {
+    ReplayRunCheckpoint checkpoint;
+    checkpoint.state = state;
+    return record_checkpoint(timestamp_us, checkpoint);
+}
+
+bool ReplaySessionRecorder::record_checkpoint(
+        std::uint64_t timestamp_us, const ReplayRunCheckpoint &checkpoint) {
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
     }
-    if (!finite_vec(state.upper.position) || !finite_quat(state.upper.orientation) ||
-            !finite_vec(state.upper.velocity) || !finite_vec(state.upper.angular_velocity) ||
-            !finite_vec(state.lower.position) || !finite_quat(state.lower.orientation) ||
-            !finite_vec(state.lower.velocity) || !finite_vec(state.lower.angular_velocity)) {
+    if (!finite_vec(checkpoint.state.upper.position) || !finite_quat(checkpoint.state.upper.orientation) ||
+            !finite_vec(checkpoint.state.upper.velocity) || !finite_vec(checkpoint.state.upper.angular_velocity) ||
+            !finite_vec(checkpoint.state.lower.position) || !finite_quat(checkpoint.state.lower.orientation) ||
+            !finite_vec(checkpoint.state.lower.velocity) || !finite_vec(checkpoint.state.lower.angular_velocity)) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay checkpoint state must be finite");
     }
     if (!session_.checkpoints.empty() && timestamp_us < session_.checkpoints.back().timestamp_us) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay checkpoints must be monotonic");
     }
-    session_.checkpoints.push_back({timestamp_us, state, {}, {}, environment_json_});
+    ReplayRunCheckpoint recorded = checkpoint;
+    recorded.timestamp_us = timestamp_us;
+    recorded.environment_json = environment_json_;
+    session_.checkpoints.push_back(std::move(recorded));
     diagnostic_ = {};
     return true;
 }
@@ -2234,7 +2295,15 @@ ReplayRunResult replay_session(
         return name == session.vehicles[0].name ? 0 : name == session.vehicles[1].name ? 1 : -1;
     };
     const auto checkpoint = [&](std::uint64_t timestamp_us) {
-        checkpoints.push_back({timestamp_us, state, {last_collisions[0], last_collisions[1]}, scene_objects, environment_json});
+        ReplayRunCheckpoint recorded;
+        recorded.timestamp_us = timestamp_us;
+        recorded.state = state;
+        recorded.controllers = {{controllers[0].control_state(), controllers[1].control_state()}};
+        recorded.clocks = {{clocks[0], clocks[1]}};
+        recorded.collisions = {{last_collisions[0], last_collisions[1]}};
+        recorded.scene_objects = scene_objects;
+        recorded.environment_json = environment_json;
+        checkpoints.push_back(std::move(recorded));
     };
     const auto checkpoint_recorded_at = [&](std::uint64_t timestamp_us) {
         while (recorded_checkpoint_index < session.checkpoints.size() &&
@@ -2612,6 +2681,34 @@ ReplayDivergence compare_replay_runs(
             result.expected = std::to_string(left.timestamp_us);
             result.actual = std::to_string(right.timestamp_us);
             return result;
+        }
+        for (std::size_t vehicle_index = 0; vehicle_index < left.controllers.size(); ++vehicle_index) {
+            const FlightControlState &left_controller = left.controllers[vehicle_index];
+            const FlightControlState &right_controller = right.controllers[vehicle_index];
+            for (std::size_t axis = 0; axis < left_controller.rate_integral.size(); ++axis) {
+                if (!same_or_close(left_controller.rate_integral[axis], right_controller.rate_integral[axis], tolerance)) {
+                    report_at(left.timestamp_us, "checkpoint.controller.integral." + std::to_string(axis),
+                            left_controller.rate_integral[axis], right_controller.rate_integral[axis]);
+                    return result;
+                }
+            }
+            if (!same_or_close(left_controller.motor_thrust_newtons, right_controller.motor_thrust_newtons, tolerance)) {
+                report_at(left.timestamp_us, "checkpoint.controller.motor_total", left_controller.motor_thrust_newtons,
+                        right_controller.motor_thrust_newtons);
+                return result;
+            }
+            if (left.clocks[vehicle_index].total_substeps != right.clocks[vehicle_index].total_substeps ||
+                    !same_or_close(left.clocks[vehicle_index].substep_accumulator,
+                            right.clocks[vehicle_index].substep_accumulator, tolerance)) {
+                result.diverged = true;
+                result.timestamp_us = left.timestamp_us;
+                result.vehicle_name = expected.vehicle_names[vehicle_index];
+                result.field = "checkpoint.clock";
+                result.expected = std::to_string(left.clocks[vehicle_index].total_substeps);
+                result.actual = std::to_string(right.clocks[vehicle_index].total_substeps);
+                result.tolerance = tolerance;
+                return result;
+            }
         }
         const double *left_values[] = {
                 &left.state.upper.position.x, &left.state.upper.position.y, &left.state.upper.position.z,

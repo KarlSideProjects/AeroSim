@@ -651,6 +651,8 @@ bool test_replay_safety_contracts() {
     }
     const std::string serialized = checkpoint_recorder.serialize();
     const std::string missing_collisions = replace_once(serialized, "\"collisions\":[", "\"missing_collisions\":[");
+    const std::string missing_controllers = replace_once(serialized, "\"controllers\":[", "\"missing_controllers\":[");
+    const std::string missing_clocks = replace_once(serialized, "\"clocks\":[", "\"missing_clocks\":[");
     const std::string missing_scene_objects = replace_once(serialized, "\"scene_objects\":[", "\"missing_scene_objects\":[");
     const std::string missing_environment = replace_once(serialized, "\"environment\":{", "\"missing_environment\":{");
     const std::string schema_v2 = replace_once(serialized, "\"schema_version\":3", "\"schema_version\":2");
@@ -669,12 +671,16 @@ bool test_replay_safety_contracts() {
     invalid_config.upper.hover_throttle = std::numeric_limits<double>::quiet_NaN();
     const aerosim::ReplayRunResult failed_step = aerosim::replay_session(
             checked.session(), invalid_config, "manifest", {{"hash-a", "hash-b"}});
-    return serialized.find("\"schema_version\":3") != std::string::npos &&
-            !aerosim::load_replay_session(missing_collisions, "manifest").ok &&
-            !aerosim::load_replay_session(missing_scene_objects, "manifest").ok &&
-            !aerosim::load_replay_session(missing_environment, "manifest").ok &&
-            aerosim::load_replay_session(schema_v2, "manifest").ok && !failed_step.ok &&
-            failed_step.diagnostic.message == "replay step failed: InvalidConfig";
+    const bool has_schema_v3 = serialized.find("\"schema_version\":3") != std::string::npos;
+    const bool rejects_collisions = !aerosim::load_replay_session(missing_collisions, "manifest").ok;
+    const bool rejects_controllers = !aerosim::load_replay_session(missing_controllers, "manifest").ok;
+    const bool rejects_clocks = !aerosim::load_replay_session(missing_clocks, "manifest").ok;
+    const bool rejects_scene_objects = !aerosim::load_replay_session(missing_scene_objects, "manifest").ok;
+    const bool rejects_environment = !aerosim::load_replay_session(missing_environment, "manifest").ok;
+    const aerosim::ReplayLoadResult v2 = aerosim::load_replay_session(schema_v2, "manifest");
+    const bool accepts_v2 = v2.ok;
+    return has_schema_v3 && rejects_collisions && rejects_controllers && rejects_clocks && rejects_scene_objects && rejects_environment && accepts_v2 &&
+            !failed_step.ok && failed_step.diagnostic.message == "replay step failed: InvalidConfig";
 }
 
 } // namespace

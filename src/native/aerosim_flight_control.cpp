@@ -343,6 +343,10 @@ const PidTimingStats &FlightController::pid_timing_stats() const {
     return pid_timing_stats_;
 }
 
+FlightControlState FlightController::control_state() const {
+    return {rate_integral_, previous_target_rates_y_up_, motor_thrust_newtons_};
+}
+
 const TelemetrySnapshot &FlightController::telemetry_snapshot() const {
     return telemetry_buffers_[telemetry_read_index_];
 }

@@ -5,8 +5,11 @@ const SETTINGS_HASH := "integration-settings-v1"
 
 func run() -> Dictionary:
     var native: Object = ClassDB.instantiate("AeroSimNative")
-    if native == null:
+    var lower_native: Object = ClassDB.instantiate("AeroSimNative")
+    if native == null or lower_native == null:
         return _failure("AeroSimNative is not registered")
+    if native == lower_native:
+        return _failure("replay checkpoint requires distinct native vehicles")
     if not native.call("set_hardware_mass_kg", 1.0):
         return _failure("native mass setup failed")
     if not native.call("set_hardware_power_model", 4.0, 0.5, 0.03, 22.2, 6.0, 0.003, 4.0):
@@ -46,7 +49,7 @@ func run() -> Dictionary:
     error = _expect_ok(native.call("record_replay_command", 0, "DroneB", 0.50, 0.0, 0.0, 0.0, 0), "lower command")
     if not error.is_empty():
         return _failure(error)
-    error = _expect_ok(native.call("record_replay_checkpoint", 0, initial_row, initial_row), "initial checkpoint")
+    error = _expect_ok(native.call("record_replay_checkpoint", 0, initial_row, initial_row, lower_native), "initial checkpoint")
     if not error.is_empty():
         return _failure(error)
     error = _expect_ok(native.call("record_replay_simulation_operation", 0, 0, 0.0), "pause")
@@ -68,6 +71,10 @@ func run() -> Dictionary:
     var finish: Dictionary = native.call("finish_complete_replay_recording", 5000, "integration")
     if not bool(finish.get("ok", false)):
         return _failure("replay recording did not finish: %s" % String(finish.get("diagnostic_message", "unknown")))
+    var checkpoint_manifest: Dictionary = JSON.parse_string(finish.serialized)
+    var checkpoint: Dictionary = checkpoint_manifest.checkpoints[0]
+    if not checkpoint.has("controllers") or not checkpoint.has("clocks") or checkpoint.controllers.size() != 2 or checkpoint.clocks.size() != 2:
+        return _failure("replay checkpoint did not retain both controller and clock snapshots")
     var config_manifest: Dictionary = native.call("replay_vehicle_config_manifest")
     var replay: Dictionary = native.call(
         "replay_complete_session", finish.serialized, SETTINGS_HASH, config_hash, config_hash,

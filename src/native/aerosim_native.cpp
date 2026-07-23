@@ -344,7 +344,7 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("record_replay_environment", "timestamp_us", "environment_json"),
             &AeroSimNative::record_replay_environment);
     ClassDB::bind_method(
-            D_METHOD("record_replay_checkpoint", "timestamp_us", "upper_row", "lower_row"),
+            D_METHOD("record_replay_checkpoint", "timestamp_us", "upper_row", "lower_row", "lower_native"),
             &AeroSimNative::record_replay_checkpoint);
     ClassDB::bind_method(
             D_METHOD("record_replay_async_command", "timestamp_us", "vehicle_name", "command_id", "method", "lifecycle"),
@@ -997,8 +997,9 @@ Dictionary AeroSimNative::record_replay_environment(
 Dictionary AeroSimNative::record_replay_checkpoint(
         std::int64_t timestamp_us,
         const PackedFloat64Array &upper_row,
-        const PackedFloat64Array &lower_row) {
-    if (replay_recorder_ == nullptr || timestamp_us < 0 || upper_row.size() < 17 || lower_row.size() < 17) {
+        const PackedFloat64Array &lower_row,
+        AeroSimNative *lower_native) {
+    if (replay_recorder_ == nullptr || lower_native == nullptr || timestamp_us < 0 || upper_row.size() < 17 || lower_row.size() < 17) {
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay checkpoint state is invalid or recording is inactive"};
         return replay_status(false, &diagnostic);
     }
@@ -1010,8 +1011,16 @@ Dictionary AeroSimNative::record_replay_checkpoint(
         state.angular_velocity = {row[14], row[15], row[16]};
         return state;
     };
-    const aerosim::DualAircraftState state{state_from_row(upper_row), state_from_row(lower_row)};
-    const bool ok = replay_recorder_->record_checkpoint(static_cast<std::uint64_t>(timestamp_us), state);
+    aerosim::DualAircraftState state{state_from_row(upper_row), state_from_row(lower_row)};
+    state.upper.motor_thrust_newtons = simulation_state_.motor_thrust_newtons;
+    state.upper.propwash_disturbance_rad_s2 = simulation_state_.propwash_disturbance_rad_s2;
+    state.lower.motor_thrust_newtons = lower_native->simulation_state_.motor_thrust_newtons;
+    state.lower.propwash_disturbance_rad_s2 = lower_native->simulation_state_.propwash_disturbance_rad_s2;
+    aerosim::ReplayRunCheckpoint checkpoint;
+    checkpoint.state = state;
+    checkpoint.controllers = {{flight_controller_.control_state(), lower_native->flight_controller_.control_state()}};
+    checkpoint.clocks = {{simulation_clock_, lower_native->simulation_clock_}};
+    const bool ok = replay_recorder_->record_checkpoint(static_cast<std::uint64_t>(timestamp_us), checkpoint);
     return replay_status(ok, &replay_recorder_->diagnostic());
 }
 
