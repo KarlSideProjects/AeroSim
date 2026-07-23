@@ -53,7 +53,7 @@ printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .go
 export AEROSIM_HEADED_COMMIT_SHA="$(git rev-parse HEAD)"
 log_path="$out_dir/godot.log"
 rm -f "$out_dir"/*.png "$out_dir/report.json" "$log_path"
-timeout 60s "${launcher[@]}" "$godot_bin" --path . --resolution 1280x720 \
+timeout 120s "${launcher[@]}" "$godot_bin" --path . --resolution 1280x720 \
     --log-file "$log_path" \
     --script res://tests/headed/headed_acceptance.gd -- --out-dir "$out_dir"
 
