@@ -383,6 +383,31 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
     return {response_state, first_response, response_clock.total_substeps, loaded.session};
 }
 
+bool zero_energy_contact_is_clamped(
+        aerosim::CollisionAuthoritySwitch &authority,
+        aerosim::RigidBodyState &state,
+        aerosim::SimulationClock &clock,
+        aerosim::FlightController &controller,
+        const aerosim::SimulationConfig &config,
+        const aerosim::FlightCommand &angle_command,
+        const aerosim::AcroCommand &acro_command,
+        const aerosim::MotorCommands &motor_commands,
+        const aerosim::CollisionContact &contact,
+        int variant) {
+    aerosim::CollisionStepResult result;
+    if (variant == 0) {
+        result = authority.step(state, clock, controller, config, angle_command, contact);
+    } else if (variant == 1) {
+        result = authority.step_altitude_hold(state, clock, controller, config, angle_command, 0.0, contact, {});
+    } else if (variant == 2) {
+        result = authority.step_acro(state, clock, controller, config, acro_command, contact);
+    } else {
+        result = authority.step_per_motor(state, clock, config, motor_commands, contact);
+    }
+    return result.status == aerosim::StepStatus::Ok && result.authority == aerosim::PhysicsAuthority::Jolt && finite(state) &&
+            aerosim::kinetic_energy_joules(state, config) <= 0.0;
+}
+
 } // namespace
 
 int main() {
@@ -664,6 +689,36 @@ int main() {
     clamped_authority.step(clamped_state, clamped_clock, clamped_controller, config, hover, energetic_contact);
     if (aerosim::kinetic_energy_joules(clamped_state, config) > energetic_contact.max_kinetic_energy_joules * 1.01) {
         return fail("collision handoff must clamp externally supplied Jolt energy to G0.8 tolerance");
+    }
+
+    aerosim::CollisionContact zero_energy_contact;
+    zero_energy_contact.touching = true;
+    zero_energy_contact.normal = {-1.0, 0.0, 0.0};
+    zero_energy_contact.has_resolved_state = true;
+    zero_energy_contact.resolved_velocity = {-100.0, 0.0, 0.0};
+    zero_energy_contact.max_kinetic_energy_joules = 0.0;
+    aerosim::AcroCommand zero_energy_acro_command;
+    zero_energy_acro_command.throttle = 0.5;
+    aerosim::MotorCommands zero_energy_motor_commands;
+    for (int variant = 0; variant < 4; ++variant) {
+        aerosim::RigidBodyState zero_energy_state;
+        aerosim::SimulationClock zero_energy_clock;
+        aerosim::FlightController zero_energy_controller;
+        zero_energy_controller.arm(0.0);
+        aerosim::CollisionAuthoritySwitch zero_energy_authority;
+        if (!zero_energy_contact_is_clamped(
+                    zero_energy_authority,
+                    zero_energy_state,
+                    zero_energy_clock,
+                    zero_energy_controller,
+                    config,
+                    hover,
+                    zero_energy_acro_command,
+                    zero_energy_motor_commands,
+                    zero_energy_contact,
+                    variant)) {
+            return fail("all collision variants must enforce a zero-energy Jolt cap for a stationary body");
+        }
     }
 
     aerosim::RigidBodyState impulse_state;

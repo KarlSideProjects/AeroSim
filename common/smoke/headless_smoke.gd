@@ -1066,6 +1066,23 @@ func _verify_collision_public_path(native: Object) -> bool:
         push_error("Collision public path must return to flight authority after configured clear frames")
         return false
     native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("Zero-energy collision setup should arm from low throttle")
+        return false
+    var zero_energy_impact: PackedFloat64Array = _step_native_collision(
+        native,
+        0.5,
+        true,
+        Vector3.LEFT,
+        Vector3.ZERO,
+        Vector3(100.0, 0.0, 0.0),
+        Vector3.ZERO,
+        0.0
+    )
+    if zero_energy_impact.size() < 18 or not is_finite(float(zero_energy_impact[17])) or float(zero_energy_impact[17]) > 0.0:
+        push_error("Collision public path must enforce a stationary zero-energy Jolt cap")
+        return false
+    native.call("reset_flight")
     return true
 
 func _verify_px4_actuator_public_path(native: Object) -> bool:
