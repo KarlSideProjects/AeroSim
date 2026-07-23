@@ -13,6 +13,9 @@ if [ "$godot_available" != true ] || [ ! -f "$extension" ]; then
     exit 1
 fi
 
+source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"
+validate_native_provenance
+
 mkdir -p build/native_atomic_boundary
 for scenario in sparse_px4 negative imu_rollback; do
     log="build/native_atomic_boundary/${scenario}.log"

@@ -17,6 +17,9 @@ PERFORMANCE_GPU_WORKFLOW = ROOT / ".github" / "workflows" / "performance-gpu.yml
 HEADED_RUNNER = ROOT / "scripts" / "run_headed_acceptance.sh"
 HEADLESS_RUNNER = ROOT / "scripts" / "run_headless_smoke.sh"
 PERFORMANCE_RUNNER = ROOT / "scripts" / "run_performance_benchmark.sh"
+GUT_RUNNER = ROOT / "scripts" / "run_gut_tests.sh"
+ATOMIC_BOUNDARY_RUNNER = ROOT / "scripts" / "test_native_atomic_boundary.sh"
+REPLAY_RUNNER = ROOT / "scripts" / "test_replay_integration.sh"
 VERIFY_ISSUE_11 = ROOT / "scripts" / "verify_issue_11.sh"
 
 FAKE_GODOT = """#!/usr/bin/env python3
@@ -246,6 +249,7 @@ class CiStrategyTest(unittest.TestCase):
             "Headed acceptance (Xvfb + lavapipe)",
             "Complete-session replay integration",
             "Performance harness smoke (Xvfb + lavapipe)",
+            "Headless physics qualification",
         ]
         positions = [self.linux_job.index(step) for step in steps]
         self.assertEqual(positions, sorted(positions))
@@ -257,7 +261,7 @@ class CiStrategyTest(unittest.TestCase):
         )
         self.assertIsNotNone(provenance_step)
         provenance = provenance_step.group(0) if provenance_step else ""
-        for field in ("commit_sha", "gdextension_sha256", "native_source_sha256"):
+        for field in ("commit_sha", "gdextension_path", "gdextension_sha256", "native_source_sha256"):
             with self.subTest(field=field):
                 self.assertIn(field, provenance)
         for command in (
@@ -265,6 +269,7 @@ class CiStrategyTest(unittest.TestCase):
             "scripts/test_native_atomic_boundary.sh",
             "scripts/run_headed_acceptance.sh --xvfb",
             "scripts/test_replay_integration.sh",
+            "scripts/run_headless_smoke.sh",
         ):
             step = re.search(
                 rf"^      - name: [^\n]+\n(?:(?!^      - ).)*{re.escape(command)}(?:(?!^      - ).)*(?=^      - |\Z)",
@@ -276,14 +281,34 @@ class CiStrategyTest(unittest.TestCase):
                 self.assertIn("AEROSIM_NATIVE_PROVENANCE", step.group(0) if step else "")
 
     def test_runtime_scripts_fail_loudly_without_the_debug_artifact_receipt(self):
-        completed, _ = self._run_runner(
-            HEADED_RUNNER, "true", "Godot Engine fake\n", with_native_provenance=False
-        )
-        self.assertNotEqual(0, completed.returncode)
-        self.assertIn("native artifact provenance", completed.stderr)
-        for runner in (PERFORMANCE_RUNNER, VERIFY_ISSUE_11):
+        for runner in (
+            GUT_RUNNER,
+            ATOMIC_BOUNDARY_RUNNER,
+            REPLAY_RUNNER,
+            HEADLESS_RUNNER,
+            HEADED_RUNNER,
+            PERFORMANCE_RUNNER,
+        ):
+            with self.subTest(runner=runner.name, receipt="missing"):
+                completed = self._run_direct_runner_with_receipt(runner, None)
+                self.assertNotEqual(0, completed.returncode)
+                self.assertIn("native artifact provenance is missing", completed.stderr)
+            with self.subTest(runner=runner.name, receipt="stale"):
+                completed = self._run_direct_runner_with_receipt(
+                    runner, {"commit_sha": "0" * 40}
+                )
+                self.assertNotEqual(0, completed.returncode)
+                self.assertIn("native artifact provenance is stale for HEAD", completed.stderr)
+        self.assertIn("AEROSIM_NATIVE_PROVENANCE", VERIFY_ISSUE_11.read_text(encoding="utf-8"))
+
+    def test_headed_and_performance_reject_a_receipt_for_an_arbitrary_binary(self):
+        for runner in (HEADED_RUNNER, PERFORMANCE_RUNNER):
             with self.subTest(runner=runner.name):
-                self.assertIn("AEROSIM_NATIVE_PROVENANCE", runner.read_text(encoding="utf-8"))
+                completed = self._run_direct_runner_with_receipt(
+                    runner, {"gdextension_path": "bin/other_debug_extension.so"}
+                )
+                self.assertNotEqual(0, completed.returncode)
+                self.assertIn("fixed debug GDExtension", completed.stderr)
 
     def test_gpu_effects_gate_reuses_one_recorded_debug_artifact(self):
         workflow = PERFORMANCE_GPU_WORKFLOW.read_text(encoding="utf-8")
@@ -439,6 +464,60 @@ class CiStrategyTest(unittest.TestCase):
             )
             logs = [path.read_text(encoding="utf-8") for path in workdir.rglob("*.log")]
             return completed, logs
+
+    def _run_direct_runner_with_receipt(
+        self, runner: Path, receipt_overrides: dict[str, str] | None
+    ) -> subprocess.CompletedProcess[str]:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workdir = Path(temporary_directory)
+            subprocess.run(["git", "init", "-q"], cwd=workdir, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workdir, check=True)
+            subprocess.run(["git", "config", "user.name", "CI test"], cwd=workdir, check=True)
+            (workdir / "seed").write_text("seed\n", encoding="utf-8")
+            subprocess.run(["git", "add", "seed"], cwd=workdir, check=True)
+            subprocess.run(["git", "commit", "-qm", "seed"], cwd=workdir, check=True)
+            fake_godot = workdir / "fake_godot.py"
+            fake_godot.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            fake_godot.chmod(0o755)
+            extension = workdir / "bin" / "libaerosim_native.linux.template_debug.x86_64.so"
+            extension.parent.mkdir(parents=True)
+            extension.write_bytes(b"fake native extension\n")
+            if receipt_overrides is not None:
+                receipt = workdir / "build" / "native_debug_artifact.json"
+                receipt.parent.mkdir(parents=True)
+                receipt_data = {
+                    "commit_sha": subprocess.check_output(
+                        ["git", "rev-parse", "HEAD"], cwd=workdir, text=True
+                    ).strip(),
+                    "gdextension_path": str(extension.relative_to(workdir)),
+                    "gdextension_sha256": hashlib.sha256(extension.read_bytes()).hexdigest(),
+                    "native_source_sha256": hashlib.sha256(b"").hexdigest(),
+                }
+                receipt_data.update(receipt_overrides)
+                if receipt_data["gdextension_path"] != str(extension.relative_to(workdir)):
+                    other_extension = workdir / receipt_data["gdextension_path"]
+                    other_extension.parent.mkdir(parents=True, exist_ok=True)
+                    other_extension.write_bytes(b"other native extension\n")
+                    receipt_data["gdextension_sha256"] = hashlib.sha256(other_extension.read_bytes()).hexdigest()
+                receipt.write_text(json.dumps(receipt_data), encoding="utf-8")
+            environment = os.environ.copy()
+            environment.update(GODOT_BIN=str(fake_godot), DISPLAY=":99")
+            command = [str(runner)]
+            if runner == PERFORMANCE_RUNNER:
+                godot_cpp_dir = workdir / "godot-cpp"
+                (godot_cpp_dir / ".git").mkdir(parents=True)
+                (godot_cpp_dir / "SConstruct").write_text("", encoding="utf-8")
+                environment["GODOT_CPP_DIR"] = str(godot_cpp_dir)
+                command.extend(("--mode", "smoke", "--warmup-seconds", "0", "--seconds", "0.1"))
+            return subprocess.run(
+                command,
+                cwd=workdir,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
 
 
 if __name__ == "__main__":

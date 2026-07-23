@@ -35,6 +35,8 @@ if [ "$recovery_mode" = false ]; then
         echo "required Linux debug GDExtension is missing: $native_extension" >&2
         exit 1
     fi
+    source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"
+    validate_native_provenance
 fi
 
 out_dir="build/gut"

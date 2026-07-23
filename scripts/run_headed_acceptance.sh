@@ -3,7 +3,6 @@ set -euo pipefail
 
 godot_bin="${GODOT_BIN:-godot}"
 out_dir="build/headed"
-native_provenance="${AEROSIM_NATIVE_PROVENANCE:-build/native_debug_artifact.json}"
 use_xvfb=0
 
 while [ "$#" -gt 0 ]; do
@@ -33,40 +32,10 @@ elif ! command -v "$godot_bin" >/dev/null; then
     exit 1
 fi
 
-provenance_values="$(python3 - "$native_provenance" "$(git rev-parse HEAD)" <<'PY'
-import hashlib
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-if not path.is_file():
-    raise SystemExit(f"native artifact provenance is missing: {path}")
-try:
-    receipt = json.loads(path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError) as error:
-    raise SystemExit(f"native artifact provenance is invalid: {path}: {error}")
-required = ("commit_sha", "gdextension_path", "gdextension_sha256", "native_source_sha256")
-if any(not isinstance(receipt.get(key), str) or not receipt[key] for key in required):
-    raise SystemExit(f"native artifact provenance is incomplete: {path}")
-if receipt["commit_sha"] != sys.argv[2]:
-    raise SystemExit(f"native artifact provenance is stale for HEAD: {path}")
-extension = Path(receipt["gdextension_path"])
-if not extension.is_file() or hashlib.sha256(extension.read_bytes()).hexdigest() != receipt["gdextension_sha256"]:
-    raise SystemExit(f"native artifact provenance does not match the debug GDExtension: {path}")
-source_paths = [Path("SConstruct"), *sorted(Path("src/native").rglob("*"))]
-digest = hashlib.sha256()
-for source in source_paths:
-    if source.is_file():
-        digest.update(f"{hashlib.sha256(source.read_bytes()).hexdigest()}  {source}\n".encode())
-if digest.hexdigest() != receipt["native_source_sha256"]:
-    raise SystemExit(f"native artifact provenance is stale for native sources: {path}")
-print(receipt["gdextension_sha256"])
-print(receipt["native_source_sha256"])
-PY
-)"
-gdextension_sha256="$(printf '%s\n' "$provenance_values" | sed -n '1p')"
-native_source_sha256="$(printf '%s\n' "$provenance_values" | sed -n '2p')"
+source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"
+validate_native_provenance
+gdextension_sha256="$AEROSIM_NATIVE_PROVENANCE_GDEXTENSION_SHA256"
+native_source_sha256="$AEROSIM_NATIVE_PROVENANCE_NATIVE_SOURCE_SHA256"
 
 if [ "$use_xvfb" -eq 1 ]; then
     lavapipe_icd="${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}"
