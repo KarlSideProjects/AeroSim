@@ -22,6 +22,19 @@ Date: 2026-07-23
 | --- | --- |
 | `git diff --check` | PASS |
 | `scripts/check_hardcoded_airframe_constants.sh` | PASS |
+
+## Re-review follow-up: 2026-07-23
+
+- RED/GREEN: the G2 fixture originally retained a literal `0.50` hover throttle. It now derives `hover_rpm / max_rpm` with the runtime's quadratic prop-fit semantics and asserts the validated HardwareConfig carries that derived value, 30 ms motor lag, and battery sag.
+- RED/GREEN: an opposite-direction shaper command previously snapped before its proposed target position crossed the new desired angle. The controller now snaps only on an actual proposed-position crossing; the existing true-crossing snap/rate-zero regression remains green.
+
+| Command | Result |
+| --- | --- |
+| focused `test_flight_control` | PASS |
+| focused `test_cascaded_flight_control` | PASS |
+| `scripts/test_native.sh` | PASS |
+| `git diff --check` | PASS |
+| `scripts/check_hardcoded_airframe_constants.sh` | PASS |
 | `scripts/test_native.sh` | PASS |
 
 ## Concern

@@ -140,6 +140,26 @@ int main() {
         return fail("Angle yaw target must advance without injecting coupled roll or pitch error");
     }
 
+    aerosim::RigidBodyState continuity_state;
+    aerosim::SimulationClock continuity_clock;
+    aerosim::FlightController continuity_controller;
+    if (!continuity_controller.arm(0.0)) {
+        return fail("shaper continuity fixture must arm from low throttle");
+    }
+    aerosim::FlightCommand continuity_command;
+    continuity_command.throttle = 0.30;
+    continuity_command.roll_degrees = 30.0;
+    for (int frame = 0; frame < 3; ++frame) {
+        continuity_controller.step_angle_mode(continuity_state, continuity_clock, config, continuity_command);
+    }
+    continuity_command.roll_degrees = 0.2;
+    continuity_controller.step_angle_mode(continuity_state, continuity_clock, config, continuity_command);
+    const aerosim::FlightControlState continuity_control = continuity_controller.control_state();
+    if (continuity_control.target_angle_frd.x <= 0.2 * 3.14159265358979323846 / 180.0 ||
+            continuity_control.target_rate_frd.x <= 0.0) {
+        return fail("Angle target must stay continuous and rate-limited before the proposed position crosses desired");
+    }
+
     aerosim::RigidBodyState shaper_state;
     aerosim::SimulationClock shaper_clock;
     aerosim::FlightController shaper_controller;
@@ -152,12 +172,12 @@ int main() {
     for (int frame = 0; frame < 3; ++frame) {
         shaper_controller.step_angle_mode(shaper_state, shaper_clock, config, shaper_command);
     }
-    shaper_command.roll_degrees = 0.2;
+    shaper_command.roll_degrees = 0.7;
     for (int frame = 0; frame < 120; ++frame) {
         shaper_controller.step_angle_mode(shaper_state, shaper_clock, config, shaper_command);
     }
     const aerosim::FlightControlState shaper_control = shaper_controller.control_state();
-    if (std::abs(shaper_control.target_angle_frd.x - 0.2 * 3.14159265358979323846 / 180.0) > 1e-12 ||
+    if (std::abs(shaper_control.target_angle_frd.x - 0.7 * 3.14159265358979323846 / 180.0) > 1e-12 ||
             shaper_control.target_rate_frd.x != 0.0) {
         return fail("Angle target shaper must snap after crossing the desired angle and zero its target rate");
     }

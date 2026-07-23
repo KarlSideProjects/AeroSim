@@ -72,10 +72,23 @@ void configure_power_model(aerosim::SimulationConfig &config) {
     config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
 }
 
+double shipped_hover_throttle() {
+    constexpr std::array<double, 3> kRpm = {4000.0, 10000.0, 15000.0};
+    constexpr std::array<double, 3> kThrustNewtons = {1.152, 7.2, 16.2};
+    double numerator = 0.0;
+    double denominator = 0.0;
+    for (std::size_t index = 0; index < kRpm.size(); ++index) {
+        const double squared_rpm = kRpm[index] * kRpm[index];
+        numerator += squared_rpm * kThrustNewtons[index];
+        denominator += squared_rpm * squared_rpm;
+    }
+    return std::sqrt((0.72 * 9.80665 / 4.0) / (numerator / denominator)) / kRpm.back();
+}
+
 aerosim::SimulationConfig shipped_5_inch_6s_config() {
     aerosim::HardwareConfig hardware;
     hardware.set_mass_kg(0.72);
-    hardware.set_power_model(64.8, 0.50, 0.030, 22.2, 6.0, 0.003, 108.0);
+    hardware.set_power_model(64.8, shipped_hover_throttle(), 0.030, 22.2, 6.0, 0.003, 108.0);
     aerosim::PerMotorPhysicsConfig per_motor;
     per_motor.inertia_kg_m2 = {0.003, 0.003, 0.005};
     per_motor.max_thrust_per_motor_newtons = 16.2;
@@ -366,6 +379,7 @@ int main() {
     aerosim::FlightController acro_controller;
     if (!near(g2_config.motor_tau_s, 0.030, 1e-12) ||
             !near(g2_config.battery_cell_resistance_ohm, 0.003, 1e-12) ||
+            !near(g2_config.hover_throttle, shipped_hover_throttle(), 1e-12) ||
             aerosim::available_thrust_cap_newtons(g2_config, 1.0) >= g2_config.max_total_thrust_newtons) {
         return fail("G2.4/G2.5 must run the shipped 30 ms motor and battery-sag plant");
     }

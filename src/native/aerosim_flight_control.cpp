@@ -408,8 +408,8 @@ MotorCommands FlightController::control_substep(
             const double rate_command = std::clamp(error / kAngleInputTimeConstantS, -kMaxRateRadS, kMaxRateRadS);
             const double next_rate = move_toward(*target_rates[index], rate_command, maximum_delta);
             const double next_angle = *target_angles[index] + next_rate * dt;
-            if ((error > 0.0 && (next_angle >= desired_angles[index] || next_rate < 0.0)) ||
-                    (error < 0.0 && (next_angle <= desired_angles[index] || next_rate > 0.0))) {
+            if ((error > 0.0 && next_angle >= desired_angles[index]) ||
+                    (error < 0.0 && next_angle <= desired_angles[index])) {
                 *target_angles[index] = desired_angles[index];
                 *target_rates[index] = 0.0;
             } else {
