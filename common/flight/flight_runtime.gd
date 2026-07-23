@@ -1483,6 +1483,10 @@ func _physics_process(delta: float) -> void:
         else:
             var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
             row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw)
+    if row.is_empty():
+        last_error_message = "Native simulation step failed"
+        set_paused(true)
+        return
     if row.size() >= 13:
         last_collision_authority = int(row[12])
     if drone_body != null and row.size() >= 17:
