@@ -223,6 +223,23 @@ int main() {
         return fail("TelemetrySnapshot must use out_of_domain and unavailable values for invalid body drag");
     }
 
+    aerosim::RigidBodyState ordering_state;
+    aerosim::SimulationClock ordering_clock;
+    aerosim::FlightController ordering_controller;
+    if (!ordering_controller.arm(0.0)) {
+        return fail("PID ordering fixture must arm from low throttle");
+    }
+    aerosim::FlightCommand roll_only;
+    roll_only.throttle = 0.5;
+    roll_only.roll_degrees = 30.0;
+    ordering_controller.step_angle_mode(ordering_state, ordering_clock, config, roll_only);
+    const aerosim::TelemetrySnapshot &ordering_snapshot = ordering_controller.telemetry_snapshot();
+    if (std::abs(ordering_snapshot.pid[2].output) <= 1e-9 ||
+            std::abs(ordering_snapshot.pid[0].output) > 1e-9 ||
+            std::abs(ordering_snapshot.pid[1].output) > 1e-9) {
+        return fail("TelemetrySnapshot PID order must remain pitch, yaw, roll while control state is FRD");
+    }
+
     aerosim::FlightCommand saturated;
     saturated.throttle = 1.0;
     saturated.pitch_degrees = 90.0;

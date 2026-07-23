@@ -294,6 +294,7 @@ AerodynamicStepValues integrate_per_motor(
 
     Vec3 body_force;
     Vec3 body_torque;
+    Vec3 motor_torque_frd;
     const auto columns = quad_x_mixer_columns(config.per_motor);
     for (std::size_t index = 0; index < commands.normalized.size(); ++index) {
         const double target_thrust = config.per_motor.max_thrust_per_motor_newtons *
@@ -303,10 +304,12 @@ AerodynamicStepValues integrate_per_motor(
         state.motor_thrust_newtons[index] = thrust;
         const Vec3 force{0.0, thrust, 0.0};
         body_force = body_force + force;
-        body_torque.x += columns[1][index] * thrust;
-        body_torque.z -= columns[2][index] * thrust;
-        body_torque.y += columns[3][index] * thrust;
+        motor_torque_frd.x += columns[1][index] * thrust;
+        motor_torque_frd.y += columns[2][index] * thrust;
+        motor_torque_frd.z += columns[3][index] * thrust;
     }
+
+    body_torque = body_torque + frd_to_y_up(motor_torque_frd);
 
     const double ground_lift = a4_ground_effect_lift_newtons(config.a4_ground_effect, state.position.y);
     body_force.y += ground_lift;

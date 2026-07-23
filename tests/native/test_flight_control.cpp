@@ -45,11 +45,11 @@ double pearson(const std::array<double, 5> &x, const std::array<double, 5> &y) {
 }
 
 double roll_degrees(const aerosim::Quat &q) {
-    return 2.0 * std::atan2(q.z, q.w) * 180.0 / kPi;
+    return 2.0 * std::atan2(q.x, q.w) * 180.0 / kPi;
 }
 
 double pitch_degrees(const aerosim::Quat &q) {
-    return 2.0 * std::atan2(q.x, q.w) * 180.0 / kPi;
+    return 2.0 * std::atan2(q.z, q.w) * 180.0 / kPi;
 }
 
 void configure_power_model(aerosim::SimulationConfig &config) {
@@ -348,12 +348,29 @@ int main() {
     acro_roll.roll_stick = 1.0;
     acro_roll.rates = {1.0, 0.722222222222, 0.0};
     aerosim::TrajectorySample acro_sample;
+    bool reached_acro_band = false;
+    double acro_reach_time_s = 0.0;
+    double acro_band_start_s = 0.0;
+    double acro_max_degrees_per_second = 0.0;
     for (int frame = 0; frame < config.physics_hz / 2; ++frame) {
         acro_sample = acro_controller.step_acro_mode(acro_state, acro_clock, config, acro_roll);
+        const double rate = acro_sample.state.angular_velocity.x * 180.0 / kPi;
+        acro_max_degrees_per_second = std::max(acro_max_degrees_per_second, rate);
+        if (!reached_acro_band && near(rate, 720.0, 720.0 * 0.05)) {
+            reached_acro_band = true;
+            acro_reach_time_s = acro_sample.time_seconds;
+            acro_band_start_s = acro_sample.time_seconds;
+        }
+        if (reached_acro_band && acro_sample.time_seconds <= acro_band_start_s + 0.050 &&
+                !near(rate, 720.0, 720.0 * 0.05)) {
+            return fail("G2.5 Acro full-stick roll must hold the 720 degree per second band for 50 ms");
+        }
     }
-    const double roll_rate_degrees_per_second = acro_sample.state.angular_velocity.z * 180.0 / kPi;
-    if (!near(roll_rate_degrees_per_second, 720.0, 720.0 * 0.05)) {
-        return fail("G2.5 Acro full-stick roll must reach 720 degrees per second within 5%");
+    const double roll_rate_degrees_per_second = acro_sample.state.angular_velocity.x * 180.0 / kPi;
+    if (!reached_acro_band || acro_reach_time_s > 0.250 ||
+            !near(roll_rate_degrees_per_second, 720.0, 720.0 * 0.05) ||
+            acro_max_degrees_per_second > 720.0 * 1.05) {
+        return fail("G2.5 Acro full-stick roll must reach and retain 720 degrees per second without exceeding its upper band");
     }
 
     aerosim::RigidBodyState roll_step_state;

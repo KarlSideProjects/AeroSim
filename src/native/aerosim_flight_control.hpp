@@ -109,6 +109,12 @@ QuadXMixerResult quad_x_mix_thrust(
 
 class FlightController {
 private:
+    enum class ModeFamily {
+        None,
+        Angle,
+        Acro,
+    };
+
     bool armed_ = false;
     std::string arm_reject_code_ = "";
     int integrator_reset_count_ = 0;
@@ -120,7 +126,12 @@ private:
     double altitude_hold_trim_throttle_ = 0.0;
     bool altitude_hold_just_captured_ = false;
     std::array<double, 3> rate_integral_ = {0.0, 0.0, 0.0};
-    std::array<double, 3> previous_target_rates_y_up_ = {0.0, 0.0, 0.0};
+    Vec3 target_angle_frd_;
+    Vec3 target_rate_frd_;
+    Vec3 previous_rate_error_frd_;
+    Vec3 filtered_rate_derivative_frd_;
+    ModeFamily mode_family_ = ModeFamily::None;
+    bool control_initialized_ = false;
     std::array<bool, 4> motor_saturation_latched_ = {false, false, false, false};
     std::array<bool, 3> pid_saturation_latched_ = {false, false, false};
     PidTimingStats pid_timing_stats_;
@@ -140,7 +151,10 @@ private:
             RigidBodyState &state,
             const SimulationConfig &config,
             double throttle,
-            const Vec3 &desired_rates_y_up,
+            ModeFamily mode_family,
+            const Vec3 &desired_angles_frd,
+            const Vec3 &desired_rates_frd,
+            const Quat &estimated_attitude,
             double dt,
             std::array<double, 3> &pid_output,
             std::array<bool, 3> &pid_saturated);
