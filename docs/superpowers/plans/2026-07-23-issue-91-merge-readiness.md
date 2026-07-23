@@ -105,6 +105,23 @@ Run: `scripts/test_native.sh`
 
 Run: `scripts/test_native.sh && GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/test_replay_integration.sh`
 
+### Task 2b: Complete the native error, collision-variant, IMU, and GDScript atomic boundary
+
+**Files:**
+- Modify: `src/native/aerosim_native.hpp`, `src/native/aerosim_native.cpp`, `src/native/aerosim_collision.hpp`, `src/native/aerosim_collision.cpp`, `src/native/aerosim_imu.hpp`, `src/native/aerosim_imu.cpp`
+- Modify: `common/flight/flight_runtime.gd`
+- Test: `tests/native/test_collision.cpp`, `tests/native/test_imu.cpp`, `tests/gut/test_flight_runtime_load.gd`
+
+**Interfaces:**
+- Build on Task 2a `StepStatus`/`StepResult`; do not replace its staged controller rollback.
+- Native owns `last_step_error` and the single exact `AeroSimNative.<method>: <status_code>: <field/reason>` error; GDScript only consumes it.
+
+- [ ] Write failing tests for collision Acro/Altitude/PX4 invalid inputs and IMU continuation after a failed public call; assert complete rollback before mutation.
+- [ ] Write failing GUT coverage that an invalid native result synchronously pauses, freezes the body, displays the native error, leaves contact/state untouched, and does not emit a second error.
+- [ ] Implement snapshot/restore and prevalidation for the remaining collision variants and IMU state; route native public APIs through the status/error boundary.
+- [ ] Implement the single GDScript failure branch before normal row application, replay recording, contact reset, or sensor progression.
+- [ ] Run focused native/GUT tests, full native suite, extension build/GUT if available, diff/hardcoded guards; commit and report.
+
 ### Task 4: Add the persistent physical four-motor HUD
 
 **Files:**
