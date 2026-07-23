@@ -70,8 +70,13 @@ class FakeSecondaryNative extends RefCounted:
 
 
 class FailingNative extends RefCounted:
+    var sync_calls := 0
+
     func last_step_error() -> String:
         return "AeroSimNative.step_collision_angle_mode: InvalidCommand: contact.normal"
+
+    func sync_flight_state(..._args) -> void:
+        sync_calls += 1
 
 
 func _body(velocity: Vector3, yaw: float) -> FakeBody:
@@ -94,6 +99,21 @@ func test_native_step_error_pauses_freezes_and_displays_without_reemitting() -> 
     assert_true(body.sleeping)
     assert_eq(runtime.screen, "error")
     assert_eq(runtime.last_error_message, "AeroSimNative.step_collision_angle_mode: InvalidCommand: contact.normal")
+
+
+func test_sync_failure_stops_the_primary_path_before_the_next_native_call() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+    var failing_native := FailingNative.new()
+    runtime.drone_body = body
+    runtime.native = failing_native
+
+    assert_false(runtime._sync_native_from_drone())
+    assert_eq(failing_native.sync_calls, 1)
+    assert_true(runtime.paused)
+    assert_true(body.freeze)
+    assert_eq(runtime.screen, "error")
 
 
 func test_named_velocity_controller_uses_the_selected_body_for_measurement_and_yaw() -> void:

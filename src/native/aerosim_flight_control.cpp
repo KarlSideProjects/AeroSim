@@ -227,6 +227,41 @@ const char *step_status_code(StepStatus status) {
     return "InvalidControlOutput";
 }
 
+StepStatus validate_angle_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const Quat &estimated_attitude) {
+    if (!valid_command(command)) return StepStatus::InvalidCommand;
+    if (!valid_config(config)) return StepStatus::InvalidConfig;
+    return valid_state(state) && finite_quat(estimated_attitude) && valid_clock(clock, config)
+            ? StepStatus::Ok : StepStatus::InvalidState;
+}
+
+StepStatus validate_acro_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const AcroCommand &command) {
+    if (!valid_command(command)) return StepStatus::InvalidCommand;
+    if (!valid_config(config)) return StepStatus::InvalidConfig;
+    return valid_state(state) && valid_clock(clock, config) ? StepStatus::Ok : StepStatus::InvalidState;
+}
+
+StepStatus validate_altitude_hold_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double measured_altitude_m,
+        const Quat &estimated_attitude) {
+    if (!valid_command(command)) return StepStatus::InvalidCommand;
+    if (!valid_config(config) || !std::isfinite(measured_altitude_m)) return StepStatus::InvalidConfig;
+    return valid_state(state) && finite_quat(estimated_attitude) && valid_clock(clock, config)
+            ? StepStatus::Ok : StepStatus::InvalidState;
+}
+
 QuadXMixerResult quad_x_mix_thrust(
         const SimulationConfig &config,
         double collective_thrust_newtons,
@@ -762,14 +797,9 @@ StepResult FlightController::try_step_angle_mode(
         const SimulationConfig &config,
         const FlightCommand &command,
         const Quat &estimated_attitude) {
-    if (!valid_command(command)) {
-        return {StepStatus::InvalidCommand, {}};
-    }
-    if (!valid_config(config)) {
-        return {StepStatus::InvalidConfig, {}};
-    }
-    if (!valid_state(state) || !finite_quat(estimated_attitude) || !valid_clock(clock, config)) {
-        return {StepStatus::InvalidState, {}};
+    const StepStatus input_status = validate_angle_step_inputs(state, clock, config, command, estimated_attitude);
+    if (input_status != StepStatus::Ok) {
+        return {input_status, {}};
     }
     RigidBodyState staged_state = state;
     SimulationClock staged_clock = clock;
@@ -847,14 +877,9 @@ StepResult FlightController::try_step_acro_mode(
         SimulationClock &clock,
         const SimulationConfig &config,
         const AcroCommand &command) {
-    if (!valid_command(command)) {
-        return {StepStatus::InvalidCommand, {}};
-    }
-    if (!valid_config(config)) {
-        return {StepStatus::InvalidConfig, {}};
-    }
-    if (!valid_state(state) || !valid_clock(clock, config)) {
-        return {StepStatus::InvalidState, {}};
+    const StepStatus input_status = validate_acro_step_inputs(state, clock, config, command);
+    if (input_status != StepStatus::Ok) {
+        return {input_status, {}};
     }
     RigidBodyState staged_state = state;
     SimulationClock staged_clock = clock;
@@ -934,14 +959,10 @@ StepResult FlightController::try_step_altitude_hold_mode(
         const FlightCommand &command,
         double measured_altitude_m,
         const Quat &estimated_attitude) {
-    if (!valid_command(command)) {
-        return {StepStatus::InvalidCommand, {}};
-    }
-    if (!valid_config(config) || !std::isfinite(measured_altitude_m)) {
-        return {StepStatus::InvalidConfig, {}};
-    }
-    if (!valid_state(state) || !finite_quat(estimated_attitude) || !valid_clock(clock, config)) {
-        return {StepStatus::InvalidState, {}};
+    const StepStatus input_status = validate_altitude_hold_step_inputs(
+            state, clock, config, command, measured_altitude_m, estimated_attitude);
+    if (input_status != StepStatus::Ok) {
+        return {input_status, {}};
     }
     RigidBodyState staged_state = state;
     SimulationClock staged_clock = clock;

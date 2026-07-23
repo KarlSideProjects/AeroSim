@@ -35,13 +35,6 @@ bool finite(const Quat &q) {
     return finite(Vec3{q.x, q.y, q.z}) && std::isfinite(q.w) && quat_norm(q) > 0.0;
 }
 
-bool valid_contact(const CollisionContact &contact) {
-    return finite(contact.normal) && finite(contact.impulse) && std::isfinite(contact.restitution) &&
-            contact.restitution >= 0.0 && contact.restitution <= 1.0 &&
-            finite(contact.resolved_velocity) && finite(contact.resolved_angular_velocity) &&
-            std::isfinite(contact.max_kinetic_energy_joules);
-}
-
 bool valid_state(const RigidBodyState &state) {
     if (!finite(state.position) || !finite(state.velocity) || !finite(state.orientation) ||
             !finite(state.angular_velocity) || !finite(state.propwash_disturbance_rad_s2)) {
@@ -178,6 +171,13 @@ void resolve_contact(RigidBodyState &state, const CollisionContact &contact, dou
 
 } // namespace
 
+bool valid_collision_contact(const CollisionContact &contact) {
+    return finite(contact.normal) && finite(contact.impulse) && std::isfinite(contact.restitution) &&
+            contact.restitution >= 0.0 && contact.restitution <= 1.0 &&
+            finite(contact.resolved_velocity) && finite(contact.resolved_angular_velocity) &&
+            std::isfinite(contact.max_kinetic_energy_joules);
+}
+
 double kinetic_energy_joules(const RigidBodyState &state, double mass_kg) {
     if (!std::isfinite(mass_kg) || mass_kg <= 0.0 || !finite(state.velocity) || !finite(state.angular_velocity)) {
         return std::numeric_limits<double>::infinity();
@@ -232,7 +232,7 @@ CollisionStepResult CollisionAuthoritySwitch::try_step(
         const FlightCommand &command,
         const CollisionContact &contact,
         const Quat &estimated_attitude) {
-    if (!valid_contact(contact)) {
+    if (!valid_collision_contact(contact)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
     }
     if (!valid_command(command)) {
@@ -323,7 +323,7 @@ CollisionStepResult CollisionAuthoritySwitch::try_step_altitude_hold(
         double measured_altitude_m,
         const CollisionContact &contact,
         const Quat &estimated_attitude) {
-    if (!valid_contact(contact) || !valid_command(command)) {
+    if (!valid_collision_contact(contact) || !valid_command(command)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
     }
     if (!valid_config(config) || !std::isfinite(measured_altitude_m)) {
@@ -383,17 +383,9 @@ CollisionStepResult CollisionAuthoritySwitch::step_altitude_hold_impl(
         authority_ = PhysicsAuthority::FlightCore;
     }
 
-    return {
-            authority_,
-            controller.step_altitude_hold_mode(
-                    state,
-                    clock,
-                    config,
-                    command,
-                    measured_altitude_m,
-                    estimated_attitude),
-            {},
-            {}};
+    const StepResult controller_result = controller.try_step_altitude_hold_mode(
+            state, clock, config, command, measured_altitude_m, estimated_attitude);
+    return {authority_, controller_result.sample, {}, {}, controller_result.status};
 }
 
 CollisionStepResult CollisionAuthoritySwitch::step_acro(
@@ -413,7 +405,7 @@ CollisionStepResult CollisionAuthoritySwitch::try_step_acro(
         const SimulationConfig &config,
         const AcroCommand &command,
         const CollisionContact &contact) {
-    if (!valid_contact(contact) || !valid_command(command)) {
+    if (!valid_collision_contact(contact) || !valid_command(command)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
     }
     if (!valid_config(config)) {
@@ -471,7 +463,8 @@ CollisionStepResult CollisionAuthoritySwitch::step_acro_impl(
         authority_ = PhysicsAuthority::FlightCore;
     }
 
-    return {authority_, controller.step_acro_mode(state, clock, config, command), {}, {}};
+    const StepResult controller_result = controller.try_step_acro_mode(state, clock, config, command);
+    return {authority_, controller_result.sample, {}, {}, controller_result.status};
 }
 
 CollisionStepResult CollisionAuthoritySwitch::step_per_motor(
@@ -489,7 +482,7 @@ CollisionStepResult CollisionAuthoritySwitch::try_step_per_motor(
         const SimulationConfig &config,
         const MotorCommands &commands,
         const CollisionContact &contact) {
-    if (!valid_contact(contact) || !valid_commands(commands)) {
+    if (!valid_collision_contact(contact) || !valid_commands(commands)) {
         return {authority_, {}, {}, {}, StepStatus::InvalidCommand};
     }
     if (!valid_config(config)) {

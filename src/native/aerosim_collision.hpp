@@ -29,6 +29,7 @@ struct CollisionStepResult {
 };
 
 double kinetic_energy_joules(const RigidBodyState &state, double mass_kg);
+bool valid_collision_contact(const CollisionContact &contact);
 
 class CollisionAuthoritySwitch {
 private:

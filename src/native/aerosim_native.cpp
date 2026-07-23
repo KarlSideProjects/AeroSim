@@ -1066,12 +1066,15 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
         double motor_1,
         double motor_2,
         double motor_3) {
+    const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
+        set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidConfig, "timing");
         return {};
     }
     const double values[] = {motor_0, motor_1, motor_2, motor_3};
     for (double value : values) {
         if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
+            set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidCommand, "motor command");
             return {};
         }
     }
@@ -1086,6 +1089,8 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     const aerosim::TrajectorySample sample = aerosim::step_per_motor_physics_frame(
             simulation_state_, simulation_clock_, config, commands);
     if (sample.substeps == 0 && physics_hz > 0 && substep_hz > 0) {
+        restore_step(snapshot);
+        set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidControlOutput, "substep");
         return {};
     }
     flight_controller_.publish_applied_telemetry(
@@ -1109,6 +1114,7 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     row.append(sample.state.angular_velocity.x);
     row.append(sample.state.angular_velocity.y);
     row.append(sample.state.angular_velocity.z);
+    clear_step_error();
     return row;
 }
 
@@ -1177,6 +1183,7 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
                 result.sample, config, (motor_0 + motor_1 + motor_2 + motor_3) * 0.25, "PX4_ACTUATOR");
     }
     if (result.sample.substeps == 0 && !touching && physics_hz > 0 && substep_hz > 0) {
+        clear_step_error();
         return {};
     }
     flight_mode_ = "PX4_ACTUATOR";
@@ -1740,12 +1747,11 @@ void AeroSimNative::sync_flight_state(
         double angular_velocity_x,
         double angular_velocity_y,
         double angular_velocity_z) {
-    const aerosim::RigidBodyState candidate{
-            {position_x, position_y, position_z},
-            {velocity_x, velocity_y, velocity_z},
-            {orientation_x, orientation_y, orientation_z, orientation_w},
-            {angular_velocity_x, angular_velocity_y, angular_velocity_z},
-    };
+    aerosim::RigidBodyState candidate;
+    candidate.position = {position_x, position_y, position_z};
+    candidate.orientation = {orientation_x, orientation_y, orientation_z, orientation_w};
+    candidate.velocity = {velocity_x, velocity_y, velocity_z};
+    candidate.angular_velocity = {angular_velocity_x, angular_velocity_y, angular_velocity_z};
     if (!valid_imu_state(candidate)) {
         set_step_error("sync_flight_state", aerosim::StepStatus::InvalidState, "state");
         return;
@@ -1782,6 +1788,14 @@ PackedFloat64Array AeroSimNative::step_angle_mode(
     command.roll_degrees = roll_degrees;
     command.pitch_degrees = pitch_degrees;
     command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
+
+    const aerosim::StepStatus input_status = aerosim::validate_angle_step_inputs(
+            simulation_state_, simulation_clock_, config, command, simulation_state_.orientation);
+    if (input_status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_angle_mode", input_status, "command/config/state");
+        return {};
+    }
 
     PackedFloat64Array row;
     const aerosim::ImuSample imu_sample = sample_imu();
@@ -1844,6 +1858,14 @@ PackedFloat64Array AeroSimNative::step_acro_mode(
     command.pitch_stick = pitch_stick;
     command.yaw_stick = yaw_stick;
     command.rates = {rc_rate, super_rate, expo};
+
+    const aerosim::StepStatus input_status = aerosim::validate_acro_step_inputs(
+            simulation_state_, simulation_clock_, config, command);
+    if (input_status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_acro_mode", input_status, "command/config/state");
+        return {};
+    }
 
     sample_imu();
     const aerosim::StepResult result = flight_controller_.try_step_acro_mode(
@@ -1926,6 +1948,14 @@ PackedFloat64Array AeroSimNative::step_collision_angle_mode(
     contact.resolved_velocity = {resolved_velocity_x, resolved_velocity_y, resolved_velocity_z};
     contact.resolved_angular_velocity = {resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z};
     contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
+    const aerosim::StepStatus input_status = aerosim::validate_angle_step_inputs(
+            simulation_state_, simulation_clock_, config, command, simulation_state_.orientation);
+    if (input_status != aerosim::StepStatus::Ok || !aerosim::valid_collision_contact(contact)) {
+        restore_step(snapshot);
+        set_step_error("step_collision_angle_mode", input_status == aerosim::StepStatus::Ok
+                ? aerosim::StepStatus::InvalidCommand : input_status, "command/contact/config/state");
+        return {};
+    }
 
     const aerosim::ImuSample imu_sample = sample_imu();
     const aerosim::CollisionStepResult result = collision_authority_.step(
@@ -2002,6 +2032,14 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
     command.roll_degrees = roll_degrees;
     command.pitch_degrees = pitch_degrees;
     command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
+
+    const aerosim::StepStatus input_status = aerosim::validate_altitude_hold_step_inputs(
+            simulation_state_, simulation_clock_, config, command, 0.0, simulation_state_.orientation);
+    if (input_status != aerosim::StepStatus::Ok) {
+        restore_step(snapshot);
+        set_step_error("step_altitude_hold_mode", input_status, "command/config/state");
+        return {};
+    }
 
     PackedFloat64Array row;
     const aerosim::ImuSample imu_sample = sample_imu();
@@ -2133,6 +2171,14 @@ PackedFloat64Array AeroSimNative::step_collision_acro_mode(
     contact.resolved_velocity = {resolved_velocity_x, resolved_velocity_y, resolved_velocity_z};
     contact.resolved_angular_velocity = {resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z};
     contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
+    const aerosim::StepStatus input_status = aerosim::validate_acro_step_inputs(
+            simulation_state_, simulation_clock_, config, command);
+    if (input_status != aerosim::StepStatus::Ok || !aerosim::valid_collision_contact(contact)) {
+        restore_step(snapshot);
+        set_step_error("step_collision_acro_mode", input_status == aerosim::StepStatus::Ok
+                ? aerosim::StepStatus::InvalidCommand : input_status, "command/contact/config/state");
+        return {};
+    }
 
     sample_imu();
     const aerosim::CollisionStepResult result = collision_authority_.step_acro(
@@ -2232,6 +2278,14 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     contact.resolved_velocity = {resolved_velocity_x, resolved_velocity_y, resolved_velocity_z};
     contact.resolved_angular_velocity = {resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z};
     contact.max_kinetic_energy_joules = max_kinetic_energy_joules;
+    const aerosim::StepStatus input_status = aerosim::validate_altitude_hold_step_inputs(
+            simulation_state_, simulation_clock_, config, command, 0.0, simulation_state_.orientation);
+    if (input_status != aerosim::StepStatus::Ok || !aerosim::valid_collision_contact(contact)) {
+        restore_step(snapshot);
+        set_step_error("step_collision_altitude_hold_mode", input_status == aerosim::StepStatus::Ok
+                ? aerosim::StepStatus::InvalidCommand : input_status, "command/contact/config/state");
+        return {};
+    }
 
     const aerosim::ImuSample imu_sample = sample_imu();
     const aerosim::CollisionStepResult result = collision_authority_.step_altitude_hold(

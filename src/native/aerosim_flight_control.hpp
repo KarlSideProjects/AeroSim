@@ -56,6 +56,24 @@ enum class StepStatus {
 };
 
 const char *step_status_code(StepStatus status);
+StepStatus validate_angle_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const Quat &estimated_attitude);
+StepStatus validate_acro_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const AcroCommand &command);
+StepStatus validate_altitude_hold_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double measured_altitude_m,
+        const Quat &estimated_attitude);
 
 struct StepResult {
     StepStatus status = StepStatus::Ok;
