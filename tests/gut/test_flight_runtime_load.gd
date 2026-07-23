@@ -152,6 +152,9 @@ class SecondaryAtomicNative:
     func last_step_error() -> String:
         return error
 
+    func set_a5_downwash_model(_enabled: bool, _radius: float, _coeff_1: float, _coeff_2: float, _coeff_3: float) -> bool:
+        return true
+
 
 class FakeBodyDragPanel extends Node:
     var blind_mode := false
@@ -1308,8 +1311,9 @@ func test_secondary_native_failure_freezes_before_airsim_runtime_side_effects() 
     autofree(runtime)
     var primary := SuccessfulAtomicNative.new()
     var secondary := SecondaryAtomicNative.new()
-    var secondary_body := RigidBody3D.new()
-    runtime.add_child(secondary_body)
+    var secondary_body := CollisionProbeBody.new()
+    autofree(secondary_body)
+    get_tree().root.add_child(secondary_body)
     runtime.native = primary
     runtime._airsim_secondary_native = secondary
     runtime.secondary_drone_body = secondary_body

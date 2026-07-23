@@ -7,6 +7,7 @@ var loader := HardwareConfig.new()
 
 class FakeHardwareNative extends RefCounted:
     var a5 := {}
+    var altitude_hold_noise_deadband_m := -1.0
     var config_hash_calls := 0
     var hash_applied_after_a5 := false
 
@@ -14,6 +15,9 @@ class FakeHardwareNative extends RefCounted:
     func set_hardware_power_model(_a: float, _b: float, _c: float, _d: float, _e: float, _f: float, _g: float) -> bool: return true
     func set_hardware_per_motor_model(_value: Dictionary) -> bool: return true
     func set_hardware_telemetry_model(_a: float, _b: float) -> bool: return true
+    func set_hardware_altitude_hold_noise_deadband(value: float) -> bool:
+        altitude_hold_noise_deadband_m = value
+        return true
     func set_body_drag_model(_enabled: bool, _a: float, _b: float, _c: float, _d: float, _e: float, _f: float, _g: float, _h: float, _i: float, _density: float) -> bool: return true
     func set_a3_drag_model(_enabled: bool, _x: float, _y: float, _z: float) -> bool: return true
     func set_a6_propwash_model(_enabled: bool, _a: float, _b: float, _c: float) -> bool: return true
@@ -103,6 +107,7 @@ func test_default_airframe_applies_configured_a5_model_to_runtime() -> void:
     assert_almost_eq(float(runtime.native.a5.coeff_1), 2267.18, 0.000001)
     assert_eq(runtime.native.config_hash_calls, 1)
     assert_true(runtime.native.hash_applied_after_a5)
+    assert_eq(runtime.native.altitude_hold_noise_deadband_m, HardwareConfig.FACTORY_DEFAULT.sensors.barometer_noise_m)
 
 
 func test_race_airframe_applies_configured_a5_model_to_runtime() -> void:
