@@ -44,6 +44,16 @@ struct PidTimingStats {
 struct FlightControlState {
     Vec3 target_angle_frd;
     Vec3 target_rate_frd;
+    std::array<double, 3> rate_integral = {0.0, 0.0, 0.0};
+    Vec3 previous_rate_error_frd;
+    Vec3 filtered_rate_derivative_frd;
+    int mode_family = 0;
+    bool control_initialized = false;
+    bool altitude_hold_captured = false;
+    bool altitude_hold_just_captured = false;
+    std::array<bool, 4> motor_saturation_latched = {false, false, false, false};
+    std::array<bool, 3> pid_saturation_latched = {false, false, false};
+    double motor_thrust_newtons = 0.0;
 };
 
 enum class StepStatus {

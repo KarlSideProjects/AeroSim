@@ -75,6 +75,8 @@ func run() -> Dictionary:
     if not bool(replay.get("ok", false)) or int(replay.get("scene_object_count", 0)) != 1 or String(replay.get("environment_json", "")).find("rain") < 0:
         return _failure("native replay failed: %s expected=%s actual=%s" % [String(replay.get("diagnostic_message", "unknown")), String(replay.get("divergence_expected", "")), String(replay.get("divergence_actual", ""))])
     var altered_manifest: Dictionary = JSON.parse_string(finish.serialized)
+    if int(altered_manifest.get("schema_version", 0)) != 3:
+        return _failure("replay recording did not emit schema v3")
     altered_manifest["vehicles"][0]["config"]["mass_kg"] = 1.25
     var strict_manifest_rejection: Dictionary = native.call(
         "replay_complete_session", JSON.stringify(altered_manifest), SETTINGS_HASH, config_hash, config_hash,

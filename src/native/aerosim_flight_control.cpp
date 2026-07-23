@@ -464,7 +464,9 @@ const PidTimingStats &FlightController::pid_timing_stats() const {
 }
 
 FlightControlState FlightController::control_state() const {
-    return {target_angle_frd_, target_rate_frd_};
+    return {target_angle_frd_, target_rate_frd_, rate_integral_, previous_rate_error_frd_, filtered_rate_derivative_frd_,
+            static_cast<int>(mode_family_), control_initialized_, altitude_hold_captured_, altitude_hold_just_captured_,
+            motor_saturation_latched_, pid_saturation_latched_, motor_thrust_newtons_};
 }
 
 const TelemetrySnapshot &FlightController::telemetry_snapshot() const {

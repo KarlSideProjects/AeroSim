@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,7 +21,9 @@ struct ReplayDelta {
     double position_meters = 0.0;
 };
 
-constexpr std::int32_t kCompleteReplaySchemaVersion = 2;
+constexpr std::int32_t kCompleteReplaySchemaVersion = 3;
+constexpr std::size_t kMaxBatchTrajectoryFrames = 1'000'000;
+constexpr std::size_t kNoFailedReplayFrame = std::numeric_limits<std::size_t>::max();
 
 enum class ReplayControllerAuthority {
     FlightCore,
@@ -114,6 +117,9 @@ struct ReplaySceneObjectState {
 struct ReplayRunCheckpoint {
     std::uint64_t timestamp_us = 0;
     DualAircraftState state;
+    std::array<FlightControlState, 2> controllers;
+    std::array<SimulationClock, 2> clocks;
+    std::array<TrajectorySample, 2> first_response_substeps;
     std::array<ReplayCollision, 2> collisions;
     std::vector<ReplaySceneObjectState> scene_objects;
     std::string environment_json;
@@ -272,6 +278,12 @@ struct ReplayRunResult {
     std::vector<ReplayRunCheckpoint> checkpoints;
 };
 
+struct ReplayBatchResult {
+    StepStatus status = StepStatus::Ok;
+    std::vector<TrajectorySample> rows;
+    std::size_t failed_frame = kNoFailedReplayFrame;
+};
+
 ReplayRunResult replay_session(
         const ReplaySession &session,
         const DualAircraftConfig &config,
@@ -287,6 +299,13 @@ ReplayDivergence compare_replay_runs(
 std::vector<TrajectorySample> replay_angle_mode(
         const SimulationConfig &config,
         const RecordedInputSequence &inputs);
+ReplayBatchResult replay_angle_mode_batch(
+        const SimulationConfig &config,
+        const RecordedInputSequence &inputs);
+ReplayBatchResult replay_angle_mode_seconds_batch(
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double seconds);
 ReplayDelta compare_replay_final_state(
         const TrajectorySample &reference,
         const TrajectorySample &actual);

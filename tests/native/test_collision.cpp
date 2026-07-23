@@ -1,8 +1,10 @@
 #include "aerosim_collision.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <cfloat>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -106,8 +108,15 @@ struct TrialSetup {
 
 struct TrialResult {
     aerosim::RigidBodyState final_state;
+    aerosim::RigidBodyState first_response_state;
     std::uint64_t substeps = 0;
 };
+
+bool finite(const aerosim::FlightControlState &state) {
+    return finite(state.target_angle_frd) && finite(state.target_rate_frd) && finite(state.previous_rate_error_frd) &&
+            finite(state.filtered_rate_derivative_frd) && std::isfinite(state.motor_thrust_newtons) &&
+            std::all_of(state.rate_integral.begin(), state.rate_integral.end(), [](double value) { return std::isfinite(value); });
+}
 
 TrialSetup setup_trial(Scenario scenario, std::uint32_t seed) {
     constexpr double kPi = 3.14159265358979323846;
@@ -196,40 +205,64 @@ TrialResult run_trial(Scenario scenario, std::uint32_t seed, ControlMode mode) {
     }
 
     aerosim::CollisionContact clear;
-    aerosim::FlightCommand recover;
-    recover.throttle = 0.8;
-    recover.roll_degrees = 3.0;
-    recover.pitch_degrees = -2.0;
-    recover.yaw_rate_degrees_per_second = 45.0;
-    aerosim::AcroCommand acro_recover;
-    acro_recover.throttle = 0.8;
-    acro_recover.roll_stick = 0.1;
-    acro_recover.pitch_stick = -0.1;
-    acro_recover.yaw_stick = 0.1;
-    acro_recover.rates = {1.0, 0.7, 0.0};
+    aerosim::FlightCommand neutral;
+    neutral.throttle = 0.5;
+    aerosim::AcroCommand acro_neutral;
+    acro_neutral.throttle = 0.5;
+    acro_neutral.rates = {1.0, 0.7, 0.0};
+    aerosim::FlightCommand response;
+    response.throttle = 0.8;
+    response.roll_degrees = 3.0;
+    response.pitch_degrees = -2.0;
+    response.yaw_rate_degrees_per_second = 45.0;
+    aerosim::AcroCommand acro_response;
+    acro_response.throttle = 0.8;
+    acro_response.roll_stick = 0.1;
+    acro_response.pitch_stick = 0.1;
+    acro_response.yaw_stick = 0.1;
+    acro_response.rates = {1.0, 0.7, 0.0};
 
     for (int frame = 0; frame < authority.release_frames(); ++frame) {
-        step_trial_mode(mode, authority, state, clock, controller, config, recover, acro_recover, clear);
+        step_trial_mode(mode, authority, state, clock, controller, config, neutral, acro_neutral, clear);
     }
     if (authority.current_authority() != aerosim::PhysicsAuthority::FlightCore) {
         return {};
     }
 
-    const double y_before_response = state.position.y;
-    const aerosim::Vec3 angular_before_response = state.angular_velocity;
-    for (int frame = 0; frame < config.physics_hz / 2; ++frame) {
-        step_trial_mode(mode, authority, state, clock, controller, config, recover, acro_recover, clear);
+    aerosim::RigidBodyState neutral_state = state;
+    aerosim::SimulationClock neutral_clock = clock;
+    aerosim::FlightController neutral_controller = controller;
+    aerosim::CollisionAuthoritySwitch neutral_authority = authority;
+    aerosim::RigidBodyState response_state = state;
+    aerosim::SimulationClock response_clock = clock;
+    aerosim::FlightController response_controller = controller;
+    aerosim::CollisionAuthoritySwitch response_authority = authority;
+    aerosim::RigidBodyState first_response_state;
+    const std::uint64_t response_start = response_clock.total_substeps;
+    while (response_clock.total_substeps - response_start < 500) {
+        const aerosim::CollisionStepResult neutral_step = step_trial_mode(
+                mode, neutral_authority, neutral_state, neutral_clock, neutral_controller, config, neutral, acro_neutral, clear);
+        const aerosim::CollisionStepResult response_step = step_trial_mode(
+                mode, response_authority, response_state, response_clock, response_controller, config, response, acro_response, clear);
+        if (neutral_step.authority != aerosim::PhysicsAuthority::FlightCore ||
+                response_step.authority != aerosim::PhysicsAuthority::FlightCore || !finite(neutral_state) || !finite(response_state) ||
+                !finite(neutral_controller.control_state()) || !finite(response_controller.control_state())) {
+            return {};
+        }
+        if (first_response_state.motor_thrust_newtons == std::array<double, 4>{}) {
+            first_response_state = response_state;
+        }
     }
-    const double angular_response =
-            std::abs(state.angular_velocity.x - angular_before_response.x) +
-            std::abs(state.angular_velocity.y - angular_before_response.y) +
-            std::abs(state.angular_velocity.z - angular_before_response.z);
-    if ((mode == ControlMode::Angle && state.position.y <= y_before_response) ||
-            (mode == ControlMode::Acro && angular_response <= 1e-6) || !finite(state)) {
+    const double epsilon = 64.0 * DBL_EPSILON * std::max(1.0, config.per_motor.max_thrust_per_motor_newtons);
+    bool motor_responded = false;
+    for (std::size_t motor = 0; motor < response_state.motor_thrust_newtons.size(); ++motor) {
+        motor_responded = motor_responded || std::abs(response_state.motor_thrust_newtons[motor] -
+                neutral_state.motor_thrust_newtons[motor]) > epsilon;
+    }
+    if (!motor_responded) {
         return {};
     }
-
-    return {state, clock.total_substeps};
+    return {response_state, first_response_state, response_clock.total_substeps};
 }
 
 } // namespace
@@ -549,7 +582,8 @@ int main() {
                 if (first.substeps == 0 || second.substeps == 0) {
                     return fail("G0.8 randomized collision scenario failed its authority/energy/response contract");
                 }
-                if (first.substeps != second.substeps || !same_state_bits(first.final_state, second.final_state)) {
+                if (first.substeps != second.substeps || !same_state_bits(first.final_state, second.final_state) ||
+                        !same_state_bits(first.first_response_state, second.first_response_state)) {
                     return fail("G0.8 same-seed collision replay must be bitwise deterministic");
                 }
             }
