@@ -1821,6 +1821,22 @@ func test_rates_save_does_not_overwrite_settings_when_load_recovers() -> void:
     runtime.free()
 
 
+func test_gamepad_save_does_not_overwrite_settings_when_load_recovers() -> void:
+    var runtime_script := load("res://common/flight/flight_runtime.gd")
+    var runtime = runtime_script.new()
+    var recovery_store := RecoverySettingsStore.new()
+    runtime.settings_store = recovery_store
+
+    var result: Dictionary = runtime._save_gamepad_profile(InputProfiles.GamepadProfile.new())
+
+    assert_false(result.ok)
+    assert_string_contains(result.error, "unavailable")
+    assert_false(recovery_store.save_called)
+    assert_null(recovery_store.retained_document.confirmed_gamepad)
+    assert_eq(recovery_store.retained_document.language.locale, "en")
+    runtime.free()
+
+
 func test_controller_monitor_renders_active_session_channels_and_unavailable_without_one() -> void:
     var runtime := _controller_monitor_runtime()
     autofree(runtime)
