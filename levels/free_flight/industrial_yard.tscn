@@ -112,6 +112,25 @@ text = "ui.map.north_spawn"
 outline_size = 4
 font_size = 64
 
+[node name="SpawnSouthPlatform" type="StaticBody3D" parent="."]
+position = Vector3(-24, 0.15, 24)
+metadata/airsim_segmentation_id = 8
+
+[node name="Mesh" type="MeshInstance3D" parent="SpawnSouthPlatform"]
+mesh = SubResource("MeshPlatform")
+surface_material_override/0 = SubResource("MaterialPlatform")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SpawnSouthPlatform"]
+shape = SubResource("ShapePlatform")
+
+[node name="SpawnSouth" type="Marker3D" parent="."]
+position = Vector3(-24, 0.6, 24)
+
+[node name="DirectionLabel" type="Label3D" parent="SpawnSouth"]
+text = "ui.map.south_spawn"
+outline_size = 4
+font_size = 64
+
 [node name="CargoContainers" type="Node3D" parent="."]
 
 [node name="ContainerBlue" type="StaticBody3D" parent="CargoContainers"]

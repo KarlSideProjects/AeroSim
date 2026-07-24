@@ -1,6 +1,7 @@
 # Release Delivery SOP
 
-Issue #52 tracks the Windows/Linux/Android private delivery flow. macOS is
+Issue #52 tracks the Windows/Linux private delivery flow. Android delivery is
+deferred for the current release and its steps remain only as a future lane. macOS is
 tracked separately by #93 and remains blocked by the Apple build environment
 in #92. This document is the current operator checklist and evidence template.
 Items marked `not verified` require device, GPU, signing, or customer-flow
@@ -44,7 +45,7 @@ It fails above the frozen 15-second G6.4 desktop threshold.
 | --- | --- | --- | --- |
 | Windows desktop bundle | future platform export artifact | size <= 300 MB | build-only lane; not verified by current Linux CI |
 | Linux desktop bundle | `build/release/AeroSim-linux.zip` | size <= 300 MB | CI verified when the Linux workflow run is green |
-| Android sideload APK | future platform export artifact | size <= 300 MB, locked production signature | build-only lane; not verified by current Linux CI |
+| Android sideload APK | future platform export artifact | size <= 300 MB, locked production signature | deferred; not part of current release acceptance |
 | Third-party notices | `build/THIRD_PARTY_NOTICES.txt` | generated from `third_party/licenses.json` | CI verified |
 
 macOS packaging, Developer ID signing, notarization, and macOS cold-start
@@ -52,9 +53,11 @@ evidence are intentionally excluded from #52. They are acceptance work for
 #93 after #92 provides the Apple build environment; this is a lane split, not
 a change to the frozen G6.1 macOS threshold.
 
-## Android Sideload
+## Future Android Sideload Lane
 
-Only download `release-android/AeroSim-android.apk` and
+This section is retained for a future Android lane. The current release does
+not require an Android APK, production signing, or device sideload evidence.
+When that lane is explicitly reopened, only download `release-android/AeroSim-android.apk` and
 `release-android/signing.txt` from a **successful `push` to `main`** CI run.
 Before any customer transfer, verify the run SHA is the intended `main` commit,
 then run `apksigner verify --print-certs` on the downloaded APK and confirm its
@@ -75,7 +78,7 @@ validation only. Production delivery must replace it with the release keystore
 before sending the APK to a customer. CI stores this test-signed artifact as
 `ci-android-apk` under the self-hosted runner Local Folder artifact root, not as a
 customer-ready release artifact and **must never be delivered to a customer**.
-On a `main` push, CI decodes the repository
+When the Android lane is explicitly reopened, CI decodes the repository
 production signing secret only into a job-local keystore, exports
 `release-android/AeroSim-android.apk`, and publishes its public certificate
 fingerprint as `release-android/signing.txt`. The keystore and passwords are
@@ -122,8 +125,8 @@ actual delivery channel.
 | Gate | Evidence | Result |
 | --- | --- | --- |
 | G6.1 Linux release artifact size | `scripts/check_release_artifacts.py` output | CI verified when the Linux workflow run is green |
-| G6.1/G6.2 Windows/Android artifact sizes | Platform build/export evidence | N/A (build-only lane; not verified by current Linux CI) |
-| G6.2 Android sideload | device log / screen recording | N/A (unverified frozen), not pass |
+| G6.1 Windows artifact size | Platform build/export evidence | N/A (build-only lane; not verified by current Linux CI) |
+| G6.2 Android artifact size / sideload | Platform build/export evidence and device log | Deferred for current release; not run, not pass, not a Linux blocker |
 | G6.3 license scan + NOTICE | CI link + `build/THIRD_PARTY_NOTICES.txt` | CI verified |
 | G6.4 Linux cold start | `build/cold_start/linux.json` from real-display release probe | automation added; not verified until measured release evidence exists |
 | G6.7 delivery drill | `build/delivery_drill/report.json` + actual delivery-channel record | local rehearsal automated; external delivery not verified |

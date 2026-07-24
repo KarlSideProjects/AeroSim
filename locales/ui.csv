@@ -25,10 +25,14 @@ ui.action.back,BACK,返回
 ui.action.apply,APPLY,套用
 ui.action.reset_defaults,RESET DEFAULTS,重設預設值
 ui.action.retry,RETRY,重試
+ui.action.reset,RESET,重設
 ui.action.exit,EXIT,離開
 ui.action.change_map,CHANGE MAP,變更地圖
+ui.action.change_spawn,CHANGE SPAWN,變更出生點
 ui.action.back_to_menu,BACK TO MENU,返回主選單
 ui.settings.controller,CONTROLLER,控制器
+ui.settings.controller_monitor,CONTROLLER MONITOR,控制器監看
+ui.settings.status_diagram,STATUS DIAGRAM,狀態圖
 ui.settings.rates,RATES,速率
 ui.settings.graphics,GRAPHICS,圖形
 ui.settings.factory_reset,FACTORY RESET SETTINGS,將設定恢復原廠
@@ -49,8 +53,8 @@ ui.license.activate,ACTIVATE LICENSE,啟用授權
 ui.license.diagnostics,DIAGNOSTICS,診斷資訊
 ui.pause.title,PAUSED,已暫停
 ui.pause.resume,RESUME,繼續
-ui.hints,T Arm/Takeoff   P Pause   R Reset   C ACRO   H Alt Hold   Esc Exit,T 起飛   P 暫停   R 重設   C ACRO   H 高度保持   Esc 離開
-ui.hints.gamepad,A Arm/Takeoff   START Pause   X Reset   RB ACRO   Y Alt Hold   B Exit,A 解鎖／起飛   START 暫停   X 重設   RB ACRO   Y 高度保持   B 離開
+ui.hints,T Arm/Takeoff   P Pause   R Reset   Shift+R Change Spawn   C ACRO   H Alt Hold   Esc Exit,T 起飛   P 暫停   R 重設   Shift+R 變更出生點   C ACRO   H 高度保持   Esc 離開
+ui.hints.gamepad,A Arm/Takeoff   START Pause   X Reset   START+X Change Spawn   RB ACRO   Y Alt Hold   B Exit,A 解鎖／起飛   START 暫停   X 重設   START+X 變更出生點   RB ACRO   Y 高度保持   B 離開
 ui.finish.title,FINISH,完成
 ui.finish.summary,FINISH - Time %0.2f s,完成－時間 %0.2f 秒
 ui.fallback.status,%s | Mode: %s,%s｜模式：%s
@@ -204,6 +208,7 @@ ui.dashboard.pitch,PITCH,俯仰
 ui.dashboard.yaw,YAW,偏航
 ui.dashboard.roll,ROLL,滾轉
 ui.map.north_spawn,NORTH SPAWN,北側起飛點
+ui.map.south_spawn,SOUTH SPAWN,南側起飛點
 ui.map.rain,Rain,雨
 ui.map.fog,Fog,霧
 ui.map.time_of_day,Time of day,時間

@@ -13,7 +13,7 @@ func _run() -> void:
         return
     root.add_child(scene)
     await process_frame
-    for node_name in ["Ground", "GroundCollision", "SpawnNorth", "CargoContainers", "LowGate", "TurnMarker", "Tower", "TimeTrial"]:
+    for node_name in ["Ground", "GroundCollision", "SpawnNorth", "SpawnSouth", "CargoContainers", "LowGate", "TurnMarker", "Tower", "TimeTrial"]:
         if scene.get_node_or_null(node_name) == null:
             push_error("Industrial Yard scene is missing %s" % node_name)
             quit(1)

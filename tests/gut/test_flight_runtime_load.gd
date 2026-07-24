@@ -1548,6 +1548,181 @@ func test_set_paused_freezes_and_sleeps_secondary_until_resume() -> void:
     runtime.free()
 
 
+func test_pause_panel_exposes_the_frozen_overlay_contract() -> void:
+    var runtime := FlightRuntime.new()
+    runtime.flight_hud_layer = CanvasLayer.new()
+    runtime.add_child(runtime.flight_hud_layer)
+
+    runtime._build_pause_panel()
+
+    var names := []
+    for child in runtime.pause_panel.get_node("Rows").get_children():
+        if child is Button:
+            names.append(String(child.name))
+    assert_eq(names, [
+        "Resume",
+        "Reset",
+        "ChangeSpawn",
+        "Rates",
+        "Camera",
+        "OSD",
+        "ControllerMonitor",
+        "StatusDiagram",
+        "Exit",
+    ])
+    runtime.free()
+
+
+func test_respawn_preserves_armed_state_and_resets_without_disarm() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = FakeNative.new()
+    runtime.native.armed = true
+    runtime.screen = "flight"
+    runtime.takeoff_requested = true
+
+    runtime.respawn()
+
+    assert_true(runtime.native.armed)
+    assert_false(runtime.native.disarmed)
+    assert_true(runtime.takeoff_requested)
+    assert_false(runtime.paused)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_change_spawn_cycles_formal_markers_and_preserves_arm_state() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var north := Marker3D.new()
+    north.name = "SpawnNorth"
+    north.position = Vector3(0.0, 0.6, -24.0)
+    map.add_child(north)
+    var south := Marker3D.new()
+    south.name = "SpawnSouth"
+    south.position = Vector3(-24.0, 0.6, 24.0)
+    map.add_child(south)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = FakeNative.new()
+    runtime.native.armed = true
+    runtime.screen = "flight"
+
+    runtime.change_spawn()
+    assert_eq(runtime.current_spawn_index, 1)
+    assert_eq(runtime.drone_body.global_position, south.global_position)
+    assert_true(runtime.native.armed)
+
+    runtime.change_spawn()
+    assert_eq(runtime.current_spawn_index, 0)
+    assert_eq(runtime.drone_body.global_position, north.global_position)
+    assert_true(runtime.native.armed)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_fixed_xbox_reset_and_start_x_chord_use_distinct_actions() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var north := Marker3D.new()
+    north.name = "SpawnNorth"
+    north.position = Vector3(0.0, 0.6, -24.0)
+    map.add_child(north)
+    var south := Marker3D.new()
+    south.name = "SpawnSouth"
+    south.position = Vector3(-24.0, 0.6, 24.0)
+    map.add_child(south)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = FakeNative.new()
+    runtime.native.armed = true
+    runtime.screen = "flight"
+    runtime.session_gamepad_device_id = 7
+    runtime.session_gamepad_profile = InputProfiles.GamepadProfile.new()
+
+    var x := InputEventJoypadButton.new()
+    x.device = 7
+    x.button_index = JOY_BUTTON_X
+    x.pressed = true
+    runtime._unhandled_input(x)
+    assert_eq(runtime.current_spawn_index, 0)
+    assert_eq(runtime.drone_body.global_position, north.global_position)
+
+    var start := InputEventJoypadButton.new()
+    start.device = 7
+    start.button_index = JOY_BUTTON_START
+    start.pressed = true
+    runtime._unhandled_input(start)
+    runtime._unhandled_input(x)
+    assert_eq(runtime.current_spawn_index, 1)
+    assert_eq(runtime.drone_body.global_position, south.global_position)
+
+    start.pressed = false
+    runtime._unhandled_input(start)
+    runtime._unhandled_input(x)
+    assert_eq(runtime.current_spawn_index, 1)
+    assert_eq(runtime.drone_body.global_position, south.global_position)
+
+    runtime.handle_controller_connection_changed(7, false)
+    assert_false(runtime.gamepad_pause_pressed)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_respawn_preserves_armed_px4_transport_without_restart() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    var bridge := Px4SitlBridge.new()
+    assert_true(bridge.configure({
+        "VehicleType": "PX4Multirotor",
+        "Transport": "Fake",
+        "HeartbeatTimeout": 1.0,
+        "FailureTimeout": 3.0,
+        "ActuatorTimeout": 1.0,
+        "UseSerial": false,
+        "LockStep": true,
+    }).ok)
+    assert_true(bridge.start().ok)
+    bridge.inject_heartbeat(false)
+    bridge.poll(0.0)
+    bridge.arm_disarm(true)
+    bridge.inject_heartbeat(true)
+    bridge.inject_actuators([0.5, 0.5, 0.5, 0.5])
+    bridge.poll(0.01)
+    runtime.px4_sitl_bridge = bridge
+    runtime.screen = "flight"
+
+    assert_eq(bridge.state, "armed")
+    runtime.respawn()
+
+    assert_eq(bridge.state, "armed")
+    assert_true(bridge.is_authority_active())
+    assert_true(bridge.arm_disarm(true).ok)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
 func test_participant_mode_is_independent_and_hides_debug_panel_input() -> void:
     var runtime_script := load("res://common/flight/flight_runtime.gd")
     var panel_script := load("res://addons/debug_api/aerosim_body_drag_panel.gd")

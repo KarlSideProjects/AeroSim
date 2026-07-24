@@ -28,11 +28,11 @@ AeroSim is a multirotor simulation platform. Player Mode is the default, game-li
 
 **Status:** Foundation
 
-Player Mode lets a person enter the reference environment, control the primary multirotor, pause, respawn, and change supported flight modes. Its normal path is selection or Quick Fly, preflight state, flight, collision or landing, and immediate retry.
+Player Mode lets a person enter the reference environment, control the primary multirotor, pause, reset, cycle through formal spawn markers, and change supported flight modes. Its normal path is selection or Quick Fly, preflight state, flight, collision or landing, and immediate retry.
 
 **Minimum acceptance:** A first-time user can reach a flyable scene, identify the active mode and vehicle state, fly, collide, respawn, pause, and exit without developer tools.
 
-**Current evidence:** Quick Fly, pause, respawn, Angle, Acro, and Altitude Hold paths exist in `common/flight/flight_runtime.gd` and are exercised by the headless smoke suite. Selection, preflight presentation, and a production scene remain incomplete.
+**Current evidence:** Quick Fly, pause, reset, formal `SpawnNorth`/`SpawnSouth` cycling, Angle, Acro, and Altitude Hold paths exist in `common/flight/flight_runtime.gd`; headless smoke and GUT cover the marker contract and fixed Xbox event semantics. The full Playable Game Milestone remains incomplete.
 
 ### CAP-003: Lab Mode automation surface
 
@@ -47,6 +47,8 @@ Lab Mode lets software reset and control the simulation, address named vehicles,
 **Status:** Foundation
 
 The main menu retains a `Map` entry and a catalog-backed selection screen. The AirSim-class minimum exposes only one selectable environment, the Industrial Test Range, and does not show fake or Coming Soon maps. Later environments can be added to the catalog without replacing the Player Mode navigation flow.
+
+The Industrial Test Range descriptor owns its formal spawn list and count. v1 contains exactly `SpawnNorth` and `SpawnSouth`; Reset returns to the current marker and Change Spawn cycles in descriptor order. The active spawn is volatile session state.
 
 **Minimum acceptance:** The Map screen lists exactly the environments present in the checked-in catalog, selects and persists the active entry, launches the selected scene through Quick Fly, handles a missing or invalid catalog entry explicitly, and remains usable with exactly one entry.
 
@@ -64,7 +66,7 @@ The main menu exposes exactly `Quick Fly`, `Lab Mode`, `Controller`, `Drone`, `M
 
 **Status:** Confirmed target
 
-The first formal visual and usability review begins only after an Ubuntu package provides one complete, production-facing Player Mode game loop. Before that review, the required milestone sequence is automated checks, a headed run on the maintainer's real display that the maintainer visibly observes, and maintainer play acceptance recorded on the issue. From a cold start, the maintainer can use the seven-entry menu, select the controller, drone, and sole Map Catalog entry, Quick Fly into the Industrial Test Range, fly the production vehicle, collide, pause, respawn, complete the short Time Trial, and quit without developer tools, placeholder UI, or missing production assets.
+The first formal visual and usability review begins only after an Ubuntu package provides one complete, production-facing Player Mode game loop. This complete playable package is the first-release UI/UX and game-flow reference standard; Betaflight SITL comparison is not a substitute for it. Before that review, the required milestone sequence is automated checks, a headed run on the maintainer's real display that the maintainer visibly observes, and maintainer play acceptance recorded on the issue. From a cold start, the maintainer can use the seven-entry menu, select the controller, drone, and sole Map Catalog entry, Quick Fly into the Industrial Test Range, fly the production vehicle, collide, pause, respawn, complete the short Time Trial, and quit without developer tools, placeholder UI, or missing production assets.
 
 Before this milestone, deterministic checks and Codex AI Visual Verification produce provisional evidence without requesting human approval. After the automated and headed milestone gate passes, a person performs the first formal visual and usability review and approves or rejects the initial four-view reference.
 
@@ -192,7 +194,7 @@ The minimum ships one coherent Industrial Test Range. It contains a launch area,
 
 **Minimum acceptance:** A person can recognize and navigate every zone; the route is flyable; scale, collision, lighting, and sensor outputs are plausible; all required screenshots pass the visual gates.
 
-**Current evidence:** The current branch contains only a non-rendered smoke scene with a collision wall and no production visual assets.
+**Current evidence:** The current branch contains the renderer-shared Industrial Yard scene with two formal spawn markers, launch platforms, route landmarks, and collision geometry. Full production visual acceptance remains incomplete.
 
 ### CAP-031: Automated Godot-native scene asset pipeline
 
@@ -282,7 +284,7 @@ Each recording is one versioned directory containing `manifest.json`, `samples.j
 
 **Status:** Foundation
 
-Ubuntu x86_64 is the Qualification Platform on which every AirSim-class minimum capability must pass together, including PX4 SITL, RPC, the Baseline Sensor Suite, Dataset Recording, the reference environment, and visual gates. Windows and Android may retain Player Mode release lanes, but full Lab Mode parity on those platforms does not block the first qualified release.
+Ubuntu x86_64 is the Qualification Platform on which every AirSim-class minimum capability must pass together, including PX4 SITL, RPC, the Baseline Sensor Suite, Dataset Recording, the reference environment, and visual gates. Windows may retain a non-blocking Player Mode release lane. Android Player Mode is deferred for this release and may be reopened later as a separate non-blocking lane; full Lab Mode parity on non-Ubuntu platforms does not block the first qualified release.
 
 **Minimum acceptance:** One pinned Ubuntu x86_64 release environment passes the full build, native, Godot, AirSim compatibility, PX4 mission, two-vehicle, sensor, dataset, scene, visual, packaging, installation, and headed smoke gates from a clean checkout.
 
