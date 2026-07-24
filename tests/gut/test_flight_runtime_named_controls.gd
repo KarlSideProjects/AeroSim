@@ -149,7 +149,7 @@ func test_named_velocity_controller_uses_the_selected_body_for_measurement_and_y
     assert_eq(primary_controls.pitch, 0.0)
     assert_gt(secondary_controls.pitch, 1.0)
     assert_eq(primary_controls.yaw_rate, 0.0)
-    assert_lt(secondary_controls.yaw_rate, -1.0)
+    assert_gt(secondary_controls.yaw_rate, 1.0)
 
 
 func test_velocity_controller_maps_horizontal_directions_to_frd_tilt_axes() -> void:
@@ -170,6 +170,27 @@ func test_velocity_controller_maps_horizontal_directions_to_frd_tilt_axes() -> v
     assert_lt(negative_z.roll, 0.0)
     assert_eq(positive_z.pitch, 0.0)
     assert_eq(negative_z.pitch, 0.0)
+
+
+func test_yaw_commands_map_ned_targets_and_rates_to_frd() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+
+    assert_gt(runtime._airsim_yaw_rate_from_mode({"is_rate": false, "yaw_or_rate": 45.0}, body), 0.0)
+    assert_lt(runtime._airsim_yaw_rate_from_mode({"is_rate": false, "yaw_or_rate": -45.0}, body), 0.0)
+    assert_eq(runtime._airsim_yaw_rate_from_mode({"is_rate": true, "yaw_or_rate": 10.0}, body), 10.0)
+
+    runtime.drone_body = body
+    runtime._airsim_api_control = true
+    runtime._airsim_command_state = {"method": "rotateToYaw", "args": [45.0, 30.0, 1.0]}
+    assert_gt(float(runtime._airsim_controls_for_frame().yaw_rate), 0.0)
+    runtime._airsim_command_state = {"method": "rotateByYawRate", "args": [10.0, 1.0]}
+    assert_eq(float(runtime._airsim_controls_for_frame().yaw_rate), 10.0)
+
+    var secondary_target: Dictionary = runtime._airsim_secondary_controls(
+        {"command_state": {"method": "rotateToYaw", "args": [45.0, 30.0, 1.0]}}, body)
+    assert_gt(float(secondary_target.yaw_rate), 0.0)
 
 
 func test_secondary_position_commands_use_secondary_body_and_clear_on_completion() -> void:
@@ -246,7 +267,7 @@ func test_secondary_rotate_by_yaw_rate_uses_secondary_body_and_primary_sign() ->
         secondary_body)
 
     assert_eq(String(controls.get("mode", "")), "ANGLE")
-    assert_eq(float(controls.get("yaw_rate", 0.0)), -30.0)
+    assert_eq(float(controls.get("yaw_rate", 0.0)), 30.0)
     assert_eq(float(controls.get("roll", 0.0)), 0.0)
     assert_eq(float(controls.get("pitch", 0.0)), 0.0)
 

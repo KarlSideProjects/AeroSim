@@ -1755,11 +1755,11 @@ func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
             var target_yaw := AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(float(args[0]))
             var delta_yaw := wrapf(target_yaw - body.rotation.y, -PI, PI)
             var rotate_to_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
-            rotate_to_controls["yaw_rate"] = clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            rotate_to_controls["yaw_rate"] = clampf(-rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
             return rotate_to_controls
         "rotateByYawRate":
             var rotate_rate_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
-            rotate_rate_controls["yaw_rate"] = clampf(-float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            rotate_rate_controls["yaw_rate"] = clampf(float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
             return rotate_rate_controls
         "moveByAngleRatesThrottle":
             return {"mode": "ACRO", "throttle": float(args[3]), "acro_roll": _airsim_rate_stick(rad_to_deg(float(args[0])), _airsim_secondary_native), "acro_pitch": _airsim_rate_stick(rad_to_deg(float(args[1])), _airsim_secondary_native), "acro_yaw": _airsim_rate_stick(rad_to_deg(float(args[2])), _airsim_secondary_native)}
@@ -5217,11 +5217,11 @@ func _airsim_controls_for_frame() -> Dictionary:
             var target_yaw := AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(float(args[0]))
             var delta_yaw := wrapf(target_yaw - drone_body.rotation.y, -PI, PI)
             var rotate_to_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0)
-            rotate_to_controls["yaw_rate"] = clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            rotate_to_controls["yaw_rate"] = clampf(-rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
             return rotate_to_controls
         "rotateByYawRate":
             var rotate_rate_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0)
-            rotate_rate_controls["yaw_rate"] = clampf(-float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            rotate_rate_controls["yaw_rate"] = clampf(float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
             return rotate_rate_controls
         "moveByAngleRatesThrottle":
             return {"mode": "ACRO", "throttle": float(args[3]), "acro_roll": _airsim_rate_stick(rad_to_deg(float(args[0]))), "acro_pitch": _airsim_rate_stick(rad_to_deg(float(args[1]))), "acro_yaw": _airsim_rate_stick(rad_to_deg(float(args[2])))}
@@ -5250,12 +5250,12 @@ func _airsim_yaw_rate_from_mode(yaw_mode: Variant, body = null) -> float:
         return 0.0
     var requested := float(yaw_mode.get("yaw_or_rate", 0.0))
     if bool(yaw_mode.get("is_rate", true)):
-        return clampf(-requested, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+        return clampf(requested, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
     var yaw_body = body if body != null else drone_body
     if yaw_body == null:
         return 0.0
     var delta_yaw := wrapf(AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(requested) - yaw_body.rotation.y, -PI, PI)
-    return clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+    return clampf(-rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
 
 
 func _airsim_rate_stick(rate_degrees_per_second: float, target_native: Object = null) -> float:
