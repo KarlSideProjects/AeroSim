@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -57,7 +58,7 @@ int main() {
     }
 
     aerosim::SimulationConfig overflowing_force_config = physics_config;
-    overflowing_force_config.external_force_world.x = 1.0e308;
+    overflowing_force_config.external_force_world.x = std::numeric_limits<double>::infinity();
     const aerosim::RigidBodyState before_overflow = state;
     const aerosim::SimulationClock clock_before_overflow = clock;
     const aerosim::TrajectorySample overflow_rejected = aerosim::step_per_motor_physics_frame(

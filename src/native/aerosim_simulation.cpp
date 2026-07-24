@@ -29,6 +29,10 @@ Quat normalized(const Quat &q) {
     return {q.x / norm, q.y / norm, q.z / norm, q.w / norm};
 }
 
+bool finite_vec3(const Vec3 &value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
 bool valid_frame_timing(const SimulationConfig &config, const SimulationClock &clock) {
     constexpr double kMaxSubstepsPerFrame = 1000000.0;
     return config.physics_hz > 0 && config.substep_hz > 0 &&
@@ -36,12 +40,9 @@ bool valid_frame_timing(const SimulationConfig &config, const SimulationClock &c
             static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz) <= kMaxSubstepsPerFrame &&
             std::isfinite(config.mass_kg) && config.mass_kg > 0.0 &&
             std::isfinite(config.gravity_mps2) &&
+            finite_vec3(config.external_force_world) && finite_vec3(config.wind_world_mps) &&
             std::isfinite(clock.substep_accumulator) &&
             clock.substep_accumulator >= 0.0 && clock.substep_accumulator < 1.0;
-}
-
-bool finite_vec3(const Vec3 &value) {
-    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
 }
 
 bool finite_quat(const Quat &value) {

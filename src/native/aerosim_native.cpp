@@ -1147,7 +1147,8 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
     if (!valid_px4_controls(values, 4) ||
             !std::all_of(std::begin(contact_values), std::end(contact_values), [](double value) {
                 return std::isfinite(value);
-            }) || restitution < 0.0 || restitution > 1.0 || max_kinetic_energy_joules < 0.0) {
+            }) || restitution < 0.0 || restitution > 1.0 ||
+            (max_kinetic_energy_joules < 0.0 && max_kinetic_energy_joules != -1.0)) {
         return {};
     }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
