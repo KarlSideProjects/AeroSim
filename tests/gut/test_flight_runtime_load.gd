@@ -1598,6 +1598,46 @@ func test_respawn_preserves_armed_state_and_resets_without_disarm() -> void:
     map.queue_free()
 
 
+func test_respawn_preserves_armed_px4_transport_without_restart() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    var bridge := Px4SitlBridge.new()
+    assert_true(bridge.configure({
+        "VehicleType": "PX4Multirotor",
+        "Transport": "Fake",
+        "HeartbeatTimeout": 1.0,
+        "FailureTimeout": 3.0,
+        "ActuatorTimeout": 1.0,
+        "UseSerial": false,
+        "LockStep": true,
+    }).ok)
+    assert_true(bridge.start().ok)
+    bridge.inject_heartbeat(false)
+    bridge.poll(0.0)
+    bridge.arm_disarm(true)
+    bridge.inject_heartbeat(true)
+    bridge.inject_actuators([0.5, 0.5, 0.5, 0.5])
+    bridge.poll(0.01)
+    runtime.px4_sitl_bridge = bridge
+    runtime.screen = "flight"
+
+    assert_eq(bridge.state, "armed")
+    runtime.respawn()
+
+    assert_eq(bridge.state, "armed")
+    assert_true(bridge.is_authority_active())
+    assert_true(bridge.arm_disarm(true).ok)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
 func test_participant_mode_is_independent_and_hides_debug_panel_input() -> void:
     var runtime_script := load("res://common/flight/flight_runtime.gd")
     var panel_script := load("res://addons/debug_api/aerosim_body_drag_panel.gd")
