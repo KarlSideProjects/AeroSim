@@ -83,6 +83,9 @@ if not result.get("flyable"):
     raise SystemExit(f"cold-start probe did not reach a flyable screen: {result.get('screen')}")
 if result.get("display_driver") == "headless":
     raise SystemExit("cold-start probe used Godot headless display driver")
+for field in ("rendering_method", "rendering_driver"):
+    if not result.get(field):
+        raise SystemExit(f"cold-start probe did not record {field}")
 if not result.get("frame_post_draw") or not result.get("screenshot_written") or not screenshot_path.is_file():
     raise SystemExit("cold-start probe did not produce a rendered screenshot")
 if elapsed_ms > max_seconds * 1000:

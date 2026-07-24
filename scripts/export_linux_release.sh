@@ -11,6 +11,9 @@ release_lib="bin/libaerosim_native.linux.template_release.x86_64.so"
 out_dir="build/release/AeroSim-linux"
 out_zip="build/release/AeroSim-linux.zip"
 
+grep -q '^renderer/rendering_method="forward_plus"$' project.godot
+grep -q '^rendering_device/fallback_to_opengl3=true$' project.godot
+
 if [ ! -s "$templates_dir/linux_release.x86_64" ]; then
     echo "missing Godot Linux export template: $templates_dir/linux_release.x86_64" >&2
     exit 1
