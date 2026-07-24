@@ -5239,8 +5239,8 @@ func _airsim_velocity_controls(velocity_world: Vector3, vertical_correction: flo
     return {
         "mode": "ANGLE",
         "throttle": throttle,
-        "roll": clampf(-horizontal_velocity_error.x * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
-        "pitch": clampf(horizontal_velocity_error.z * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
+        "roll": clampf(horizontal_velocity_error.z * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
+        "pitch": clampf(-horizontal_velocity_error.x * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
         "yaw_rate": _airsim_yaw_rate_from_mode(yaw_mode, measured_body),
     }
 

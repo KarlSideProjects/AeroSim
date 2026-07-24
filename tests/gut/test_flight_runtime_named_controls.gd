@@ -146,10 +146,30 @@ func test_named_velocity_controller_uses_the_selected_body_for_measurement_and_y
     var primary_controls: Dictionary = runtime._airsim_velocity_controls(Vector3.ZERO, 0.0, yaw_mode, primary)
     var secondary_controls: Dictionary = runtime._airsim_velocity_controls(Vector3.ZERO, 0.0, yaw_mode, secondary)
 
-    assert_eq(primary_controls.roll, 0.0)
-    assert_gt(secondary_controls.roll, 1.0)
+    assert_eq(primary_controls.pitch, 0.0)
+    assert_gt(secondary_controls.pitch, 1.0)
     assert_eq(primary_controls.yaw_rate, 0.0)
     assert_lt(secondary_controls.yaw_rate, -1.0)
+
+
+func test_velocity_controller_maps_horizontal_directions_to_frd_tilt_axes() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+
+    var positive_x: Dictionary = runtime._airsim_velocity_controls(Vector3(1.0, 0.0, 0.0), 0.0, null, body)
+    var negative_x: Dictionary = runtime._airsim_velocity_controls(Vector3(-1.0, 0.0, 0.0), 0.0, null, body)
+    var positive_z: Dictionary = runtime._airsim_velocity_controls(Vector3(0.0, 0.0, 1.0), 0.0, null, body)
+    var negative_z: Dictionary = runtime._airsim_velocity_controls(Vector3(0.0, 0.0, -1.0), 0.0, null, body)
+
+    assert_lt(positive_x.pitch, 0.0)
+    assert_gt(negative_x.pitch, 0.0)
+    assert_eq(positive_x.roll, 0.0)
+    assert_eq(negative_x.roll, 0.0)
+    assert_gt(positive_z.roll, 0.0)
+    assert_lt(negative_z.roll, 0.0)
+    assert_eq(positive_z.pitch, 0.0)
+    assert_eq(negative_z.pitch, 0.0)
 
 
 func test_secondary_position_commands_use_secondary_body_and_clear_on_completion() -> void:
