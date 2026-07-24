@@ -34,6 +34,31 @@ func test_fake_transport_reaches_connected_armed_and_fails_after_stale() -> void
     assert_false(bridge.diagnostics().message.is_empty())
 
 
+func test_fake_armed_transport_reconnects_before_failure_timeout() -> void:
+    var bridge := _new_fake_bridge(0.1)
+
+    assert_true(bridge.start().ok)
+    bridge.inject_heartbeat(false)
+    bridge.poll(0.0)
+    bridge.arm_disarm(true)
+    bridge.inject_heartbeat(true)
+    bridge.inject_actuators([0.5, 0.5, 0.5, 0.5])
+    bridge.poll(0.01)
+    assert_eq(bridge.state, "armed")
+
+    bridge.poll(0.2)
+    assert_eq(bridge.state, "stale")
+    assert_false(bridge.is_authority_active())
+
+    bridge.inject_heartbeat(true)
+    bridge.inject_actuators([0.5, 0.5, 0.5, 0.5])
+    bridge.poll(0.21)
+
+    assert_eq(bridge.state, "armed")
+    assert_true(bridge.is_authority_active())
+    assert_eq(bridge.diagnostics().last_heartbeat_time, 0.21)
+
+
 func test_fake_startup_fails_without_heartbeat() -> void:
     var bridge := _new_fake_bridge(0.1)
 
