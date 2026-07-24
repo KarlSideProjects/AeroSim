@@ -456,10 +456,12 @@ func _run() -> void:
 	_tap(KEY_P)
 	await _settle(2)
 	var change_spawn_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/ChangeSpawn")
+	var north_spawn_before_change := runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
 	if change_spawn_button != null:
 		_click(change_spawn_button)
 	await _settle(4)
-	_expect(runtime.screen == "flight" and runtime.loaded_map_id == "industrial_yard" and not runtime.paused, "Change Spawn resets the current Industrial Yard segment")
+	var south_spawn_after_change := runtime.loaded_map.get_node_or_null("SpawnSouth") as Marker3D
+	_expect(runtime.screen == "flight" and runtime.loaded_map_id == "industrial_yard" and not runtime.paused and north_spawn_before_change != null and south_spawn_after_change != null and runtime.drone_body.global_position.distance_to(south_spawn_after_change.global_position) <= 1e-6, "Change Spawn cycles to the formal South spawn and resets the current Industrial Yard segment")
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
@@ -576,8 +578,8 @@ func _run() -> void:
 	await _settle(10)
 	await _snapshot("05_reset")
 	_expect(runtime.reset_count >= 1, "R resets flight after resume")
-	spawn = runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D if runtime.loaded_map != null else null
-	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6 and runtime.drone_body.linear_velocity.length() <= 1e-6 and runtime.drone_body.angular_velocity.length() <= 1e-6, "reset returns to SpawnNorth with cleared velocities")
+	spawn = runtime.loaded_map.get_node_or_null("SpawnSouth") as Marker3D if runtime.loaded_map != null else null
+	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6 and runtime.drone_body.linear_velocity.length() <= 1e-6 and runtime.drone_body.angular_velocity.length() <= 1e-6, "reset returns to the current SpawnSouth with cleared velocities")
 
 	runtime.quit_on_exit = false
 	_tap(KEY_ESCAPE)

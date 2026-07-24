@@ -1582,6 +1582,7 @@ func test_respawn_preserves_armed_state_and_resets_without_disarm() -> void:
     get_tree().root.add_child(map)
     runtime.loaded_map = map
     runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
     runtime.native = FakeNative.new()
     runtime.native.armed = true
     runtime.screen = "flight"
@@ -1593,6 +1594,90 @@ func test_respawn_preserves_armed_state_and_resets_without_disarm() -> void:
     assert_false(runtime.native.disarmed)
     assert_true(runtime.takeoff_requested)
     assert_false(runtime.paused)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_change_spawn_cycles_formal_markers_and_preserves_arm_state() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var north := Marker3D.new()
+    north.name = "SpawnNorth"
+    north.position = Vector3(0.0, 0.6, -24.0)
+    map.add_child(north)
+    var south := Marker3D.new()
+    south.name = "SpawnSouth"
+    south.position = Vector3(-24.0, 0.6, 24.0)
+    map.add_child(south)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = FakeNative.new()
+    runtime.native.armed = true
+    runtime.screen = "flight"
+
+    runtime.change_spawn()
+    assert_eq(runtime.current_spawn_index, 1)
+    assert_eq(runtime.drone_body.global_position, south.global_position)
+    assert_true(runtime.native.armed)
+
+    runtime.change_spawn()
+    assert_eq(runtime.current_spawn_index, 0)
+    assert_eq(runtime.drone_body.global_position, north.global_position)
+    assert_true(runtime.native.armed)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_fixed_xbox_reset_and_start_x_chord_use_distinct_actions() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var north := Marker3D.new()
+    north.name = "SpawnNorth"
+    north.position = Vector3(0.0, 0.6, -24.0)
+    map.add_child(north)
+    var south := Marker3D.new()
+    south.name = "SpawnSouth"
+    south.position = Vector3(-24.0, 0.6, 24.0)
+    map.add_child(south)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = FakeNative.new()
+    runtime.native.armed = true
+    runtime.screen = "flight"
+    runtime.session_gamepad_device_id = 7
+    runtime.session_gamepad_profile = InputProfiles.GamepadProfile.new()
+
+    var x := InputEventJoypadButton.new()
+    x.device = 7
+    x.button_index = JOY_BUTTON_X
+    x.pressed = true
+    runtime._unhandled_input(x)
+    assert_eq(runtime.current_spawn_index, 0)
+    assert_eq(runtime.drone_body.global_position, north.global_position)
+
+    var start := InputEventJoypadButton.new()
+    start.device = 7
+    start.button_index = JOY_BUTTON_START
+    start.pressed = true
+    runtime._unhandled_input(start)
+    runtime._unhandled_input(x)
+    assert_eq(runtime.current_spawn_index, 1)
+    assert_eq(runtime.drone_body.global_position, south.global_position)
+
+    start.pressed = false
+    runtime._unhandled_input(start)
+    runtime._unhandled_input(x)
+    assert_eq(runtime.current_spawn_index, 1)
+    assert_eq(runtime.drone_body.global_position, south.global_position)
+
+    runtime.handle_controller_connection_changed(7, false)
+    assert_false(runtime.gamepad_pause_pressed)
     runtime.drone_body.free()
     runtime.free()
     map.queue_free()

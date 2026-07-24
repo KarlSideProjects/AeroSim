@@ -132,19 +132,6 @@ class ActionContract:
             return GAMEPAD_DEFAULT_ACTIONS.duplicate()
         return {}
 
-    static func rebind(bindings: Dictionary, action: String, glyph: String) -> Dictionary:
-        if not ACTIONS.has(action):
-            return {"ok": false, "error": "unknown action: %s" % action, "bindings": bindings}
-        var candidate := bindings.duplicate()
-        candidate[action] = glyph
-        var conflicts: Array[String] = []
-        for other_action in candidate:
-            if other_action != action and candidate[other_action] == glyph:
-                conflicts.append(String(other_action))
-        if not conflicts.is_empty():
-            return {"ok": false, "error": "binding conflicts with %s" % ", ".join(conflicts), "conflicts": conflicts, "bindings": bindings}
-        return {"ok": true, "error": "", "conflicts": [], "bindings": candidate}
-
     static func glyph(bindings: Dictionary, action: String) -> String:
         return String(bindings.get(action, "UNBOUND"))
 

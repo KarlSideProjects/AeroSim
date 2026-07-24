@@ -50,7 +50,7 @@ func test_segmentation_catalog_ids_are_stable_and_unique() -> void:
     for item in catalog:
         assert_false(ids.has(item.segmentation_id))
         ids[item.segmentation_id] = item.path
-    assert_eq(catalog.size(), 7)
+    assert_eq(catalog.size(), 8)
     var blue_found := false
     for item in catalog:
         if int(item["segmentation_id"]) == 3:

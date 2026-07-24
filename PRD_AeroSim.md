@@ -3,12 +3,13 @@
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v4.1.4（AirSim-class minimum；2026-07-23 Xbox 起飛行為修正） |
+| 版本 | v4.1.5（AirSim-class minimum；2026-07-24 Issue #42 決策同步） |
 | 文件狀態 | 產品邊界已核准；GitHub issue 同步中 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
+- v4.1.5：凍結 v1 輸入映射（不提供玩家重綁）；Industrial Test Range 改以 descriptor 的正式 `SpawnNorth`／`SpawnSouth` 清單循環出生；Keyboard `R`／Xbox `X` 只做 Reset，Xbox `START+X` 才做 Change Spawn，且永不作 Arm/Takeoff；新增 GPU-A Reset/Respawn P99 專用 gate，分別量測 plain X 與 Pause Overlay Reset，各至少 200 次並以 armed、pause off、非零 throttle 已被 physics/control telemetry 接受為終點。
 - v4.1.4：Xbox A 的 Arm/Takeoff 必須以目前機體 hover throttle 加受控起飛輔助升至約 1 m，再交回玩家油門；不得使用一次性跳躍速度，X 僅保留 Reset 行為。
 - v4.1.3：HUD 輸入提示必須跟隨目前 active input profile；Xbox profile 顯示 A／START／X／RB／Y／B，KeyboardProfile 才顯示 T／P／R／C／H／Esc，禁止同時使用錯誤裝置提示。
 - v4.1.2：開發用 debug build 的 Quick Fly 不要求授權金鑰；正式／release build 仍必須遵守授權驗證與離線寬限規則。
@@ -233,7 +234,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 - `GamepadProfile`：固定映射軸/鍵、raw / normalized / 固定 deadzone、按鍵狀態、sticky throttle 模式（油門不回中語意）、UI 明示「非擬真操控」。
 - `KeyboardProfile`：離散輸入，僅保證可起飛/暫停/重生/退出，明示限制用途。
 
-**操作 Action Contract（回應審查 H2）**：pause / reset / change spawn / exit / arm / mode 於兩種 Profile 各有預設映射、可重綁、衝突偵測、畫面 glyph 提示；**所有飛行中救援動作（reset/pause）必須「手不離主控制器」可達**——gamepad 按鍵不足時提供組合鍵（chord）或明確提示替代路徑。
+**操作 Action Contract（回應審查 H2）**：pause / reset / change spawn / exit / arm / mode 於兩種 Profile 各有固定、版本化的 canonical 映射與畫面 glyph；v1 不提供玩家重綁，避免 session-only 映射造成重連或跨 session 歧義。Keyboard 固定為 `P` Pause、`R` Reset、`Shift+R` Change Spawn、`Esc` Exit、`T` Arm/Takeoff、`C` Mode；Xbox 固定為 `START` Pause、`X` Reset、`START+X` Change Spawn、`B` Exit、`A` Arm/Takeoff、`Y` Mode。`START+X` 是獨立 Change Spawn chord，不得觸發 Arm/Takeoff；**所有飛行中救援動作（reset/pause）必須「手不離主控制器」可達**。
 
 **Quick Fly 狀態機（回應審查 H1）**：
 
@@ -248,7 +249,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 **Pause / Reset / Spawn 語意（回應審查 H3，凍結為規格）**：
 - Pause：凍結物理與計時器，輸入監控持續（Channel Monitor 可用）。
 - Reset：回 spawn 姿態、清空線/角速度、清 PID 積分項、清碰撞狀態、當段遙測標記分段；**保持 armed、油門即時跟隨搖桿**（沿用競速模擬器慣例）；Time Trial 下計時與 checkpoint 歸零。
-- Change Spawn：結束本段（計時/checkpoint 清空），於新 spawn 依 Reset 語意重生。
+- Change Spawn：結束本段（計時/checkpoint 清空），依地圖 descriptor 的正式 spawn 清單循環到下一個 Marker3D，於新 spawn 依 Reset 語意重生；Industrial Test Range v1 固定提供 `SpawnNorth` 與 `SpawnSouth`。
 
 **Channel Monitor 為一等 UI**（依上述 Profile 分規格呈現）。飛行中控制器斷線：fail loud——畫面即時警示 + 顯示重連狀態，禁止靜默失控。
 
@@ -434,7 +435,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
 | G4B.1 | 首次啟動至起飛 ≤ 90 秒（行動觸控 ≤ 60 秒），由維護者依固定腳本完成並於 issue 記錄計時 | USR | SC |
-| G4B.2 | 墜機→重飛 ≤ 1.5 秒（P99，重生鍵至油門可輸入） | GPU-A | SC |
+| G4B.2 | 墜機→重飛 ≤ 1.5 秒（P99，GPU-A 專用 benchmark；plain `X` Reset 與 Pause Overlay `Reset` 分開量測，各至少 200 次；終點必須是 armed 保留、pause off、非零 throttle 已由 physics/control telemetry 接受，不得只量到 respawn return） | GPU-A | SC |
 | G4B.3 | 固定 mapping 確認流程由維護者無協助完成，於 issue 記錄阻塞點與結論 | USR | DESK, AND |
 | G4B.4 | 維護者完成固定可用性檢核並於 issue 記錄結論；不要求外部 SUS 樣本 | USR | SC |
 | G4B.5 | 選單深度 ≤ 3 層，自動遍歷驗證 | CI-A | SC |
@@ -444,7 +445,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G4B.9 | UI 動效以 offset transforms 實作、layout 不變（自動斷言）、不阻塞輸入 > 100 ms | GPU-A | SC |
 | G4B.UI1 | **First Fly Flow**：維護者不看說明書——已確認固定 mapping 的相容手把 ≤ 30 秒起飛、未確認 ≤ 90 秒（含完成 Setup Flow）；無控制器時提示與 keyboard fallback 可用，於 issue 記錄計時與結論 | USR | SC |
 | G4B.UI2 | **Controller Setup**：Xbox 360 相容手把完成固定 mapping 確認流程；**unknown 裝置必須 100% 主動拒絕並提示 keyboard fallback**（各 10 次注入測試） | DEV-M | DESK, AND |
-| G4B.UI3 | **Pause Overlay**：固定項全數存在；rates/camera/OSD 修改即時生效不重載（自動斷言）；Reset 至可輸入 ≤ 1.5 秒（P99） | GPU-A | SC |
+| G4B.UI3 | **Pause Overlay**：固定項全數存在；rates/camera/OSD 修改即時生效不重載（自動斷言）；Pause Overlay `Reset` 至可輸入 ≤ 1.5 秒（P99），並納入 G4B.2 的獨立 GPU-A benchmark | GPU-A | SC |
 | G4B.UI4 | **OSD Presets**：三 preset 於 1080p 與行動橫向、zh-TW/en 四組合下，主飛行視野遮擋率 ≤ 8%，警告訊息不遮擋畫面中央 1/3（自動截圖幾何稽核） | GPU-A | SC |
 | G4B.UI5 | **選擇流程**：主選單七入口固定；Quick Fly 一鍵進預設場；Drone／Map／mode／weather 可選，Map screen 在單一 entry 時仍可用；全流程確認次數 ≤ 3 | GPU-A + USR | LIN |
 | G4B.UI6 | **機體狀態圖**：(a) 真值一致——狀態圖各數值 vs 物理層遙測快照逐項相等（容忍僅顯示取整），A1–A10 任一效應關閉時對應指示歸零（自動化逐效應開關測試）；(b) 更新率 ≥ 30 Hz、資料延遲 ≤ 100 ms；(c) 完整版與迷你版渲染成本合計 ≤ 0.5 ms/幀（各平台 Profile）；(d) 迷你版於 Debug OSD 下不違反 G4B.UI4 遮擋門檻 | CI-A + GPU-A | SC |
@@ -459,7 +460,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G5.2 | Android export/build-only；OTG gamepad 實機分項維持 N/A（未驗證凍結） | DEV-M | AND |
 | G5.3 | iOS（若 Lane 續行）：MFi（SDL3 路徑）+ VirtualJoystick（Fixed/Dynamic 雙模式）可完成 G2.3 姿態保持測試 | DEV-M | IOS |
 | G5.4 | 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）：桌面 ≤ 40 ms、行動 ≤ 60 ms | DEV-M | 各 Lane |
-| G5.5 | 輸入映射匯出/匯入、斷線重連不丟設定（已確認 mapping/schema version 跨 session 持久化，見範圍排除之界線釐清） | CI-A | SC |
+| G5.5 | 固定 canonical 輸入映射與 schema version 跨 session 持久化，斷線重連不丟設定；v1 不提供玩家重綁或 mapping 匯入/匯出 | CI-A | SC |
 | G5.6 | **Channel Monitor 一等 UI**：固定映射下的 raw / normalized / deadzone / 按鍵狀態全數即時顯示，更新率 ≥ 30 Hz；自動檢核四項提示（油門低位、arm 映射、mode 映射、unknown 裝置）功能驗證 | GPU-A + DEV-M | SC |
 | G5.7 | **斷線 fail loud**：飛行中拔除控制器 → 500 ms 內畫面警示 + 顯示重連狀態；重插後 ≤ 2 秒恢復輸入且已確認 mapping 不丟失（各 20 次） | DEV-M | 各 Lane |
 

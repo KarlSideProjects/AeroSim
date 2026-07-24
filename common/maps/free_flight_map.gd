@@ -10,6 +10,7 @@ const REQUIRED_FIELDS := [
     "recommended_aircraft",
     "wind_preset",
     "spawn_count",
+    "spawns",
     "mode"
 ]
 
@@ -46,6 +47,17 @@ func validate_descriptor(descriptor: Dictionary) -> String:
     var spawn_count := float(descriptor.spawn_count)
     if spawn_count < 1.0 or not is_equal_approx(spawn_count, roundf(spawn_count)):
         return "spawn_count must be a positive integer"
+    if not (descriptor.spawns is Array) or descriptor.spawns.is_empty():
+        return "spawns must be a non-empty array"
+    if descriptor.spawns.size() != int(spawn_count):
+        return "spawn_count must match spawns"
+    var spawn_names: Array[String] = []
+    for spawn in descriptor.spawns:
+        if not (spawn is Dictionary) or not spawn.has("name") or not (spawn.name is String) or str(spawn.name).strip_edges().is_empty():
+            return "each spawn must define a non-empty name"
+        if spawn_names.has(String(spawn.name)):
+            return "spawn names must be unique"
+        spawn_names.append(String(spawn.name))
     return ""
 
 func _read_json(path: String) -> Dictionary:

@@ -245,7 +245,8 @@ func _verify_industrial_yard_descriptor_and_scene() -> bool:
         "type": "free_flight",
         "recommended_aircraft": "5_inch_6s",
         "wind_preset": "calm",
-        "spawn_count": 1,
+        "spawn_count": 2,
+        "spawns": [{"name": "SpawnNorth"}, {"name": "SpawnSouth"}],
         "mode": "free_flight"
     }
     for field in expected_fields:
@@ -262,6 +263,7 @@ func _verify_industrial_yard_descriptor_and_scene() -> bool:
     var scene := IndustrialYardScene.instantiate()
     var named_nodes := {
         "SpawnNorth": Marker3D,
+        "SpawnSouth": Marker3D,
         "Ground": MeshInstance3D,
         "CargoContainers": Node3D,
         "LowGate": StaticBody3D,
@@ -273,6 +275,12 @@ func _verify_industrial_yard_descriptor_and_scene() -> bool:
             push_error("Industrial Yard scene must expose %s" % node_name)
             scene.queue_free()
             return false
+    var north_spawn := scene.get_node_or_null("SpawnNorth") as Marker3D
+    var south_spawn := scene.get_node_or_null("SpawnSouth") as Marker3D
+    if north_spawn.position.distance_to(south_spawn.position) < 1.0:
+        push_error("Industrial Yard formal spawn markers must be distinct")
+        scene.queue_free()
+        return false
     var cargo_containers := scene.get_node_or_null("CargoContainers")
     if cargo_containers.get_child_count() < 2:
         push_error("Industrial Yard scene must expose at least two cargo containers")

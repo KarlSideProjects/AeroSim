@@ -28,11 +28,11 @@ AeroSim is a multirotor simulation platform. Player Mode is the default, game-li
 
 **Status:** Foundation
 
-Player Mode lets a person enter the reference environment, control the primary multirotor, pause, respawn, and change supported flight modes. Its normal path is selection or Quick Fly, preflight state, flight, collision or landing, and immediate retry.
+Player Mode lets a person enter the reference environment, control the primary multirotor, pause, reset, cycle through formal spawn markers, and change supported flight modes. Its normal path is selection or Quick Fly, preflight state, flight, collision or landing, and immediate retry.
 
 **Minimum acceptance:** A first-time user can reach a flyable scene, identify the active mode and vehicle state, fly, collide, respawn, pause, and exit without developer tools.
 
-**Current evidence:** Quick Fly, pause, respawn, Angle, Acro, and Altitude Hold paths exist in `common/flight/flight_runtime.gd` and are exercised by the headless smoke suite. Selection, preflight presentation, and a production scene remain incomplete.
+**Current evidence:** Quick Fly, pause, reset, formal `SpawnNorth`/`SpawnSouth` cycling, Angle, Acro, and Altitude Hold paths exist in `common/flight/flight_runtime.gd`; headless smoke and GUT cover the marker contract and fixed Xbox event semantics. The GPU-A P99 evidence and full Playable Game Milestone remain incomplete.
 
 ### CAP-003: Lab Mode automation surface
 
@@ -47,6 +47,8 @@ Lab Mode lets software reset and control the simulation, address named vehicles,
 **Status:** Foundation
 
 The main menu retains a `Map` entry and a catalog-backed selection screen. The AirSim-class minimum exposes only one selectable environment, the Industrial Test Range, and does not show fake or Coming Soon maps. Later environments can be added to the catalog without replacing the Player Mode navigation flow.
+
+The Industrial Test Range descriptor owns its formal spawn list and count. v1 contains exactly `SpawnNorth` and `SpawnSouth`; Reset returns to the current marker and Change Spawn cycles in descriptor order. The active spawn is volatile session state.
 
 **Minimum acceptance:** The Map screen lists exactly the environments present in the checked-in catalog, selects and persists the active entry, launches the selected scene through Quick Fly, handles a missing or invalid catalog entry explicitly, and remains usable with exactly one entry.
 
@@ -192,7 +194,7 @@ The minimum ships one coherent Industrial Test Range. It contains a launch area,
 
 **Minimum acceptance:** A person can recognize and navigate every zone; the route is flyable; scale, collision, lighting, and sensor outputs are plausible; all required screenshots pass the visual gates.
 
-**Current evidence:** The current branch contains only a non-rendered smoke scene with a collision wall and no production visual assets.
+**Current evidence:** The current branch contains the renderer-shared Industrial Yard scene with two formal spawn markers, launch platforms, route landmarks, and collision geometry. Full production visual acceptance remains incomplete.
 
 ### CAP-031: Automated Godot-native scene asset pipeline
 

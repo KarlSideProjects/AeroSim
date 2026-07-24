@@ -64,6 +64,8 @@ var airsim_stop_file := ""
 var loaded_map: Node3D
 var loaded_map_id := ""
 var loaded_map_wind_preset := "calm"
+var loaded_spawn_names: Array[String] = []
+var current_spawn_index := 0
 var selected_wind_preset := ""
 var time_trial: TimeTrialController
 var camera_profile: Dictionary = CameraProfile.default_profile()
@@ -2052,6 +2054,7 @@ func accept_controller_confirmation() -> void:
 func use_keyboard_fallback() -> void:
     session_gamepad_profile = null
     session_gamepad_device_id = -1
+    gamepad_pause_pressed = false
     keyboard_fallback_explicitly_selected = false
     if controller_confirmation_panel != null:
         controller_confirmation_panel.hide()
@@ -2212,6 +2215,9 @@ func change_map() -> void:
 
 
 func change_spawn() -> void:
+    var spawn_names := _spawn_names_for_loaded_map()
+    if spawn_names.size() > 1:
+        current_spawn_index = (current_spawn_index + 1) % spawn_names.size()
     respawn()
 
 func load_map(map_id: String) -> bool:
@@ -2234,6 +2240,10 @@ func load_map(map_id: String) -> bool:
     loaded_map = map_root
     loaded_map_id = map_id
     loaded_map_wind_preset = str(descriptor.wind_preset)
+    loaded_spawn_names.clear()
+    for spawn in descriptor.spawns:
+        loaded_spawn_names.append(String(spawn.name))
+    current_spawn_index = 0
     _refresh_loaded_map_localization()
     if native != null:
         var applied_wind_preset := selected_wind_preset if not selected_wind_preset.is_empty() else str(descriptor.wind_preset)
@@ -2250,9 +2260,9 @@ func load_map(map_id: String) -> bool:
 func reset_to_spawn() -> bool:
     if loaded_map == null:
         return _set_map_error("Cannot reset Free Flight: no map is loaded")
-    var spawn := loaded_map.get_node_or_null("SpawnNorth") as Marker3D
+    var spawn := _current_spawn_marker()
     if spawn == null:
-        return _set_map_error("Cannot reset Free Flight map %s: SpawnNorth is missing" % loaded_map_id)
+        return _set_map_error("Cannot reset Free Flight map %s: configured spawn is missing" % loaded_map_id)
     _record_replay_simulation_operation(5, 0.0)
     _airsim_last_velocity = Vector3.ZERO
     _airsim_linear_acceleration = Vector3.ZERO
@@ -2294,11 +2304,31 @@ func _reset_secondary_kinematic_contexts() -> void:
         _airsim_vehicle_contexts[name] = context
 
 func _spawn_position() -> Vector3:
-    if loaded_map != null:
-        var spawn := loaded_map.get_node_or_null("SpawnNorth") as Marker3D
-        if spawn != null:
-            return spawn.global_position
+    var spawn := _current_spawn_marker()
+    if spawn != null:
+        return spawn.global_position
     return SPAWN_POSITION
+
+func _spawn_names_for_loaded_map() -> Array[String]:
+    if not loaded_spawn_names.is_empty():
+        return loaded_spawn_names
+    if loaded_map == null:
+        return []
+    var discovered: Array[String] = []
+    for child in loaded_map.get_children():
+        if child is Marker3D and String(child.name).begins_with("Spawn"):
+            discovered.append(String(child.name))
+    discovered.sort()
+    return discovered
+
+func _current_spawn_marker() -> Marker3D:
+    if loaded_map == null:
+        return null
+    var spawn_names := _spawn_names_for_loaded_map()
+    if spawn_names.is_empty():
+        return null
+    current_spawn_index = clampi(current_spawn_index, 0, spawn_names.size() - 1)
+    return loaded_map.get_node_or_null(spawn_names[current_spawn_index]) as Marker3D
 
 func unload_map() -> void:
     if scene_object_catalog != null:
@@ -2309,6 +2339,8 @@ func unload_map() -> void:
         loaded_map = null
     loaded_map_id = ""
     loaded_map_wind_preset = "calm"
+    loaded_spawn_names.clear()
+    current_spawn_index = 0
     time_trial = null
 
 
@@ -3109,6 +3141,7 @@ func _refresh_loaded_map_localization() -> void:
         return
     var labels_by_path := {
         "SpawnNorth/DirectionLabel": "ui.map.north_spawn",
+        "SpawnSouth/DirectionLabel": "ui.map.south_spawn",
         "TurnMarker/DirectionLabel": "ui.map.turn_90",
         "TimeTrial/Checkpoint01/DirectionArrow": "ui.map.checkpoint_1",
         "TimeTrial/Checkpoint02/DirectionArrow": "ui.map.checkpoint_2",
@@ -4487,6 +4520,7 @@ func handle_controller_connection_changed(device_id: int, connected: bool) -> vo
     controller_reconnected = false
     session_gamepad_profile = null
     session_gamepad_device_id = -1
+    gamepad_pause_pressed = false
     keyboard_fallback_explicitly_selected = false
     takeoff_requested = false
     _reset_airsim_flight_state()
