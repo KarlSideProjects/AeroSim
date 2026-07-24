@@ -136,6 +136,7 @@ var license_exit_button: Button
 var acro_mode_button: Button
 var time_trial_status_label: Label
 var pause_panel: Control
+var status_diagram_back_button: Button
 var finish_panel: Control
 var finish_summary_label: Label
 var camera_panel: Control
@@ -2773,6 +2774,8 @@ func set_paused(value: bool, sync_session: bool = true) -> void:
     paused = value
     if not value:
         status_diagram_fullscreen = false
+        if status_diagram_back_button != null:
+            status_diagram_back_button.hide()
     if body_drag_debug_panel != null and body_drag_debug_panel.has_method("set_paused"):
         body_drag_debug_panel.call("set_paused", value)
     if sync_session and airsim_session != null:
@@ -4125,9 +4128,30 @@ func _build_pause_panel() -> void:
 
 
 func _show_status_diagram_from_pause() -> void:
+    if status_diagram_back_button == null:
+        status_diagram_back_button = Button.new()
+        status_diagram_back_button.name = "StatusDiagramBack"
+        status_diagram_back_button.text = _t("ui.action.back")
+        status_diagram_back_button.set_anchors_preset(Control.PRESET_TOP_LEFT)
+        status_diagram_back_button.offset_left = 20.0
+        status_diagram_back_button.offset_top = 20.0
+        status_diagram_back_button.offset_right = 180.0
+        status_diagram_back_button.offset_bottom = 60.0
+        status_diagram_back_button.pressed.connect(_close_status_diagram_from_pause)
+        flight_hud_layer.add_child(status_diagram_back_button)
+    status_diagram_back_button.show()
     status_diagram_fullscreen = true
     if pause_panel != null:
         pause_panel.hide()
+    _refresh_flight_hud()
+
+
+func _close_status_diagram_from_pause() -> void:
+    status_diagram_fullscreen = false
+    if status_diagram_back_button != null:
+        status_diagram_back_button.hide()
+    if pause_panel != null:
+        pause_panel.show()
     _refresh_flight_hud()
 
 

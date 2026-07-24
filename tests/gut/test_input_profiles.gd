@@ -66,3 +66,19 @@ func test_action_contract_exposes_fixed_profile_defaults() -> void:
     assert_eq(gamepad["change_spawn"], "START+X")
 
     assert_eq(InputProfiles.ActionContract.glyph(keyboard, "reset"), "R")
+
+
+func test_action_contract_rejects_conflicting_bindings() -> void:
+    var bindings := InputProfiles.ActionContract.default_bindings("KeyboardProfile")
+    bindings["mode"] = bindings["pause"]
+
+    var result: Dictionary = InputProfiles.ActionContract.validate_bindings(bindings)
+
+    assert_false(result.ok)
+    assert_string_contains(result.error, "conflict")
+
+
+func test_action_contract_matches_project_input_map() -> void:
+    var result: Dictionary = InputProfiles.ActionContract.validate_input_map()
+
+    assert_true(result.ok, result.error)

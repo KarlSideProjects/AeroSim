@@ -2734,6 +2734,10 @@ func _press_key(keycode: int) -> void:
     await process_frame
 
 func _verify_keyboard_profile_actions() -> bool:
+    var contract_result: Dictionary = InputProfiles.ActionContract.validate_input_map()
+    if not contract_result.ok:
+        push_error("ActionContract validation failed: %s" % contract_result.error)
+        return false
     var actions := {
         "flight_takeoff": KEY_T,
         "flight_pause": KEY_P,

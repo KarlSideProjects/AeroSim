@@ -124,6 +124,23 @@ class ActionContract:
         "arm": "A",
         "mode": "Y",
     }
+    const KEYBOARD_INPUT_ACTIONS := {
+        "flight_takeoff": {"keycode": KEY_T, "shift_pressed": false},
+        "flight_pause": {"keycode": KEY_P, "shift_pressed": false},
+        "flight_respawn": {"keycode": KEY_R, "shift_pressed": false},
+        "flight_change_spawn": {"keycode": KEY_R, "shift_pressed": true},
+        "flight_altitude_hold": {"keycode": KEY_H, "shift_pressed": false},
+        "flight_acro": {"keycode": KEY_C, "shift_pressed": false},
+        "flight_exit": {"keycode": KEY_ESCAPE, "shift_pressed": false},
+    }
+    const GAMEPAD_INPUT_ACTIONS := {
+        "flight_takeoff": JOY_BUTTON_A,
+        "flight_pause": JOY_BUTTON_START,
+        "flight_respawn": JOY_BUTTON_X,
+        "flight_altitude_hold": JOY_BUTTON_Y,
+        "flight_acro": GamepadProfile.ACRO_BUTTON,
+        "flight_exit": JOY_BUTTON_B,
+    }
 
     static func default_bindings(profile_name: String) -> Dictionary:
         if profile_name == KeyboardProfile.NAME:
@@ -131,6 +148,61 @@ class ActionContract:
         if profile_name == "GamepadProfile":
             return GAMEPAD_DEFAULT_ACTIONS.duplicate()
         return {}
+
+    static func validate_bindings(bindings: Dictionary) -> Dictionary:
+        var seen := {}
+        for action in ACTIONS:
+            if not bindings.has(action):
+                return {"ok": false, "error": "missing action binding: %s" % action}
+            if typeof(bindings[action]) != TYPE_STRING:
+                return {"ok": false, "error": "action binding must be a string: %s" % action}
+            var binding := String(bindings[action])
+            if binding.is_empty() or binding == "UNBOUND":
+                return {"ok": false, "error": "unbound action: %s" % action}
+            if seen.has(binding):
+                return {"ok": false, "error": "action conflict: %s and %s use %s" % [seen[binding], action, binding]}
+            seen[binding] = action
+        return {"ok": true, "error": ""}
+
+    static func validate_input_map() -> Dictionary:
+        for profile_name in [KeyboardProfile.NAME, "GamepadProfile"]:
+            var binding_result := validate_bindings(default_bindings(profile_name))
+            if not binding_result.ok:
+                return binding_result
+        for action in KEYBOARD_INPUT_ACTIONS:
+            if not InputMap.has_action(action):
+                return {"ok": false, "error": "missing InputMap action: %s" % action}
+            var expected: Dictionary = KEYBOARD_INPUT_ACTIONS[action]
+            var key_match_count := 0
+            for mapped_event in InputMap.action_get_events(action):
+                if mapped_event is InputEventKey:
+                    var key_event := mapped_event as InputEventKey
+                    var key_matches: bool = key_event.keycode == expected.keycode and key_event.physical_keycode == expected.keycode
+                    key_matches = key_matches and key_event.shift_pressed == expected.shift_pressed and not key_event.alt_pressed and not key_event.ctrl_pressed and not key_event.meta_pressed
+                    if not key_matches:
+                        return {"ok": false, "error": "non-canonical keyboard binding: %s" % action}
+                    key_match_count += 1
+                elif mapped_event is InputEventJoypadButton:
+                    if not GAMEPAD_INPUT_ACTIONS.has(action) or int(mapped_event.button_index) != int(GAMEPAD_INPUT_ACTIONS[action]):
+                        return {"ok": false, "error": "non-canonical gamepad binding: %s" % action}
+                else:
+                    return {"ok": false, "error": "unsupported InputMap event: %s" % action}
+            if key_match_count != 1:
+                return {"ok": false, "error": "duplicate/missing keyboard binding: %s" % action}
+        for action in GAMEPAD_INPUT_ACTIONS:
+            if not InputMap.has_action(action):
+                return {"ok": false, "error": "missing InputMap action: %s" % action}
+            var joy_match_count := 0
+            for mapped_event in InputMap.action_get_events(action):
+                if mapped_event is InputEventJoypadButton:
+                    if int(mapped_event.button_index) != int(GAMEPAD_INPUT_ACTIONS[action]):
+                        return {"ok": false, "error": "non-canonical gamepad binding: %s" % action}
+                    joy_match_count += 1
+                elif not mapped_event is InputEventKey:
+                    return {"ok": false, "error": "unsupported InputMap event: %s" % action}
+            if joy_match_count != 1:
+                return {"ok": false, "error": "duplicate/missing gamepad binding: %s" % action}
+        return {"ok": true, "error": ""}
 
     static func glyph(bindings: Dictionary, action: String) -> String:
         return String(bindings.get(action, "UNBOUND"))
