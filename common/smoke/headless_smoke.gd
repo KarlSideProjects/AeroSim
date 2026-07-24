@@ -1128,6 +1128,14 @@ func _verify_px4_actuator_public_path(native: Object) -> bool:
     if invalid_collision_row.size() != 0:
         push_error("Public collision path must reject non-positive simulation rates before touching contact state")
         return false
+    var invalid_energy_args := [
+        Engine.physics_ticks_per_second, 1000, 0.5, 0.5, 0.5, 0.5, false,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -2.0
+    ]
+    if not (native.callv("step_collision_px4_actuator_mode", invalid_energy_args) as PackedFloat64Array).is_empty():
+        push_error("Public collision path must reject invalid negative kinetic-energy limits")
+        return false
     if not native.call("set_body_drag_model", true, 1.0, 1.0, 1.0, 0.1, 0.1, 0.1, 0.0, 0.0, 0.0, 1.225):
         push_error("PX4 telemetry setup must enable body drag")
         return false
@@ -1610,8 +1618,9 @@ func _verify_runtime_actions() -> bool:
         push_error("Playable GUI smoke scene must have a current ChaseCamera Camera3D")
         scene.queue_free()
         return false
-    if (scene.get_node_or_null("DroneBody/DroneMesh") as MeshInstance3D) == null:
-        push_error("Playable GUI smoke scene must expose a visible drone mesh")
+    var drone_visual_loader := scene.get_node_or_null("DroneBody/DroneVisualLoader")
+    if drone_visual_loader == null or not bool(drone_visual_loader.get("model_loaded")):
+        push_error("Playable GUI smoke scene must load the drone visual model")
         scene.queue_free()
         return false
     if (scene.get_node_or_null("GroundPlane") as MeshInstance3D) == null and (scene.get_node_or_null("GridLineX") as MeshInstance3D) == null:

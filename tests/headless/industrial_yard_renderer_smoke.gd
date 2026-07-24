@@ -18,6 +18,11 @@ func _run() -> void:
             push_error("Industrial Yard scene is missing %s" % node_name)
             quit(1)
             return
+    var visual_assets := scene.get_node_or_null("YardVisualAssets") as Node3D
+    if visual_assets == null or visual_assets.find_children("*", "MeshInstance3D", true, false).size() < 5:
+        push_error("Industrial Yard scene must load its Kenney visual asset set")
+        quit(1)
+        return
     for checkpoint_name in ["Checkpoint01", "Checkpoint02", "Checkpoint03"]:
         var checkpoint := scene.get_node("TimeTrial/%s" % checkpoint_name) as Marker3D
         if checkpoint == null or checkpoint.get_node_or_null("DirectionArrow") == null:

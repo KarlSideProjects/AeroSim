@@ -1,4 +1,10 @@
-[gd_scene load_steps=17 format=3]
+[gd_scene load_steps=22 format=3]
+
+[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-a.scn" id="1_building_a"]
+[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-f.scn" id="2_building_f"]
+[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-l.scn" id="3_building_l"]
+[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-q.scn" id="4_building_q"]
+[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/detail-tank.scn" id="5_detail_tank"]
 
 [sub_resource type="StandardMaterial3D" id="MaterialGround"]
 albedo_color = Color(0.16, 0.19, 0.18, 1)
@@ -80,6 +86,30 @@ height = 11.0
 [node name="Sun" type="DirectionalLight3D" parent="."]
 rotation = Vector3(-0.9, -0.55, 0)
 light_energy = 1.5
+
+[node name="YardVisualAssets" type="Node3D" parent="."]
+metadata/asset_license = "CC0"
+metadata/asset_source = "Kenney City Kit Industrial"
+
+[node name="BuildingA" parent="YardVisualAssets" instance=ExtResource("1_building_a")]
+position = Vector3(-13, 0, -13)
+scale = Vector3(4.5, 4.5, 4.5)
+
+[node name="BuildingF" parent="YardVisualAssets" instance=ExtResource("2_building_f")]
+position = Vector3(14, 0, -13)
+scale = Vector3(4.5, 4.5, 4.5)
+
+[node name="BuildingL" parent="YardVisualAssets" instance=ExtResource("3_building_l")]
+position = Vector3(-14, 0, 13)
+scale = Vector3(4.5, 4.5, 4.5)
+
+[node name="BuildingQ" parent="YardVisualAssets" instance=ExtResource("4_building_q")]
+position = Vector3(15, 0, 9)
+scale = Vector3(4.5, 4.5, 4.5)
+
+[node name="DetailTank" parent="YardVisualAssets" instance=ExtResource("5_detail_tank")]
+position = Vector3(12, 1.5, -7)
+scale = Vector3(5.0, 5.0, 5.0)
 
 [node name="Ground" type="MeshInstance3D" parent="."]
 mesh = SubResource("MeshGround")

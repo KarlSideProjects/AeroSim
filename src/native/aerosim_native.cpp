@@ -1259,6 +1259,20 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
             return {};
         }
     }
+    const double contact_values[] = {
+            normal_x, normal_y, normal_z, impulse_x, impulse_y, impulse_z, restitution,
+            resolved_velocity_x, resolved_velocity_y, resolved_velocity_z,
+            resolved_angular_velocity_x, resolved_angular_velocity_y, resolved_angular_velocity_z,
+            max_kinetic_energy_joules,
+    };
+    if (!std::all_of(std::begin(contact_values), std::end(contact_values), [](double value) {
+                return std::isfinite(value);
+            }) || restitution < 0.0 || restitution > 1.0 ||
+            (max_kinetic_energy_joules < 0.0 && max_kinetic_energy_joules != -1.0)) {
+        set_step_error("step_collision_px4_actuator_mode", aerosim::StepStatus::InvalidCommand,
+                "command/contact/config/state");
+        return {};
+    }
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
