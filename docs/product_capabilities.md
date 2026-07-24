@@ -284,7 +284,7 @@ Each recording is one versioned directory containing `manifest.json`, `samples.j
 
 **Status:** Foundation
 
-Ubuntu x86_64 is the Qualification Platform on which every AirSim-class minimum capability must pass together, including PX4 SITL, RPC, the Baseline Sensor Suite, Dataset Recording, the reference environment, and visual gates. Windows and Android may retain Player Mode release lanes, but full Lab Mode parity on those platforms does not block the first qualified release.
+Ubuntu x86_64 is the Qualification Platform on which every AirSim-class minimum capability must pass together, including PX4 SITL, RPC, the Baseline Sensor Suite, Dataset Recording, the reference environment, and visual gates. Windows may retain a non-blocking Player Mode release lane. Android Player Mode is deferred for this release and may be reopened later as a separate non-blocking lane; full Lab Mode parity on non-Ubuntu platforms does not block the first qualified release.
 
 **Minimum acceptance:** One pinned Ubuntu x86_64 release environment passes the full build, native, Godot, AirSim compatibility, PX4 mission, two-vehicle, sensor, dataset, scene, visual, packaging, installation, and headed smoke gates from a clean checkout.
 

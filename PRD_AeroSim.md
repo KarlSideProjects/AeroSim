@@ -3,12 +3,13 @@
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v4.1.6（AirSim-class minimum；2026-07-24 Issue #42 決策同步） |
+| 版本 | v4.1.7（AirSim-class minimum；2026-07-24 Android lane 決策同步） |
 | 文件狀態 | 產品邊界已核准；GitHub issue 同步中 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
+- v4.1.7：Android Player Mode 本期 deferred，不產生、不簽章、不驗收 Android APK 或側載；保留未來可獨立重啟的 Android lane，且不阻擋 Ubuntu minimum。
 - v4.1.5：凍結 v1 輸入映射（不提供玩家重綁）；Industrial Test Range 改以 descriptor 的正式 `SpawnNorth`／`SpawnSouth` 清單循環出生；Keyboard `R`／Xbox `X` 只做 Reset，Xbox `START+X` 才做 Change Spawn，且永不作 Arm/Takeoff；新增 GPU-A Reset/Respawn P99 專用 gate，分別量測 plain X 與 Pause Overlay Reset，各至少 200 次並以 armed、pause off、非零 throttle 已被 physics/control telemetry 接受為終點。
 - v4.1.6：依產品決策移除專用 GPU-A Reset/Respawn 測試與其阻擋門檻；Reset／Change Spawn 改由 GUT 與 headed functional checks 驗證。
 - v4.1.4：Xbox A 的 Arm/Takeoff 必須以目前機體 hover throttle 加受控起飛輔助升至約 1 m，再交回玩家油門；不得使用一次性跳躍速度，X 僅保留 Reset 行為。
@@ -90,7 +91,7 @@ AirSim-class minimum 不是外觀仿製。AeroSim 必須在同一 Godot 產品�
 | 層級 | 平台 | 飛控 | 授權狀態 |
 |---|---|---|---|
 | **AirSim-class minimum** | Ubuntu x86_64 | 自研飛控 + PX4 SITL、Player Mode + Lab Mode | 全部阻擋 Ubuntu qualification |
-| **Player Mode lanes** | Windows / Android | 自研高頻 PID 飛控 | 可獨立交付，不阻擋 Ubuntu minimum |
+| **Player Mode lanes** | Windows；Android（future lane） | 自研高頻 PID 飛控 | Windows 可獨立交付；Android 本期 deferred，均不阻擋 Ubuntu minimum |
 | **Deferred professional module** | 桌面 | Betaflight SITL 獨立行程橋接 | GPL-3.0，隔離發布，須法務核准 |
 
 ### 1.4 發布通道
@@ -101,7 +102,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 |---|---|---|
 | Ubuntu AirSim-class | 私下提供安裝包 + 授權啟用 | 唯一完整 qualification，阻擋 minimum |
 | Windows Player Mode | 私下提供桌面包 | 非阻擋，可獨立發布 |
-| Android Player Mode | 私下提供 APK | 非阻擋，可獨立發布 |
+| Android Player Mode | 本期不承諾交付；保留未來 lane | **Deferred**：本期不產生、不簽章、不驗收；重啟 Android lane 後才恢復驗收 |
 | macOS / iOS | 未承諾 | Deferred |
 | Betaflight module | 桌面獨立安裝 | Deferred，須法務核准 |
 
@@ -472,7 +473,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
 | G6.1 | Ubuntu x86_64 安裝包 ≤ 300 MB；其他 Player Mode lane 各自驗收 | CI-A | LIN |
-| G6.2 | Android APK ≤ 300 MB，側載安裝流程文件化（含簽章與未知來源指引） | CI-A + DEV-M | AND |
+| G6.2 | Android APK ≤ 300 MB，側載安裝流程文件化（含簽章與未知來源指引）；**本期 deferred，Android lane 重啟後才啟用** | — | AND（future） |
 | G6.3 | 授權掃描：Tier 1 產物 0 GPL/LGPL/AGPL；NOTICE 自動生成 | CI-A | SC |
 | G6.4 | 冷啟動至可飛：在 Godot-compatible rendering path 上，桌面 ≤ 15 秒、行動 ≤ 20 秒；不得要求特定 GPU 型號，renderer fallback 後仍須產生可飛畫面並 fail loud 記錄實際 renderer | GPU-A / DEV-M | 各 Lane |
 | G6.5 | 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件） | DEV-M | 各 Lane |
