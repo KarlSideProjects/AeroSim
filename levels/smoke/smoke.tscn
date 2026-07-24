@@ -1,7 +1,8 @@
-[gd_scene load_steps=13 format=3 uid="uid://aerosim_smoke_scene"]
+[gd_scene load_steps=14 format=3 uid="uid://aerosim_smoke_scene"]
 
 [ext_resource type="Script" path="res://common/flight/flight_runtime.gd" id="1_2nq71"]
 [ext_resource type="Script" path="res://common/flight/collision_probe_body.gd" id="2_e6a3t"]
+[ext_resource type="Script" path="res://common/flight/drone_visual_loader.gd" id="3_drone_visual"]
 
 [sub_resource type="SphereShape3D" id="SphereShape3D_drone"]
 radius = 0.1
@@ -53,6 +54,11 @@ fov = 70.0
 unique_name_in_owner = true
 text = "ui.fallback.unavailable"
 
+[node name="VisualLoadStatus" type="Label3D" parent="."]
+visible = false
+position = Vector3(0, 0.45, 0)
+outline_size = 5
+
 [node name="DroneBody" type="RigidBody3D" parent="."]
 script = ExtResource("2_e6a3t")
 gravity_scale = 0.0
@@ -66,6 +72,9 @@ shape = SubResource("SphereShape3D_drone")
 [node name="DroneMesh" type="MeshInstance3D" parent="DroneBody"]
 mesh = SubResource("BoxMesh_drone")
 surface_material_override/0 = SubResource("StandardMaterial3D_drone")
+
+[node name="DroneVisualLoader" type="Node3D" parent="DroneBody"]
+script = ExtResource("3_drone_visual")
 
 [node name="DroneBodySecondary" type="RigidBody3D" parent="."]
 visible = false
@@ -81,6 +90,10 @@ shape = SubResource("SphereShape3D_drone")
 [node name="DroneMesh" type="MeshInstance3D" parent="DroneBodySecondary"]
 mesh = SubResource("BoxMesh_drone")
 surface_material_override/0 = SubResource("StandardMaterial3D_drone_secondary")
+
+[node name="DroneVisualLoader" type="Node3D" parent="DroneBodySecondary"]
+script = ExtResource("3_drone_visual")
+show_load_failure = false
 
 [node name="GroundPlane" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.22, 0)
