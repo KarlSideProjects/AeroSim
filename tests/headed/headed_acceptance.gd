@@ -578,8 +578,8 @@ func _run() -> void:
 	await _settle(10)
 	await _snapshot("05_reset")
 	_expect(runtime.reset_count >= 1, "R resets flight after resume")
-	spawn = runtime.loaded_map.get_node_or_null("SpawnSouth") as Marker3D if runtime.loaded_map != null else null
-	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6 and runtime.drone_body.linear_velocity.length() <= 1e-6 and runtime.drone_body.angular_velocity.length() <= 1e-6, "reset returns to the current SpawnSouth with cleared velocities")
+	spawn = runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D if runtime.loaded_map != null else null
+	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6 and runtime.drone_body.linear_velocity.length() <= 1e-6 and runtime.drone_body.angular_velocity.length() <= 1e-6, "reset returns to the default SpawnNorth with cleared velocities after a fresh map load")
 
 	runtime.quit_on_exit = false
 	_tap(KEY_ESCAPE)
