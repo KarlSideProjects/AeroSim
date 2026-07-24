@@ -125,8 +125,8 @@ actual delivery channel.
 | Gate | Evidence | Result |
 | --- | --- | --- |
 | G6.1 Linux release artifact size | `scripts/check_release_artifacts.py` output | CI verified when the Linux workflow run is green |
-| G6.1/G6.2 Windows/Android artifact sizes | Platform build/export evidence | N/A (build-only lane; not verified by current Linux CI) |
-| G6.2 Android sideload | device log / screen recording | N/A (unverified frozen), not pass |
+| G6.1 Windows artifact size | Platform build/export evidence | N/A (build-only lane; not verified by current Linux CI) |
+| G6.2 Android artifact size / sideload | Platform build/export evidence and device log | Deferred for current release; not run, not pass, not a Linux blocker |
 | G6.3 license scan + NOTICE | CI link + `build/THIRD_PARTY_NOTICES.txt` | CI verified |
 | G6.4 Linux cold start | `build/cold_start/linux.json` from real-display release probe | automation added; not verified until measured release evidence exists |
 | G6.7 delivery drill | `build/delivery_drill/report.json` + actual delivery-channel record | local rehearsal automated; external delivery not verified |

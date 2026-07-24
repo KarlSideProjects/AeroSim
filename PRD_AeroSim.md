@@ -3,7 +3,7 @@
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v4.1.7（AirSim-class minimum；2026-07-24 Android lane 決策同步） |
+| 版本 | v4.1.8（AirSim-class minimum；2026-07-24 UI/UX 成品標準與 Android lane 決策同步） |
 | 文件狀態 | 產品邊界已核准；GitHub issue 同步中 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
@@ -94,6 +94,8 @@ AirSim-class minimum 不是外觀仿製。AeroSim 必須在同一 Godot 產品�
 | **AirSim-class minimum** | Ubuntu x86_64 | 自研飛控 + PX4 SITL、Player Mode + Lab Mode | 全部阻擋 Ubuntu qualification |
 | **Player Mode lanes** | Windows；Android（future lane） | 自研高頻 PID 飛控 | Windows 可獨立交付；Android 本期 deferred，均不阻擋 Ubuntu minimum |
 | **Deferred professional module** | 桌面 | Betaflight SITL 獨立行程橋接 | GPL-3.0，隔離發布，須法務核准 |
+
+> **本期 lane 狀態**：所有 Android／`AND` 專屬 gate 本期均為 **deferred / not run / not pass**；只有明確重啟 Android lane 後才恢復。這些 gate 不得阻擋 Ubuntu qualification；Ubuntu／`LIN` 與 shared-core gate 仍依各自門檻驗收。
 
 ### 1.4 發布通道
 
@@ -359,7 +361,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
 | G0.1 | Desktop Full profile：物理（Jolt+GDExtension 子步進合計，主執行緒，vsync off，排除前 10 秒 warmup，模擬時間 60 秒）P99 每幀 ≤ 3 ms；Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX、NVIDIA GeForce RTX 4060 Ti、driver 580.159.03 僅為可重現效能基準，不是硬體相容性要求 | GPU-A | SC |
-| G0.2 | Mobile High 與 Mobile Base 兩 profile 於基準行動裝置：物理 P99 ≤ 5 ms 且整體 ≥ 60 FPS（量測定義同 G0.1；以 Perfetto 拆解物理/渲染占比） | DEV-M→GPU-A | AND, iOS |
+| G0.2 | Mobile High 與 Mobile Base 兩 profile 於基準行動裝置：物理 P99 ≤ 5 ms 且整體 ≥ 60 FPS（量測定義同 G0.1；以 Perfetto 拆解物理/渲染占比）；Android portion 本期 deferred | DEV-M→GPU-A | AND, iOS（future） |
 | G0.3 | 1000/500 Hz 子步進下四元數積分 10 分鐘無 NaN、範數漂移 < 1e-6 | CI-A | SC |
 | G0.4 | 桌面/行動雙渲染管線同場景資產打通 | GPU-A | SC |
 | G0.5 | Xbox 360 相容 gamepad 於 Ubuntu 完成固定 mapping 確認與飛行輸入；RC 遙控器若未來有需求再以新增 Profile 回補 | DEV-M | LIN |
@@ -427,7 +429,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
 | G4.1 | Reference Performance Profile（Ubuntu 26.04 LTS、AMD Ryzen 9 7945HX、NVIDIA GeForce RTX 4060 Ti、driver 580.159.03）Player Mode 1080p default quality 穩定 60 FPS；僅指定 runner 可阻擋，本機規格不足回報 not-qualified；其他 Godot-compatible GPU 可執行功能驗收，不因未達 reference hardware 阻擋 | GPU-A | LIN |
-| G4.2 | 行動基準機同場景 ≥ 60 FPS（P99 ≥ 45），30 分鐘熱節流後 ≥ 50 FPS | DEV-M | AND, IOS |
+| G4.2 | 行動基準機同場景 ≥ 60 FPS（P99 ≥ 45），30 分鐘熱節流後 ≥ 50 FPS；Android portion 本期 deferred | DEV-M | AND, IOS（future） |
 | G4.3 | GA 交付一張 `Industrial Test Range`：launch area、warehouse/street、obstacle corridor、短 Time Trial route、reset-to-spawn、方向指示與 finish panel；Map Catalog 保留且只有一個真實 entry | GPU-A + DEV-M | LIN |
 | G4.4 | FPV 攝影機：uptilt/FOV/OSD；桌面含類比雜訊濾鏡 | GPU-A | SC |
 | G4.5 | Kenney City Kit (Industrial) CC0 為主要資產，缺口只用 Godot primitives／自製資產；clean checkout 自動 import，不依賴 Unity／Unreal 轉換 | CI-A + GPU-A | LIN |
@@ -443,7 +445,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G4B.4 | 維護者完成固定可用性檢核並於 issue 記錄結論；不要求外部 SUS 樣本 | USR | SC |
 | G4B.5 | 選單深度 ≤ 3 層，自動遍歷驗證 | CI-A | SC |
 | G4B.6 | Rates 介面與 Betaflight 曲線公式一致、即時預覽、JSON 與 Betaflight diff 可逐項核對；**PID/濾波顯示 sim profile 免責提示**（3.5.1 原則 2） | GPU-A | SC |
-| G4B.7 | 觸控布局可自訂持久化，誤觸率 ≤ 1%/分鐘 | USR | AND, IOS |
+| G4B.7 | 觸控布局可自訂持久化，誤觸率 ≤ 1%/分鐘；Android portion 本期 deferred | USR | AND, IOS（future） |
 | G4B.8 | 本地化 zh-TW/en 覆蓋 100%、0 硬編碼字串（CI）；**UI 截斷/溢出稽核於 GPU runner 截圖比對**（headless 不得宣稱涵蓋此項） | CI-A + GPU-A | SC |
 | G4B.9 | UI 動效以 offset transforms 實作、layout 不變（自動斷言）、不阻塞輸入 > 100 ms | GPU-A | SC |
 | G4B.UI1 | **First Fly Flow**：維護者不看說明書——已確認固定 mapping 的相容手把 ≤ 30 秒起飛、未確認 ≤ 90 秒（含完成 Setup Flow）；無控制器時提示與 keyboard fallback 可用，於 issue 記錄計時與結論 | USR | SC |
@@ -460,7 +462,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
 | G5.1 | **逐 OS 控制器閘門**：Linux 以 Xbox 360 相容 gamepad 完成固定 mapping 確認 + 斷線重連；Windows / macOS 為 build-only，控制器實機分項維持 N/A（未驗證凍結） | DEV-M | WIN / MAC / LIN |
-| G5.2 | Android export/build-only；OTG gamepad 實機分項維持 N/A（未驗證凍結） | DEV-M | AND |
+| G5.2 | Android export/build-only；本期 deferred，OTG gamepad 實機分項維持 N/A（未驗證凍結） | — | AND（future） |
 | G5.3 | iOS（若 Lane 續行）：MFi（SDL3 路徑）+ VirtualJoystick（Fixed/Dynamic 雙模式）可完成 G2.3 姿態保持測試 | DEV-M | IOS |
 | G5.4 | 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）：桌面 ≤ 40 ms、行動 ≤ 60 ms | DEV-M | 各 Lane |
 | G5.5 | 固定 canonical 輸入映射與 schema version 跨 session 持久化，斷線重連不丟設定；v1 不提供玩家重綁或 mapping 匯入/匯出 | CI-A | SC |
@@ -476,8 +478,8 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G6.1 | Ubuntu x86_64 安裝包 ≤ 300 MB；其他 Player Mode lane 各自驗收 | CI-A | LIN |
 | G6.2 | Android APK ≤ 300 MB，側載安裝流程文件化（含簽章與未知來源指引）；**本期 deferred，Android lane 重啟後才啟用** | — | AND（future） |
 | G6.3 | 授權掃描：Tier 1 產物 0 GPL/LGPL/AGPL；NOTICE 自動生成 | CI-A | SC |
-| G6.4 | 冷啟動至可飛：在 Godot-compatible rendering path 上，桌面 ≤ 15 秒、行動 ≤ 20 秒；不得要求特定 GPU 型號，renderer fallback 後仍須產生可飛畫面並 fail loud 記錄實際 renderer | GPU-A / DEV-M | 各 Lane |
-| G6.5 | 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件） | DEV-M | 各 Lane |
+| G6.4 | 冷啟動至可飛：在 Godot-compatible rendering path 上，桌面 ≤ 15 秒、行動 ≤ 20 秒；不得要求特定 GPU 型號，renderer fallback 後仍須產生可飛畫面並 fail loud 記錄實際 renderer；Android portion 本期 deferred | GPU-A / DEV-M | 各 Lane（Android future） |
+| G6.5 | 封測 7 日 crash-free session ≥ 99.5%（遙測須 opt-in，私下發行仍須隱私告知文件）；Android portion 本期 deferred | DEV-M | 各 Lane（Android future） |
 | G6.6 | **授權伺服器**：註冊→簽發→JWT 驗證全流程可用；離線寬限期機制（斷網 ≤ 72 小時可玩）；伺服器不可達時明確提示而非靜默鎖死 | CI-A + DEV-M | SC |
 | G6.7 | 交付流程演練：從客戶名單到發送安裝檔+授權金鑰之 SOP 全程演練一次成功，含撤銷授權 | DEV-M | SC |
 | G6.8 | **診斷支援包（回應審查 H10）**：`Settings > Diagnostics > Export Support Bundle` 一鍵匯出——build hash、OS/GPU/裝置資訊、授權狀態、近期 log、控制器 raw 取樣、輸入映射與 mapping schema version、最後錯誤；**自動化稽核：bundle 內 0 個 secrets / JWT / 個資（遮罩驗證）** | CI-A + DEV-M | SC |
