@@ -109,6 +109,8 @@ var rates_slider_labels: Dictionary = {}
 var rates_return_screen := "settings"
 var camera_return_screen := "settings"
 var osd_return_screen := "settings"
+var controller_settings_return_screen := "settings"
+var status_diagram_fullscreen := false
 var render_scale := QualityProfile.DEFAULT_RENDER_SCALE
 var graphics_committed_scale := QualityProfile.DEFAULT_RENDER_SCALE
 var graphics_return_screen := "settings"
@@ -160,6 +162,7 @@ var controller_safety_panel: Control
 var controller_safety_label: Label
 var last_arm_button_press_ms := -1000000
 var last_mode_button_press_ms := -1000000
+var gamepad_pause_pressed := false
 var gamepad_button_time_source: Callable
 var settings_store: RefCounted
 var persisted_gamepad_profile: InputProfiles.GamepadProfile
@@ -1233,6 +1236,8 @@ func _unhandled_input(event: InputEvent) -> void:
         arm_and_takeoff()
     elif event.is_action_pressed("flight_pause") and screen == "flight":
         set_paused(not paused)
+    elif event.is_action_pressed("flight_change_spawn"):
+        change_spawn()
     elif event.is_action_pressed("flight_respawn"):
         respawn()
     elif event.is_action_pressed("flight_acro"):
@@ -2163,8 +2168,9 @@ func respawn() -> void:
         last_error_message = "Respawn blocked: controller_resume_required"
         _refresh_flight_hud()
         return
+    var was_armed := _flight_control_armed()
     reset_count += 1
-    _reset_airsim_flight_state()
+    _reset_airsim_flight_state(true)
     _airsim_disarm_requested = false
     takeoff_assist_active = false
     takeoff_assist_throttle = 0.0
@@ -2172,17 +2178,19 @@ func respawn() -> void:
     flight_mode = "ANGLE"
     takeoff_requested = true
     set_paused(false)
-    if native != null:
-        native.call("reset_flight")
-        if native.has_method("disarm_flight_control"):
-            native.call("disarm_flight_control")
     if px4_sitl_bridge != null:
-        px4_sitl_bridge.stop()
-        px4_sitl_bridge.start()
-        _px4_lockstep_sensor_pending = false
+        if not was_armed:
+            px4_sitl_bridge.stop()
+            px4_sitl_bridge.start()
+            _px4_lockstep_sensor_pending = false
     update_fallback_status()
     if not reset_to_spawn():
         return
+    if was_armed:
+        if px4_sitl_bridge != null:
+            px4_sitl_bridge.arm_disarm(true)
+        elif native != null and native.has_method("arm_flight_control"):
+            native.call("arm_flight_control", 0.0)
     if time_trial != null:
         time_trial.start()
     if drone_body != null:
@@ -2201,6 +2209,10 @@ func change_map() -> void:
     takeoff_requested = false
     set_paused(false)
     enter_preflight()
+
+
+func change_spawn() -> void:
+    respawn()
 
 func load_map(map_id: String) -> bool:
     var maps := FreeFlightMap.new()
@@ -2546,9 +2558,9 @@ func _set_map_error(message: String) -> bool:
     push_warning(message)
     return false
 
-func _reset_airsim_flight_state() -> void:
+func _reset_airsim_flight_state(preserve_armed: bool = false) -> void:
     _airsim_api_control = false
-    _airsim_disarm_requested = true
+    _airsim_disarm_requested = not preserve_armed
     _airsim_command_state.clear()
     _airsim_hold_controls.clear()
     _airsim_command_remaining_frames = 0
@@ -2562,20 +2574,21 @@ func _reset_airsim_flight_state() -> void:
     _airsim_angular_acceleration = Vector3.ZERO
     if airsim_rpc_server != null:
         airsim_rpc_server.reset_vehicle_control_state()
-    if px4_sitl_bridge != null:
+    if px4_sitl_bridge != null and not preserve_armed:
         px4_sitl_bridge.arm_disarm(false)
         px4_sitl_bridge.stop()
         _px4_lockstep_sensor_pending = false
-    if native != null and native.has_method("disarm_flight_control"):
+    if not preserve_armed and native != null and native.has_method("disarm_flight_control"):
         native.call("disarm_flight_control")
-    if _airsim_secondary_native != null and _airsim_secondary_native.has_method("disarm_flight_control"):
+    if not preserve_armed and _airsim_secondary_native != null and _airsim_secondary_native.has_method("disarm_flight_control"):
         _airsim_secondary_native.call("disarm_flight_control")
     _reset_secondary_kinematic_contexts()
     for name in _airsim_vehicle_contexts:
         var context: Dictionary = _airsim_vehicle_contexts[name]
         context["api_control"] = false
-        context["armed"] = false
-        context["disarm_requested"] = true
+        if not preserve_armed:
+            context["armed"] = false
+            context["disarm_requested"] = true
         context["command_state"] = {}
         context["hold_controls"] = {}
         context["command_remaining_frames"] = 0
@@ -2724,6 +2737,8 @@ func set_paused(value: bool, sync_session: bool = true) -> void:
         if not bool(replay_pause_result.get("ok", false)):
             push_error("Complete replay pause recording failed: %s" % String(replay_pause_result.get("diagnostic_message", "unknown error")))
     paused = value
+    if not value:
+        status_diagram_fullscreen = false
     if body_drag_debug_panel != null and body_drag_debug_panel.has_method("set_paused"):
         body_drag_debug_panel.call("set_paused", value)
     if sync_session and airsim_session != null:
@@ -3029,9 +3044,11 @@ func _refresh_localized_ui() -> void:
         "FlightHud/LicensePanel/Rows/Exit": "ui.action.exit",
         "FlightHud/PausePanel/Rows/Title": "ui.pause.title",
         "FlightHud/PausePanel/Rows/Resume": "ui.pause.resume",
-        "FlightHud/PausePanel/Rows/Retry": "ui.action.retry",
-        "FlightHud/PausePanel/Rows/ChangeMap": "ui.action.change_map",
+        "FlightHud/PausePanel/Rows/Reset": "ui.action.reset",
+        "FlightHud/PausePanel/Rows/ChangeSpawn": "ui.action.change_spawn",
         "FlightHud/PausePanel/Rows/Rates": "ui.settings.rates",
+        "FlightHud/PausePanel/Rows/ControllerMonitor": "ui.settings.controller_monitor",
+        "FlightHud/PausePanel/Rows/StatusDiagram": "ui.settings.status_diagram",
         "FlightHud/PausePanel/Rows/Exit": "ui.action.exit",
         "FlightHud/FinishPanel/Rows/Retry": "ui.action.retry",
         "FlightHud/FinishPanel/Rows/ChangeMap": "ui.action.change_map",
@@ -3433,7 +3450,7 @@ func _build_controller_settings_panel() -> void:
     var back_button := Button.new()
     back_button.name = "Back"
     back_button.text = _t("ui.action.back")
-    back_button.pressed.connect(show_settings)
+    back_button.pressed.connect(_close_controller_settings)
     rows.add_child(back_button)
 
 func show_main_menu() -> void:
@@ -3465,7 +3482,8 @@ func show_settings() -> void:
     if graphics_button != null and is_inside_tree():
         graphics_button.grab_focus()
 
-func show_controller_settings() -> void:
+func show_controller_settings(return_screen: String = "settings") -> void:
+    controller_settings_return_screen = return_screen if return_screen in ["flight", "settings"] else "settings"
     screen = "controller_settings"
     controller_monitor_refresh_count = 0
     _refresh_controller_settings()
@@ -3473,6 +3491,11 @@ func show_controller_settings() -> void:
     var reset_button := controller_settings_panel.get_node_or_null("Rows/ResetXboxDefault") as Button if controller_settings_panel != null else null
     if reset_button != null and reset_button.is_visible_in_tree():
         reset_button.grab_focus()
+
+
+func _close_controller_settings() -> void:
+    screen = controller_settings_return_screen
+    _refresh_flight_hud()
 
 
 func show_rates(return_screen: String = "settings") -> void:
@@ -4006,9 +4029,9 @@ func _build_pause_panel() -> void:
     panel.name = "PausePanel"
     panel.set_anchors_preset(Control.PRESET_CENTER)
     panel.offset_left = -170.0
-    panel.offset_top = -120.0
+    panel.offset_top = -240.0
     panel.offset_right = 170.0
-    panel.offset_bottom = 120.0
+    panel.offset_bottom = 240.0
     pause_panel = panel
     flight_hud_layer.add_child(panel)
 
@@ -4024,16 +4047,16 @@ func _build_pause_panel() -> void:
     resume.text = _t("ui.pause.resume")
     resume.pressed.connect(func() -> void: set_paused(false))
     rows.add_child(resume)
-    var retry := Button.new()
-    retry.name = "Retry"
-    retry.text = _t("ui.action.retry")
-    retry.pressed.connect(retry_time_trial)
-    rows.add_child(retry)
-    var change := Button.new()
-    change.name = "ChangeMap"
-    change.text = _t("ui.action.change_map")
-    change.pressed.connect(change_map)
-    rows.add_child(change)
+    var reset := Button.new()
+    reset.name = "Reset"
+    reset.text = _t("ui.action.reset")
+    reset.pressed.connect(respawn)
+    rows.add_child(reset)
+    var change_spawn_button := Button.new()
+    change_spawn_button.name = "ChangeSpawn"
+    change_spawn_button.text = _t("ui.action.change_spawn")
+    change_spawn_button.pressed.connect(change_spawn)
+    rows.add_child(change_spawn_button)
     var rates := Button.new()
     rates.name = "Rates"
     rates.text = _t("ui.settings.rates")
@@ -4049,11 +4072,28 @@ func _build_pause_panel() -> void:
     osd.text = _t("ui.settings.osd")
     osd.pressed.connect(show_osd.bind("flight"))
     rows.add_child(osd)
+    var controller_monitor := Button.new()
+    controller_monitor.name = "ControllerMonitor"
+    controller_monitor.text = _t("ui.settings.controller_monitor")
+    controller_monitor.pressed.connect(show_controller_settings.bind("flight"))
+    rows.add_child(controller_monitor)
+    var status_diagram_button := Button.new()
+    status_diagram_button.name = "StatusDiagram"
+    status_diagram_button.text = _t("ui.settings.status_diagram")
+    status_diagram_button.pressed.connect(_show_status_diagram_from_pause)
+    rows.add_child(status_diagram_button)
     var exit := Button.new()
     exit.name = "Exit"
     exit.text = _t("ui.action.exit")
     exit.pressed.connect(request_exit)
     rows.add_child(exit)
+
+
+func _show_status_diagram_from_pause() -> void:
+    status_diagram_fullscreen = true
+    if pause_panel != null:
+        pause_panel.hide()
+    _refresh_flight_hud()
 
 
 func _build_controller_safety_panel() -> void:
@@ -4272,7 +4312,7 @@ func _refresh_flight_hud() -> void:
         return
     var visible_error_message := _localize_fallback_message(last_error_message)
     if status_diagram != null:
-        status_diagram.call("set_layout_mode", "full" if screen == "lab_mode" else "compact")
+        status_diagram.call("set_layout_mode", "full" if screen == "lab_mode" or status_diagram_fullscreen else "compact")
     if main_menu_layer != null:
         main_menu_layer.visible = screen in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
     if body_drag_debug_panel != null and body_drag_debug_panel.has_method("set_screen_visible"):
@@ -4297,7 +4337,7 @@ func _refresh_flight_hud() -> void:
         if status_margin != null:
             status_margin.visible = screen != "controller_confirmation"
     if pause_panel != null:
-        pause_panel.visible = paused and screen == "flight"
+        pause_panel.visible = paused and screen == "flight" and not status_diagram_fullscreen
     if camera_panel != null:
         camera_panel.visible = screen == "camera"
     if osd_panel != null:
@@ -4525,6 +4565,12 @@ func _normalize_gamepad_axis(raw: float, deadzone: float) -> float:
 func _handle_gamepad_button(event: InputEventJoypadButton) -> bool:
     if not _has_active_gamepad_profile() or event.device != session_gamepad_device_id:
         return false
+    if event.button_index == JOY_BUTTON_START:
+        gamepad_pause_pressed = event.pressed
+        return false
+    if event.button_index == JOY_BUTTON_X and event.pressed and gamepad_pause_pressed and screen == "flight":
+        change_spawn()
+        return true
     var profile := session_gamepad_profile
     var is_arm := event.button_index == profile.arm_button
     var is_mode := event.button_index == profile.mode_button

@@ -55,3 +55,17 @@ func test_throttle_stays_sticky_inside_the_deadzone() -> void:
         0.000001,
         "Deadzone noise must not make an armed aircraft's sticky throttle jump."
     )
+
+
+func test_action_contract_has_two_profile_defaults_and_rejects_conflicts() -> void:
+    var keyboard := InputProfiles.ActionContract.default_bindings("KeyboardProfile")
+    var gamepad := InputProfiles.ActionContract.default_bindings("GamepadProfile")
+    assert_eq(keyboard["pause"], "P")
+    assert_eq(keyboard["change_spawn"], "SHIFT+R")
+    assert_eq(gamepad["reset"], "X")
+    assert_eq(gamepad["change_spawn"], "START+X")
+
+    var conflict := InputProfiles.ActionContract.rebind(keyboard, "reset", "P")
+    assert_false(conflict.ok)
+    assert_eq(conflict.conflicts, ["pause"])
+    assert_eq(InputProfiles.ActionContract.glyph(keyboard, "reset"), "R")

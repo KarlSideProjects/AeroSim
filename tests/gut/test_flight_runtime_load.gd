@@ -1548,6 +1548,56 @@ func test_set_paused_freezes_and_sleeps_secondary_until_resume() -> void:
     runtime.free()
 
 
+func test_pause_panel_exposes_the_frozen_overlay_contract() -> void:
+    var runtime := FlightRuntime.new()
+    runtime.flight_hud_layer = CanvasLayer.new()
+    runtime.add_child(runtime.flight_hud_layer)
+
+    runtime._build_pause_panel()
+
+    var names := []
+    for child in runtime.pause_panel.get_node("Rows").get_children():
+        if child is Button:
+            names.append(String(child.name))
+    assert_eq(names, [
+        "Resume",
+        "Reset",
+        "ChangeSpawn",
+        "Rates",
+        "Camera",
+        "OSD",
+        "ControllerMonitor",
+        "StatusDiagram",
+        "Exit",
+    ])
+    runtime.free()
+
+
+func test_respawn_preserves_armed_state_and_resets_without_disarm() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    runtime.native = FakeNative.new()
+    runtime.native.armed = true
+    runtime.screen = "flight"
+    runtime.takeoff_requested = true
+
+    runtime.respawn()
+
+    assert_true(runtime.native.armed)
+    assert_false(runtime.native.disarmed)
+    assert_true(runtime.takeoff_requested)
+    assert_false(runtime.paused)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
 func test_participant_mode_is_independent_and_hides_debug_panel_input() -> void:
     var runtime_script := load("res://common/flight/flight_runtime.gd")
     var panel_script := load("res://addons/debug_api/aerosim_body_drag_panel.gd")

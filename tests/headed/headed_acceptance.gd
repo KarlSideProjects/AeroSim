@@ -455,11 +455,11 @@ func _run() -> void:
 	_expect(not runtime.paused, "pause overlay resumes the same flight")
 	_tap(KEY_P)
 	await _settle(2)
-	var change_map_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/ChangeMap")
-	if change_map_button != null:
-		_click(change_map_button)
+	var change_spawn_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/ChangeSpawn")
+	if change_spawn_button != null:
+		_click(change_spawn_button)
 	await _settle(4)
-	_expect(runtime.screen == "preflight" and runtime.loaded_map_id == "industrial_yard" and not runtime.paused, "Change Map returns to the sole Industrial Yard preflight")
+	_expect(runtime.screen == "flight" and runtime.loaded_map_id == "industrial_yard" and not runtime.paused, "Change Spawn resets the current Industrial Yard segment")
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()

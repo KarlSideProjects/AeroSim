@@ -101,6 +101,53 @@ class GamepadProfile:
         profile.deadzone = float(source["deadzone"])
         return profile
 
+
+class KeyboardProfile:
+    const NAME := "KeyboardProfile"
+    const DEFAULT_ACTIONS := {
+        "pause": "P",
+        "reset": "R",
+        "change_spawn": "SHIFT+R",
+        "exit": "ESC",
+        "arm": "T",
+        "mode": "C",
+    }
+
+
+class ActionContract:
+    const ACTIONS := ["pause", "reset", "change_spawn", "exit", "arm", "mode"]
+    const GAMEPAD_DEFAULT_ACTIONS := {
+        "pause": "START",
+        "reset": "X",
+        "change_spawn": "START+X",
+        "exit": "B",
+        "arm": "A",
+        "mode": "Y",
+    }
+
+    static func default_bindings(profile_name: String) -> Dictionary:
+        if profile_name == KeyboardProfile.NAME:
+            return KeyboardProfile.DEFAULT_ACTIONS.duplicate()
+        if profile_name == "GamepadProfile":
+            return GAMEPAD_DEFAULT_ACTIONS.duplicate()
+        return {}
+
+    static func rebind(bindings: Dictionary, action: String, glyph: String) -> Dictionary:
+        if not ACTIONS.has(action):
+            return {"ok": false, "error": "unknown action: %s" % action, "bindings": bindings}
+        var candidate := bindings.duplicate()
+        candidate[action] = glyph
+        var conflicts: Array[String] = []
+        for other_action in candidate:
+            if other_action != action and candidate[other_action] == glyph:
+                conflicts.append(String(other_action))
+        if not conflicts.is_empty():
+            return {"ok": false, "error": "binding conflicts with %s" % ", ".join(conflicts), "conflicts": conflicts, "bindings": bindings}
+        return {"ok": true, "error": "", "conflicts": [], "bindings": candidate}
+
+    static func glyph(bindings: Dictionary, action: String) -> String:
+        return String(bindings.get(action, "UNBOUND"))
+
 static func fallback_status(connected_joypads: Array) -> String:
     if connected_joypads.is_empty():
         return "No controller detected; KeyboardProfile fallback active (non-sim control)"
