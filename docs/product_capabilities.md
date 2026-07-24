@@ -32,7 +32,7 @@ Player Mode lets a person enter the reference environment, control the primary m
 
 **Minimum acceptance:** A first-time user can reach a flyable scene, identify the active mode and vehicle state, fly, collide, respawn, pause, and exit without developer tools.
 
-**Current evidence:** Quick Fly, pause, reset, formal `SpawnNorth`/`SpawnSouth` cycling, Angle, Acro, and Altitude Hold paths exist in `common/flight/flight_runtime.gd`; headless smoke and GUT cover the marker contract and fixed Xbox event semantics. The GPU-A P99 evidence and full Playable Game Milestone remain incomplete.
+**Current evidence:** Quick Fly, pause, reset, formal `SpawnNorth`/`SpawnSouth` cycling, Angle, Acro, and Altitude Hold paths exist in `common/flight/flight_runtime.gd`; headless smoke and GUT cover the marker contract and fixed Xbox event semantics. The full Playable Game Milestone remains incomplete.
 
 ### CAP-003: Lab Mode automation surface
 

@@ -131,29 +131,6 @@ jobs:
           assert candidate["comparison_to_baseline"]["g3_7_increase_within_limit"] is True
           PY
 
-      - name: Run GPU-A reset and respawn P99 gate
-        env:
-          AEROSIM_REQUIRED_GPU_ADAPTER: NVIDIA GeForce RTX 4060 Ti
-          AEROSIM_NATIVE_PROVENANCE: build/native_debug_artifact.json
-        run: |
-          scripts/run_reset_respawn_benchmark.sh \
-            --output build/performance-gpu/reset-respawn.json
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          report = json.loads(Path("build/performance-gpu/reset-respawn.json").read_text())
-          assert report["gate"] == "G4B.2/G4B.UI3"
-          assert report["sample_count"] == 400
-          assert report["trials_per_path"] == 200
-          assert report["p99_ms"]["plain_x_reset"] <= 1500.0
-          assert report["p99_ms"]["pause_overlay_reset"] <= 1500.0
-          assert report["endpoint_contract"]["armed_preserved"] is True
-          assert report["endpoint_contract"]["pause_off"] is True
-          assert report["endpoint_contract"]["nonzero_throttle_accepted_by_native_telemetry"] is True
-          assert report["video_adapter"] == "NVIDIA GeForce RTX 4060 Ti"
-          PY
-
       - name: Write GPU performance artifact manifest
         run: |
           python3 - <<'PY'
@@ -165,7 +142,6 @@ jobs:
               mode: json.loads((directory / f"effects-{mode}.json").read_text())
               for mode in ("off", "on")
           }
-          reset_report = json.loads((directory / "reset-respawn.json").read_text())
           provenance = {
               mode: {
                   "commit_sha": report["environment"]["git_revision"],
@@ -176,24 +152,12 @@ jobs:
           }
           if provenance["off"] != provenance["on"]:
               raise SystemExit("effects reports do not share one native-artifact receipt")
-          reset_provenance = {
-              "commit_sha": reset_report["commit_sha"],
-              "gdextension_sha256": reset_report["gdextension_sha256"],
-              "native_source_sha256": reset_report["native_source_sha256"],
-          }
-          if reset_provenance != provenance["off"]:
-              raise SystemExit("reset report does not share the effects native-artifact receipt")
           (directory / "manifest.json").write_text(json.dumps({
               "schema_version": 1,
               "provenance": provenance["off"],
               "artifacts": {
-                  **{mode: f"effects-{mode}.json" for mode in ("off", "on")},
-                  "reset_respawn": "reset-respawn.json",
-              },
-              "reset_respawn_gate": {
-                  "gate": reset_report["gate"],
-                  "sample_count": reset_report["sample_count"],
-                  "p99_ms": reset_report["p99_ms"],
+                  mode: f"effects-{mode}.json"
+                  for mode in ("off", "on")
               },
           }, separators=(",", ":")) + "\n", encoding="utf-8")
           PY

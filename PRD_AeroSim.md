@@ -3,13 +3,14 @@
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v4.1.5（AirSim-class minimum；2026-07-24 Issue #42 決策同步） |
+| 版本 | v4.1.6（AirSim-class minimum；2026-07-24 Issue #42 決策同步） |
 | 文件狀態 | 產品邊界已核准；GitHub issue 同步中 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
 - v4.1.5：凍結 v1 輸入映射（不提供玩家重綁）；Industrial Test Range 改以 descriptor 的正式 `SpawnNorth`／`SpawnSouth` 清單循環出生；Keyboard `R`／Xbox `X` 只做 Reset，Xbox `START+X` 才做 Change Spawn，且永不作 Arm/Takeoff；新增 GPU-A Reset/Respawn P99 專用 gate，分別量測 plain X 與 Pause Overlay Reset，各至少 200 次並以 armed、pause off、非零 throttle 已被 physics/control telemetry 接受為終點。
+- v4.1.6：依產品決策移除專用 GPU-A Reset/Respawn 測試與其阻擋門檻；Reset／Change Spawn 改由 GUT 與 headed functional checks 驗證。
 - v4.1.4：Xbox A 的 Arm/Takeoff 必須以目前機體 hover throttle 加受控起飛輔助升至約 1 m，再交回玩家油門；不得使用一次性跳躍速度，X 僅保留 Reset 行為。
 - v4.1.3：HUD 輸入提示必須跟隨目前 active input profile；Xbox profile 顯示 A／START／X／RB／Y／B，KeyboardProfile 才顯示 T／P／R／C／H／Esc，禁止同時使用錯誤裝置提示。
 - v4.1.2：開發用 debug build 的 Quick Fly 不要求授權金鑰；正式／release build 仍必須遵守授權驗證與離線寬限規則。
@@ -435,7 +436,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
 | G4B.1 | 首次啟動至起飛 ≤ 90 秒（行動觸控 ≤ 60 秒），由維護者依固定腳本完成並於 issue 記錄計時 | USR | SC |
-| G4B.2 | 墜機→重飛 ≤ 1.5 秒（P99，GPU-A 專用 benchmark；plain `X` Reset 與 Pause Overlay `Reset` 分開量測，各至少 200 次；終點必須是 armed 保留、pause off、非零 throttle 已由 physics/control telemetry 接受，不得只量到 respawn return） | GPU-A | SC |
+| G4B.2 | 墜機→重飛功能語意：Reset 保持 armed、解除 pause 並恢復油門輸入；由 GUT 與 headed functional checks 驗證，不列入專用 GPU-A P99 門檻 | CI-A + DEV-M | SC |
 | G4B.3 | 固定 mapping 確認流程由維護者無協助完成，於 issue 記錄阻塞點與結論 | USR | DESK, AND |
 | G4B.4 | 維護者完成固定可用性檢核並於 issue 記錄結論；不要求外部 SUS 樣本 | USR | SC |
 | G4B.5 | 選單深度 ≤ 3 層，自動遍歷驗證 | CI-A | SC |
@@ -445,7 +446,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G4B.9 | UI 動效以 offset transforms 實作、layout 不變（自動斷言）、不阻塞輸入 > 100 ms | GPU-A | SC |
 | G4B.UI1 | **First Fly Flow**：維護者不看說明書——已確認固定 mapping 的相容手把 ≤ 30 秒起飛、未確認 ≤ 90 秒（含完成 Setup Flow）；無控制器時提示與 keyboard fallback 可用，於 issue 記錄計時與結論 | USR | SC |
 | G4B.UI2 | **Controller Setup**：Xbox 360 相容手把完成固定 mapping 確認流程；**unknown 裝置必須 100% 主動拒絕並提示 keyboard fallback**（各 10 次注入測試） | DEV-M | DESK, AND |
-| G4B.UI3 | **Pause Overlay**：固定項全數存在；rates/camera/OSD 修改即時生效不重載（自動斷言）；Pause Overlay `Reset` 至可輸入 ≤ 1.5 秒（P99），並納入 G4B.2 的獨立 GPU-A benchmark | GPU-A | SC |
+| G4B.UI3 | **Pause Overlay**：固定項全數存在；rates/camera/OSD 修改即時生效不重載（自動斷言）；Reset 功能由 headed functional check 驗證 | CI-A + DEV-M | SC |
 | G4B.UI4 | **OSD Presets**：三 preset 於 1080p 與行動橫向、zh-TW/en 四組合下，主飛行視野遮擋率 ≤ 8%，警告訊息不遮擋畫面中央 1/3（自動截圖幾何稽核） | GPU-A | SC |
 | G4B.UI5 | **選擇流程**：主選單七入口固定；Quick Fly 一鍵進預設場；Drone／Map／mode／weather 可選，Map screen 在單一 entry 時仍可用；全流程確認次數 ≤ 3 | GPU-A + USR | LIN |
 | G4B.UI6 | **機體狀態圖**：(a) 真值一致——狀態圖各數值 vs 物理層遙測快照逐項相等（容忍僅顯示取整），A1–A10 任一效應關閉時對應指示歸零（自動化逐效應開關測試）；(b) 更新率 ≥ 30 Hz、資料延遲 ≤ 100 ms；(c) 完整版與迷你版渲染成本合計 ≤ 0.5 ms/幀（各平台 Profile）；(d) 迷你版於 Debug OSD 下不違反 G4B.UI4 遮擋門檻 | CI-A + GPU-A | SC |

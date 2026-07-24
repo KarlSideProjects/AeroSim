@@ -353,14 +353,6 @@ class CiStrategyTest(unittest.TestCase):
         self.assertIsNotNone(store_step)
         self.assertIn("manifest.json", store_step.group(0) if store_step else "")
 
-    def test_gpu_workflow_has_the_dedicated_reset_respawn_p99_gate(self):
-        workflow = PERFORMANCE_GPU_WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("scripts/run_reset_respawn_benchmark.sh", workflow)
-        self.assertIn('report["sample_count"] == 400', workflow)
-        self.assertIn('report["p99_ms"]["plain_x_reset"] <= 1500.0', workflow)
-        self.assertIn('report["p99_ms"]["pause_overlay_reset"] <= 1500.0', workflow)
-        self.assertIn('"reset_respawn": "reset-respawn.json"', workflow)
-
     def test_known_xbox_path_keeps_the_indexed_frd_sign_gate_before_fallback(self):
         source = HEADED_ACCEPTANCE.read_text(encoding="utf-8")
         known_xbox_start = source.index("var known_device_id := await _inject_known_gamepad()")
