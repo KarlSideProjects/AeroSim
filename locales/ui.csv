@@ -237,6 +237,7 @@ ui.error.respawn_blocked_resume,Respawn blocked: controller_resume_required,重�
 ui.error.resume_blocked_throttle,Resume blocked: throttle_not_low,繼續受阻：油門未在低位
 ui.error.settings_recovered,Settings recovered to factory defaults,設定已恢復原廠預設
 ui.error.map_load_failed,Cannot load Free Flight map,無法載入 Free Flight 地圖
+ui.error.drone_model_load_failed,DRONE MODEL LOAD FAILED | FALLBACK MESH ACTIVE,無人機模型載入失敗 | 啟用 fallback 網格
 ui.error.license_diagnostics_requested,license diagnostics requested,已要求授權診斷
 ui.error.license_request_failed,License request failed: %s,授權要求失敗：%s
 ui.error.license_network_failed,License network failed: %s,授權網路失敗：%s

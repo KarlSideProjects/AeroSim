@@ -1,7 +1,9 @@
 extends Node3D
 
+const Localization = preload("res://common/flight/localization.gd")
 const MODEL_PATH := "res://assets/third_party/free3d_drone/drone_costum_godot.scn"
 const MODEL_SCALE := Vector3(0.03, 0.03, 0.03)
+const LOAD_FAILURE_KEY := "ui.error.drone_model_load_failed"
 
 @export_file("*.scn") var model_path := MODEL_PATH
 @export var show_load_failure := true
@@ -35,4 +37,4 @@ func _show_load_failure() -> void:
     var status := get_node_or_null("../../VisualLoadStatus") as Label3D
     if status != null:
         status.visible = show_load_failure
-        status.text = "DRONE MODEL LOAD FAILED\nFALLBACK MESH ACTIVE"
+        status.text = Localization.translate(LOAD_FAILURE_KEY)

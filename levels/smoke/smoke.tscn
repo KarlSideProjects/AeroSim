@@ -57,7 +57,6 @@ text = "ui.fallback.unavailable"
 [node name="VisualLoadStatus" type="Label3D" parent="."]
 visible = false
 position = Vector3(0, 0.45, 0)
-text = "DRONE MODEL LOAD FAILED\nFALLBACK MESH ACTIVE"
 outline_size = 5
 
 [node name="DroneBody" type="RigidBody3D" parent="."]
