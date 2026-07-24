@@ -1176,6 +1176,23 @@ func _run_cold_start_probe() -> void:
     quick_fly()
     accept_fallback()
     await RenderingServer.frame_post_draw
+    var frame_marker_path := _cold_start_arg("--aerosim-cold-start-frame-marker")
+    if not frame_marker_path.is_empty():
+        var frame_marker := FileAccess.open(frame_marker_path, FileAccess.WRITE)
+        if frame_marker == null:
+            push_error("Cannot write cold-start frame marker: %s" % frame_marker_path)
+            get_tree().quit(1)
+            return
+        frame_marker.store_string(JSON.stringify({
+            "stage": "frame_post_draw",
+            "display_driver": DisplayServer.get_name(),
+            "rendering_method": RenderingServer.get_current_rendering_method(),
+            "rendering_driver": RenderingServer.get_current_rendering_driver_name(),
+            "preflight_ready": native != null and screen == "preflight" and not takeoff_requested and not paused,
+            "frame_post_draw": true,
+            "screen": screen,
+        }))
+        frame_marker.close()
     var screenshot_path := _cold_start_arg("--aerosim-cold-start-screenshot")
     var screenshot := get_viewport().get_texture().get_image()
     var screenshot_written := not screenshot_path.is_empty() and screenshot.save_png(screenshot_path) == OK
