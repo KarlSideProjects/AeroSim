@@ -9,6 +9,7 @@
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
+- v4.1.8：確認第一版 UI/UX 標準由 CAP-006/G4.6 的完整可玩成品承擔；G2.9 僅保留為未來 Betaflight 開發對照，不作 UI/UX 或 Ubuntu qualification 門檻。
 - v4.1.7：Android Player Mode 本期 deferred，不產生、不簽章、不驗收 Android APK 或側載；保留未來可獨立重啟的 Android lane，且不阻擋 Ubuntu minimum。
 - v4.1.5：凍結 v1 輸入映射（不提供玩家重綁）；Industrial Test Range 改以 descriptor 的正式 `SpawnNorth`／`SpawnSouth` 清單循環出生；Keyboard `R`／Xbox `X` 只做 Reset，Xbox `START+X` 才做 Change Spawn，且永不作 Arm/Takeoff；新增 GPU-A Reset/Respawn P99 專用 gate，分別量測 plain X 與 Pause Overlay Reset，各至少 200 次並以 armed、pause off、非零 throttle 已被 physics/control telemetry 接受為終點。
 - v4.1.6：依產品決策移除專用 GPU-A Reset/Respawn 測試與其阻擋門檻；Reset／Change Spawn 改由 GUT 與 headed functional checks 驗證。
@@ -402,7 +403,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G2.6 | Altitude Hold：氣壓計噪音開啟，60 秒高度漂移 ≤ ±15 cm | CI-A | SC |
 | G2.7 | 手感驗收：維護者以固定情境盲測 Acro 手感，於 issue 記錄比較結果與可操作性結論；不要求外部飛手樣本或真機 blackbox 錨定題 | USR | SC |
 | G2.8 | **豁免真機 blackbox 真值重播**：目前不要求真機資料；保留 replay harness 供未來取得合規資料時重啟驗證 | — | — |
-| G2.9 | **SITL 交叉驗證**：同輸入分別餵自研飛控與 Betaflight SITL（開發環境工具，不隨 Tier 1 發布），姿態響應趨勢相關係數 ≥ 0.85（此為自研飛控之健全性檢查，非等價承諾） | CI-A | SC |
+| G2.9 | **SITL 交叉驗證（deferred）**：未來如需 Betaflight 對照，再以同輸入比較自研飛控與 Betaflight SITL；它是開發環境信心檢查，不隨 Tier 1 發布、不作 UI/UX 標準，也不阻擋 Ubuntu qualification | — | T2（future） |
 
 ---
 
@@ -430,7 +431,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G4.3 | GA 交付一張 `Industrial Test Range`：launch area、warehouse/street、obstacle corridor、短 Time Trial route、reset-to-spawn、方向指示與 finish panel；Map Catalog 保留且只有一個真實 entry | GPU-A + DEV-M | LIN |
 | G4.4 | FPV 攝影機：uptilt/FOV/OSD；桌面含類比雜訊濾鏡 | GPU-A | SC |
 | G4.5 | Kenney City Kit (Industrial) CC0 為主要資產，缺口只用 Godot primitives／自製資產；clean checkout 自動 import，不依賴 Unity／Unreal 轉換 | CI-A + GPU-A | LIN |
-| G4.6 | **Playable Game Milestone**：先通過自動化與 headed checks，再由維護者在 Ubuntu 真實 display 親眼看到並親自完成七入口 → Controller／Drone／單一 Map 選擇 → Quick Fly → production vehicle 飛行／碰撞／pause／respawn → 短 Time Trial finish → quit，於 issue 留言確認；全程無 placeholder 或 developer-only state，Codex Critical/High = 0。此 gate 通過後才開始第一次正式人工視覺／可用性審核與初始 Approved Visual Reference 核准 | CI-A + GPU-A + DEV-M + Codex | LIN |
+| G4.6 | **Playable Game Milestone／第一版 UI/UX 成品標準**：先通過自動化與 headed checks，再由維護者在 Ubuntu 真實 display 親眼看到並親自完成七入口 → Controller／Drone／單一 Map 選擇 → Quick Fly → production vehicle 飛行／碰撞／pause／respawn → 短 Time Trial finish → quit，於 issue 留言確認；這個完整可玩的 packaged game 是第一版 UI/UX 與遊戲流程的成品參考標準，全程無 placeholder 或 developer-only state，Codex Critical/High = 0。此 gate 通過後才開始第一次正式人工視覺／可用性審核與初始 Approved Visual Reference 核准；G2.9 不取代此標準 | CI-A + GPU-A + DEV-M + Codex | LIN |
 
 ### Phase 4B — UI/UX
 
