@@ -103,7 +103,7 @@ if not frame_marker.get("frame_post_draw"):
     raise SystemExit("cold-start probe frame marker did not record frame_post_draw")
 elapsed_ms = (frame_seen_ns - started_ns) / 1_000_000
 report_elapsed_ms = (report_seen_ns - started_ns) / 1_000_000
-result["elapsed_ms"] = elapsed_ms
+result["elapsed_ms"] = report_elapsed_ms
 result["frame_elapsed_ms"] = elapsed_ms
 result["report_elapsed_ms"] = report_elapsed_ms
 result["threshold_seconds"] = max_seconds
@@ -118,7 +118,7 @@ for field in ("rendering_method", "rendering_driver"):
         raise SystemExit(f"cold-start probe did not record {field}")
 if not result.get("frame_post_draw") or not result.get("screenshot_written") or not screenshot_path.is_file():
     raise SystemExit("cold-start probe did not produce a rendered screenshot")
-if elapsed_ms > max_seconds * 1000:
-    raise SystemExit(f"cold-start exceeded {max_seconds}s: {elapsed_ms:.3f}ms")
-print(f"Linux cold start: {elapsed_ms:.3f}ms to first frame (<= {max_seconds}s); final report: {report_elapsed_ms:.3f}ms")
+if report_elapsed_ms > max_seconds * 1000:
+    raise SystemExit(f"cold-start exceeded {max_seconds}s to flyable report: {report_elapsed_ms:.3f}ms")
+print(f"Linux cold start: {report_elapsed_ms:.3f}ms to flyable report (<= {max_seconds}s); first frame: {elapsed_ms:.3f}ms")
 PY
