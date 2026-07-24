@@ -14,6 +14,8 @@ if [ "${AEROSIM_EXPORTED:-false}" = true ]; then
     timeout --signal=TERM --kill-after=5s "${AEROSIM_REPLAY_TIMEOUT_SECONDS:-30}s" \
         "$godot_bin" --headless -- --aerosim-replay-integration
 else
+    source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"
+    validate_native_provenance
     mkdir -p "$project_path/.godot" "$project_path/build" "$project_path/.deps"
     touch "$project_path/build/.gdignore" "$project_path/.deps/.gdignore"
     printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > "$project_path/.godot/extension_list.cfg"

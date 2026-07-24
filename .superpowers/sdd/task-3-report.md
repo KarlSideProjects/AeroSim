@@ -1,4 +1,67 @@
-# Task 3: Complete remaining routes and cold-start evidence
+# Task 3: Replay schema-v3 and collision recovery evidence
+
+## Scope
+
+- Upgraded complete replay artifacts from schema 2 to schema 3 with controller, motor, clock, and first-response checkpoint state.
+- Added checked replay batches returning `status`, `rows`, and `failed_frame`; the hard cap is `kMaxBatchTrajectoryFrames=1'000'000`.
+- Replaced the collision height/angle proxy with the paired neutral/response counterfactual across the existing four scenes, 100 seeds, and Angle/Acro modes.
+
+## TDD evidence
+
+### RED
+
+```bash
+mkdir -p build/tests && g++ -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native tests/native/test_replay.cpp src/native/aerosim_aerodynamics.cpp src/native/aerosim_simulation.cpp src/native/aerosim_flight_control.cpp src/native/aerosim_imu.cpp src/native/aerosim_wind.cpp src/native/aerosim_collision.cpp src/native/aerosim_replay.cpp -o build/tests/test_replay && build/tests/test_replay
+```
+
+Failed as expected because `ReplayBatchResult`, checked batch entry points, schema-v3 controller checkpoints, clocks, and first-response fields did not exist.
+
+```bash
+g++ -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native tests/native/test_replay.cpp src/native/aerosim_aerodynamics.cpp src/native/aerosim_simulation.cpp src/native/aerosim_flight_control.cpp src/native/aerosim_imu.cpp src/native/aerosim_wind.cpp src/native/aerosim_collision.cpp src/native/aerosim_replay.cpp -o build/tests/test_replay && build/tests/test_replay
+```
+
+The second RED exposed the missing field-by-field run comparator for changed controller, motor, and clock checkpoint fields.
+
+### GREEN
+
+```bash
+g++ -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native tests/native/test_replay.cpp src/native/aerosim_aerodynamics.cpp src/native/aerosim_simulation.cpp src/native/aerosim_flight_control.cpp src/native/aerosim_imu.cpp src/native/aerosim_wind.cpp src/native/aerosim_collision.cpp src/native/aerosim_replay.cpp -o build/tests/test_replay && build/tests/test_replay
+g++ -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native tests/native/test_collision.cpp src/native/aerosim_aerodynamics.cpp src/native/aerosim_simulation.cpp src/native/aerosim_flight_control.cpp src/native/aerosim_imu.cpp src/native/aerosim_wind.cpp src/native/aerosim_collision.cpp src/native/aerosim_replay.cpp -o build/tests/test_collision && build/tests/test_collision
+scripts/test_native.sh
+GODOT_CPP_DIR=/tmp/aerosim-issue36-ci/aerosim-tools-local-1772574-1-verify-issue-11/godot-cpp /tmp/aerosim-issue36-ci/aerosim-tools-local-1772574-1-verify-issue-11/scons-venv/bin/scons -j4 target=template_debug platform=linux
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/test_replay_integration.sh
+AEROSIM_REPLAY_ARTIFACT=build/replay_task3.json build/tests/test_replay && python3 scripts/compare_replay_artifacts.py build/replay_task3.json build/replay_task3.json
+```
+
+All commands passed. The first integration attempt intentionally caught a stale pre-change native `.so`; rebuilding the pinned GDExtension made the schema-v3 integration pass.
+
+## Review-fix evidence
+
+- RED: a full-checkpoint recorder call did not compile because the recorder accepted only `DualAircraftState`.
+- GREEN: the recorder now accepts a complete checkpoint; the existing native binding fills it from live controller, clock, motor, propwash, and first-response state without changing the GDScript call signature.
+- Both session and run comparators now include checkpoint motor/propwash and every first-response rigid-body field. The randomized collision proof uses one direct recovery run to record its commands, collision, release-frame operation, response operation, full checkpoints, and first response; it then calls `ReplaySessionRecorder::serialize()`, `load_replay_session()`, and `replay_session()` on the deserialized session. It bitwise-compares the replay's ready checkpoint, final checkpoint, and first-response sample to the recorded run. It does not invoke the collision simulation helper a second time as a stand-in for replay.
+- Added explicit schema-v2 rejection and checked finite/capped duration-to-`size_t` frame conversion coverage.
+
+## Final review fixes
+
+- Secondary checkpoints now receive the live secondary `AeroSimNative` instance from `FlightRuntime`. The primary recorder copies its controller state, simulation clock, motor/propwash body state, and cached first response; the secondary begins capture alongside the primary recording session, so vehicle 1 is no longer silently defaulted.
+- First-response capture moved to the successful native-step path (Angle, Acro, altitude-hold, collision, and actuator rows). It snapshots the first returned physical substep immediately, before a later checkpoint can observe a different motor state.
+- Zero-tolerance comparator paths now compare the IEEE-754 bit representation of each double. The RED signed-zero replay comparator test failed under numerical comparison and passes with the bitwise implementation; this also preserves distinct NaN payloads/non-finite representations.
+- The 4 scenarios × 100 seeds × Angle/Acro collision matrix enables A6 propwash. Its inverted tumble recovery has a non-zero first-response propwash assertion, and the record/serialize/load/replay path bitwise-compares that sample, including propwash.
+- `test_replay` artifacts now include propwash, controller target/rate/PID/latch state, and first-response time/substeps/motors/propwash. `compare_replay_artifacts.py` rejects divergence in each of those fields. The GDExtension integration verifies both vehicles' checkpoint controller, clock, motor, propwash, and response fields.
+- Comparator reporting now uses the same IEEE-bit predicate for every zero-tolerance floating-point branch, including simulation-time events, collision vectors/scalars, and scene transforms, so signed-zero cannot be silently accepted while selecting a divergence field.
+- Live and replay use the same response definition: the first successful substep associated with a recorded non-neutral command. Native steps retain the returned sample, then the recorder latches it only after that command is recorded; neutral and zero-substep prefixes do not latch. The integration runner uses two distinct armed native instances, steps both with non-neutral input, and records their real live checkpoint state.
+- PX4 actuator recording applies the same latch rule: after a successful actuator command record, any output different from neutral `0.5` marks the already-returned successful native actuator substep as the first response. Artifact generation now round-trips a real schema-v3 `ReplaySessionRecorder` checkpoint with live controller, clocks, motor/propwash, and first-response data; Python validates that complete checkpoint rather than terminal synthetic fields.
+- Artifact comparison additionally consumes an IEEE-754 hexadecimal bit manifest for required controller, clock, propwash, and first-response doubles. It requires exact manifest equality and a negative-zero probe (`8000000000000000`), so serialized JSON numeric normalization cannot weaken the zero-tolerance replay contract.
+- The bit manifest now covers every serialized checkpoint float for both vehicles: full rigid state (including motors/propwash), controller target/rate/I/D/motor total, clock accumulator, and full first-response sample state/aero fields. The negative-zero entry is an actual vehicle-0 controller target-angle checkpoint value, not a synthetic probe.
+
+Validation after the review fixes:
+
+```bash
+scripts/test_native.sh
+GODOT_CPP_DIR=/tmp/aerosim-issue36-ci/aerosim-tools-local-1772574-1-verify-issue-11/godot-cpp /tmp/aerosim-issue36-ci/aerosim-tools-local-1772574-1-verify-issue-11/scons-venv/bin/scons -j4 target=template_debug platform=linux
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/test_replay_integration.sh
+```
 
 ## Scope
 

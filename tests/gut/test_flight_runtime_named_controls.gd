@@ -33,12 +33,19 @@ class FakeSecondaryNative extends RefCounted:
     var rate_stick_calls := 0
     var a5_config := {"enabled": false, "prop_radius_m": 0.0, "coeff_1": 0.0, "coeff_2": 0.0, "coeff_3": 0.0}
     var last_a5_source_position := Vector3.ZERO
+    var refresh_error := ""
+    var refresh_calls := 0
+    var refreshed := false
 
     func a5_downwash_configuration() -> Dictionary:
         return a5_config.duplicate(true)
 
     func refresh_imu_sample() -> void:
-        pass
+        refresh_calls += 1
+        refreshed = true
+
+    func last_step_error() -> String:
+        return refresh_error if refreshed else ""
 
     func betaflight_stick_for_rate(_rate: float, _rc_rate: float, _super_rate: float, _expo: float) -> float:
         rate_stick_calls += 1
@@ -69,11 +76,64 @@ class FakeSecondaryNative extends RefCounted:
         return PackedFloat64Array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.1, 2.2, 3.3])
 
 
+class FailingNative extends RefCounted:
+    var sync_calls := 0
+
+    func last_step_error() -> String:
+        return "AeroSimNative.step_collision_angle_mode: InvalidCommand: contact.normal"
+
+    func sync_flight_state(..._args) -> void:
+        sync_calls += 1
+
+
 func _body(velocity: Vector3, yaw: float) -> FakeBody:
     var result := FakeBody.new()
     result.linear_velocity = velocity
     result.rotation.y = yaw
     return result
+
+
+func test_jolt_boundary_converts_world_angular_velocity_to_the_body_frame() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+    body.global_transform = Transform3D(Basis.from_euler(Vector3(0.0, 0.0, PI * 0.5)), Vector3.ZERO)
+    body.angular_velocity = Vector3(0.0, 1.0, 0.0)
+
+    var angular_body: Vector3 = runtime._jolt_angular_velocity_body_y_up(body)
+    assert_almost_eq(angular_body.x, 1.0, 0.000001)
+    assert_almost_eq(angular_body.y, 0.0, 0.000001)
+    assert_almost_eq(angular_body.z, 0.0, 0.000001)
+
+
+func test_native_step_error_pauses_freezes_and_displays_without_reemitting() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+    runtime.drone_body = body
+    runtime.screen = "flight"
+
+    assert_true(runtime._handle_native_step_failure(FailingNative.new()))
+    assert_true(runtime.paused)
+    assert_true(body.freeze)
+    assert_true(body.sleeping)
+    assert_eq(runtime.screen, "error")
+    assert_eq(runtime.last_error_message, "AeroSimNative.step_collision_angle_mode: InvalidCommand: contact.normal")
+
+
+func test_sync_failure_stops_the_primary_path_before_the_next_native_call() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+    var failing_native := FailingNative.new()
+    runtime.drone_body = body
+    runtime.native = failing_native
+
+    assert_false(runtime._sync_native_from_drone())
+    assert_eq(failing_native.sync_calls, 1)
+    assert_true(runtime.paused)
+    assert_true(body.freeze)
+    assert_eq(runtime.screen, "error")
 
 
 func test_named_velocity_controller_uses_the_selected_body_for_measurement_and_yaw() -> void:
@@ -86,10 +146,51 @@ func test_named_velocity_controller_uses_the_selected_body_for_measurement_and_y
     var primary_controls: Dictionary = runtime._airsim_velocity_controls(Vector3.ZERO, 0.0, yaw_mode, primary)
     var secondary_controls: Dictionary = runtime._airsim_velocity_controls(Vector3.ZERO, 0.0, yaw_mode, secondary)
 
-    assert_eq(primary_controls.roll, 0.0)
-    assert_gt(secondary_controls.roll, 1.0)
+    assert_eq(primary_controls.pitch, 0.0)
+    assert_gt(secondary_controls.pitch, 1.0)
     assert_eq(primary_controls.yaw_rate, 0.0)
-    assert_lt(secondary_controls.yaw_rate, -1.0)
+    assert_gt(secondary_controls.yaw_rate, 1.0)
+
+
+func test_velocity_controller_maps_horizontal_directions_to_frd_tilt_axes() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+
+    var positive_x: Dictionary = runtime._airsim_velocity_controls(Vector3(1.0, 0.0, 0.0), 0.0, null, body)
+    var negative_x: Dictionary = runtime._airsim_velocity_controls(Vector3(-1.0, 0.0, 0.0), 0.0, null, body)
+    var positive_z: Dictionary = runtime._airsim_velocity_controls(Vector3(0.0, 0.0, 1.0), 0.0, null, body)
+    var negative_z: Dictionary = runtime._airsim_velocity_controls(Vector3(0.0, 0.0, -1.0), 0.0, null, body)
+
+    assert_lt(positive_x.pitch, 0.0)
+    assert_gt(negative_x.pitch, 0.0)
+    assert_eq(positive_x.roll, 0.0)
+    assert_eq(negative_x.roll, 0.0)
+    assert_gt(positive_z.roll, 0.0)
+    assert_lt(negative_z.roll, 0.0)
+    assert_eq(positive_z.pitch, 0.0)
+    assert_eq(negative_z.pitch, 0.0)
+
+
+func test_yaw_commands_map_ned_targets_and_rates_to_frd() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := _body(Vector3.ZERO, 0.0)
+
+    assert_gt(runtime._airsim_yaw_rate_from_mode({"is_rate": false, "yaw_or_rate": 45.0}, body), 0.0)
+    assert_lt(runtime._airsim_yaw_rate_from_mode({"is_rate": false, "yaw_or_rate": -45.0}, body), 0.0)
+    assert_eq(runtime._airsim_yaw_rate_from_mode({"is_rate": true, "yaw_or_rate": 10.0}, body), 10.0)
+
+    runtime.drone_body = body
+    runtime._airsim_api_control = true
+    runtime._airsim_command_state = {"method": "rotateToYaw", "args": [45.0, 30.0, 1.0]}
+    assert_gt(float(runtime._airsim_controls_for_frame().yaw_rate), 0.0)
+    runtime._airsim_command_state = {"method": "rotateByYawRate", "args": [10.0, 1.0]}
+    assert_eq(float(runtime._airsim_controls_for_frame().yaw_rate), 10.0)
+
+    var secondary_target: Dictionary = runtime._airsim_secondary_controls(
+        {"command_state": {"method": "rotateToYaw", "args": [45.0, 30.0, 1.0]}}, body)
+    assert_gt(float(secondary_target.yaw_rate), 0.0)
 
 
 func test_secondary_position_commands_use_secondary_body_and_clear_on_completion() -> void:
@@ -166,7 +267,7 @@ func test_secondary_rotate_by_yaw_rate_uses_secondary_body_and_primary_sign() ->
         secondary_body)
 
     assert_eq(String(controls.get("mode", "")), "ANGLE")
-    assert_eq(float(controls.get("yaw_rate", 0.0)), -30.0)
+    assert_eq(float(controls.get("yaw_rate", 0.0)), 30.0)
     assert_eq(float(controls.get("roll", 0.0)), 0.0)
     assert_eq(float(controls.get("pitch", 0.0)), 0.0)
 
@@ -296,6 +397,39 @@ func test_secondary_angular_state_tracks_body_acceleration_and_publishes_it() ->
     assert_almost_eq(float(angular_acceleration.x_val), 1.1 * Engine.physics_ticks_per_second, 0.000001)
     assert_almost_eq(float(angular_acceleration.y_val), 3.3 * Engine.physics_ticks_per_second, 0.000001)
     assert_almost_eq(float(angular_acceleration.z_val), -2.2 * Engine.physics_ticks_per_second, 0.000001)
+
+
+func test_secondary_imu_refresh_failure_precedes_contact_body_and_context_mutation() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var primary_body := _body(Vector3.ZERO, 0.0)
+    var secondary_body := _body(Vector3.ZERO, 0.0)
+    secondary_body.contact_seen = true
+    secondary_body.contact_normal = Vector3.UP
+    var secondary_native := FakeSecondaryNative.new()
+    secondary_native.refresh_error = "AeroSimNative.refresh_imu_sample: InvalidState: state"
+    runtime.drone_body = primary_body
+    runtime.secondary_drone_body = secondary_body
+    runtime.native = FakeSecondaryNative.new()
+    runtime._airsim_secondary_native = secondary_native
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime._airsim_vehicle_contexts["DroneB"] = {
+        "api_control": true,
+        "armed": true,
+        "command_state": {"method": "hover", "args": []},
+        "hold_controls": {},
+        "command_remaining_frames": 1,
+        "last_velocity": Vector3.ZERO,
+        "last_body_angular_velocity": Vector3.ZERO,
+    }
+
+    runtime._step_secondary_airsim_vehicle("DroneB")
+
+    assert_eq(secondary_native.refresh_calls, 1)
+    assert_true(runtime.paused)
+    assert_true(secondary_body.contact_seen)
+    assert_eq(secondary_body.angular_velocity, Vector3.ZERO)
+    assert_eq(int(runtime._airsim_vehicle_contexts["DroneB"].command_remaining_frames), 1)
 
 
 func test_secondary_kinematic_context_resets_without_an_acceleration_spike() -> void:

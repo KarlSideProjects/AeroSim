@@ -7,9 +7,12 @@ const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const LanguageProfile = preload("res://common/flight/language_profile.gd")
 const Localization = preload("res://common/flight/localization.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
+const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 
 
 class FakeNative:
@@ -36,6 +39,121 @@ class FakeNative:
 
     func hardware_power_diagnostics() -> Dictionary:
         return {"hover_throttle": 0.30}
+
+
+class FailingStepNative:
+    extends FakeNative
+
+    var step_calls := 0
+    var sync_calls := 0
+
+    func sync_flight_state(
+        _position_x: float,
+        _position_y: float,
+        _position_z: float,
+        _orientation_x: float,
+        _orientation_y: float,
+        _orientation_z: float,
+        _orientation_w: float,
+        _velocity_x: float,
+        _velocity_y: float,
+        _velocity_z: float,
+        _angular_velocity_x: float,
+        _angular_velocity_y: float,
+        _angular_velocity_z: float
+    ) -> void:
+        sync_calls += 1
+
+    func step_collision_angle_mode(
+        _physics_hz: int,
+        _substep_hz: int,
+        _throttle: float,
+        _roll: float,
+        _pitch: float,
+        _yaw_rate: float,
+        _touching: bool,
+        _normal_x: float,
+        _normal_y: float,
+        _normal_z: float,
+        _impulse_x: float,
+        _impulse_y: float,
+        _impulse_z: float,
+        _restitution: float,
+        _velocity_x: float,
+        _velocity_y: float,
+        _velocity_z: float,
+        _angular_velocity_x: float,
+        _angular_velocity_y: float,
+        _angular_velocity_z: float,
+        _energy_limit: float
+    ) -> PackedFloat64Array:
+        step_calls += 1
+        return PackedFloat64Array()
+
+
+class FailingAtomicNative:
+    extends RefCounted
+
+    var step_calls := 0
+    var error := ""
+
+    func flight_control_armed() -> bool:
+        return true
+
+    func step_angle_mode(_physics_hz: int, _substep_hz: int, _throttle: float, _roll: float, _pitch: float, _yaw: float) -> PackedFloat64Array:
+        step_calls += 1
+        error = "AeroSimNative.step_angle_mode: InvalidControlOutput: simulation"
+        return PackedFloat64Array()
+
+    func last_step_error() -> String:
+        return error
+
+
+class SuccessfulAtomicNative:
+    extends RefCounted
+
+    var step_calls := 0
+
+    func flight_control_armed() -> bool:
+        return true
+
+    func step_angle_mode(_physics_hz: int, _substep_hz: int, _throttle: float, _roll: float, _pitch: float, _yaw: float) -> PackedFloat64Array:
+        step_calls += 1
+        var row := PackedFloat64Array()
+        row.resize(17)
+        row[7] = 1.0
+        return row
+
+    func a5_downwash_configuration() -> Dictionary:
+        return {}
+
+    func last_step_error() -> String:
+        return ""
+
+
+class SecondaryAtomicNative:
+    extends RefCounted
+
+    var sync_calls := 0
+    var step_calls := 0
+    var error := ""
+
+    func flight_control_armed() -> bool:
+        return true
+
+    func sync_flight_state(_position_x: float, _position_y: float, _position_z: float, _orientation_x: float, _orientation_y: float, _orientation_z: float, _orientation_w: float, _velocity_x: float, _velocity_y: float, _velocity_z: float, _angular_x: float, _angular_y: float, _angular_z: float) -> void:
+        sync_calls += 1
+
+    func step_collision_angle_mode(_physics_hz: int, _substep_hz: int, _throttle: float, _roll: float, _pitch: float, _yaw: float, _touching: bool, _normal_x: float, _normal_y: float, _normal_z: float, _impulse_x: float, _impulse_y: float, _impulse_z: float, _restitution: float, _velocity_x: float, _velocity_y: float, _velocity_z: float, _angular_x: float, _angular_y: float, _angular_z: float, _energy_limit: float) -> PackedFloat64Array:
+        step_calls += 1
+        error = "AeroSimNative.step_collision_angle_mode: InvalidControlOutput: simulation"
+        return PackedFloat64Array()
+
+    func last_step_error() -> String:
+        return error
+
+    func set_a5_downwash_model(_enabled: bool, _radius: float, _coeff_1: float, _coeff_2: float, _coeff_3: float) -> bool:
+        return true
 
 
 class FakeBodyDragPanel extends Node:
@@ -678,6 +796,50 @@ func test_flight_hud_hints_follow_active_input_profile() -> void:
     assert_false(runtime.key_hints_label.text.contains("T Arm/Takeoff"))
 
 
+func test_motor_hud_stays_visible_for_minimal_osd_and_shows_paused_or_error_state() -> void:
+    var runtime := _attach_runtime_ui(_licensed_runtime())
+    runtime.status_diagram = StatusDiagramDebug.new()
+    autofree(runtime.status_diagram)
+    runtime.status_diagram._ready()
+    var snapshot := {
+        "vehicle_name": "DroneA",
+        "timestamp_us": 1_000_000,
+        "publish_count": 1,
+        "snapshot_hz": 30.0,
+        "source": "native_double_buffer",
+        "motors": [
+            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+            {"thrust_newtons": 1.0, "speed_rad_s": 2.0, "current_a": 3.0, "saturated": false},
+            {"thrust_newtons": 4.0, "speed_rad_s": 20.0 * PI, "current_a": 5.0, "saturated": false},
+        ],
+    }
+    runtime.status_diagram.update_from_snapshot(snapshot, 1_000_000)
+    runtime.screen = "flight"
+    runtime.osd_profile = OsdProfile.profile_for_preset("Minimal")
+    runtime._refresh_flight_hud()
+
+    var panel := runtime.flight_hud_layer.get_node_or_null("MotorHudMargin/MotorHudPanel") as PanelContainer
+    var fl := runtime.flight_hud_layer.get_node_or_null("MotorHudMargin/MotorHudPanel/Rows/Grid/FL") as Label
+    assert_not_null(panel)
+    assert_not_null(fl)
+    if panel == null or fl == null:
+        return
+    assert_true(panel.is_visible_in_tree())
+    assert_string_contains(fl.text, "FL")
+    assert_string_contains(fl.text, "600 RPM")
+
+    runtime.paused = true
+    runtime._refresh_flight_hud()
+    assert_string_contains(fl.text, "UNAVAILABLE")
+    runtime.paused = false
+    runtime.screen = "error"
+    runtime.last_error_message = "AeroSimNative.step: InvalidState"
+    runtime._refresh_flight_hud()
+    assert_true(panel.is_visible_in_tree())
+    assert_string_contains(fl.text, "ERROR")
+
+
 func test_request_takeoff_does_not_inject_jump_velocity() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)
@@ -1117,6 +1279,62 @@ func test_exported_replay_runner_is_available_to_the_main_scene() -> void:
     assert_not_null(runner_script)
 
 
+func test_native_failure_freezes_before_airsim_runtime_side_effects() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var primary := FailingAtomicNative.new()
+    var secondary := SecondaryAtomicNative.new()
+    var secondary_body := RigidBody3D.new()
+    runtime.add_child(secondary_body)
+    runtime.native = primary
+    runtime._airsim_secondary_native = secondary
+    runtime.secondary_drone_body = secondary_body
+    runtime._airsim_vehicle_name = "DroneA"
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.takeoff_requested = true
+    runtime._airsim_vehicle_contexts["DroneB"] = {"api_control": true, "armed": true}
+
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(primary.step_calls, 1)
+    assert_eq(secondary.sync_calls, 0)
+    assert_eq(runtime.airsim_session.frame_index, 0)
+    assert_true(runtime.paused)
+    assert_true(secondary_body.freeze)
+    assert_true(secondary_body.sleeping)
+    assert_eq(runtime.last_error_message, "AeroSimNative.step_angle_mode: InvalidControlOutput: simulation")
+
+
+func test_secondary_native_failure_freezes_before_airsim_runtime_side_effects() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var primary := SuccessfulAtomicNative.new()
+    var secondary := SecondaryAtomicNative.new()
+    var secondary_body := CollisionProbeBody.new()
+    autofree(secondary_body)
+    get_tree().root.add_child(secondary_body)
+    runtime.native = primary
+    runtime._airsim_secondary_native = secondary
+    runtime.secondary_drone_body = secondary_body
+    runtime._airsim_vehicle_name = "DroneA"
+    runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.takeoff_requested = true
+    runtime._airsim_vehicle_contexts["DroneB"] = {"api_control": true, "armed": true}
+
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(primary.step_calls, 1)
+    assert_eq(secondary.sync_calls, 1)
+    assert_eq(secondary.step_calls, 1)
+    assert_eq(runtime.airsim_session.frame_index, 0)
+    assert_true(runtime.paused)
+    assert_true(secondary_body.freeze)
+    assert_true(secondary_body.sleeping)
+    assert_eq(runtime.last_error_message, "AeroSimNative.step_collision_angle_mode: InvalidControlOutput: simulation")
+
+
 func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)
@@ -1169,6 +1387,7 @@ func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void
     runtime._begin_complete_replay_recording({"SettingsVersion": 1.2, "SimMode": "Multirotor"})
     assert_true(runtime._replay_recording_active)
     runtime._physics_process(1.0 / 240.0)
+    assert_true(bool(lower.call("flight_control_armed")))
     var finish: Dictionary = runtime._finish_complete_replay_recording("gut-runtime")
     assert_true(bool(finish.get("ok", false)))
     var recorded: Dictionary = JSON.parse_string(String(finish.get("serialized", "")))
@@ -1192,6 +1411,58 @@ func test_runtime_replay_records_and_replays_two_bound_native_vehicles() -> void
             JSON.stringify(swapped_manifest), runtime._replay_settings_manifest_hash,
             runtime._replay_upper_config_manifest_hash, runtime._replay_lower_config_manifest_hash)
     assert_false(bool(swapped_result.get("ok", true)))
+
+
+func test_native_failure_freezes_continue_for_frames_session() -> void:
+    _assert_native_failure_freezes_explicit_session(false)
+
+
+func test_native_failure_freezes_continue_for_time_session() -> void:
+    _assert_native_failure_freezes_explicit_session(true)
+
+
+func _assert_native_failure_freezes_explicit_session(use_time: bool) -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var native := FailingStepNative.new()
+    var body := CollisionProbeBody.new()
+    autofree(body)
+    get_tree().root.add_child(body)
+    runtime.native = native
+    runtime.drone_body = body
+    runtime.screen = "flight"
+    runtime.takeoff_requested = true
+    runtime._airsim_vehicle_name = "Drone1"
+    runtime._airsim_vehicle_names = ["Drone1"]
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.airsim_sensor_suite = AirSimSensorSuite.new()
+    assert_true(runtime.airsim_sensor_suite.configure({
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight", "Sensors": {}}},
+    }, ["Drone1"]).ok)
+    var start: Dictionary = runtime.airsim_session.continue_for_time(2.0 / 240.0) if use_time else runtime.airsim_session.continue_for_frames(2)
+    assert_true(start.ok)
+
+    runtime._physics_process(1.0 / 240.0)
+    var frame_after_failure := runtime.airsim_session.frame_index
+    var sensor_samples_after_failure: int = int(runtime.airsim_sensor_suite.stats("Drone1", AirSimSensorSuite.SENSOR_IMU, "").sample_count)
+    var body_position_after_failure := body.global_position
+
+    assert_true(runtime.paused)
+    assert_true(runtime.airsim_session.is_paused())
+    assert_true(body.freeze)
+    assert_true(body.sleeping)
+    assert_eq(runtime.last_error_message, "Native simulation step failed")
+    assert_eq(runtime.screen, "flight")
+
+    runtime._process(0.0)
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(native.step_calls, 1)
+    assert_eq(native.sync_calls, 1)
+    assert_eq(runtime.airsim_session.frame_index, frame_after_failure)
+    assert_eq(runtime.airsim_sensor_suite.stats("Drone1", AirSimSensorSuite.SENSOR_IMU, "").sample_count, sensor_samples_after_failure)
+    assert_eq(body.global_position, body_position_after_failure)
+    assert_true(body.freeze)
 
 
 func test_runtime_rejects_more_than_two_named_vehicles_before_dashboard_setup() -> void:

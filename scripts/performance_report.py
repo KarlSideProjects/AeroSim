@@ -71,7 +71,10 @@ def _validate_gate_eligibility(raw: dict[str, Any], environment: dict[str, Any])
     os_matches = environment.get("os_release") == G0_1_BASELINE_OS_RELEASE
     driver_matches = environment.get("nvidia_driver_version") == G0_1_BASELINE_NVIDIA_DRIVER
     provenance_is_pinned = (
-        raw.get("godot_version") == PINNED_GODOT_VERSION
+        raw.get("commit_sha") == environment.get("git_revision")
+        and isinstance(raw.get("commit_sha"), str)
+        and len(raw["commit_sha"]) == 40
+        and raw.get("godot_version") == PINNED_GODOT_VERSION
         and raw.get("godot_sha256") == PINNED_GODOT_BINARY_SHA256
         and raw.get("godot_cpp_revision") == PINNED_GODOT_CPP_REVISION
         and all(
@@ -83,7 +86,7 @@ def _validate_gate_eligibility(raw: dict[str, Any], environment: dict[str, Any])
     )
     if not cpu_matches or video_adapter != G0_1_BASELINE_GPU or not os_matches or not driver_matches or not provenance_is_pinned:
         raise ValueError(
-            "G0.1 gate requires the frozen Ryzen 9 7945HX and RTX 4060 Ti on Ubuntu 26.04 LTS and NVIDIA driver 580.159.03 with pinned Godot/godot-cpp provenance"
+            "G0.1 gate requires the frozen Ryzen 9 7945HX and RTX 4060 Ti on Ubuntu 26.04 LTS and NVIDIA driver 580.159.03 with pinned Godot/godot-cpp provenance and the debug artifact commit"
         )
 
 
@@ -217,7 +220,7 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
             raise ValueError(f"incompatible benchmark reports: {label} p99 limit evidence is invalid")
         if not recomputed_within_limit:
             raise ValueError(f"incompatible benchmark reports: {label} p99 exceeds the G0.1 limit")
-    for key in ("gdextension_sha256", "native_source_sha256"):
+    for key in ("commit_sha", "gdextension_sha256", "native_source_sha256"):
         if baseline_measurement.get(key) != candidate_measurement.get(key):
             raise ValueError(f"incompatible benchmark reports: {key} differs between baseline and candidate")
     if baseline_measurement.get("active_effects") != []:

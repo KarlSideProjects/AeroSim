@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -40,7 +41,9 @@ int main() {
     const aerosim::MotorCommands commands{{0.5, 0.5, 0.5, 0.5}};
     const aerosim::TrajectorySample sample = aerosim::step_per_motor_physics_frame(
             state, clock, physics_config, commands);
-    if (sample.substeps != 4 || !std::isfinite(sample.state.position.y) || sample.state.position.y <= 0.0) {
+    if (sample.substeps != 4 || sample.first_substeps != 1 ||
+            sample.first_substep_time_seconds != 0.001 ||
+            !std::isfinite(sample.state.position.y) || sample.state.position.y <= 0.0) {
         return fail("PX4 actuator commands must use the deterministic per-motor physics path");
     }
 
@@ -52,6 +55,35 @@ int main() {
     if (rejected.substeps != 0 || state.position.y != before_invalid.position.y ||
             clock.total_substeps != clock_before_invalid.total_substeps) {
         return fail("invalid PX4 actuator output must be rejected without mutating simulation state");
+    }
+
+    aerosim::SimulationConfig overflowing_force_config = physics_config;
+    overflowing_force_config.mass_kg = 0.5;
+    overflowing_force_config.external_force_world.x = 1.0e308;
+    const aerosim::RigidBodyState before_overflow = state;
+    const aerosim::SimulationClock clock_before_overflow = clock;
+    const aerosim::TrajectorySample overflow_rejected = aerosim::step_per_motor_physics_frame(
+            state, clock, overflowing_force_config, commands);
+    if (overflow_rejected.substeps != 0 || !std::isfinite(state.position.x) ||
+            state.position.x != before_overflow.position.x ||
+            clock.total_substeps != clock_before_overflow.total_substeps) {
+        return fail("overflowing PX4 control force must roll back simulation state");
+    }
+
+    aerosim::RigidBodyState clock_overflow_state;
+    aerosim::SimulationClock clock_overflow_clock;
+    clock_overflow_clock.substep_accumulator = 0.25;
+    clock_overflow_clock.total_substeps = std::numeric_limits<std::uint64_t>::max() - 3;
+    const aerosim::RigidBodyState before_clock_overflow = clock_overflow_state;
+    const aerosim::SimulationClock before_clock_overflow_clock = clock_overflow_clock;
+    const aerosim::TrajectorySample clock_overflow_rejected = aerosim::step_per_motor_physics_frame(
+            clock_overflow_state, clock_overflow_clock, physics_config, commands);
+    if (clock_overflow_rejected.substeps != 0 ||
+            clock_overflow_state.position.x != before_clock_overflow.position.x ||
+            clock_overflow_state.position.y != before_clock_overflow.position.y ||
+            clock_overflow_clock.total_substeps != before_clock_overflow_clock.total_substeps ||
+            clock_overflow_clock.substep_accumulator != before_clock_overflow_clock.substep_accumulator) {
+        return fail("PX4 actuator clock overflow must restore the complete step snapshot");
     }
     return EXIT_SUCCESS;
 }

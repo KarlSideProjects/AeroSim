@@ -176,6 +176,28 @@ int main() {
         return fail("resetting IMUs to the same seed must restore the deterministic stream");
     }
 
+    aerosim::ImuSimulator continuation_imu(deterministic_config);
+    for (int i = 0; i < 8; ++i) {
+        aerosim::RigidBodyState moving;
+        moving.position.y = static_cast<double>(i);
+        moving.angular_velocity = {0.1 * i, -0.2 * i, 0.3 * i};
+        continuation_imu.sample(moving);
+    }
+    aerosim::ImuSimulator restored_imu = continuation_imu;
+    for (int i = 8; i < 16; ++i) {
+        aerosim::RigidBodyState moving;
+        moving.position.y = static_cast<double>(i);
+        moving.angular_velocity = {0.1 * i, -0.2 * i, 0.3 * i};
+        const aerosim::ImuSample continued = continuation_imu.sample(moving);
+        const aerosim::ImuSample restored = restored_imu.sample(moving);
+        if (!same_bits(continued.gyro_rad_per_s.x, restored.gyro_rad_per_s.x) ||
+                !same_bits(continued.accel_mps2.y, restored.accel_mps2.y) ||
+                !same_bits(continued.barometer_altitude_m, restored.barometer_altitude_m) ||
+                !same_bits(continued.estimated_attitude.w, restored.estimated_attitude.w)) {
+            return fail("IMU snapshots must continue the exact RNG, delay, bias, and estimator stream");
+        }
+    }
+
     aerosim::ImuConfig noise_config;
     noise_config.seed = 7;
     noise_config.sample_hz = 100.0;

@@ -4,11 +4,14 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace aerosim {
+
+class WindField;
 
 struct RecordedInputSequence {
     std::string vehicle_name;
@@ -20,7 +23,9 @@ struct ReplayDelta {
     double position_meters = 0.0;
 };
 
-constexpr std::int32_t kCompleteReplaySchemaVersion = 2;
+constexpr std::int32_t kCompleteReplaySchemaVersion = 3;
+constexpr std::size_t kMaxBatchTrajectoryFrames = 1'000'000;
+constexpr std::size_t kNoFailedReplayFrame = std::numeric_limits<std::size_t>::max();
 
 enum class ReplayControllerAuthority {
     FlightCore,
@@ -114,6 +119,9 @@ struct ReplaySceneObjectState {
 struct ReplayRunCheckpoint {
     std::uint64_t timestamp_us = 0;
     DualAircraftState state;
+    std::array<FlightControlState, 2> controllers;
+    std::array<SimulationClock, 2> clocks;
+    std::array<TrajectorySample, 2> first_response_substeps;
     std::array<ReplayCollision, 2> collisions;
     std::vector<ReplaySceneObjectState> scene_objects;
     std::string environment_json;
@@ -189,6 +197,8 @@ private:
     std::unordered_map<std::string, ReplayAsyncLifecycle> async_lifecycle_;
     std::unordered_map<std::string, std::string> async_methods_;
     std::string environment_json_;
+    std::array<ReplayCollision, 2> checkpoint_collisions_;
+    std::vector<ReplaySceneObjectState> checkpoint_scene_objects_;
     bool finished_ = false;
 
     bool fail(ReplayDiagnosticCode code, std::string message);
@@ -244,6 +254,7 @@ public:
             const Quat &orientation = {});
     bool record_environment(std::uint64_t timestamp_us, std::string environment_json);
     bool record_checkpoint(std::uint64_t timestamp_us, const DualAircraftState &state);
+    bool record_checkpoint(std::uint64_t timestamp_us, ReplayRunCheckpoint checkpoint);
     bool finish(std::uint64_t timestamp_us, std::string reason);
 
     const ReplaySession &session() const;
@@ -272,6 +283,12 @@ struct ReplayRunResult {
     std::vector<ReplayRunCheckpoint> checkpoints;
 };
 
+struct ReplayBatchResult {
+    StepStatus status = StepStatus::Ok;
+    std::vector<TrajectorySample> rows;
+    std::size_t failed_frame = kNoFailedReplayFrame;
+};
+
 ReplayRunResult replay_session(
         const ReplaySession &session,
         const DualAircraftConfig &config,
@@ -287,6 +304,19 @@ ReplayDivergence compare_replay_runs(
 std::vector<TrajectorySample> replay_angle_mode(
         const SimulationConfig &config,
         const RecordedInputSequence &inputs);
+ReplayBatchResult replay_angle_mode_batch(
+        const SimulationConfig &config,
+        const RecordedInputSequence &inputs,
+        const WindField *wind_field = nullptr);
+ReplayBatchResult replay_angle_mode_seconds_batch(
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double seconds);
+ReplayBatchResult replay_angle_mode_seconds_batch(
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double seconds,
+        const WindField &wind_field);
 ReplayDelta compare_replay_final_state(
         const TrajectorySample &reference,
         const TrajectorySample &actual);

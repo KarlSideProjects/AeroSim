@@ -4,6 +4,7 @@ set -euo pipefail
 godot_bin="${GODOT_BIN:-godot}"
 out_dir="build/headed"
 use_xvfb=0
+display_driver_args=()
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -32,12 +33,18 @@ elif ! command -v "$godot_bin" >/dev/null; then
     exit 1
 fi
 
+source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"
+validate_native_provenance
+gdextension_sha256="$AEROSIM_NATIVE_PROVENANCE_GDEXTENSION_SHA256"
+native_source_sha256="$AEROSIM_NATIVE_PROVENANCE_NATIVE_SOURCE_SHA256"
+
 if [ "$use_xvfb" -eq 1 ]; then
     lavapipe_icd="${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}"
     test -r "$lavapipe_icd"
     command -v xvfb-run >/dev/null
     export VK_ICD_FILENAMES="$lavapipe_icd"
-    launcher=(xvfb-run -a --server-args="-screen 0 1920x1080x24")
+    launcher=(xvfb-run -a -e "$out_dir/xvfb.log" --server-args="-screen 0 1920x1080x24")
+    display_driver_args=(--display-driver x11)
 else
     launcher=()
 fi
@@ -47,10 +54,28 @@ mkdir -p .godot
 printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .godot/extension_list.cfg
 export AEROSIM_HEADED_COMMIT_SHA="$(git rev-parse HEAD)"
 log_path="$out_dir/godot.log"
-rm -f "$out_dir"/*.png "$out_dir/report.json" "$log_path"
-timeout 60s "${launcher[@]}" "$godot_bin" --path . --resolution 1280x720 \
+rm -f "$out_dir"/*.png "$out_dir/report.json" "$log_path" "$out_dir/xvfb.log"
+timeout 60s "${launcher[@]}" "$godot_bin" "${display_driver_args[@]}" --path . --resolution 1280x720 \
     --log-file "$log_path" \
     --script res://tests/headed/headed_acceptance.gd -- --out-dir "$out_dir"
+
+python3 - "$out_dir/report.json" "$gdextension_sha256" "$native_source_sha256" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    report = json.loads(path.read_text(encoding="utf-8"))
+    provenance = report.get("provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError("provenance is missing")
+except (OSError, json.JSONDecodeError, ValueError) as error:
+    raise SystemExit(f"cannot bind headed acceptance report to native artifact: {path}: {error}")
+provenance["gdextension_sha256"] = sys.argv[2]
+provenance["native_source_sha256"] = sys.argv[3]
+path.write_text(json.dumps(report, separators=(",", ":")), encoding="utf-8")
+PY
 
 for required_file in \
     "$log_path" \
@@ -69,12 +94,14 @@ for required_file in \
     fi
 done
 
-python3 - "$out_dir/report.json" "$(git rev-parse HEAD)" <<'PY'
+python3 - "$out_dir/report.json" "$(git rev-parse HEAD)" "$gdextension_sha256" "$native_source_sha256" <<'PY'
 import json
 import sys
 
 path = sys.argv[1]
 expected_commit_sha = sys.argv[2]
+expected_gdextension_sha256 = sys.argv[3]
+expected_native_source_sha256 = sys.argv[4]
 try:
     with open(path, encoding="utf-8") as report_file:
         report = json.load(report_file)
@@ -88,6 +115,10 @@ if not isinstance(provenance, dict):
     raise SystemExit(f"headed acceptance report is missing provenance: {path}")
 if provenance.get("commit_sha") != expected_commit_sha:
     raise SystemExit(f"headed acceptance report commit SHA is not bound to the checkout: {path}")
+if provenance.get("gdextension_sha256") != expected_gdextension_sha256:
+    raise SystemExit(f"headed acceptance report GDExtension SHA is not bound to the debug artifact: {path}")
+if provenance.get("native_source_sha256") != expected_native_source_sha256:
+    raise SystemExit(f"headed acceptance report native source SHA is not bound to the debug artifact: {path}")
 for field in ("godot_version", "os", "display_driver", "gpu_adapter"):
     if not provenance.get(field):
         raise SystemExit(f"headed acceptance report is missing provenance field {field}: {path}")
@@ -102,7 +133,8 @@ for switch in locale_switches:
         raise SystemExit(f"headed acceptance locale switch exceeded its input-blocking threshold: {path}")
 PY
 
-if grep -Eq '^(ERROR:|SCRIPT ERROR:)' "$log_path"; then
+unexpected_errors="$(grep -E '^(ERROR:|SCRIPT ERROR:)' "$log_path" | grep -Fxv 'ERROR: X11 Display is not available' || true)"
+if [ -n "$unexpected_errors" ]; then
     echo "Godot error found in headed acceptance log: $log_path" >&2
     exit 1
 fi

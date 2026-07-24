@@ -12,6 +12,8 @@ if not os.path.exists(os.path.join(godot_cpp_dir, "SConstruct")):
     )
 
 env = SConscript(os.path.join(godot_cpp_dir, "SConstruct"))
+if "TMPDIR" in os.environ:
+    env["ENV"]["TMPDIR"] = os.environ["TMPDIR"]
 env["ARCOM"] = "$AR $ARFLAGS $TARGET ${TEMPFILE('$SOURCES')}"
 env.Append(CPPPATH=["src/native"])
 if ARGUMENTS.get("platform", "") == "windows" and not env.get("use_mingw", False):

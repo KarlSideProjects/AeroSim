@@ -186,6 +186,11 @@ ui.dashboard.not_fresh,NOT FRESH,非最新
 ui.dashboard.status,%s  UPDATE %.1f Hz  LATENCY %.0f ms,%s  更新 %.1f Hz  延遲 %.0f ms
 ui.dashboard.mode,%s  ARM %s  MODE %s,%s  解鎖 %s  模式 %s
 ui.dashboard.motor,%s  %.2f N  %.1f rad/s%s,%s  %.2f N  %.1f rad/s%s
+ui.motor_hud.title,MOTOR OUTPUT (30 Hz),馬達輸出（30 Hz）
+ui.motor_hud.cell,%s\n%.2f N\n%.0f RPM\n%.2f A%s,%s\n%.2f N\n%.0f 轉/分\n%.2f A%s
+ui.motor_hud.saturated,\nSATURATED,\n飽和
+ui.motor_hud.unavailable,%s\nUNAVAILABLE,%s\n無法使用
+ui.motor_hud.error,%s\nERROR,%s\n錯誤
 ui.dashboard.battery,BAT %.2f V  sag %.2f V,電池 %.2f V  壓降 %.2f V
 ui.dashboard.wind,WIND body %.2f %.2f %.2f m/s,機體風 %.2f %.2f %.2f m/s
 ui.dashboard.pid,PID sat %s,PID 飽和 %s

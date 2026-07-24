@@ -248,7 +248,7 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             last_error = "per-motor model derivation failed: %s" % per_motor_model.get("error", "unknown")
             push_error(last_error)
             return false
-        if not runtime.native.has_method("set_hardware_power_model") or not runtime.native.has_method("set_hardware_per_motor_model"):
+        if not runtime.native.has_method("set_hardware_power_model") or not runtime.native.has_method("set_hardware_per_motor_model") or not runtime.native.has_method("set_hardware_altitude_hold_noise_deadband"):
             last_ok = false
             last_error = "native runtime missing hardware model setters"
             push_error(last_error)
@@ -272,6 +272,16 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             last_error = "native runtime rejected derived power model"
             push_error(last_error)
             return false
+        if not runtime.native.call("set_hardware_altitude_hold_noise_deadband", float(current.sensors.barometer_noise_m)):
+            last_ok = false
+            last_error = "native runtime rejected altitude-hold noise deadband"
+            push_error(last_error)
+            return false
+        var body: RigidBody3D = runtime.get("secondary_drone_body") if runtime.get("native") == runtime.get("_airsim_secondary_native") else runtime.get("drone_body")
+        if body != null:
+            var inertia: Dictionary = current.aircraft.inertia_kg_m2
+            body.mass = float(current.aircraft.mass_kg)
+            body.inertia = Vector3(float(inertia.x), float(inertia.z), float(inertia.y))
         if not runtime.native.has_method("set_body_drag_model"):
             last_ok = false
             last_error = "native runtime missing body drag model setter"

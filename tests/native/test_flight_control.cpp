@@ -1,9 +1,13 @@
 #include "aerosim_flight_control.hpp"
 #include "aerosim_aerodynamics.hpp"
+#include "aerosim_imu.hpp"
 
 #include <cmath>
+#include <cstring>
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -16,6 +20,42 @@ int fail(const char *message) {
 
 bool near(double actual, double expected, double tolerance) {
     return std::abs(actual - expected) <= tolerance;
+}
+
+bool same_bits(double a, double b) {
+    return std::memcmp(&a, &b, sizeof(double)) == 0;
+}
+
+bool same_state_bits(const aerosim::RigidBodyState &a, const aerosim::RigidBodyState &b) {
+    const auto same_vec3 = [](const aerosim::Vec3 &left, const aerosim::Vec3 &right) {
+        return same_bits(left.x, right.x) && same_bits(left.y, right.y) && same_bits(left.z, right.z);
+    };
+    return same_vec3(a.position, b.position) && same_vec3(a.velocity, b.velocity) &&
+            same_bits(a.orientation.x, b.orientation.x) && same_bits(a.orientation.y, b.orientation.y) &&
+            same_bits(a.orientation.z, b.orientation.z) && same_bits(a.orientation.w, b.orientation.w) &&
+            same_vec3(a.angular_velocity, b.angular_velocity) &&
+            same_vec3(a.propwash_disturbance_rad_s2, b.propwash_disturbance_rad_s2) &&
+            std::equal(a.motor_thrust_newtons.begin(), a.motor_thrust_newtons.end(), b.motor_thrust_newtons.begin(), same_bits);
+}
+
+bool same_clock_bits(const aerosim::SimulationClock &a, const aerosim::SimulationClock &b) {
+    return same_bits(a.substep_accumulator, b.substep_accumulator) && a.total_substeps == b.total_substeps;
+}
+
+bool same_controller_observables(const aerosim::FlightController &a, const aerosim::FlightController &b) {
+    const aerosim::FlightControlState a_state = a.control_state();
+    const aerosim::FlightControlState b_state = b.control_state();
+    return a.armed() == b.armed() && a.arm_reject_code() == b.arm_reject_code() &&
+            a.integrator_reset_count() == b.integrator_reset_count() &&
+            same_bits(a.motor_thrust_newtons(), b.motor_thrust_newtons()) &&
+            same_bits(a_state.target_angle_frd.x, b_state.target_angle_frd.x) &&
+            same_bits(a_state.target_angle_frd.y, b_state.target_angle_frd.y) &&
+            same_bits(a_state.target_angle_frd.z, b_state.target_angle_frd.z) &&
+            same_bits(a_state.target_rate_frd.x, b_state.target_rate_frd.x) &&
+            same_bits(a_state.target_rate_frd.y, b_state.target_rate_frd.y) &&
+            same_bits(a_state.target_rate_frd.z, b_state.target_rate_frd.z) &&
+            a.telemetry_snapshot().timestamp_us == b.telemetry_snapshot().timestamp_us &&
+            a.telemetry_snapshot().publish_count == b.telemetry_snapshot().publish_count;
 }
 
 double vector_length(const aerosim::Vec3 &value) {
@@ -45,11 +85,11 @@ double pearson(const std::array<double, 5> &x, const std::array<double, 5> &y) {
 }
 
 double roll_degrees(const aerosim::Quat &q) {
-    return 2.0 * std::atan2(q.z, q.w) * 180.0 / kPi;
+    return 2.0 * std::atan2(q.x, q.w) * 180.0 / kPi;
 }
 
 double pitch_degrees(const aerosim::Quat &q) {
-    return 2.0 * std::atan2(q.x, q.w) * 180.0 / kPi;
+    return 2.0 * std::atan2(q.z, q.w) * 180.0 / kPi;
 }
 
 void configure_power_model(aerosim::SimulationConfig &config) {
@@ -72,9 +112,154 @@ void configure_power_model(aerosim::SimulationConfig &config) {
     config.per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
 }
 
+double shipped_hover_throttle() {
+    constexpr std::array<double, 3> kRpm = {4000.0, 10000.0, 15000.0};
+    constexpr std::array<double, 3> kThrustNewtons = {1.152, 7.2, 16.2};
+    double numerator = 0.0;
+    double denominator = 0.0;
+    for (std::size_t index = 0; index < kRpm.size(); ++index) {
+        const double squared_rpm = kRpm[index] * kRpm[index];
+        numerator += squared_rpm * kThrustNewtons[index];
+        denominator += squared_rpm * squared_rpm;
+    }
+    return std::sqrt((0.72 * 9.80665 / 4.0) / (numerator / denominator)) / kRpm.back();
+}
+
+aerosim::SimulationConfig shipped_5_inch_6s_config() {
+    aerosim::HardwareConfig hardware;
+    hardware.set_mass_kg(0.72);
+    hardware.set_power_model(64.8, shipped_hover_throttle(), 0.030, 22.2, 6.0, 0.003, 108.0);
+    hardware.set_altitude_hold_noise_deadband_m(0.10);
+    aerosim::PerMotorPhysicsConfig per_motor;
+    per_motor.inertia_kg_m2 = {0.003, 0.003, 0.005};
+    per_motor.max_thrust_per_motor_newtons = 16.2;
+    per_motor.max_current_per_motor_a = 27.0;
+    per_motor.yaw_torque_per_newton = 0.1575 / 16.2;
+    per_motor.position_frd = {{
+            {-0.1125, 0.1125, 0.0},
+            {0.1125, 0.1125, 0.0},
+            {-0.1125, -0.1125, 0.0},
+            {0.1125, -0.1125, 0.0},
+    }};
+    per_motor.spin_direction = {{1.0, -1.0, -1.0, 1.0}};
+    hardware.set_per_motor_model(per_motor);
+    aerosim::SimulationConfig config = hardware.simulation_config();
+    config.physics_hz = 240;
+    config.substep_hz = 1000;
+    return config;
+}
+
 } // namespace
 
 int main() {
+    if (std::string(aerosim::step_status_code(aerosim::StepStatus::Ok)) != "Ok" ||
+            std::string(aerosim::step_status_code(aerosim::StepStatus::InvalidConfig)) != "InvalidConfig" ||
+            std::string(aerosim::step_status_code(aerosim::StepStatus::InvalidState)) != "InvalidState" ||
+            std::string(aerosim::step_status_code(aerosim::StepStatus::ResourceLimitExceeded)) != "ResourceLimitExceeded") {
+        return fail("StepStatus codes must remain stable public contract names");
+    }
+
+    if (!near(aerosim::normalize_angle_radians(1.0e300),
+                    std::remainder(1.0e300, 2.0 * kPi), 1e-12)) {
+        return fail("angle normalization must be constant-time for huge finite angles");
+    }
+
+    // A rejected command must not advance the controller, clock, or motor state.
+    aerosim::FlightController atomic_controller;
+    aerosim::RigidBodyState atomic_state;
+    aerosim::SimulationClock atomic_clock;
+    aerosim::SimulationConfig atomic_config;
+    atomic_config.physics_hz = 240;
+    atomic_config.substep_hz = 1000;
+    configure_power_model(atomic_config);
+    if (!atomic_controller.arm(0.0)) {
+        return fail("atomic controller setup should arm from low throttle");
+    }
+    const aerosim::RigidBodyState state_before_invalid_command = atomic_state;
+    const aerosim::SimulationClock clock_before_invalid_command = atomic_clock;
+    aerosim::FlightCommand invalid_command;
+    invalid_command.throttle = NAN;
+    const aerosim::StepResult invalid_command_result = atomic_controller.try_step_angle_mode(
+            atomic_state, atomic_clock, atomic_config, invalid_command, aerosim::Quat{});
+    if (invalid_command_result.status != aerosim::StepStatus::InvalidCommand ||
+            !same_bits(atomic_state.position.x, state_before_invalid_command.position.x) ||
+            atomic_clock.total_substeps != clock_before_invalid_command.total_substeps) {
+        return fail("invalid controller commands must be rejected atomically");
+    }
+    for (const aerosim::RateProfile invalid_rates : {
+                 aerosim::RateProfile{-0.1, 0.7, 0.0}, aerosim::RateProfile{3.1, 0.7, 0.0},
+                 aerosim::RateProfile{1.0, -0.1, 0.0}, aerosim::RateProfile{1.0, 1.1, 0.0},
+                 aerosim::RateProfile{1.0, 0.7, -0.1}, aerosim::RateProfile{1.0, 0.7, 1.1},
+         }) {
+        aerosim::AcroCommand invalid_acro;
+        invalid_acro.throttle = 0.5;
+        invalid_acro.rates = invalid_rates;
+        const aerosim::StepResult invalid_acro_result = atomic_controller.try_step_acro_mode(
+                atomic_state, atomic_clock, atomic_config, invalid_acro);
+        if (invalid_acro_result.status != aerosim::StepStatus::InvalidCommand ||
+                !same_state_bits(atomic_state, state_before_invalid_command) ||
+                !same_clock_bits(atomic_clock, clock_before_invalid_command)) {
+            return fail("Acro rate profiles outside the public bounds must be rejected atomically");
+        }
+    }
+
+    for (double invalid_accumulator : {NAN, INFINITY}) {
+        aerosim::SimulationClock invalid_clock = atomic_clock;
+        invalid_clock.substep_accumulator = invalid_accumulator;
+        const aerosim::SimulationClock invalid_clock_before = invalid_clock;
+        const aerosim::StepResult invalid_clock_result = atomic_controller.try_step_angle_mode(
+                atomic_state, invalid_clock, atomic_config, aerosim::FlightCommand{}, aerosim::Quat{});
+        if (invalid_clock_result.status != aerosim::StepStatus::InvalidState ||
+                !same_clock_bits(invalid_clock, invalid_clock_before)) {
+            return fail("non-finite clocks must be rejected before substep conversion");
+        }
+    }
+    aerosim::SimulationClock overflow_clock = atomic_clock;
+    overflow_clock.total_substeps = std::numeric_limits<std::uint64_t>::max();
+    const aerosim::SimulationClock overflow_clock_before = overflow_clock;
+    const aerosim::StepResult overflow_clock_result = atomic_controller.try_step_angle_mode(
+            atomic_state, overflow_clock, atomic_config, aerosim::FlightCommand{}, aerosim::Quat{});
+    if (overflow_clock_result.status != aerosim::StepStatus::InvalidState ||
+            !same_clock_bits(overflow_clock, overflow_clock_before)) {
+        return fail("overflowing clocks must be rejected before advancing the substep counter");
+    }
+
+    aerosim::FlightController rollback_controller;
+    aerosim::FlightController untouched_controller;
+    aerosim::RigidBodyState rollback_state;
+    aerosim::RigidBodyState untouched_state;
+    aerosim::SimulationClock rollback_clock;
+    aerosim::SimulationClock untouched_clock;
+    if (!rollback_controller.arm(0.0) || !untouched_controller.arm(0.0)) {
+        return fail("rollback controller setup should arm from low throttle");
+    }
+    aerosim::FlightCommand legal_command;
+    legal_command.throttle = 0.5;
+    rollback_controller.step_angle_mode(rollback_state, rollback_clock, atomic_config, legal_command, aerosim::Quat{});
+    untouched_controller.step_angle_mode(untouched_state, untouched_clock, atomic_config, legal_command, aerosim::Quat{});
+    int failing_substep = 0;
+    aerosim::SimulationConfig fourth_substep_failure = atomic_config;
+    fourth_substep_failure.external_force_provider = [&failing_substep](const aerosim::Vec3 &) {
+        ++failing_substep;
+        return failing_substep == 4 ? aerosim::Vec3{NAN, 0.0, 0.0} : aerosim::Vec3{};
+    };
+    const aerosim::RigidBodyState rollback_state_before = rollback_state;
+    const aerosim::SimulationClock rollback_clock_before = rollback_clock;
+    const aerosim::FlightController rollback_controller_before = rollback_controller;
+    const aerosim::StepResult fourth_substep_result = rollback_controller.try_step_angle_mode(
+            rollback_state, rollback_clock, fourth_substep_failure, legal_command, aerosim::Quat{});
+    if (fourth_substep_result.status != aerosim::StepStatus::InvalidControlOutput || failing_substep != 4 ||
+            !same_state_bits(rollback_state, rollback_state_before) || !same_clock_bits(rollback_clock, rollback_clock_before) ||
+            !same_controller_observables(rollback_controller, rollback_controller_before)) {
+        return fail("a fourth-substep failure must restore all controller observables");
+    }
+    rollback_controller.step_angle_mode(rollback_state, rollback_clock, atomic_config, legal_command, aerosim::Quat{});
+    untouched_controller.step_angle_mode(untouched_state, untouched_clock, atomic_config, legal_command, aerosim::Quat{});
+    if (!same_state_bits(rollback_state, untouched_state) || !same_clock_bits(rollback_clock, untouched_clock) ||
+            !same_controller_observables(rollback_controller, untouched_controller)) {
+        return fail("the next legal frame after rollback must equal an untouched continuation");
+    }
+
     aerosim::FlightController blocked_controller;
     if (blocked_controller.arm(0.25)) {
         return fail("arm must be rejected unless throttle is low");
@@ -337,9 +522,47 @@ int main() {
         }
     }
 
+    const aerosim::SimulationConfig g2_config = shipped_5_inch_6s_config();
     aerosim::RigidBodyState acro_state;
     aerosim::SimulationClock acro_clock;
     aerosim::FlightController acro_controller;
+    if (!near(g2_config.motor_tau_s, 0.030, 1e-12) ||
+            !near(g2_config.battery_cell_resistance_ohm, 0.003, 1e-12) ||
+            !near(g2_config.hover_throttle, shipped_hover_throttle(), 1e-12) ||
+            !near(g2_config.altitude_hold_noise_deadband_m, 0.10, 1e-12) ||
+            aerosim::available_thrust_cap_newtons(g2_config, 1.0) >= g2_config.max_total_thrust_newtons) {
+        return fail("G2.4/G2.5/G2.6 must run the shipped hardware and altitude-noise tuning");
+    }
+
+    aerosim::ImuConfig g2_6_imu_config;
+    g2_6_imu_config.barometer_noise_stddev_m = g2_config.altitude_hold_noise_deadband_m;
+    aerosim::ImuSimulator g2_6_imu(g2_6_imu_config);
+    aerosim::RigidBodyState g2_6_state;
+    aerosim::SimulationClock g2_6_clock;
+    aerosim::FlightController g2_6_controller;
+    aerosim::FlightCommand g2_6_command;
+    g2_6_command.throttle = g2_config.hover_throttle;
+    g2_6_imu.sample(g2_6_state);
+    if (!g2_6_controller.arm(0.0)) {
+        return fail("G2.6 IMU altitude-hold setup should arm from low throttle");
+    }
+    for (int frame = 0; frame < g2_config.physics_hz * 2; ++frame) {
+        const aerosim::ImuSample sample = g2_6_imu.sample(g2_6_state);
+        g2_6_controller.step_angle_mode(g2_6_state, g2_6_clock, g2_config, g2_6_command, sample.estimated_attitude);
+    }
+    g2_6_state = {};
+    g2_6_controller.capture_altitude_hold(g2_6_state.position.y);
+    double g2_6_max_drift_m = 0.0;
+    for (int frame = 0; frame < g2_config.physics_hz * 60; ++frame) {
+        const aerosim::ImuSample sample = g2_6_imu.sample(g2_6_state);
+        const aerosim::TrajectorySample trajectory = g2_6_controller.step_altitude_hold_mode(
+                g2_6_state, g2_6_clock, g2_config, g2_6_command,
+                sample.barometer_altitude_m, sample.estimated_attitude);
+        g2_6_max_drift_m = std::max(g2_6_max_drift_m, std::abs(trajectory.state.position.y));
+    }
+    if (g2_6_max_drift_m > 0.15) {
+        return fail("G2.6 Altitude Hold must remain within 15 cm with the public IMU barometer stream");
+    }
     if (!acro_controller.arm(0.0)) {
         return fail("Acro setup should arm from low throttle");
     }
@@ -348,12 +571,29 @@ int main() {
     acro_roll.roll_stick = 1.0;
     acro_roll.rates = {1.0, 0.722222222222, 0.0};
     aerosim::TrajectorySample acro_sample;
-    for (int frame = 0; frame < config.physics_hz / 2; ++frame) {
-        acro_sample = acro_controller.step_acro_mode(acro_state, acro_clock, config, acro_roll);
+    bool reached_acro_band = false;
+    double acro_reach_time_s = 0.0;
+    double acro_band_start_s = 0.0;
+    double acro_max_degrees_per_second = 0.0;
+    for (int frame = 0; frame < g2_config.physics_hz / 2; ++frame) {
+        acro_sample = acro_controller.step_acro_mode(acro_state, acro_clock, g2_config, acro_roll);
+        const double rate = acro_sample.state.angular_velocity.x * 180.0 / kPi;
+        acro_max_degrees_per_second = std::max(acro_max_degrees_per_second, rate);
+        if (!reached_acro_band && near(rate, 720.0, 720.0 * 0.05)) {
+            reached_acro_band = true;
+            acro_reach_time_s = acro_sample.time_seconds;
+            acro_band_start_s = acro_sample.time_seconds;
+        }
+        if (reached_acro_band && acro_sample.time_seconds <= acro_band_start_s + 0.050 &&
+                !near(rate, 720.0, 720.0 * 0.05)) {
+            return fail("G2.5 Acro full-stick roll must hold the 720 degree per second band for 50 ms");
+        }
     }
-    const double roll_rate_degrees_per_second = acro_sample.state.angular_velocity.z * 180.0 / kPi;
-    if (!near(roll_rate_degrees_per_second, 720.0, 720.0 * 0.05)) {
-        return fail("G2.5 Acro full-stick roll must reach 720 degrees per second within 5%");
+    const double roll_rate_degrees_per_second = acro_sample.state.angular_velocity.x * 180.0 / kPi;
+    if (!reached_acro_band || acro_reach_time_s > 0.250 ||
+            !near(roll_rate_degrees_per_second, 720.0, 720.0 * 0.05) ||
+            acro_max_degrees_per_second > 720.0 * 1.05) {
+        return fail("G2.5 Acro full-stick roll must reach and retain 720 degrees per second without exceeding its upper band");
     }
 
     aerosim::RigidBodyState roll_step_state;
@@ -369,9 +609,9 @@ int main() {
     double rise_time_s = 0.0;
     double max_roll_degrees = 0.0;
     double last_outside_2_percent_s = 0.0;
-    for (int frame = 0; frame < config.physics_hz; ++frame) {
+    for (int frame = 0; frame < g2_config.physics_hz; ++frame) {
         const aerosim::TrajectorySample sample =
-                roll_step_controller.step_angle_mode(roll_step_state, roll_step_clock, config, roll_step);
+                roll_step_controller.step_angle_mode(roll_step_state, roll_step_clock, g2_config, roll_step);
         const double roll = roll_degrees(sample.state.orientation);
         max_roll_degrees = std::max(max_roll_degrees, roll);
         if (!reached_90_percent && roll >= 27.0) {

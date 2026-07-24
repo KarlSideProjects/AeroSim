@@ -62,9 +62,33 @@ jobs:
           git clone https://github.com/godotengine/godot-cpp.git "$GODOT_CPP_DIR"
           git -C "$GODOT_CPP_DIR" checkout ba0edfed90512ec64aba51d4295a3e7e30112f86
 
+      - name: Build GDExtension
+        run: scons target=template_debug platform=linux
+
+      - name: Record Linux debug artifact provenance
+        run: |
+          artifact=build/native_debug_artifact.json
+          extension=bin/libaerosim_native.linux.template_debug.x86_64.so
+          test -s "$extension"
+          native_source_sha256="$({ find src/native -type f -print0; printf 'SConstruct\0'; } | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1)"
+          python3 - "$artifact" "$extension" "$(git rev-parse HEAD)" "$native_source_sha256" <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          artifact = Path(sys.argv[1])
+          extension = Path(sys.argv[2])
+          artifact.parent.mkdir(parents=True, exist_ok=True)
+          artifact.write_text(json.dumps({
+              "commit_sha": sys.argv[3],
+              "gdextension_path": str(extension),
+              "gdextension_sha256": hashlib.sha256(extension.read_bytes()).hexdigest(),
+              "native_source_sha256": sys.argv[4],
+          }, separators=(",", ":")) + "\n", encoding="utf-8")
+          PY
+
       - name: Run full local-Ubuntu G0.1 gate protocol
         env:
           AEROSIM_REQUIRED_GPU_ADAPTER: NVIDIA GeForce RTX 4060 Ti
+          AEROSIM_NATIVE_PROVENANCE: build/native_debug_artifact.json
         run: |
           mkdir -p build/performance-gpu
           (
@@ -107,11 +131,43 @@ jobs:
           assert candidate["comparison_to_baseline"]["g3_7_increase_within_limit"] is True
           PY
 
+      - name: Write GPU performance artifact manifest
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          directory = Path("build/performance-gpu")
+          reports = {
+              mode: json.loads((directory / f"effects-{mode}.json").read_text())
+              for mode in ("off", "on")
+          }
+          provenance = {
+              mode: {
+                  "commit_sha": report["environment"]["git_revision"],
+                  "gdextension_sha256": report["measurement"]["gdextension_sha256"],
+                  "native_source_sha256": report["measurement"]["native_source_sha256"],
+              }
+              for mode, report in reports.items()
+          }
+          if provenance["off"] != provenance["on"]:
+              raise SystemExit("effects reports do not share one native-artifact receipt")
+          (directory / "manifest.json").write_text(json.dumps({
+              "schema_version": 1,
+              "provenance": provenance["off"],
+              "artifacts": {
+                  mode: f"effects-{mode}.json"
+                  for mode in ("off", "on")
+              },
+          }, separators=(",", ":")) + "\n", encoding="utf-8")
+          PY
+
       - name: Store GPU performance artifacts locally
         if: always()
         run: |
           destination="$AEROSIM_CI_ARTIFACT_RUN_DIR/performance-gpu"
           install -d "$destination"
+          test -s build/performance-gpu/manifest.json
           if compgen -G 'build/performance-gpu/*.json' > /dev/null; then
             cp build/performance-gpu/*.json "$destination/"
           fi

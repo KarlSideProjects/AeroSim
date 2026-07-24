@@ -9,6 +9,7 @@ var native_position := Vector3.ZERO
 var native_orientation := Quaternion.IDENTITY
 var native_linear_velocity := Vector3.ZERO
 var native_angular_velocity := Vector3.ZERO
+var native_body_angular_velocity := Vector3.ZERO
 
 func reset_contact() -> void:
     contact_seen = false
@@ -24,7 +25,8 @@ func apply_native_state(
     native_position = position
     native_orientation = orientation.normalized()
     native_linear_velocity = linear
-    native_angular_velocity = angular
+    native_body_angular_velocity = angular
+    native_angular_velocity = Basis(native_orientation) * angular
     global_transform = Transform3D(Basis(native_orientation), native_position)
     linear_velocity = native_linear_velocity
     angular_velocity = native_angular_velocity

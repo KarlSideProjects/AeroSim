@@ -25,15 +25,47 @@ struct CollisionStepResult {
     TrajectorySample sample;
     Vec3 normal;
     Vec3 impulse;
+    StepStatus status = StepStatus::Ok;
 };
 
-double kinetic_energy_joules(const RigidBodyState &state, double mass_kg);
+double kinetic_energy_joules(const RigidBodyState &state, const SimulationConfig &config);
+bool valid_collision_contact(const CollisionContact &contact);
 
 class CollisionAuthoritySwitch {
 private:
     PhysicsAuthority authority_ = PhysicsAuthority::FlightCore;
     int clear_frames_ = 0;
     int release_frames_ = 3;
+    CollisionStepResult step_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const CollisionContact &contact,
+            const Quat &estimated_attitude);
+    CollisionStepResult step_altitude_hold_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            double measured_altitude_m,
+            const CollisionContact &contact,
+            const Quat &estimated_attitude);
+    CollisionStepResult step_acro_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const AcroCommand &command,
+            const CollisionContact &contact);
+    CollisionStepResult step_per_motor_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const MotorCommands &commands,
+            const CollisionContact &contact);
 
 public:
     CollisionAuthoritySwitch() = default;
@@ -56,7 +88,24 @@ public:
             const FlightCommand &command,
             const CollisionContact &contact,
             const Quat &estimated_attitude);
+    CollisionStepResult try_step(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const CollisionContact &contact,
+            const Quat &estimated_attitude = {});
     CollisionStepResult step_altitude_hold(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            double measured_altitude_m,
+            const CollisionContact &contact,
+            const Quat &estimated_attitude);
+    CollisionStepResult try_step_altitude_hold(
             RigidBodyState &state,
             SimulationClock &clock,
             FlightController &controller,
@@ -72,7 +121,20 @@ public:
             const SimulationConfig &config,
             const AcroCommand &command,
             const CollisionContact &contact);
+    CollisionStepResult try_step_acro(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            FlightController &controller,
+            const SimulationConfig &config,
+            const AcroCommand &command,
+            const CollisionContact &contact);
     CollisionStepResult step_per_motor(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const MotorCommands &commands,
+            const CollisionContact &contact);
+    CollisionStepResult try_step_per_motor(
             RigidBodyState &state,
             SimulationClock &clock,
             const SimulationConfig &config,

@@ -59,6 +59,19 @@ int main() {
         }
     }
 
+    const auto positive_roll = aerosim::quad_x_mix_thrust(config, 16.0, {0.2, 0.0, 0.0});
+    const auto positive_pitch = aerosim::quad_x_mix_thrust(config, 16.0, {0.0, 0.2, 0.0});
+    const auto positive_yaw = aerosim::quad_x_mix_thrust(config, 16.0, {0.0, 0.0, 0.02});
+    if (!positive_roll.valid || !positive_pitch.valid || !positive_yaw.valid ||
+            !(positive_roll.normalized[2] > positive_roll.normalized[0] &&
+                    positive_roll.normalized[3] > positive_roll.normalized[1]) ||
+            !(positive_pitch.normalized[1] > positive_pitch.normalized[0] &&
+                    positive_pitch.normalized[3] > positive_pitch.normalized[2]) ||
+            !(positive_yaw.normalized[0] > positive_yaw.normalized[1] &&
+                    positive_yaw.normalized[3] > positive_yaw.normalized[2])) {
+        return fail("frozen Quad-X motor-pair signs must preserve FRD roll, pitch, and yaw");
+    }
+
     auto exact_capacity = aerosim::quad_x_mix_thrust(config, 32.0, {0.2, 0.0, 0.0});
     if (!exact_capacity.valid || !exact_capacity.collective_saturated) {
         return fail("exact-capacity collective must preserve differential with an explicit collective saturation");

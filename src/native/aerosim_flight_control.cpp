@@ -27,27 +27,84 @@ Vec3 world_to_body(const Quat &attitude, const Vec3 &world) {
     const Quat rotated = multiply(multiply(conjugate, vector), attitude);
     return {rotated.x, rotated.y, rotated.z};
 }
-constexpr double kAngleP = 20.0;
+constexpr double kAngleP = 15.0;
 constexpr double kRateP = 0.600;
+constexpr double kRatePFeedForward = 0.0;
 constexpr double kRateI = 0.020;
+constexpr double kRateD = 0.005;
 constexpr double kMaxRateRadS = 16.0;
-constexpr double kTargetRateAccelerationRadS2 = 80.0;
+constexpr double kTargetRateAccelerationRadS2 = 120.0;
 constexpr double kRateIntegralLimitNm = 0.20;
+constexpr double kAngleInputTimeConstantS = 0.05;
+constexpr double kDerivativeFilterTimeConstantS = 0.003;
 constexpr double kAltitudeHoldEstimateTauS = 2.0;
 constexpr double kAltitudeHoldKp = 0.08;
 constexpr double kAltitudeHoldKd = 0.20;
-constexpr double kAltitudeHoldNoiseDeadbandM = 0.15;
 
 double radians(double degrees) {
     return degrees * kPi / 180.0;
 }
 
-double angle_x(const Quat &q) {
-    return 2.0 * std::atan2(q.x, q.w);
+Quat conjugate(const Quat &q) {
+    return {-q.x, -q.y, -q.z, q.w};
 }
 
-double angle_z(const Quat &q) {
-    return 2.0 * std::atan2(q.z, q.w);
+Quat normalized_quat(const Quat &q) {
+    const double norm = quat_norm(q);
+    if (!std::isfinite(norm) || norm <= 0.0) {
+        return {};
+    }
+    return {q.x / norm, q.y / norm, q.z / norm, q.w / norm};
+}
+
+double wrap_pi(double angle) {
+    return normalize_angle_radians(angle);
+}
+
+double move_toward(double current, double target, double maximum_delta) {
+    return current + std::clamp(target - current, -maximum_delta, maximum_delta);
+}
+
+Vec3 frd_euler(const Quat &attitude_y_up) {
+    constexpr double kHalfSqrt2 = 0.70710678118654752440;
+    const Quat basis{ kHalfSqrt2, 0.0, 0.0, kHalfSqrt2 };
+    const Quat frd = normalized_quat(multiply(multiply(conjugate(basis), normalized_quat(attitude_y_up)), basis));
+    const double roll = std::atan2(
+            2.0 * (frd.w * frd.x + frd.y * frd.z),
+            1.0 - 2.0 * (frd.x * frd.x + frd.y * frd.y));
+    const double pitch = std::asin(std::clamp(2.0 * (frd.w * frd.y - frd.z * frd.x), -1.0, 1.0));
+    const double yaw = std::atan2(
+            2.0 * (frd.w * frd.z + frd.x * frd.y),
+            1.0 - 2.0 * (frd.y * frd.y + frd.z * frd.z));
+    return {roll, pitch, yaw};
+}
+
+Quat frd_attitude(const Vec3 &angles) {
+    constexpr double kHalfSqrt2 = 0.70710678118654752440;
+    const double cr = std::cos(angles.x * 0.5);
+    const double sr = std::sin(angles.x * 0.5);
+    const double cp = std::cos(angles.y * 0.5);
+    const double sp = std::sin(angles.y * 0.5);
+    const double cy = std::cos(angles.z * 0.5);
+    const double sy = std::sin(angles.z * 0.5);
+    const Quat frd{
+            sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+            cr * cp * cy + sr * sp * sy,
+    };
+    const Quat basis{ kHalfSqrt2, 0.0, 0.0, kHalfSqrt2 };
+    return normalized_quat(multiply(multiply(basis, frd), conjugate(basis)));
+}
+
+Vec3 shortest_attitude_error_frd(const Quat &actual_y_up, const Vec3 &target_angle_frd) {
+    Quat error = normalized_quat(multiply(conjugate(normalized_quat(actual_y_up)), frd_attitude(target_angle_frd)));
+    if (error.w < 0.0) {
+        error = {-error.x, -error.y, -error.z, -error.w};
+    }
+    const double vector_norm = std::sqrt(error.x * error.x + error.y * error.y + error.z * error.z);
+    const double scale = vector_norm > 1e-12 ? 2.0 * std::atan2(vector_norm, error.w) / vector_norm : 2.0;
+    return y_up_to_frd({error.x * scale, error.y * scale, error.z * scale});
 }
 
 double power3(double value) {
@@ -85,13 +142,127 @@ double loaded_voltage_v(const SimulationConfig &config, double throttle) {
                     current_a * config.battery_cell_resistance_ohm * config.battery_cells);
 }
 
-double shaped_rate(double desired, double previous, double dt) {
-    const double limited_desired = std::clamp(desired, -kMaxRateRadS, kMaxRateRadS);
-    const double maximum_delta = kTargetRateAccelerationRadS2 * std::max(dt, 0.0);
-    return std::clamp(limited_desired, previous - maximum_delta, previous + maximum_delta);
+bool finite_vec3(const Vec3 &value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+bool finite_quat(const Quat &value) {
+    return finite_vec3({value.x, value.y, value.z}) && std::isfinite(value.w) && quat_norm(value) > 0.0;
+}
+
+bool valid_state(const RigidBodyState &state) {
+    if (!finite_vec3(state.position) || !finite_vec3(state.velocity) || !finite_quat(state.orientation) ||
+            !finite_vec3(state.angular_velocity) || !finite_vec3(state.propwash_disturbance_rad_s2)) {
+        return false;
+    }
+    return std::all_of(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(),
+            [](double value) { return std::isfinite(value) && value >= 0.0; });
+}
+
+bool valid_clock(const SimulationClock &clock, const SimulationConfig &config) {
+    if (!std::isfinite(clock.substep_accumulator) || clock.substep_accumulator < 0.0 ||
+            clock.substep_accumulator >= 1.0) {
+        return false;
+    }
+    const std::uint64_t maximum_frame_substeps =
+            static_cast<std::uint64_t>(config.substep_hz / config.physics_hz) +
+            (config.substep_hz % config.physics_hz == 0 ? 0U : 1U);
+    return clock.total_substeps <= std::numeric_limits<std::uint64_t>::max() - maximum_frame_substeps;
+}
+
+bool valid_config(const SimulationConfig &config) {
+    const double values[] = {
+            config.seconds, config.mass_kg, config.gravity_mps2, config.total_thrust_newtons,
+            config.max_total_thrust_newtons, config.hover_throttle, config.motor_tau_s,
+            config.battery_nominal_voltage_v, config.battery_cells, config.battery_cell_resistance_ohm,
+            config.battery_remaining_mah, config.max_total_current_a, config.max_motor_rpm,
+            config.altitude_hold_noise_deadband_m, config.air_density_kg_m3,
+            config.a4_ground_effect.kf, config.a4_ground_effect.ground_effect_coeff,
+            config.a4_ground_effect.prop_radius_m, config.a4_ground_effect.height_clip_m,
+            config.a5_downwash.prop_radius_m, config.a5_downwash.coeff_1, config.a5_downwash.coeff_2,
+            config.a5_downwash.coeff_3, config.a6_propwash.full_collective_angular_accel_rad_s2,
+            config.a6_propwash.minimum_wake_entry_speed_mps, config.a6_propwash.minimum_transverse_rate_rad_s,
+    };
+    return config.physics_hz > 0 && config.substep_hz >= config.physics_hz &&
+            static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz) <= 1000000.0 &&
+            std::all_of(std::begin(values), std::end(values), [](double value) { return std::isfinite(value); }) &&
+            finite_vec3(config.external_force_world) && finite_vec3(config.wind_world_mps) &&
+            finite_vec3(config.wind_turbulence_mps) && finite_vec3(config.a3_drag.coefficient) &&
+            finite_vec3(config.body_drag.drag_coefficient) && finite_vec3(config.body_drag.frontal_area_m2) &&
+            finite_vec3(config.body_drag.center_of_pressure_frd_m) &&
+            std::all_of(config.a4_ground_effect.motor_rpm.begin(), config.a4_ground_effect.motor_rpm.end(),
+                    [](double value) { return std::isfinite(value); }) &&
+            config.mass_kg > 0.0 && config.gravity_mps2 > 0.0 && config.altitude_hold_noise_deadband_m >= 0.0 && config.air_density_kg_m3 > 0.0 &&
+            config.hover_throttle >= 0.0 && config.hover_throttle <= 1.0 && config.motor_tau_s >= 0.0 &&
+            valid_state(config.initial_state) && validate_per_motor_config(config.per_motor);
 }
 
 } // namespace
+
+bool valid_flight_command(const FlightCommand &command) {
+    return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
+            std::isfinite(command.roll_degrees) && std::isfinite(command.pitch_degrees) &&
+            std::isfinite(command.yaw_rate_degrees_per_second);
+}
+
+bool valid_acro_command(const AcroCommand &command) {
+    return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
+            std::isfinite(command.roll_stick) && std::isfinite(command.pitch_stick) && std::isfinite(command.yaw_stick) &&
+            std::isfinite(command.rates.rc_rate) && command.rates.rc_rate >= 0.0 && command.rates.rc_rate <= 3.0 &&
+            std::isfinite(command.rates.super_rate) && command.rates.super_rate >= 0.0 && command.rates.super_rate <= 1.0 &&
+            std::isfinite(command.rates.expo) && command.rates.expo >= 0.0 && command.rates.expo <= 1.0;
+}
+
+double normalize_angle_radians(double angle) {
+    return std::isfinite(angle) ? std::remainder(angle, 2.0 * 3.14159265358979323846) : 0.0;
+}
+
+const char *step_status_code(StepStatus status) {
+    switch (status) {
+        case StepStatus::Ok: return "Ok";
+        case StepStatus::InvalidCommand: return "InvalidCommand";
+        case StepStatus::InvalidConfig: return "InvalidConfig";
+        case StepStatus::InvalidState: return "InvalidState";
+        case StepStatus::InvalidControlOutput: return "InvalidControlOutput";
+        case StepStatus::ResourceLimitExceeded: return "ResourceLimitExceeded";
+    }
+    return "InvalidControlOutput";
+}
+
+StepStatus validate_angle_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const Quat &estimated_attitude) {
+    if (!valid_flight_command(command)) return StepStatus::InvalidCommand;
+    if (!valid_config(config)) return StepStatus::InvalidConfig;
+    return valid_state(state) && finite_quat(estimated_attitude) && valid_clock(clock, config)
+            ? StepStatus::Ok : StepStatus::InvalidState;
+}
+
+StepStatus validate_acro_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const AcroCommand &command) {
+    if (!valid_acro_command(command)) return StepStatus::InvalidCommand;
+    if (!valid_config(config)) return StepStatus::InvalidConfig;
+    return valid_state(state) && valid_clock(clock, config) ? StepStatus::Ok : StepStatus::InvalidState;
+}
+
+StepStatus validate_altitude_hold_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double measured_altitude_m,
+        const Quat &estimated_attitude) {
+    if (!valid_flight_command(command)) return StepStatus::InvalidCommand;
+    if (!valid_config(config) || !std::isfinite(measured_altitude_m)) return StepStatus::InvalidConfig;
+    return valid_state(state) && finite_quat(estimated_attitude) && valid_clock(clock, config)
+            ? StepStatus::Ok : StepStatus::InvalidState;
+}
 
 QuadXMixerResult quad_x_mix_thrust(
         const SimulationConfig &config,
@@ -238,7 +409,12 @@ void FlightController::disarm() {
     altitude_hold_trim_throttle_ = 0.0;
     altitude_hold_just_captured_ = false;
     rate_integral_ = {};
-    previous_target_rates_y_up_ = {};
+    target_angle_frd_ = {};
+    target_rate_frd_ = {};
+    previous_rate_error_frd_ = {};
+    filtered_rate_derivative_frd_ = {};
+    mode_family_ = ModeFamily::None;
+    control_initialized_ = false;
     motor_saturation_latched_ = {};
     pid_saturation_latched_ = {};
     pid_timing_stats_ = {};
@@ -258,7 +434,12 @@ const std::string &FlightController::arm_reject_code() const {
 void FlightController::reset_integrators() {
     ++integrator_reset_count_;
     rate_integral_ = {};
-    previous_target_rates_y_up_ = {};
+    target_angle_frd_ = {};
+    target_rate_frd_ = {};
+    previous_rate_error_frd_ = {};
+    filtered_rate_derivative_frd_ = {};
+    mode_family_ = ModeFamily::None;
+    control_initialized_ = false;
 }
 
 int FlightController::integrator_reset_count() const {
@@ -284,6 +465,12 @@ const PidTimingStats &FlightController::pid_timing_stats() const {
     return pid_timing_stats_;
 }
 
+FlightControlState FlightController::control_state() const {
+    return {target_angle_frd_, target_rate_frd_, rate_integral_, previous_rate_error_frd_, filtered_rate_derivative_frd_,
+            static_cast<int>(mode_family_), control_initialized_, altitude_hold_captured_, altitude_hold_just_captured_,
+            motor_saturation_latched_, pid_saturation_latched_, motor_thrust_newtons_};
+}
+
 const TelemetrySnapshot &FlightController::telemetry_snapshot() const {
     return telemetry_buffers_[telemetry_read_index_];
 }
@@ -299,67 +486,132 @@ MotorCommands FlightController::control_substep(
         RigidBodyState &state,
         const SimulationConfig &config,
         double throttle,
-        const Vec3 &desired_rates_y_up,
+        ModeFamily mode_family,
+        const Vec3 &desired_angles_frd,
+        const Vec3 &desired_rates_frd,
+        const Quat &estimated_attitude,
         double dt,
         std::array<double, 3> &pid_output,
         std::array<bool, 3> &pid_saturated) {
     MotorCommands commands;
+    pid_saturated = {};
     if (!armed_) {
-        previous_target_rates_y_up_ = {};
+        mode_family_ = ModeFamily::None;
+        control_initialized_ = false;
         return commands;
     }
 
-    const std::array<double, 3> desired = {
-            desired_rates_y_up.x,
-            desired_rates_y_up.y,
-            desired_rates_y_up.z,
-    };
-    std::array<double, 3> shaped{};
-    for (std::size_t index = 0; index < shaped.size(); ++index) {
-        shaped[index] = shaped_rate(desired[index], previous_target_rates_y_up_[index], dt);
-        previous_target_rates_y_up_[index] = shaped[index];
+    const Vec3 measured_angle = frd_euler(estimated_attitude);
+    const Vec3 measured_rate = y_up_to_frd(state.angular_velocity);
+    if (!control_initialized_ || mode_family_ != mode_family) {
+        target_angle_frd_ = measured_angle;
+        target_rate_frd_ = measured_rate;
+        rate_integral_ = {};
+        previous_rate_error_frd_ = {};
+        filtered_rate_derivative_frd_ = {};
+        mode_family_ = mode_family;
+        control_initialized_ = true;
     }
 
-    const Vec3 rate_error_y_up{
-            shaped[0] - state.angular_velocity.x,
-            shaped[1] - state.angular_velocity.y,
-            shaped[2] - state.angular_velocity.z,
-    };
-    const std::array<double, 3> errors = {rate_error_y_up.x, rate_error_y_up.y, rate_error_y_up.z};
-    std::array<double, 3> target_torque_y_up = {};
-    for (std::size_t index = 0; index < target_torque_y_up.size(); ++index) {
-        rate_integral_[index] = std::clamp(
-                rate_integral_[index] + errors[index] * kRateI * std::max(dt, 0.0),
-                -kRateIntegralLimitNm,
-                kRateIntegralLimitNm);
-        target_torque_y_up[index] = errors[index] * kRateP + rate_integral_[index];
-    }
-    // The controller's desired-rate tuple is the legacy pitch/yaw/roll command
-    // order used by the mixer, not a physical Godot Y-up vector. Keep this
-    // explicit mapping separate from the frozen coordinate-boundary helpers.
-    const Vec3 target_torque_frd{
-            target_torque_y_up[0],
-            -target_torque_y_up[2],
-            target_torque_y_up[1],
-    };
-    const std::array<double, 3> target_torque = {
-            target_torque_frd.x,
-            target_torque_frd.y,
-            target_torque_frd.z,
-    };
-    for (std::size_t index = 0; index < target_torque.size(); ++index) {
-        pid_output[index] = target_torque[index];
-        pid_saturated[index] = std::abs(target_torque[index]) >= kRateIntegralLimitNm + kMaxRateRadS * kRateP;
+    const double maximum_delta = kTargetRateAccelerationRadS2 * std::max(dt, 0.0);
+    if (mode_family == ModeFamily::Angle) {
+        double *target_angles[] = {&target_angle_frd_.x, &target_angle_frd_.y};
+        double *target_rates[] = {&target_rate_frd_.x, &target_rate_frd_.y};
+        const double desired_angles[] = {desired_angles_frd.x, desired_angles_frd.y};
+        for (std::size_t index = 0; index < 2; ++index) {
+            const double error = wrap_pi(desired_angles[index] - *target_angles[index]);
+            const double rate_command = std::clamp(error / kAngleInputTimeConstantS, -kMaxRateRadS, kMaxRateRadS);
+            const double next_rate = move_toward(*target_rates[index], rate_command, maximum_delta);
+            const double next_angle = *target_angles[index] + next_rate * dt;
+            if ((error > 0.0 && next_angle >= desired_angles[index]) ||
+                    (error < 0.0 && next_angle <= desired_angles[index])) {
+                *target_angles[index] = desired_angles[index];
+                *target_rates[index] = 0.0;
+            } else {
+                *target_angles[index] = next_angle;
+                *target_rates[index] = next_rate;
+            }
+        }
+        target_rate_frd_.z = move_toward(
+                target_rate_frd_.z,
+                std::clamp(desired_rates_frd.z, -kMaxRateRadS, kMaxRateRadS),
+                maximum_delta);
+        target_angle_frd_.z = wrap_pi(target_angle_frd_.z + target_rate_frd_.z * dt);
+    } else {
+        target_rate_frd_.x = move_toward(target_rate_frd_.x, std::clamp(desired_rates_frd.x, -kMaxRateRadS, kMaxRateRadS), maximum_delta);
+        target_rate_frd_.y = move_toward(target_rate_frd_.y, std::clamp(desired_rates_frd.y, -kMaxRateRadS, kMaxRateRadS), maximum_delta);
+        target_rate_frd_.z = move_toward(target_rate_frd_.z, std::clamp(desired_rates_frd.z, -kMaxRateRadS, kMaxRateRadS), maximum_delta);
     }
 
-    const QuadXMixerResult mixed = quad_x_mix_thrust(
+    const Vec3 attitude_error = mode_family == ModeFamily::Angle
+            ? shortest_attitude_error_frd(estimated_attitude, target_angle_frd_) : Vec3{};
+    const Vec3 rate_setpoint{
+            target_rate_frd_.x + attitude_error.x * kAngleP,
+            target_rate_frd_.y + attitude_error.y * kAngleP,
+            target_rate_frd_.z,
+    };
+    const std::array<double, 3> errors = {
+            rate_setpoint.x - measured_rate.x,
+            rate_setpoint.y - measured_rate.y,
+            rate_setpoint.z - measured_rate.z,
+    };
+    std::array<double, 3> derivative{};
+    std::array<double, 3> previous_error = {
+            previous_rate_error_frd_.x,
+            previous_rate_error_frd_.y,
+            previous_rate_error_frd_.z,
+    };
+    std::array<double, 3> filtered_derivative = {
+            filtered_rate_derivative_frd_.x,
+            filtered_rate_derivative_frd_.y,
+            filtered_rate_derivative_frd_.z,
+    };
+    const double derivative_alpha = alpha_from_tau(dt, kDerivativeFilterTimeConstantS);
+    for (std::size_t index = 0; index < derivative.size(); ++index) {
+        const double raw_derivative = dt > 0.0 ? (errors[index] - previous_error[index]) / dt : 0.0;
+        filtered_derivative[index] += (raw_derivative - filtered_derivative[index]) * derivative_alpha;
+        previous_error[index] = errors[index];
+        derivative[index] = filtered_derivative[index];
+    }
+    previous_rate_error_frd_ = {previous_error[0], previous_error[1], previous_error[2]};
+    filtered_rate_derivative_frd_ = {filtered_derivative[0], filtered_derivative[1], filtered_derivative[2]};
+    auto torque_for = [&](const std::array<double, 3> &integral) {
+        return Vec3{
+                errors[0] * kRateP + target_rate_frd_.x * kRatePFeedForward + integral[0] + derivative[0] * kRateD,
+                errors[1] * kRateP + target_rate_frd_.y * kRatePFeedForward + integral[1] + derivative[1] * kRateD,
+                errors[2] * kRateP + target_rate_frd_.z * kRatePFeedForward + integral[2] + derivative[2] * kRateD,
+        };
+    };
+    Vec3 target_torque_frd = torque_for(rate_integral_);
+    QuadXMixerResult mixed = quad_x_mix_thrust(
             config,
             target_thrust_newtons(config, throttle),
-            {target_torque[0], target_torque[1], target_torque[2]});
+            target_torque_frd);
     if (!mixed.valid) {
         commands.normalized.fill(std::numeric_limits<double>::quiet_NaN());
         return commands;
     }
+
+    bool saturated = mixed.collective_saturated || mixed.axis_saturated[0] || mixed.axis_saturated[1] || mixed.axis_saturated[2];
+    for (double command : mixed.normalized) {
+        saturated = saturated || command <= 1.0e-12 || command >= 1.0 - 1.0e-12;
+    }
+    for (std::size_t index = 0; index < rate_integral_.size(); ++index) {
+        const double candidate = std::clamp(
+                rate_integral_[index] + errors[index] * kRateI * std::max(dt, 0.0),
+                -kRateIntegralLimitNm,
+                kRateIntegralLimitNm);
+        if (!saturated || std::abs(candidate) <= std::abs(rate_integral_[index])) {
+            rate_integral_[index] = candidate;
+        }
+    }
+    target_torque_frd = torque_for(rate_integral_);
+    mixed = quad_x_mix_thrust(config, target_thrust_newtons(config, throttle), target_torque_frd);
+    if (!mixed.valid) {
+        commands.normalized.fill(std::numeric_limits<double>::quiet_NaN());
+        return commands;
+    }
+    const std::array<double, 3> target_torque = {target_torque_frd.x, target_torque_frd.y, target_torque_frd.z};
     for (std::size_t index = 0; index < commands.normalized.size(); ++index) {
         commands.normalized[index] = mixed.normalized[index];
     }
@@ -379,6 +631,8 @@ MotorCommands FlightController::control_substep(
     for (std::size_t index = 0; index < pid_saturated.size(); ++index) {
         pid_saturation_latched_[index] = pid_saturation_latched_[index] || pid_saturated[index];
     }
+    pid_output = {target_torque[1], target_torque[2], target_torque[0]};
+    pid_saturated = {pid_saturated[1], pid_saturated[2], pid_saturated[0]};
     return commands;
 }
 
@@ -488,7 +742,8 @@ void FlightController::maybe_publish_telemetry(
     snapshot.battery.remaining_mah = config.battery_remaining_mah;
     for (std::size_t index = 0; index < snapshot.pid.size(); ++index) {
         snapshot.pid[index].output = px4_external ? NAN : pid_output[index];
-        snapshot.pid[index].saturated = !px4_external && (pid_saturated[index] || pid_saturation_latched_[index]);
+        const std::size_t frd_index = (index + 1) % snapshot.pid.size();
+        snapshot.pid[index].saturated = !px4_external && (pid_saturated[index] || pid_saturation_latched_[frd_index]);
     }
 
     const int write_index = 1 - telemetry_read_index_;
@@ -528,10 +783,43 @@ TrajectorySample FlightController::step_angle_mode(
         SimulationClock &clock,
         const SimulationConfig &config,
         const FlightCommand &command) {
-    return step_angle_mode(state, clock, config, command, state.orientation);
+    return try_step_angle_mode(state, clock, config, command, state.orientation).sample;
 }
 
 TrajectorySample FlightController::step_angle_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const Quat &estimated_attitude) {
+    return try_step_angle_mode(state, clock, config, command, estimated_attitude).sample;
+}
+
+StepResult FlightController::try_step_angle_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const Quat &estimated_attitude) {
+    const StepStatus input_status = validate_angle_step_inputs(state, clock, config, command, estimated_attitude);
+    if (input_status != StepStatus::Ok) {
+        return {input_status, {}};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = *this;
+    const TrajectorySample sample = staged_controller.step_angle_mode_impl(
+            staged_state, staged_clock, config, command, estimated_attitude);
+    if (sample.substeps == 0 || !valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+        return {StepStatus::InvalidControlOutput, {}};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    *this = std::move(staged_controller);
+    return {StepStatus::Ok, sample};
+}
+
+TrajectorySample FlightController::step_angle_mode_impl(
         RigidBodyState &state,
         SimulationClock &clock,
         const SimulationConfig &config,
@@ -545,17 +833,21 @@ TrajectorySample FlightController::step_angle_mode(
     pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
-    const Vec3 desired_rates_y_up{
-            (radians(command.pitch_degrees) - angle_x(estimated_attitude)) * kAngleP,
-            radians(command.yaw_rate_degrees_per_second),
-            (radians(command.roll_degrees) - angle_z(estimated_attitude)) * kAngleP,
+    const Vec3 desired_angles_frd{
+            radians(command.roll_degrees),
+            radians(command.pitch_degrees),
+            0.0,
     };
+    const Vec3 desired_rates_frd{0.0, 0.0, radians(command.yaw_rate_degrees_per_second)};
     const TrajectorySample sample = step_per_motor_physics_frame(state, clock, frame_config, [&](double dt) {
         const MotorCommands commands_for_substep = control_substep(
                 state,
                 frame_config,
                 throttle,
-                desired_rates_y_up,
+                ModeFamily::Angle,
+                desired_angles_frd,
+                desired_rates_frd,
+                estimated_attitude,
                 dt,
                 pid_output,
                 pid_saturated);
@@ -581,6 +873,36 @@ TrajectorySample FlightController::step_acro_mode(
         SimulationClock &clock,
         const SimulationConfig &config,
         const AcroCommand &command) {
+    return try_step_acro_mode(state, clock, config, command).sample;
+}
+
+StepResult FlightController::try_step_acro_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const AcroCommand &command) {
+    const StepStatus input_status = validate_acro_step_inputs(state, clock, config, command);
+    if (input_status != StepStatus::Ok) {
+        return {input_status, {}};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = *this;
+    const TrajectorySample sample = staged_controller.step_acro_mode_impl(staged_state, staged_clock, config, command);
+    if (sample.substeps == 0 || !valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+        return {StepStatus::InvalidControlOutput, {}};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    *this = std::move(staged_controller);
+    return {StepStatus::Ok, sample};
+}
+
+TrajectorySample FlightController::step_acro_mode_impl(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const AcroCommand &command) {
     if (!armed_) {
         state.motor_thrust_newtons = {};
     }
@@ -589,17 +911,20 @@ TrajectorySample FlightController::step_acro_mode(
     pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
-    const Vec3 desired_rates_y_up{
+    const Vec3 desired_rates_frd{
+            radians(betaflight_rate_degrees_per_second(command.roll_stick, command.rates)),
             radians(betaflight_rate_degrees_per_second(command.pitch_stick, command.rates)),
             radians(betaflight_rate_degrees_per_second(command.yaw_stick, command.rates)),
-            radians(betaflight_rate_degrees_per_second(command.roll_stick, command.rates)),
     };
     const TrajectorySample sample = step_per_motor_physics_frame(state, clock, frame_config, [&](double dt) {
         const MotorCommands commands_for_substep = control_substep(
                 state,
                 frame_config,
                 throttle,
-                desired_rates_y_up,
+                ModeFamily::Acro,
+                {},
+                desired_rates_frd,
+                state.orientation,
                 dt,
                 pid_output,
                 pid_saturated);
@@ -621,6 +946,43 @@ TrajectorySample FlightController::step_acro_mode(
 }
 
 TrajectorySample FlightController::step_altitude_hold_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double measured_altitude_m,
+        const Quat &estimated_attitude) {
+    return try_step_altitude_hold_mode(
+            state, clock, config, command, measured_altitude_m, estimated_attitude).sample;
+}
+
+StepResult FlightController::try_step_altitude_hold_mode(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double measured_altitude_m,
+        const Quat &estimated_attitude) {
+    const StepStatus input_status = validate_altitude_hold_step_inputs(
+            state, clock, config, command, measured_altitude_m, estimated_attitude);
+    if (input_status != StepStatus::Ok) {
+        return {input_status, {}};
+    }
+    RigidBodyState staged_state = state;
+    SimulationClock staged_clock = clock;
+    FlightController staged_controller = *this;
+    const TrajectorySample sample = staged_controller.step_altitude_hold_mode_impl(
+            staged_state, staged_clock, config, command, measured_altitude_m, estimated_attitude);
+    if (sample.substeps == 0 || !valid_state(staged_state) || !std::isfinite(sample.time_seconds)) {
+        return {StepStatus::InvalidControlOutput, {}};
+    }
+    state = staged_state;
+    clock = staged_clock;
+    *this = std::move(staged_controller);
+    return {StepStatus::Ok, sample};
+}
+
+TrajectorySample FlightController::step_altitude_hold_mode_impl(
         RigidBodyState &state,
         SimulationClock &clock,
         const SimulationConfig &config,
@@ -662,7 +1024,7 @@ TrajectorySample FlightController::step_altitude_hold_mode(
                 ? std::clamp(motor_thrust_newtons_ * frame_config.hover_throttle / hover_thrust, 0.0, 1.0)
                 : std::clamp(command.throttle, 0.0, 1.0);
         double altitude_error_m = altitude_hold_target_m_ - altitude_hold_filtered_altitude_m_;
-        const bool inside_noise_band = std::abs(altitude_error_m) <= kAltitudeHoldNoiseDeadbandM;
+        const bool inside_noise_band = std::abs(altitude_error_m) <= frame_config.altitude_hold_noise_deadband_m;
         if (inside_noise_band) {
             altitude_error_m = 0.0;
         }
@@ -683,17 +1045,21 @@ TrajectorySample FlightController::step_altitude_hold_mode(
     pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
-    const Vec3 desired_rates_y_up{
-            (radians(command.pitch_degrees) - angle_x(estimated_attitude)) * kAngleP,
-            radians(command.yaw_rate_degrees_per_second),
-            (radians(command.roll_degrees) - angle_z(estimated_attitude)) * kAngleP,
+    const Vec3 desired_angles_frd{
+            radians(command.roll_degrees),
+            radians(command.pitch_degrees),
+            0.0,
     };
+    const Vec3 desired_rates_frd{0.0, 0.0, radians(command.yaw_rate_degrees_per_second)};
     const TrajectorySample sample = step_per_motor_physics_frame(state, clock, frame_config, [&](double dt) {
         const MotorCommands commands_for_substep = control_substep(
                 state,
                 frame_config,
                 target_throttle,
-                desired_rates_y_up,
+                ModeFamily::Angle,
+                desired_angles_frd,
+                desired_rates_frd,
+                estimated_attitude,
                 dt,
                 pid_output,
                 pid_saturated);
@@ -726,7 +1092,12 @@ void FlightController::reset_flight(RigidBodyState &state, SimulationClock &cloc
     altitude_hold_vertical_speed_mps_ = 0.0;
     altitude_hold_trim_throttle_ = 0.0;
     altitude_hold_just_captured_ = false;
-    previous_target_rates_y_up_ = {};
+    target_angle_frd_ = {};
+    target_rate_frd_ = {};
+    previous_rate_error_frd_ = {};
+    filtered_rate_derivative_frd_ = {};
+    mode_family_ = ModeFamily::None;
+    control_initialized_ = false;
     motor_saturation_latched_ = {};
     pid_saturation_latched_ = {};
     telemetry_buffers_ = {};

@@ -99,6 +99,7 @@ struct SimulationConfig {
     double battery_remaining_mah = 0.0;
     double max_total_current_a = 0.0;
     double max_motor_rpm = 0.0;
+    double altitude_hold_noise_deadband_m = 0.0;
     PerMotorPhysicsConfig per_motor;
     A3DragConfig a3_drag;
     A4GroundEffectConfig a4_ground_effect;
@@ -140,6 +141,7 @@ struct HardwareConfig {
     double battery_remaining_mah = 0.0;
     double max_total_current_a = 0.0;
     double max_motor_rpm = 0.0;
+    double altitude_hold_noise_deadband_m = 0.0;
     A3DragConfig a3_drag;
     A6PropwashConfig a6_propwash;
     BodyDragConfig body_drag;
@@ -189,6 +191,14 @@ struct HardwareConfig {
         }
         max_motor_rpm = max_motor_rpm_value;
         battery_remaining_mah = battery_remaining_mah_value;
+        return true;
+    }
+
+    bool set_altitude_hold_noise_deadband_m(double value) {
+        if (!std::isfinite(value) || value < 0.0) {
+            return false;
+        }
+        altitude_hold_noise_deadband_m = value;
         return true;
     }
 
@@ -260,6 +270,7 @@ struct HardwareConfig {
         config.battery_remaining_mah = battery_remaining_mah;
         config.max_total_current_a = max_total_current_a;
         config.max_motor_rpm = max_motor_rpm;
+        config.altitude_hold_noise_deadband_m = altitude_hold_noise_deadband_m;
         config.a3_drag = a3_drag;
         config.a6_propwash = a6_propwash;
         config.body_drag = body_drag;
@@ -287,6 +298,9 @@ struct TrajectorySample {
     double air_density_kg_m3 = 1.225;
     bool body_drag_force_applied = false;
     bool body_drag_torque_applied = false;
+    RigidBodyState first_substep_state;
+    double first_substep_time_seconds = 0.0;
+    std::uint64_t first_substeps = 0;
 };
 
 struct DualAircraftTrajectorySample {

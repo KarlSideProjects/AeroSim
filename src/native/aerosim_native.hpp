@@ -23,6 +23,19 @@ protected:
     static void _bind_methods();
 
 private:
+    struct StepSnapshot {
+        aerosim::RigidBodyState simulation_state;
+        aerosim::SimulationClock simulation_clock;
+        aerosim::DualAircraftState dual_aircraft_state;
+        aerosim::SimulationClock dual_aircraft_clock;
+        aerosim::FlightController flight_controller;
+        aerosim::CollisionAuthoritySwitch collision_authority;
+        aerosim::ImuSimulator imu;
+        aerosim::ImuSample last_imu_sample;
+        bool has_last_imu_sample = false;
+        bool flight_control_used_estimated_attitude = false;
+        godot::String flight_mode;
+    };
     aerosim::RigidBodyState simulation_state_;
     aerosim::SimulationClock simulation_clock_;
     aerosim::DualAircraftState dual_aircraft_state_;
@@ -41,6 +54,11 @@ private:
     bool has_last_imu_sample_ = false;
     aerosim::WindField wind_field_;
     std::unique_ptr<aerosim::ReplaySessionRecorder> replay_recorder_;
+    aerosim::TrajectorySample replay_first_response_;
+    bool has_replay_first_response_ = false;
+    bool replay_checkpoint_capture_active_ = false;
+    aerosim::TrajectorySample replay_last_successful_step_;
+    bool has_replay_last_successful_step_ = false;
     godot::String wind_preset_name_ = "custom";
     bool imu_noise_enabled_ = false;
     bool imu_bias_enabled_ = false;
@@ -48,8 +66,14 @@ private:
     bool imu_delay_enabled_ = false;
     bool flight_control_used_estimated_attitude_ = false;
     godot::String flight_mode_ = "ANGLE";
+    godot::String last_step_error_;
     aerosim::ImuSample sample_imu();
     void apply_downwash_provider(aerosim::SimulationConfig &config) const;
+    StepSnapshot snapshot_step() const;
+    void restore_step(const StepSnapshot &snapshot);
+    void set_step_error(const char *method, aerosim::StepStatus status, const char *reason);
+    void clear_step_error();
+    void capture_replay_first_response(const aerosim::TrajectorySample &sample);
 
 public:
     std::int32_t probe_value() const;
@@ -64,6 +88,7 @@ public:
             double battery_cell_resistance_ohm,
             double max_total_current_a);
     bool set_hardware_telemetry_model(double max_motor_rpm, double battery_remaining_mah);
+    bool set_hardware_altitude_hold_noise_deadband(double value_m);
     bool set_hardware_per_motor_model(const godot::Dictionary &model);
     bool set_body_drag_model(
             bool enabled,
@@ -122,6 +147,8 @@ public:
             const godot::String &lower_config_manifest_hash,
             const godot::String &lower_config_json,
             std::int32_t lower_controller_authority);
+    void begin_replay_checkpoint_capture();
+    void capture_replay_recorded_response(bool non_neutral);
     godot::Dictionary record_replay_command(
             std::int64_t timestamp_us,
             const godot::String &vehicle_name,
@@ -188,7 +215,8 @@ public:
     godot::Dictionary record_replay_checkpoint(
             std::int64_t timestamp_us,
             const godot::PackedFloat64Array &upper_row,
-            const godot::PackedFloat64Array &lower_row);
+            const godot::PackedFloat64Array &lower_row,
+            AeroSimNative *lower_native);
     godot::Dictionary record_replay_async_command(
             std::int64_t timestamp_us,
             const godot::String &vehicle_name,
@@ -248,6 +276,7 @@ public:
     godot::Dictionary imu_configuration() const;
     godot::Dictionary imu_sample() const;
     void refresh_imu_sample();
+    godot::String last_step_error() const;
     void configure_wind(const godot::Dictionary &config);
     godot::Dictionary wind_configuration() const;
     godot::Vector3 sample_wind(double time_seconds, double position_x, double position_y, double position_z) const;
@@ -396,7 +425,7 @@ public:
             double resolved_angular_velocity_y,
             double resolved_angular_velocity_z,
             double max_kinetic_energy_joules);
-    godot::PackedFloat64Array simulate_trajectory(
+    godot::Dictionary simulate_trajectory(
             double seconds,
             std::int32_t physics_hz,
             std::int32_t substep_hz,

@@ -1,6 +1,7 @@
 extends SceneTree
 
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const AirSimCoordinateContract = preload("res://common/rpc/airsim_coordinate_contract.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 
@@ -36,6 +37,8 @@ class HeadedLicenseProvider:
 var _failures: Array[String] = []
 var _out_dir := "build/headed"
 var _channel_monitor_evidence: Dictionary = {}
+var _motor_hud_evidence: Dictionary = {}
+var _known_xbox_physical_evidence: Dictionary = {}
 var _layout_audit_evidence: Dictionary = {}
 var _screenshot_comparison: Dictionary = {}
 var _ui_animation_count := 0
@@ -300,6 +303,33 @@ func _run() -> void:
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
+	var xbox_frd_axis_cases := [
+		{"role": "roll", "axis": JOY_AXIS_LEFT_X, "value": -0.5, "component": 0},
+		{"role": "pitch", "axis": JOY_AXIS_LEFT_Y, "value": 0.5, "component": 1},
+		{"role": "yaw", "axis": JOY_AXIS_RIGHT_X, "value": -0.25, "component": 2},
+	]
+	for axis_case in xbox_frd_axis_cases:
+		for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X]:
+			_inject_joy_axis(known_device_id, axis, 0.0)
+		runtime.native.call("reset_flight")
+		runtime.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+		runtime.drone_body.reset_contact()
+		_inject_joy_axis(known_device_id, axis_case.axis, axis_case.value)
+		await _settle(10)
+		for role in ["roll", "pitch", "yaw"]:
+			if role != axis_case.role:
+				_expect(is_zero_approx(runtime._profile_axis(role)), "known Xbox %s FRD gate neutralizes %s input" % [axis_case.role, role])
+		var known_xbox_diagnostics: Dictionary = runtime.native.call("flight_control_diagnostics")
+		var frd_rates := AirSimCoordinateContract.godot_body_to_frd(Vector3(
+			float(known_xbox_diagnostics.get("angular_velocity_x_rad_s", 0.0)),
+			float(known_xbox_diagnostics.get("angular_velocity_y_rad_s", 0.0)),
+			float(known_xbox_diagnostics.get("angular_velocity_z_rad_s", 0.0))
+		))
+		_known_xbox_physical_evidence[axis_case.role] = {
+			"raw": axis_case.value,
+			"frd_omega_rad_s": {"roll": frd_rates.x, "pitch": frd_rates.y, "yaw": frd_rates.z},
+		}
+		_expect(frd_rates[axis_case.component] < -0.01, "known Xbox physical %s input produces negative FRD %s response" % [axis_case.role, axis_case.role])
 	runtime.set_paused(true)
 	await _settle(2)
 	var paused_position: Vector3 = runtime.drone_body.global_position
@@ -519,6 +549,22 @@ func _run() -> void:
 	_audit_overlay_geometry(runtime, "flight")
 	await _snapshot("03_takeoff")
 	_expect(runtime.takeoff_requested, "T requests takeoff after Quick Fly")
+	var motor_panel: PanelContainer = runtime.get_node_or_null("FlightHud/MotorHudMargin/MotorHudPanel")
+	var motor_labels: Array[Label] = []
+	for motor_label in ["FL", "FR", "RL", "RR"]:
+		var cell: Label = runtime.get_node_or_null("FlightHud/MotorHudMargin/MotorHudPanel/Rows/Grid/%s" % motor_label)
+		motor_labels.append(cell)
+		_expect(cell != null and cell.is_visible_in_tree() and cell.text.begins_with("%s\n" % motor_label), "Motor HUD renders physical %s cell" % motor_label)
+		_expect(cell != null and cell.text.contains(" N\n") and cell.text.contains(" RPM\n") and cell.text.contains(" A"), "Motor HUD %s cell is readable in N/RPM/A" % motor_label)
+	runtime.osd_profile = OsdProfile.profile_for_preset("Minimal")
+	runtime.call("_refresh_flight_hud")
+	_expect(motor_panel != null and motor_panel.is_visible_in_tree(), "Minimal OSD cannot hide the persistent Motor HUD")
+	_motor_hud_evidence = {
+		"visible": motor_panel != null and motor_panel.is_visible_in_tree(),
+		"minimal_visible": motor_panel != null and motor_panel.is_visible_in_tree(),
+		"labels": motor_labels.map(func(cell: Label) -> String: return cell.text.split("\n")[0] if cell != null else ""),
+		"screenshot_path": "%s/03_takeoff.png" % _out_dir,
+	}
 
 	_tap(KEY_P)
 	await _settle(10)
@@ -1001,6 +1047,6 @@ func _write_report() -> bool:
 		"gpu_adapter": RenderingServer.get_video_adapter_name(),
 		"vulkan_icd": OS.get_environment("VK_ICD_FILENAMES"),
 	}
-	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
+	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "motor_hud": _motor_hud_evidence, "known_xbox_physical": _known_xbox_physical_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
 	return true

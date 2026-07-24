@@ -38,6 +38,9 @@ elif ! command -v "$godot_bin" >/dev/null; then
     exit 1
 fi
 
+source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"
+validate_native_provenance
+
 mkdir -p "$(dirname "$output_path")"
 mkdir -p "$(dirname "$csv_output_path")"
 mkdir -p "$(dirname "$log_path")"

@@ -116,6 +116,8 @@ var graphics_panel: Control
 var graphics_value_label: Label
 var controller_settings_panel: Control
 var flight_hud_layer: CanvasLayer
+var motor_hud_panel: PanelContainer
+var motor_hud_labels: Dictionary = {}
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
@@ -670,6 +672,8 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     if not bool(result.get("ok", false)):
         push_error("Complete replay recording could not start: %s" % String(result.get("diagnostic_message", "unknown error")))
         return
+    if _airsim_secondary_native.has_method("begin_replay_checkpoint_capture"):
+        _airsim_secondary_native.call("begin_replay_checkpoint_capture")
     _replay_recording_active = true
     if not _record_replay_environment({}):
         _replay_recording_active = false
@@ -732,6 +736,17 @@ func _record_replay_command(vehicle_name: String, controls: Dictionary, timestam
             0)
     if not bool(result.get("ok", false)):
         push_error("Complete replay command recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        return
+    var response_native: Object = _airsim_secondary_native if vehicle_name == String(_airsim_vehicle_names[1]) else native
+    if response_native != null and response_native.has_method("capture_replay_recorded_response"):
+        var non_neutral := float(controls.get("throttle", 0.0)) != 0.5
+        if mode == "ACRO":
+            non_neutral = non_neutral or float(controls.get("acro_roll", 0.0)) != 0.0 or \
+                float(controls.get("acro_pitch", 0.0)) != 0.0 or float(controls.get("acro_yaw", 0.0)) != 0.0
+        else:
+            non_neutral = non_neutral or float(controls.get("roll", 0.0)) != 0.0 or \
+                float(controls.get("pitch", 0.0)) != 0.0 or float(controls.get("yaw_rate", 0.0)) != 0.0
+        response_native.call("capture_replay_recorded_response", non_neutral)
 
 
 func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: PackedFloat32Array, timestamp_us: int) -> void:
@@ -748,11 +763,18 @@ func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: Pac
         2)
     if not bool(result.get("ok", false)):
         push_error("Complete replay actuator recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        return
+    if native.has_method("capture_replay_recorded_response"):
+        var non_neutral := false
+        for output in actuator_outputs:
+            non_neutral = non_neutral or absf(float(output) - 0.5) > 0.0
+        native.call("capture_replay_recorded_response", non_neutral)
 
 
 func _record_replay_collision(vehicle_name: String, body, authority: int = 1, timestamp_us: int = -1) -> void:
     if not _replay_recording_active or native == null or body == null or not body.contact_seen:
         return
+    var angular_velocity_body := _jolt_angular_velocity_body_y_up(body)
     var result: Dictionary = native.call(
         "record_replay_collision",
         _replay_timestamp_us() if timestamp_us < 0 else _replay_timestamp_for_recorded_frame(timestamp_us),
@@ -768,10 +790,10 @@ func _record_replay_collision(vehicle_name: String, body, authority: int = 1, ti
         body.linear_velocity.x,
         body.linear_velocity.y,
         body.linear_velocity.z,
-        body.angular_velocity.x,
-        body.angular_velocity.y,
-        body.angular_velocity.z,
-        _kinetic(body.linear_velocity, body.angular_velocity),
+        angular_velocity_body.x,
+        angular_velocity_body.y,
+        angular_velocity_body.z,
+        _kinetic(body.linear_velocity, angular_velocity_body, _airsim_secondary_native if vehicle_name != _airsim_vehicle_name else native),
         true,
         authority)
     if not bool(result.get("ok", false)):
@@ -814,9 +836,9 @@ func _record_replay_environment(state: Dictionary) -> bool:
 
 
 func _record_replay_checkpoint(timestamp_us: int, upper_row: PackedFloat64Array) -> void:
-    if not _replay_recording_active or native == null or upper_row.size() < 17 or _replay_secondary_row.size() < 17:
+    if not _replay_recording_active or native == null or upper_row.size() < 12 or _replay_secondary_row.size() < 12:
         return
-    var result: Dictionary = native.call("record_replay_checkpoint", timestamp_us, upper_row, _replay_secondary_row)
+    var result: Dictionary = native.call("record_replay_checkpoint", timestamp_us, upper_row, _replay_secondary_row, _airsim_secondary_native)
     if not bool(result.get("ok", false)):
         push_error("Complete replay checkpoint recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
 
@@ -1253,14 +1275,12 @@ func _physics_process(delta: float) -> void:
             set_paused(false, false)
         if paused:
             return
-    # AirSim advances its session clock before stepping native physics below.
-    # Commands and contacts therefore belong to this frame's native start time;
+    # Commands and contacts belong to this frame's native start time;
     # checkpoints use the post-step frame timestamp separately.
     var replay_timestamp_us := _replay_timestamp_us()
     var replay_frame_timestamp_us := _replay_frame_timestamp_us()
     _replay_secondary_row = PackedFloat64Array()
-    if _airsim_secondary_native != null and secondary_drone_body != null and (airsim_session == null or not airsim_session.is_paused()):
-        _step_secondary_airsim_vehicle(String(_airsim_vehicle_names[1]), replay_timestamp_us)
+    var defer_airsim_advance := native != null and takeoff_requested
     if px4_sitl_bridge != null:
         px4_sitl_bridge.poll(Time.get_ticks_usec() / 1000000.0)
         if px4_sitl_bridge.state == "failed":
@@ -1273,16 +1293,16 @@ func _physics_process(delta: float) -> void:
     var px4_lockstep_active := px4_sitl_bridge != null and px4_sitl_bridge.lockstep_active()
     if not px4_lockstep_active:
         _px4_lockstep_sensor_pending = false
-    if px4_lockstep_active and not _px4_lockstep_sensor_pending:
+    if not defer_airsim_advance and px4_lockstep_active and not _px4_lockstep_sensor_pending:
         _publish_px4_lockstep_sensor_if_needed()
         _px4_lockstep_sensor_pending = true
     var session_advanced := true
-    if airsim_session != null and not px4_lockstep_active:
+    if not defer_airsim_advance and airsim_session != null and not px4_lockstep_active:
         session_advanced = airsim_session.advance_frame()
         if not session_advanced and airsim_session.is_paused():
             set_paused(true, false)
             return
-    if px4_sitl_bridge != null and not px4_lockstep_active:
+    if not defer_airsim_advance and px4_sitl_bridge != null and not px4_lockstep_active:
         px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), airsim_session.simulation_time_seconds if airsim_session != null else 0.0)
     if native == null or paused or not takeoff_requested:
         if px4_lockstep_active and _px4_lockstep_sensor_pending:
@@ -1324,18 +1344,6 @@ func _physics_process(delta: float) -> void:
         acro_yaw = float(airsim_controls.get("acro_yaw", acro_yaw))
         if airsim_controls.has("mode"):
             flight_mode = String(airsim_controls["mode"])
-    if px4_sitl_bridge == null:
-        _record_replay_command(_airsim_vehicle_name, {
-            "mode": flight_mode,
-            "throttle": throttle,
-            "roll": angle_roll,
-            "pitch": angle_pitch,
-            "yaw_rate": angle_yaw,
-            "acro_roll": acro_roll,
-            "acro_pitch": acro_pitch,
-            "acro_yaw": acro_yaw,
-            "altitude_m": drone_body.global_position.y if drone_body != null else 0.0,
-        }, replay_timestamp_us)
     var row: PackedFloat64Array
     if px4_sitl_bridge != null:
         var actuator_outputs := px4_sitl_bridge.actuator_outputs()
@@ -1353,7 +1361,6 @@ func _physics_process(delta: float) -> void:
                 _publish_px4_lockstep_sensor_if_needed()
             _advance_airsim_sensors()
             return
-        _record_replay_actuator_command(_airsim_vehicle_name, actuator_outputs, replay_timestamp_us)
         var actuator_has_thrust := false
         for actuator in actuator_outputs:
             if absf(float(actuator)) > 0.05:
@@ -1377,9 +1384,9 @@ func _physics_process(delta: float) -> void:
             _advance_airsim_sensors()
             return
         if drone_body != null:
-            drone_body.freeze = false
-            drone_body.sleeping = false
-            _sync_native_from_drone()
+            if not _sync_native_from_drone():
+                return
+        var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body) if drone_body != null else Vector3.ZERO
         row = native.call(
             "step_collision_px4_actuator_mode",
             Engine.physics_ticks_per_second,
@@ -1399,22 +1406,18 @@ func _physics_process(delta: float) -> void:
             drone_body.linear_velocity.x if drone_body != null else 0.0,
             drone_body.linear_velocity.y if drone_body != null else 0.0,
             drone_body.linear_velocity.z if drone_body != null else 0.0,
-            drone_body.angular_velocity.x if drone_body != null else 0.0,
-            drone_body.angular_velocity.y if drone_body != null else 0.0,
-            drone_body.angular_velocity.z if drone_body != null else 0.0,
-            _kinetic(drone_body.linear_velocity, drone_body.angular_velocity) if drone_body != null else -1.0
+            angular_velocity_body.x,
+            angular_velocity_body.y,
+            angular_velocity_body.z,
+            _pre_impact_energy(drone_body) if drone_body != null else -1.0
         )
-        if drone_body != null and drone_body.contact_seen:
-            _record_replay_collision(_airsim_vehicle_name, drone_body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
-            collision_handoff_count += 1
-            _airsim_contact_this_frame = true
-            _airsim_collision_seen = true
-            _airsim_collision_normal = drone_body.contact_normal
-            _airsim_collision_point = drone_body.global_position
-            drone_body.reset_contact()
+        if _handle_native_step_failure(native, row, true):
+            return
     elif drone_body != null:
-        _sync_native_from_drone()
-        var energy_limit := _kinetic(drone_body.linear_velocity, drone_body.angular_velocity)
+        if not _sync_native_from_drone():
+            return
+        var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body)
+        var energy_limit := _pre_impact_energy(drone_body)
         if flight_mode == "ACRO":
             row = native.call(
                 "step_collision_acro_mode",
@@ -1438,9 +1441,9 @@ func _physics_process(delta: float) -> void:
                 drone_body.linear_velocity.x,
                 drone_body.linear_velocity.y,
                 drone_body.linear_velocity.z,
-                drone_body.angular_velocity.x,
-                drone_body.angular_velocity.y,
-                drone_body.angular_velocity.z,
+                angular_velocity_body.x,
+                angular_velocity_body.y,
+                angular_velocity_body.z,
                 energy_limit
             )
         else:
@@ -1464,35 +1467,68 @@ func _physics_process(delta: float) -> void:
                 drone_body.linear_velocity.x,
                 drone_body.linear_velocity.y,
                 drone_body.linear_velocity.z,
-                drone_body.angular_velocity.x,
-                drone_body.angular_velocity.y,
-                drone_body.angular_velocity.z,
+                angular_velocity_body.x,
+                angular_velocity_body.y,
+                angular_velocity_body.z,
                 energy_limit
             )
-        if drone_body.contact_seen:
-            _record_replay_collision(_airsim_vehicle_name, drone_body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
-            collision_handoff_count += 1
-            _airsim_contact_this_frame = true
-            _airsim_collision_seen = true
-            _airsim_collision_normal = drone_body.contact_normal
-            _airsim_collision_point = drone_body.global_position
-        drone_body.reset_contact()
+        if _handle_native_step_failure(native, row, true):
+            return
     else:
         if flight_mode == "ACRO":
             row = native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, throttle, acro_roll, acro_pitch, acro_yaw, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo"))
         else:
             var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
             row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw)
+        if _handle_native_step_failure(native, row, true):
+            return
+    if _airsim_secondary_native != null and secondary_drone_body != null and (airsim_session == null or not airsim_session.is_paused()):
+        _step_secondary_airsim_vehicle(String(_airsim_vehicle_names[1]), replay_timestamp_us)
+        if paused:
+            return
+    if not _refresh_native_imu_sample(native):
+        return
+    if px4_sitl_bridge != null:
+        _record_replay_actuator_command(_airsim_vehicle_name, px4_sitl_bridge.actuator_outputs(), replay_timestamp_us)
+    if drone_body != null and drone_body.contact_seen:
+        _record_replay_collision(_airsim_vehicle_name, drone_body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
+        collision_handoff_count += 1
+        _airsim_contact_this_frame = true
+        _airsim_collision_seen = true
+        _airsim_collision_normal = drone_body.contact_normal
+        _airsim_collision_point = drone_body.global_position
+        drone_body.reset_contact()
+    if px4_sitl_bridge == null:
+        _record_replay_command(_airsim_vehicle_name, {
+            "mode": flight_mode,
+            "throttle": throttle,
+            "roll": angle_roll,
+            "pitch": angle_pitch,
+            "yaw_rate": angle_yaw,
+            "acro_roll": acro_roll,
+            "acro_pitch": acro_pitch,
+            "acro_yaw": acro_yaw,
+            "altitude_m": drone_body.global_position.y if drone_body != null else 0.0,
+        }, replay_timestamp_us)
     if row.size() >= 13:
         last_collision_authority = int(row[12])
     if drone_body != null and row.size() >= 17:
         _record_replay_checkpoint(replay_frame_timestamp_us, row)
+        drone_body.freeze = false
+        drone_body.sleeping = false
         drone_body.apply_native_state(
             Vector3(row[1], row[2], row[3]),
             Quaternion(row[4], row[5], row[6], row[7]),
             Vector3(row[8], row[9], row[10]),
             Vector3(row[14], row[15], row[16])
         )
+    if defer_airsim_advance and airsim_session != null and not px4_lockstep_active:
+        session_advanced = airsim_session.advance_frame()
+        if not session_advanced and airsim_session.is_paused():
+            set_paused(true, false)
+            return
+    if defer_airsim_advance and px4_sitl_bridge != null and not px4_lockstep_active:
+        px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), airsim_session.simulation_time_seconds if airsim_session != null else 0.0)
     _advance_px4_path()
     if px4_lockstep_active:
         if airsim_session != null:
@@ -1517,8 +1553,6 @@ func _physics_process(delta: float) -> void:
         _airsim_linear_acceleration = Vector3.ZERO
         _airsim_angular_acceleration = Vector3.ZERO
     _airsim_last_velocity = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
-    if native != null and native.has_method("refresh_imu_sample"):
-        native.call("refresh_imu_sample")
     if time_trial != null and drone_body != null:
         time_trial.advance(drone_body.global_position, 1.0 / float(Engine.physics_ticks_per_second))
     _advance_airsim_sensors()
@@ -1542,9 +1576,11 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
     var body = _secondary_body(vehicle_name)
     if body == null or _airsim_secondary_native == null:
         return
-    body.freeze = false
-    body.sleeping = false
-    _sync_named_native(body, _airsim_secondary_native)
+    if _airsim_secondary_native.has_method("flight_control_armed") and not bool(_airsim_secondary_native.call("flight_control_armed")) and not bool(_airsim_secondary_native.call("arm_flight_control", 0.0)):
+        push_error("Secondary AirSim vehicle could not arm: %s" % String(_airsim_secondary_native.call("flight_control_arm_reject_code")))
+        return
+    if not _sync_named_native(body, _airsim_secondary_native):
+        return
     if not _sync_secondary_a5_model():
         return
     if _airsim_secondary_native.has_method("set_a5_downwash_source_position") and drone_body != null:
@@ -1555,7 +1591,7 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             drone_body.global_position.z)
     var controls := _airsim_secondary_controls(context, body)
     controls["altitude_m"] = body.global_position.y
-    _record_replay_command(vehicle_name, controls, replay_timestamp_us)
+    var angular_velocity_body := _jolt_angular_velocity_body_y_up(body)
     var row: PackedFloat64Array
     if String(controls.get("mode", "ANGLE")) == "ACRO":
         row = _airsim_secondary_native.call(
@@ -1580,10 +1616,10 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             body.linear_velocity.x,
             body.linear_velocity.y,
             body.linear_velocity.z,
-            body.angular_velocity.x,
-            body.angular_velocity.y,
-            body.angular_velocity.z,
-            _kinetic(body.linear_velocity, body.angular_velocity))
+            angular_velocity_body.x,
+            angular_velocity_body.y,
+            angular_velocity_body.z,
+            _pre_impact_energy(body, _airsim_secondary_native))
     elif String(controls.get("mode", "ANGLE")) == "ALTITUDE_HOLD":
         row = _airsim_secondary_native.call(
             "step_collision_altitude_hold_mode",
@@ -1604,10 +1640,10 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             body.linear_velocity.x,
             body.linear_velocity.y,
             body.linear_velocity.z,
-            body.angular_velocity.x,
-            body.angular_velocity.y,
-            body.angular_velocity.z,
-            _kinetic(body.linear_velocity, body.angular_velocity))
+            angular_velocity_body.x,
+            angular_velocity_body.y,
+            angular_velocity_body.z,
+            _pre_impact_energy(body, _airsim_secondary_native))
     else:
         row = _airsim_secondary_native.call(
             "step_collision_angle_mode",
@@ -1628,11 +1664,18 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
             body.linear_velocity.x,
             body.linear_velocity.y,
             body.linear_velocity.z,
-            body.angular_velocity.x,
-            body.angular_velocity.y,
-            body.angular_velocity.z,
-            _kinetic(body.linear_velocity, body.angular_velocity))
+            angular_velocity_body.x,
+            angular_velocity_body.y,
+            angular_velocity_body.z,
+            _pre_impact_energy(body, _airsim_secondary_native))
+    if _handle_native_step_failure(_airsim_secondary_native, row, true):
+        return
+    if not _refresh_native_imu_sample(_airsim_secondary_native):
+        return
+    _record_replay_command(vehicle_name, controls, replay_timestamp_us)
     if row.size() >= 17:
+        body.freeze = false
+        body.sleeping = false
         _replay_secondary_row = row
         body.apply_native_state(
             Vector3(row[1], row[2], row[3]),
@@ -1661,10 +1704,6 @@ func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: i
     context["angular_acceleration"] = (body_angular_velocity - context.get("last_body_angular_velocity", Vector3.ZERO)) * float(Engine.physics_ticks_per_second)
     context["last_body_angular_velocity"] = body_angular_velocity
     _airsim_vehicle_contexts[vehicle_name] = context
-    if _airsim_secondary_native.has_method("refresh_imu_sample"):
-        _airsim_secondary_native.call("refresh_imu_sample")
-
-
 func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
     var command_state: Dictionary = context.get("command_state", {})
     if command_state.is_empty():
@@ -1716,19 +1755,20 @@ func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
             var target_yaw := AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(float(args[0]))
             var delta_yaw := wrapf(target_yaw - body.rotation.y, -PI, PI)
             var rotate_to_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
-            rotate_to_controls["yaw_rate"] = clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            rotate_to_controls["yaw_rate"] = clampf(-rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
             return rotate_to_controls
         "rotateByYawRate":
             var rotate_rate_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
-            rotate_rate_controls["yaw_rate"] = clampf(-float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            rotate_rate_controls["yaw_rate"] = clampf(float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
             return rotate_rate_controls
         "moveByAngleRatesThrottle":
             return {"mode": "ACRO", "throttle": float(args[3]), "acro_roll": _airsim_rate_stick(rad_to_deg(float(args[0])), _airsim_secondary_native), "acro_pitch": _airsim_rate_stick(rad_to_deg(float(args[1])), _airsim_secondary_native), "acro_yaw": _airsim_rate_stick(rad_to_deg(float(args[2])), _airsim_secondary_native)}
     return _airsim_neutral_controls()
 
 
-func _sync_named_native(body: Object, target_native: Object) -> void:
+func _sync_named_native(body: Object, target_native: Object) -> bool:
     var q: Quaternion = body.global_transform.basis.get_rotation_quaternion()
+    var angular_velocity_body := _jolt_angular_velocity_body_y_up(body)
     target_native.call(
         "sync_flight_state",
         body.global_position.x,
@@ -1741,9 +1781,10 @@ func _sync_named_native(body: Object, target_native: Object) -> void:
         body.linear_velocity.x,
         body.linear_velocity.y,
         body.linear_velocity.z,
-        body.angular_velocity.x,
-        body.angular_velocity.y,
-        body.angular_velocity.z)
+        angular_velocity_body.x,
+        angular_velocity_body.y,
+        angular_velocity_body.z)
+    return not _handle_native_step_failure(target_native)
 
 
 func _publish_px4_lockstep_sensor_if_needed() -> void:
@@ -2654,6 +2695,25 @@ func toggle_acro_mode() -> void:
 
 func _acro_rate(key: String) -> float:
     return float(rates_profile.get(key, RatesProfile.default_profile().get(key, 0.0)))
+
+func _handle_native_step_failure(step_native, row: PackedFloat64Array = PackedFloat64Array(), has_row: bool = false) -> bool:
+    if step_native == null:
+        return false
+    var native_error := String(step_native.call("last_step_error")) if step_native.has_method("last_step_error") else ""
+    if native_error.is_empty() and (not has_row or not row.is_empty()):
+        return false
+    last_error_message = native_error if not native_error.is_empty() else "Native simulation step failed"
+    set_paused(true)
+    if not native_error.is_empty():
+        screen = "error"
+        _refresh_flight_hud()
+    return true
+
+func _refresh_native_imu_sample(step_native) -> bool:
+    if step_native != null and step_native.has_method("refresh_imu_sample"):
+        step_native.call("refresh_imu_sample")
+        return not _handle_native_step_failure(step_native)
+    return true
 
 func set_paused(value: bool, sync_session: bool = true) -> void:
     if not value and _airsim_lifecycle_stopped() and (airsim_session == null or not airsim_session.is_explicit_step_active()):
@@ -3584,6 +3644,7 @@ func _build_flight_hud() -> void:
     add_child(layer)
     _build_analog_noise_overlay(layer)
     _build_osd(layer)
+    _build_motor_hud(layer)
 
     var margin := MarginContainer.new()
     margin.name = "StatusMargin"
@@ -3638,6 +3699,49 @@ func _build_flight_hud() -> void:
     _build_controller_safety_panel()
     _build_finish_panel()
     _build_license_panel()
+
+
+func _build_motor_hud(layer: CanvasLayer) -> void:
+    var margin := MarginContainer.new()
+    margin.name = "MotorHudMargin"
+    margin.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+    margin.offset_left = -292.0
+    margin.offset_top = -202.0
+    margin.offset_right = -10.0
+    margin.offset_bottom = -10.0
+    margin.add_theme_constant_override("margin_left", 6)
+    margin.add_theme_constant_override("margin_top", 6)
+    margin.add_theme_constant_override("margin_right", 6)
+    margin.add_theme_constant_override("margin_bottom", 6)
+    layer.add_child(margin)
+
+    motor_hud_panel = PanelContainer.new()
+    motor_hud_panel.name = "MotorHudPanel"
+    margin.add_child(motor_hud_panel)
+    var rows := VBoxContainer.new()
+    rows.name = "Rows"
+    motor_hud_panel.add_child(rows)
+    var title := Label.new()
+    title.name = "Title"
+    title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    title.add_theme_font_size_override("font_size", 14)
+    title.text = _t("ui.motor_hud.title")
+    rows.add_child(title)
+    var grid := GridContainer.new()
+    grid.name = "Grid"
+    grid.columns = 2
+    rows.add_child(grid)
+    for label_name in ["FL", "FR", "RL", "RR"]:
+        var label := Label.new()
+        label.name = label_name
+        label.custom_minimum_size = Vector2(132.0, 64.0)
+        label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+        label.add_theme_font_size_override("font_size", 13)
+        label.add_theme_constant_override("line_spacing", -2)
+        label.text = _format("ui.motor_hud.unavailable", [label_name])
+        grid.add_child(label)
+        motor_hud_labels[label_name] = label
 
 
 func _build_analog_noise_overlay(layer: CanvasLayer) -> void:
@@ -4061,6 +4165,7 @@ func _refresh_osd() -> void:
     var viewport_size := viewport.get_visible_rect().size
     var dashboard_panel := status_diagram.get_node_or_null("DashboardMargin/DashboardPanel") as Control if status_diagram != null else null
     var status_panel := flight_hud_layer.get_node_or_null("StatusMargin/StatusPanel") as Control if flight_hud_layer != null else null
+    var motor_hud_visible := motor_hud_panel != null and motor_hud_panel.is_visible_in_tree()
     var body_panel := body_drag_debug_panel.get("_panel") as Control if body_drag_debug_panel != null else null
     var body_surface := body_panel.get("_scroll") as Control if body_panel != null else null
     var default_right_stack_offset_y := 0.0
@@ -4102,6 +4207,8 @@ func _refresh_osd() -> void:
                 label_position.y = maxf(label_position.y, status_panel.get_global_rect().end.y + 8.0)
             if body_surface != null and body_surface.is_visible_in_tree():
                 label_position.y = minf(label_position.y, body_surface.get_global_rect().position.y - rendered_height - 8.0)
+        if element == "reset_hint" and motor_hud_visible and position == OsdProfile.DEFAULT_POSITIONS["reset_hint"]:
+            label_position = Vector2(viewport_size.x * 0.35, maxf(viewport_size.y * 0.16, status_panel.get_global_rect().end.y + 8.0) if status_panel != null and status_panel.is_visible_in_tree() else viewport_size.y * 0.16)
         label.position = label_position
     if analog_noise_overlay != null:
         analog_noise_overlay.visible = active and bool(camera_profile.analog_noise)
@@ -4143,6 +4250,7 @@ func _update_status_diagram() -> void:
             }
     var now_timestamp_us := Time.get_ticks_usec()
     status_diagram.call("set_vehicle_snapshots", snapshots, _dashboard_vehicle_name, now_timestamp_us)
+    _refresh_motor_hud()
     if body_drag_debug_panel != null and body_drag_debug_panel.has_method("update_from_snapshot"):
         body_drag_debug_panel.call("update_from_snapshot", primary_snapshot)
     if environment_state != null and status_diagram.has_method("update_environment"):
@@ -4231,6 +4339,7 @@ func _refresh_flight_hud() -> void:
         if time_trial != null:
             var trial_state := _t("ui.hud.time_trial_finished") if time_trial.finished else _format("ui.hud.time_trial_next", [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()])
             time_trial_status_label.text = _format("ui.hud.time_trial", [trial_state, time_trial.elapsed_seconds])
+    _refresh_motor_hud()
     _refresh_osd()
     if screen == "preflight":
         var armed := _flight_control_armed()
@@ -4252,6 +4361,8 @@ func _refresh_flight_hud() -> void:
     elif screen == "exit":
         arm_status_label.text = _t("ui.hud.exit_requested")
         arm_takeoff_button.text = _t("ui.action.exit")
+
+
     elif screen == "finish":
         arm_status_label.text = _t("ui.hud.time_trial_complete")
         arm_takeoff_button.text = _t("ui.action.retry")
@@ -4264,6 +4375,22 @@ func _refresh_flight_hud() -> void:
     else:
         arm_status_label.text = _t("ui.hud.quick_fly_hint")
         arm_takeoff_button.text = _t("ui.hud.arm_takeoff")
+
+
+func _refresh_motor_hud() -> void:
+    if motor_hud_panel == null:
+        return
+    motor_hud_panel.visible = screen in ["flight", "error"]
+    var title := motor_hud_panel.get_node_or_null("Rows/Title") as Label
+    if title != null:
+        title.text = _t("ui.motor_hud.title")
+    var motor_hud := {"cells": []}
+    if status_diagram != null and status_diagram.has_method("get_motor_hud_state"):
+        motor_hud = status_diagram.call("get_motor_hud_state", paused, last_error_message if screen == "error" else "")
+    for cell in motor_hud.cells:
+        var label := motor_hud_labels.get(String(cell.label)) as Label
+        if label != null:
+            label.text = String(cell.text)
 
 func _handle_primary_action() -> void:
     if screen == "fallback_prompt":
@@ -4658,13 +4785,34 @@ func _localized_license_status(status: String) -> String:
         return _t(known_key)
     return _format("ui.license.status", [status])
 
-func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3) -> float:
-    return 0.5 * _mass_kg() * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()
+func _pre_impact_energy(body: Object, target_native = native) -> float:
+    for property in body.get_property_list():
+        if property.get("name") == &"native_linear_velocity":
+            return _kinetic(body.get(&"native_linear_velocity"), body.get(&"native_body_angular_velocity"), target_native)
+    return _kinetic(body.linear_velocity, _jolt_angular_velocity_body_y_up(body), target_native)
 
-func _mass_kg() -> float:
-    if native == null or not native.has_method("hardware_power_diagnostics"):
+func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, target_native = native) -> float:
+    var inertia_frd := Vector3.ONE
+    if target_native != null and target_native.has_method("hardware_per_motor_diagnostics"):
+        var diagnostics: Dictionary = target_native.call("hardware_per_motor_diagnostics")
+        var configured_inertia: Variant = diagnostics.get("inertia_frd", inertia_frd)
+        if configured_inertia is Vector3 and configured_inertia.x > 0.0 and configured_inertia.y > 0.0 and configured_inertia.z > 0.0:
+            inertia_frd = configured_inertia
+    var rotational_energy := inertia_frd.x * angular_velocity.x * angular_velocity.x + inertia_frd.z * angular_velocity.y * angular_velocity.y + inertia_frd.y * angular_velocity.z * angular_velocity.z
+    return 0.5 * _mass_kg(target_native) * linear_velocity.length_squared() + 0.5 * rotational_energy
+
+
+func _jolt_angular_velocity_body_y_up(body: Object) -> Vector3:
+    var basis: Basis = body.global_transform.basis
+    if body is Node3D and not body.is_inside_tree():
+        basis = body.transform.basis
+    return basis.inverse() * body.angular_velocity
+
+
+func _mass_kg(target_native = native) -> float:
+    if target_native == null or not target_native.has_method("hardware_power_diagnostics"):
         return 1.0
-    var diagnostics: Dictionary = native.call("hardware_power_diagnostics")
+    var diagnostics: Dictionary = target_native.call("hardware_power_diagnostics")
     return maxf(float(diagnostics.get("mass_kg", 1.0)), 0.000001)
 
 
@@ -5069,11 +5217,11 @@ func _airsim_controls_for_frame() -> Dictionary:
             var target_yaw := AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(float(args[0]))
             var delta_yaw := wrapf(target_yaw - drone_body.rotation.y, -PI, PI)
             var rotate_to_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0)
-            rotate_to_controls["yaw_rate"] = clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            rotate_to_controls["yaw_rate"] = clampf(-rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
             return rotate_to_controls
         "rotateByYawRate":
             var rotate_rate_controls := _airsim_velocity_controls(Vector3.ZERO, 0.0)
-            rotate_rate_controls["yaw_rate"] = clampf(-float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+            rotate_rate_controls["yaw_rate"] = clampf(float(args[0]), -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
             return rotate_rate_controls
         "moveByAngleRatesThrottle":
             return {"mode": "ACRO", "throttle": float(args[3]), "acro_roll": _airsim_rate_stick(rad_to_deg(float(args[0]))), "acro_pitch": _airsim_rate_stick(rad_to_deg(float(args[1]))), "acro_yaw": _airsim_rate_stick(rad_to_deg(float(args[2])))}
@@ -5091,8 +5239,8 @@ func _airsim_velocity_controls(velocity_world: Vector3, vertical_correction: flo
     return {
         "mode": "ANGLE",
         "throttle": throttle,
-        "roll": clampf(-horizontal_velocity_error.x * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
-        "pitch": clampf(horizontal_velocity_error.z * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
+        "roll": clampf(horizontal_velocity_error.z * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
+        "pitch": clampf(-horizontal_velocity_error.x * 4.0, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
         "yaw_rate": _airsim_yaw_rate_from_mode(yaw_mode, measured_body),
     }
 
@@ -5102,12 +5250,12 @@ func _airsim_yaw_rate_from_mode(yaw_mode: Variant, body = null) -> float:
         return 0.0
     var requested := float(yaw_mode.get("yaw_or_rate", 0.0))
     if bool(yaw_mode.get("is_rate", true)):
-        return clampf(-requested, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+        return clampf(requested, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
     var yaw_body = body if body != null else drone_body
     if yaw_body == null:
         return 0.0
     var delta_yaw := wrapf(AirSimCoordinateContract.ned_yaw_degrees_to_godot_radians(requested) - yaw_body.rotation.y, -PI, PI)
-    return clampf(rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+    return clampf(-rad_to_deg(delta_yaw) * 3.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
 
 
 func _airsim_rate_stick(rate_degrees_per_second: float, target_native: Object = null) -> float:
@@ -5286,8 +5434,9 @@ func _acro_pitch_stick() -> float:
 func _acro_yaw_stick() -> float:
     return acro_yaw_stick
 
-func _sync_native_from_drone() -> void:
+func _sync_native_from_drone() -> bool:
     var q: Quaternion = drone_body.global_transform.basis.get_rotation_quaternion()
+    var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body)
     native.call(
         "sync_flight_state",
         drone_body.global_position.x,
@@ -5300,7 +5449,8 @@ func _sync_native_from_drone() -> void:
         drone_body.linear_velocity.x,
         drone_body.linear_velocity.y,
         drone_body.linear_velocity.z,
-        drone_body.angular_velocity.x,
-        drone_body.angular_velocity.y,
-        drone_body.angular_velocity.z
+        angular_velocity_body.x,
+        angular_velocity_body.y,
+        angular_velocity_body.z
     )
+    return not _handle_native_step_failure(native)

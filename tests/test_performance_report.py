@@ -26,6 +26,7 @@ BASELINE_ENVIRONMENT = {
     "nvidia_driver_version": BASELINE_NVIDIA_DRIVER,
 }
 PINNED_PROVENANCE = {
+    "commit_sha": "a" * 40,
     "godot_version": "4.7.stable.official.5b4e0cb0f",
     "godot_sha256": "f85bbc6b15e22416c7d797cd60b63286dd67b9cb13498847056c18520ae55a75",
     "godot_cpp_revision": "ba0edfed90512ec64aba51d4295a3e7e30112f86",
@@ -57,6 +58,19 @@ def g37_samples(value):
 
 
 class PerformanceReportTest(unittest.TestCase):
+    def test_gate_rejects_missing_or_mismatched_debug_artifact_commit(self):
+        raw = {
+            "samples_ms": [1.0, 2.0],
+            "benchmark_mode": "gate",
+            "video_adapter": BASELINE_GPU,
+            **PINNED_PROVENANCE,
+        }
+        environment = {"git_revision": "a" * 40, **BASELINE_ENVIRONMENT}
+        with self.assertRaisesRegex(ValueError, "debug artifact commit"):
+            build_report(raw | {"commit_sha": ""}, environment)
+        with self.assertRaisesRegex(ValueError, "debug artifact commit"):
+            build_report(raw | {"commit_sha": "b" * 40}, environment)
+
     def test_nearest_rank_percentiles_preserve_raw_samples_and_gate_verdict(self):
         report = build_report(
             {
@@ -68,7 +82,7 @@ class PerformanceReportTest(unittest.TestCase):
                 "video_adapter": BASELINE_GPU,
                 **PINNED_PROVENANCE,
             },
-            {"git_revision": "abc123", **BASELINE_ENVIRONMENT},
+            {"git_revision": "a" * 40, **BASELINE_ENVIRONMENT},
         )
 
         self.assertEqual(report["p95_ms"], 95.0)
@@ -82,7 +96,7 @@ class PerformanceReportTest(unittest.TestCase):
         self.assertEqual(report["gate_verdict"], "fail")
         self.assertEqual(report["raw_samples_ms"], list(range(1, 101)))
         self.assertEqual(report["measurement"]["scenario"], "effects_off")
-        self.assertEqual(report["environment"]["git_revision"], "abc123")
+        self.assertEqual(report["environment"]["git_revision"], "a" * 40)
 
     def test_rejects_empty_or_non_finite_measurements(self):
         with self.assertRaisesRegex(ValueError, "samples_ms"):
@@ -151,6 +165,8 @@ class PerformanceReportTest(unittest.TestCase):
                 str(raw_path),
                 "--output",
                 str(report_path),
+                "--git-revision",
+                "a" * 40,
             ]
             with patch.object(sys, "argv", argv), patch(
                 "performance_report._cpu_model", return_value=BASELINE_CPU
@@ -219,7 +235,7 @@ class PerformanceReportTest(unittest.TestCase):
             build_report(raw, BASELINE_ENVIRONMENT | {"nvidia_driver_version": "570.133.07"})
 
     def test_comparison_reports_on_off_percentile_deltas(self):
-        environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
+        environment = {"git_revision": "a" * 40, **BASELINE_ENVIRONMENT}
         common = {
             "benchmark_mode": "gate",
             "warmup_seconds": 10.0,
@@ -256,7 +272,7 @@ class PerformanceReportTest(unittest.TestCase):
         self.assertEqual(comparison["p99_delta_percent"], 100.0)
 
     def test_g37_passes_at_absolute_and_relative_boundaries(self):
-        environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
+        environment = {"git_revision": "a" * 40, **BASELINE_ENVIRONMENT}
         common = {
             "benchmark_mode": "gate",
             "warmup_seconds": 10.0,
@@ -303,7 +319,7 @@ class PerformanceReportTest(unittest.TestCase):
         self.assertFalse(relative_fail["g3_7_increase_within_limit"])
 
     def test_g37_rejects_tampered_or_forged_production_reports(self):
-        environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
+        environment = {"git_revision": "a" * 40, **BASELINE_ENVIRONMENT}
         common = {
             "benchmark_mode": "gate",
             "warmup_seconds": 10.0,
@@ -459,7 +475,7 @@ class PerformanceReportTest(unittest.TestCase):
                 compare_reports(baseline, candidate)
 
     def test_g37_fails_closed_for_missing_incompatible_or_zero_baseline(self):
-        environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
+        environment = {"git_revision": "a" * 40, **BASELINE_ENVIRONMENT}
         common = {
             "benchmark_mode": "gate",
             "warmup_seconds": 10.0,
@@ -501,7 +517,7 @@ class PerformanceReportTest(unittest.TestCase):
             compare_reports(baseline | {"p99_ms": 0.0}, candidate)
 
     def test_g37_requires_observed_enabled_effects(self):
-        environment = {"git_revision": "abc123", **BASELINE_ENVIRONMENT}
+        environment = {"git_revision": "a" * 40, **BASELINE_ENVIRONMENT}
         common = {
             "benchmark_mode": "gate",
             "warmup_seconds": 10.0,

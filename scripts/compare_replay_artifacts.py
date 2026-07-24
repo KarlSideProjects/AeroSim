@@ -2,6 +2,7 @@
 import json
 import math
 import pathlib
+import re
 import sys
 
 
@@ -31,12 +32,38 @@ def main():
 
     reference = load(pathlib.Path(sys.argv[1]))
     actual = load(pathlib.Path(sys.argv[2]))
-    angle = quat_angle_degrees(reference["orientation_xyzw"], actual["orientation_xyzw"])
-    position = position_delta_m(reference["position_m"], actual["position_m"])
-    if angle > 0.5 or position > 0.05:
-        print(f"G0.6a tolerance failed: orientation={angle:.9f} deg position={position:.9f} m", file=sys.stderr)
+    if reference.get("schema_version") != 3 or actual.get("schema_version") != 3:
+        print("replay artifact schema_version must be 3", file=sys.stderr)
         return 1
-    print(f"G0.6a tolerance passed: orientation={angle:.9f} deg position={position:.9f} m")
+    checkpoints = reference.get("checkpoints")
+    actual_checkpoints = actual.get("checkpoints")
+    if not isinstance(checkpoints, list) or len(checkpoints) != 1 or checkpoints != actual_checkpoints:
+        print("schema-v3 replay checkpoint diverged", file=sys.stderr)
+        return 1
+    checkpoint = checkpoints[0]
+    if len(checkpoint.get("controllers", [])) != 2 or len(checkpoint.get("clocks", [])) != 2 or \
+            len(checkpoint.get("first_response_substeps", [])) != 2:
+        print("schema-v3 replay checkpoint is incomplete", file=sys.stderr)
+        return 1
+    response = checkpoint["first_response_substeps"][0]
+    if response.get("substeps", 0) <= 0 or not any(response.get("state", {}).get("propwash", [])):
+        print("schema-v3 replay first response lacks a real propwash substep", file=sys.stderr)
+        return 1
+    reference_bits = reference.get("ieee754_bits")
+    actual_bits = actual.get("ieee754_bits")
+    if not isinstance(reference_bits, dict) or not isinstance(actual_bits, dict) or reference_bits != actual_bits:
+        print("IEEE-754 replay bit manifest diverged", file=sys.stderr)
+        return 1
+    required_bits = ["vehicle[0].state.position.x", "vehicle[0].state.motor[0]",
+                     "vehicle[0].controller.target_angle.z", "vehicle[0].controller.integral[0]",
+                     "vehicle[0].controller.derivative.x", "vehicle[0].clock.substep_accumulator",
+                     "vehicle[0].first_response.state.propwash.x", "vehicle[1].state.position.x",
+                     "vehicle[1].controller.target_rate.x", "vehicle[1].first_response.time_seconds"]
+    if any(not isinstance(reference_bits.get(field), str) or not re.fullmatch(r"[0-9a-f]{16}", reference_bits[field])
+           for field in required_bits) or reference_bits["vehicle[0].controller.target_angle.z"] != "8000000000000000":
+        print("IEEE-754 replay bit manifest is incomplete", file=sys.stderr)
+        return 1
+    print("schema-v3 replay checkpoint passed")
     return 0
 
 

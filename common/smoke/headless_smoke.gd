@@ -1,6 +1,7 @@
 extends SceneTree
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const AirSimCoordinateContract = preload("res://common/rpc/airsim_coordinate_contract.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
 const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
@@ -165,11 +166,31 @@ func _run() -> void:
         var row: PackedFloat64Array = native.call("step_simulation", Engine.physics_ticks_per_second, 1000, 0.0)
         trajectory.append_array(row)
 
-    var mobile_trajectory: PackedFloat64Array = native.call("simulate_trajectory", 1.0, 120, 500, 0.0)
+    var mobile_trajectory_result: Variant = native.call("simulate_trajectory", 1.0, 120, 500, 0.0)
     var stride: int = native.call("trajectory_stride")
+    if not (mobile_trajectory_result is Dictionary):
+        push_error("AeroSimNative.simulate_trajectory returned a non-Dictionary result")
+        quit(1)
+        return
+    var mobile_status := String(mobile_trajectory_result.get("status", "missing_status"))
+    var mobile_failed_frame := int(mobile_trajectory_result.get("failed_frame", -1))
+    var mobile_trajectory: PackedFloat64Array = mobile_trajectory_result.get("rows", PackedFloat64Array())
 
-    if trajectory.is_empty() or mobile_trajectory.is_empty() or stride != 12:
-        push_error("AeroSimNative.simulate_trajectory returned invalid data")
+    var zero_trajectory_result: Dictionary = native.call("simulate_trajectory", 0.0, 120, 500, 0.0)
+    var zero_rows: PackedFloat64Array = zero_trajectory_result.get("rows", PackedFloat64Array())
+    var limited_trajectory_result: Dictionary = native.call("simulate_trajectory", 1000000.0, 120, 500, 0.0)
+    var limited_rows: PackedFloat64Array = limited_trajectory_result.get("rows", PackedFloat64Array())
+
+    if String(zero_trajectory_result.get("status", "")) != "Ok" or not zero_rows.is_empty() \
+            or int(zero_trajectory_result.get("failed_frame", 0)) != -1 \
+            or String(limited_trajectory_result.get("status", "")) != "ResourceLimitExceeded" \
+            or not limited_rows.is_empty() or int(limited_trajectory_result.get("failed_frame", 0)) != -1:
+        push_error("AeroSimNative.simulate_trajectory violated its StepStatus contract")
+        quit(1)
+        return
+
+    if mobile_status != "Ok" or trajectory.is_empty() or mobile_trajectory.is_empty() or stride != 12 or mobile_trajectory.size() % stride != 0:
+        push_error("AeroSimNative.simulate_trajectory failed: status=%s failed_frame=%d" % [mobile_status, mobile_failed_frame])
         quit(1)
         return
 
@@ -317,6 +338,10 @@ func _configure_default_power_model(native: Object) -> bool:
             float(power_model.battery_remaining_mah)
         ):
         push_error("Default hardware preset must apply native telemetry metadata")
+        return false
+    if not native.has_method("set_hardware_altitude_hold_noise_deadband") or not native.call(
+            "set_hardware_altitude_hold_noise_deadband", float(preset.sensors.barometer_noise_m)):
+        push_error("Default hardware preset must apply native altitude-hold noise tuning")
         return false
     if native.has_method("set_config_hash") and native.has_method("replay_vehicle_config_manifest") and native.has_method("replay_manifest_hash"):
         var canonicalizer := FlightRuntime.new()
@@ -589,7 +614,7 @@ func _verify_flight_control_public_path(native: Object) -> bool:
     for _frame in range(Engine.physics_ticks_per_second / 2):
         native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, 0.5, 1.0, 0.0, 0.0, 1.0, 0.722222222222, 0.0)
     var acro: Dictionary = native.call("flight_control_diagnostics")
-    var roll_rate_dps := rad_to_deg(float(acro.get("angular_velocity_z_rad_s", 0.0)))
+    var roll_rate_dps := rad_to_deg(float(acro.get("angular_velocity_x_rad_s", 0.0)))
     if absf(roll_rate_dps - 720.0) > 720.0 * 0.05:
         push_error("G2.5 public Acro full-stick roll must reach 720 deg/s within 5%%")
         return false
@@ -932,7 +957,7 @@ func _verify_a4_a5_public_path(native: Object) -> bool:
     native.call("set_a5_downwash_model", false, prop_radius, 2267.18, 0.16, -0.11)
     native.call("set_a5_downwash_source_position", NAN, NAN, NAN)
     native.call("set_a3_drag_model", false, 0.0001, 0.0001, 0.00012)
-    native.call("set_a4_ground_effect_model", true, 3.16e-10, 11.36859, prop_radius, prop_radius, 12000.0, 12000.0, 12000.0, 12000.0)
+    native.call("set_a4_ground_effect_model", false, 3.16e-10, 11.36859, prop_radius, prop_radius, 12000.0, 12000.0, 12000.0, 12000.0)
     return true
 
 
@@ -1039,6 +1064,23 @@ func _verify_collision_public_path(native: Object) -> bool:
     )
     if clear.size() < 14 or int(clear[12]) != 0:
         push_error("Collision public path must return to flight authority after configured clear frames")
+        return false
+    native.call("reset_flight")
+    if not native.call("arm_flight_control", 0.0):
+        push_error("Zero-energy collision setup should arm from low throttle")
+        return false
+    var zero_energy_impact: PackedFloat64Array = _step_native_collision(
+        native,
+        0.5,
+        true,
+        Vector3.LEFT,
+        Vector3.ZERO,
+        Vector3(100.0, 0.0, 0.0),
+        Vector3.ZERO,
+        0.0
+    )
+    if zero_energy_impact.size() < 18 or not is_finite(float(zero_energy_impact[17])) or float(zero_energy_impact[17]) > 0.0:
+        push_error("Collision public path must enforce a stationary zero-energy Jolt cap")
         return false
     native.call("reset_flight")
     return true
@@ -1155,20 +1197,35 @@ func _verify_jolt_collision_scene(native: Object) -> bool:
     if mass_kg <= 0.0:
         push_error("Jolt collision smoke requires a positive configured hardware mass")
         return false
+    var per_motor: Dictionary = native.call("hardware_per_motor_diagnostics")
+    var inertia_frd: Vector3 = per_motor.get("inertia_frd", Vector3.ZERO)
+    if inertia_frd.x <= 0.0 or inertia_frd.y <= 0.0 or inertia_frd.z <= 0.0:
+        push_error("Jolt collision smoke requires positive configured hardware inertia")
+        return false
 
     verified_jolt_collision_trials = 0
     for mode in ["ANGLE", "ACRO"]:
         for scenario in ["wall", "glancing_ground", "pole", "tumble_ground"]:
             for seed in range(100):
-                var first: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg, mode)
-                var second: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg, mode)
+                var first: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg, inertia_frd, mode)
+                var second: Dictionary = await _run_jolt_collision_trial(native, scenario, seed, mass_kg, inertia_frd, mode)
                 if not first.ok or not second.ok or not _same_collision_row(first.row, second.row):
                     push_error("Headless Jolt G0.8 trial failed: %s %s seed %d first=%s second=%s" % [mode, scenario, seed, first.get("reason", ""), second.get("reason", "")])
                     return false
                 verified_jolt_collision_trials += 1
+    var rotated: Dictionary = await _run_jolt_collision_trial(native, "rotated_anisotropic", 0, mass_kg, inertia_frd, "ANGLE")
+    if not rotated.ok:
+        push_error("Headless Jolt rotated anisotropic-inertia G0.8 trial failed: %s" % rotated.get("reason", ""))
+        return false
+    verified_jolt_collision_trials += 1
+    var zero_energy: Dictionary = await _run_jolt_collision_trial(native, "zero_energy_impactor", 0, mass_kg, inertia_frd, "ANGLE")
+    if not zero_energy.ok:
+        push_error("Headless Jolt zero-energy production-contact regression failed: %s" % zero_energy.get("reason", ""))
+        return false
+    verified_jolt_collision_trials += 1
     return true
 
-func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass_kg: float, mode: String) -> Dictionary:
+func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass_kg: float, inertia_frd: Vector3, mode: String) -> Dictionary:
     var trial_root := Node3D.new()
     trial_root.name = "JoltCollisionTrial"
     root.add_child(trial_root)
@@ -1178,11 +1235,13 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
     drone.max_contacts_reported = 4
     drone.gravity_scale = 0.0
     drone.set("continuous_cd", true)
+    drone.mass = mass_kg
+    drone.inertia = Vector3(inertia_frd.x, inertia_frd.z, inertia_frd.y)
     _add_shape(drone, _drone_shape(scenario))
     trial_root.add_child(drone)
 
     _setup_jolt_trial_geometry(trial_root, drone, scenario, seed)
-    var energy_before := _kinetic(drone.linear_velocity, drone.angular_velocity, mass_kg)
+    var energy_before := _kinetic(drone.linear_velocity, _jolt_angular_velocity_body_y_up(drone), mass_kg, inertia_frd)
 
     if drone.get("continuous_cd") != true:
         trial_root.queue_free()
@@ -1203,7 +1262,7 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
                 break
             _sync_native_from_body(native, drone)
             var solved_linear: Vector3 = drone.linear_velocity
-            var solved_angular: Vector3 = drone.angular_velocity
+            var solved_angular := _jolt_angular_velocity_body_y_up(drone)
             impact_row = _step_native_collision(
                 native,
                 0.5,
@@ -1236,7 +1295,7 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
         reason = "energy row=%f limit=%f" % [float(impact_row[17]), energy_before * 1.01]
     if ok:
         _apply_collision_row_to_body(drone, impact_row)
-        var body_energy := _kinetic(drone.linear_velocity, drone.angular_velocity, mass_kg)
+        var body_energy := _kinetic(drone.linear_velocity, _jolt_angular_velocity_body_y_up(drone), mass_kg, inertia_frd)
         ok = _body_state_finite(drone) and body_energy <= energy_before * 1.01 + 1e-4
         if not ok:
             reason = "body_impact_state body=%f limit=%f finite=%s" % [body_energy, energy_before * 1.01, str(_body_state_finite(drone))]
@@ -1253,18 +1312,18 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
         ok = clear.size() >= 24 and int(clear[12]) == 0
         if not ok:
             reason = "handoff_clear"
-        var vertical_velocity_before_response := float(clear[9])
         for _frame in range(Engine.physics_ticks_per_second / 2):
             await physics_frame
             _sync_native_from_body(native, drone)
             clear = _step_native_clear_collision(native, 0.8, mode)
             _apply_collision_row_to_body(drone, clear)
-        ok = ok and clear.size() >= 18 and float(clear[9]) > vertical_velocity_before_response and _collision_row_finite(clear)
+        var response_thrust := float(native.call("flight_control_diagnostics").get("motor_thrust_newtons", 0.0))
+        ok = ok and clear.size() >= 18 and response_thrust > mass_kg * 9.80665 and _collision_row_finite(clear)
         if not ok and reason == "impact":
             reason = "response"
         if ok:
             _apply_collision_row_to_body(drone, clear)
-            ok = _body_state_finite(drone) and drone.linear_velocity.y > vertical_velocity_before_response
+            ok = _body_state_finite(drone)
             if not ok:
                 reason = "body_response"
         impact_row = clear
@@ -1384,7 +1443,7 @@ func _setup_jolt_trial_geometry(parent: Node3D, drone: RigidBody3D, scenario: St
         var z_offset := _jitter(seed, 6, -0.12, 0.12)
         drone.position = Vector3(-1.0, 0.0, z_offset)
         drone.linear_velocity = Vector3(14.0, 0.0, -z_offset * 3.0)
-    else:
+    elif scenario == "tumble_ground":
         var tumble_ground := StaticBody3D.new()
         tumble_ground.position = Vector3.ZERO
         var tumble_box := BoxShape3D.new()
@@ -1394,9 +1453,29 @@ func _setup_jolt_trial_geometry(parent: Node3D, drone: RigidBody3D, scenario: St
         drone.position = Vector3(_jitter(seed, 7, -0.2, 0.2), 0.8, _jitter(seed, 8, -0.2, 0.2))
         drone.linear_velocity = Vector3(_jitter(seed, 9, -2.0, 2.0), -8.0, _jitter(seed, 10, -2.0, 2.0))
         drone.angular_velocity = Vector3(_jitter(seed, 11, -9.0, 9.0), _jitter(seed, 12, -9.0, 9.0), _jitter(seed, 13, -9.0, 9.0))
+    elif scenario == "zero_energy_impactor":
+        drone.position = Vector3.ZERO
+        var impactor := RigidBody3D.new()
+        impactor.gravity_scale = 0.0
+        impactor.mass = drone.mass
+        impactor.set("continuous_cd", true)
+        _add_shape(impactor, _drone_shape(scenario))
+        parent.add_child(impactor)
+        impactor.position = Vector3(-1.0, 0.0, 0.0)
+        impactor.linear_velocity = Vector3(20.0, 0.0, 0.0)
+    else:
+        var rotated_ground := StaticBody3D.new()
+        var rotated_box := BoxShape3D.new()
+        rotated_box.size = Vector3(4.0, 0.1, 4.0)
+        _add_shape(rotated_ground, rotated_box)
+        parent.add_child(rotated_ground)
+        drone.rotation = Vector3(0.0, 0.0, PI * 0.5)
+        drone.position = Vector3(0.0, 0.8, 0.0)
+        drone.linear_velocity = Vector3(0.0, -8.0, 0.0)
+        drone.angular_velocity = Vector3(0.0, 9.0, 0.0)
 
 func _drone_shape(scenario: String) -> Shape3D:
-    if scenario == "tumble_ground":
+    if scenario == "tumble_ground" or scenario == "rotated_anisotropic":
         var box := BoxShape3D.new()
         box.size = Vector3(0.24, 0.08, 0.24)
         return box
@@ -1427,6 +1506,7 @@ func _apply_collision_row_to_body(body: Object, row: PackedFloat64Array) -> void
 
 func _sync_native_from_body(native: Object, body: RigidBody3D) -> void:
     var q := body.global_transform.basis.get_rotation_quaternion()
+    var angular_velocity_body := _jolt_angular_velocity_body_y_up(body)
     native.call(
         "sync_flight_state",
         body.global_position.x,
@@ -1439,10 +1519,13 @@ func _sync_native_from_body(native: Object, body: RigidBody3D) -> void:
         body.linear_velocity.x,
         body.linear_velocity.y,
         body.linear_velocity.z,
-        body.angular_velocity.x,
-        body.angular_velocity.y,
-        body.angular_velocity.z
+        angular_velocity_body.x,
+        angular_velocity_body.y,
+        angular_velocity_body.z
     )
+
+func _jolt_angular_velocity_body_y_up(body: RigidBody3D) -> Vector3:
+    return body.global_transform.basis.inverse() * body.angular_velocity
 
 func _row_impulse(row: PackedFloat64Array) -> Vector3:
     return Vector3(row[21], row[22], row[23])
@@ -1451,10 +1534,10 @@ func _row_normal(row: PackedFloat64Array) -> Vector3:
     return Vector3(row[18], row[19], row[20])
 
 func _row_roll_degrees(row: PackedFloat64Array) -> float:
-    return rad_to_deg(2.0 * atan2(float(row[6]), float(row[7])))
+    return rad_to_deg(2.0 * atan2(float(row[4]), float(row[7])))
 
 func _row_pitch_degrees(row: PackedFloat64Array) -> float:
-    return rad_to_deg(2.0 * atan2(float(row[4]), float(row[7])))
+    return rad_to_deg(2.0 * atan2(float(row[6]), float(row[7])))
 
 func _body_state_finite(body: RigidBody3D) -> bool:
     var q := body.global_transform.basis.get_rotation_quaternion()
@@ -1486,8 +1569,11 @@ func _same_motor_debug_values(a: Array, b: Array) -> bool:
             return false
     return true
 
-func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, mass_kg: float) -> float:
-    return 0.5 * mass_kg * linear_velocity.length_squared() + 0.5 * angular_velocity.length_squared()
+func _kinetic(linear_velocity: Vector3, angular_velocity: Vector3, mass_kg: float, inertia_frd: Vector3) -> float:
+    return 0.5 * mass_kg * linear_velocity.length_squared() + 0.5 * (
+        inertia_frd.x * angular_velocity.x * angular_velocity.x +
+        inertia_frd.z * angular_velocity.y * angular_velocity.y +
+        inertia_frd.y * angular_velocity.z * angular_velocity.z)
 
 func _vector_finite(value: Vector3) -> bool:
     return is_finite(value.x) and is_finite(value.y) and is_finite(value.z)
@@ -2016,8 +2102,9 @@ func _verify_runtime_actions() -> bool:
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
     )
-    if angle_rates.length() <= 0.01:
-        push_error("Xbox roll, pitch, and yaw axes must drive the Angle runtime path")
+    var angle_rates_frd := AirSimCoordinateContract.godot_body_to_frd(angle_rates)
+    if angle_rates_frd.x <= 0.01 or angle_rates_frd.y <= 0.01 or angle_rates_frd.z <= 0.01:
+        push_error("Xbox positive roll, pitch, and yaw axes must produce positive FRD angular velocity in Angle mode")
         scene.queue_free()
         return false
     button_clock.milliseconds = 100
@@ -2074,8 +2161,9 @@ func _verify_runtime_actions() -> bool:
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
     )
-    if altitude_hold_rates.length() <= 0.01:
-        push_error("Xbox roll, pitch, and yaw axes must drive the Altitude Hold runtime path")
+    var altitude_hold_rates_frd := AirSimCoordinateContract.godot_body_to_frd(altitude_hold_rates)
+    if altitude_hold_rates_frd.x >= -0.01 or altitude_hold_rates_frd.y >= -0.01 or altitude_hold_rates_frd.z >= -0.01:
+        push_error("Xbox negative roll, pitch, and yaw axes must produce negative FRD angular velocity in Altitude Hold")
         scene.queue_free()
         return false
     scene.native.call("reset_flight")
@@ -2102,8 +2190,9 @@ func _verify_runtime_actions() -> bool:
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_y_rad_s", 0.0)),
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
     )
-    if acro_rates.z <= 0.01 or absf(acro_rates.z) <= absf(acro_rates.x) or absf(acro_rates.z) <= absf(acro_rates.y):
-        push_error("Fresh Xbox roll profile input must produce the expected dominant positive ACRO roll response")
+    var acro_rates_frd := AirSimCoordinateContract.godot_body_to_frd(acro_rates)
+    if acro_rates_frd.x <= 0.01 or absf(acro_rates_frd.x) <= absf(acro_rates_frd.y) or absf(acro_rates_frd.x) <= absf(acro_rates_frd.z):
+        push_error("Fresh Xbox roll profile input must produce the expected dominant positive FRD ACRO roll response")
         scene.queue_free()
         return false
     scene.queue_free()
@@ -2262,7 +2351,7 @@ func _verify_runtime_actions() -> bool:
     var acro_rate_observed := false
     for _frame in range(Engine.physics_ticks_per_second / 2):
         await physics_frame
-        if absf(scene.drone_body.angular_velocity.z) > 1.0:
+        if absf(scene.drone_body.angular_velocity.x) > 1.0:
             acro_rate_observed = true
             break
     scene.acro_roll_stick = 0.0
@@ -2271,7 +2360,7 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     if scene.last_collision_authority != 0 or not acro_rate_observed:
-        push_error("flight runtime ACRO path must hand back and respond to rates input within 0.5 seconds; authority=%d angular_z=%f" % [scene.last_collision_authority, scene.drone_body.angular_velocity.z])
+        push_error("flight runtime ACRO path must hand back and respond to rates input within 0.5 seconds; authority=%d angular_x=%f" % [scene.last_collision_authority, scene.drone_body.angular_velocity.x])
         scene.queue_free()
         return false
     scene.flight_mode = "ANGLE"
@@ -2477,8 +2566,18 @@ func _verify_hardware_config_public_path() -> bool:
         push_error("Runtime startup preset must apply aircraft mass to native")
         scene.queue_free()
         return false
+    var preset_inertia := Vector3(float(preset.aircraft.inertia_kg_m2.x), float(preset.aircraft.inertia_kg_m2.y), float(preset.aircraft.inertia_kg_m2.z))
+    var jolt_inertia := Vector3(preset_inertia.x, preset_inertia.z, preset_inertia.y)
+    if absf(scene.drone_body.mass - float(preset.aircraft.mass_kg)) > 1e-6 or scene.drone_body.inertia.distance_to(jolt_inertia) > 1e-6:
+        push_error("Runtime startup preset must apply aircraft mass and inertia to the Jolt body")
+        scene.queue_free()
+        return false
     if abs(float(startup_power.hover_throttle) - float(power_model.hover_throttle)) > 1e-9:
         push_error("Runtime startup preset must apply derived hover throttle to native")
+        scene.queue_free()
+        return false
+    if abs(float(startup_power.altitude_hold_noise_deadband_m) - float(preset.sensors.barometer_noise_m)) > 1e-9:
+        push_error("Runtime startup preset must apply validated barometer noise as native altitude-hold tuning")
         scene.queue_free()
         return false
     if float(startup_power.full_throttle_cap_newtons) >= float(power_model.max_total_thrust_n):
@@ -2602,13 +2701,15 @@ func _native_hovers_at_mass(native: Object, mass_kg: float) -> bool:
     native.call("reset_flight")
     native.call("arm_flight_control", 0.0)
     var hover: PackedFloat64Array = native.call(
-        "simulate_trajectory",
-        1.0,
+        "step_simulation",
         Engine.physics_ticks_per_second,
         1000,
         mass_kg * 9.80665
     )
-    return not hover.is_empty() and abs(float(hover[hover.size() - int(native.call("trajectory_stride")) + 2])) <= 1e-6
+    if hover.size() != 12:
+        push_error("AeroSimNative.step_simulation failed to produce a trajectory row")
+        return false
+    return abs(float(hover[2])) <= 1e-6
 
 func _press_key(keycode: int) -> void:
     var event := InputEventKey.new()

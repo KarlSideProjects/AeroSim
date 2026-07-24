@@ -41,6 +41,57 @@ struct PidTimingStats {
     std::uint64_t samples = 0;
 };
 
+struct FlightControlState {
+    Vec3 target_angle_frd;
+    Vec3 target_rate_frd;
+    std::array<double, 3> rate_integral = {0.0, 0.0, 0.0};
+    Vec3 previous_rate_error_frd;
+    Vec3 filtered_rate_derivative_frd;
+    int mode_family = 0;
+    bool control_initialized = false;
+    bool altitude_hold_captured = false;
+    bool altitude_hold_just_captured = false;
+    std::array<bool, 4> motor_saturation_latched = {false, false, false, false};
+    std::array<bool, 3> pid_saturation_latched = {false, false, false};
+    double motor_thrust_newtons = 0.0;
+};
+
+enum class StepStatus {
+    Ok,
+    InvalidCommand,
+    InvalidConfig,
+    InvalidState,
+    InvalidControlOutput,
+    ResourceLimitExceeded,
+};
+
+const char *step_status_code(StepStatus status);
+StepStatus validate_angle_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        const Quat &estimated_attitude);
+bool valid_flight_command(const FlightCommand &command);
+bool valid_acro_command(const AcroCommand &command);
+StepStatus validate_acro_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const AcroCommand &command);
+StepStatus validate_altitude_hold_step_inputs(
+        const RigidBodyState &state,
+        const SimulationClock &clock,
+        const SimulationConfig &config,
+        const FlightCommand &command,
+        double measured_altitude_m,
+        const Quat &estimated_attitude);
+
+struct StepResult {
+    StepStatus status = StepStatus::Ok;
+    TrajectorySample sample;
+};
+
 constexpr std::int32_t kTelemetrySnapshotSchemaVersion = 2;
 constexpr double kTelemetrySnapshotHz = 30.0;
 
@@ -102,6 +153,7 @@ struct TelemetrySnapshot {
 
 double betaflight_rate_degrees_per_second(double stick, const RateProfile &profile);
 double betaflight_stick_for_rate_degrees_per_second(double rate_degrees_per_second, const RateProfile &profile);
+double normalize_angle_radians(double angle);
 QuadXMixerResult quad_x_mix_thrust(
         const SimulationConfig &config,
         double collective_thrust_newtons,
@@ -109,6 +161,12 @@ QuadXMixerResult quad_x_mix_thrust(
 
 class FlightController {
 private:
+    enum class ModeFamily {
+        None,
+        Angle,
+        Acro,
+    };
+
     bool armed_ = false;
     std::string arm_reject_code_ = "";
     int integrator_reset_count_ = 0;
@@ -120,7 +178,12 @@ private:
     double altitude_hold_trim_throttle_ = 0.0;
     bool altitude_hold_just_captured_ = false;
     std::array<double, 3> rate_integral_ = {0.0, 0.0, 0.0};
-    std::array<double, 3> previous_target_rates_y_up_ = {0.0, 0.0, 0.0};
+    Vec3 target_angle_frd_;
+    Vec3 target_rate_frd_;
+    Vec3 previous_rate_error_frd_;
+    Vec3 filtered_rate_derivative_frd_;
+    ModeFamily mode_family_ = ModeFamily::None;
+    bool control_initialized_ = false;
     std::array<bool, 4> motor_saturation_latched_ = {false, false, false, false};
     std::array<bool, 3> pid_saturation_latched_ = {false, false, false};
     PidTimingStats pid_timing_stats_;
@@ -140,10 +203,31 @@ private:
             RigidBodyState &state,
             const SimulationConfig &config,
             double throttle,
-            const Vec3 &desired_rates_y_up,
+            ModeFamily mode_family,
+            const Vec3 &desired_angles_frd,
+            const Vec3 &desired_rates_frd,
+            const Quat &estimated_attitude,
             double dt,
             std::array<double, 3> &pid_output,
             std::array<bool, 3> &pid_saturated);
+    TrajectorySample step_angle_mode_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const Quat &estimated_attitude);
+    TrajectorySample step_acro_mode_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const AcroCommand &command);
+    TrajectorySample step_altitude_hold_mode_impl(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            double measured_altitude_m,
+            const Quat &estimated_attitude);
 
 public:
     bool arm(double throttle);
@@ -155,6 +239,7 @@ public:
     double motor_thrust_newtons() const;
     void capture_altitude_hold(double target_altitude_m);
     const PidTimingStats &pid_timing_stats() const;
+    FlightControlState control_state() const;
     const TelemetrySnapshot &telemetry_snapshot() const;
     void publish_unavailable_telemetry(
             const TrajectorySample &sample,
@@ -177,12 +262,30 @@ public:
             const SimulationConfig &config,
             const FlightCommand &command,
             const Quat &estimated_attitude);
+    StepResult try_step_angle_mode(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            const Quat &estimated_attitude);
     TrajectorySample step_acro_mode(
             RigidBodyState &state,
             SimulationClock &clock,
             const SimulationConfig &config,
             const AcroCommand &command);
+    StepResult try_step_acro_mode(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const AcroCommand &command);
     TrajectorySample step_altitude_hold_mode(
+            RigidBodyState &state,
+            SimulationClock &clock,
+            const SimulationConfig &config,
+            const FlightCommand &command,
+            double measured_altitude_m,
+            const Quat &estimated_attitude);
+    StepResult try_step_altitude_hold_mode(
             RigidBodyState &state,
             SimulationClock &clock,
             const SimulationConfig &config,

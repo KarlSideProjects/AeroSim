@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numeric>
 
 namespace aerosim {
@@ -27,6 +28,29 @@ Quat normalized(const Quat &q) {
         return {};
     }
     return {q.x / norm, q.y / norm, q.z / norm, q.w / norm};
+}
+
+bool valid_frame_timing(const SimulationConfig &config, const SimulationClock &clock) {
+    constexpr double kMaxSubstepsPerFrame = 1000000.0;
+    return config.physics_hz > 0 && config.substep_hz >= config.physics_hz &&
+            static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz) <= kMaxSubstepsPerFrame &&
+            std::isfinite(config.mass_kg) && config.mass_kg > 0.0 && std::isfinite(config.gravity_mps2) &&
+            std::isfinite(clock.substep_accumulator) &&
+            clock.substep_accumulator >= 0.0 && clock.substep_accumulator < 1.0;
+}
+
+bool finite_vec3(const Vec3 &value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+bool finite_state(const RigidBodyState &state) {
+    return finite_vec3(state.position) && finite_vec3(state.velocity) &&
+            std::isfinite(state.orientation.x) && std::isfinite(state.orientation.y) &&
+            std::isfinite(state.orientation.z) && std::isfinite(state.orientation.w) &&
+            finite_vec3(state.angular_velocity) && finite_vec3(state.propwash_disturbance_rad_s2) &&
+            std::all_of(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(), [](double value) {
+                return std::isfinite(value);
+            });
 }
 
 Quat multiply(const Quat &a, const Quat &b) {
@@ -294,6 +318,7 @@ AerodynamicStepValues integrate_per_motor(
 
     Vec3 body_force;
     Vec3 body_torque;
+    Vec3 motor_torque_frd;
     const auto columns = quad_x_mixer_columns(config.per_motor);
     for (std::size_t index = 0; index < commands.normalized.size(); ++index) {
         const double target_thrust = config.per_motor.max_thrust_per_motor_newtons *
@@ -303,10 +328,12 @@ AerodynamicStepValues integrate_per_motor(
         state.motor_thrust_newtons[index] = thrust;
         const Vec3 force{0.0, thrust, 0.0};
         body_force = body_force + force;
-        body_torque.x += columns[1][index] * thrust;
-        body_torque.z -= columns[2][index] * thrust;
-        body_torque.y += columns[3][index] * thrust;
+        motor_torque_frd.x += columns[1][index] * thrust;
+        motor_torque_frd.y += columns[2][index] * thrust;
+        motor_torque_frd.z += columns[3][index] * thrust;
     }
+
+    body_torque = body_torque + frd_to_y_up(motor_torque_frd);
 
     const double ground_lift = a4_ground_effect_lift_newtons(config.a4_ground_effect, state.position.y);
     body_force.y += ground_lift;
@@ -367,7 +394,7 @@ AerodynamicStepValues integrate_per_motor(
 } // namespace
 
 double quat_norm(const Quat &q) {
-    return std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    return std::hypot(std::hypot(q.x, q.y), std::hypot(q.z, q.w));
 }
 
 Vec3 frd_to_y_up(const Vec3 &frd) {
@@ -423,11 +450,20 @@ double motor_speed_rad_s_from_thrust(
 }
 
 std::vector<TrajectorySample> simulate_trajectory(const SimulationConfig &config) {
-    if (config.seconds <= 0.0 || config.physics_hz <= 0 || config.substep_hz <= 0 || config.mass_kg <= 0.0) {
+    if (!std::isfinite(config.seconds) || config.seconds <= 0.0 || config.physics_hz <= 0 ||
+            config.substep_hz <= 0 || !std::isfinite(config.mass_kg) || config.mass_kg <= 0.0 ||
+            !std::isfinite(config.gravity_mps2)) {
         return {};
     }
-
-    const auto physics_frames = static_cast<std::int32_t>(std::ceil(config.seconds * config.physics_hz));
+    constexpr std::size_t kMaxTrajectoryFrames = 1000000;
+    const double frames_as_double = std::ceil(config.seconds * static_cast<double>(config.physics_hz));
+    if (!std::isfinite(frames_as_double) || frames_as_double <= 0.0 ||
+            frames_as_double > static_cast<double>(kMaxTrajectoryFrames) ||
+            frames_as_double * static_cast<double>(config.substep_hz) /
+                    static_cast<double>(config.physics_hz) > static_cast<double>(kMaxTrajectoryFrames)) {
+        return {};
+    }
+    const std::size_t physics_frames = static_cast<std::size_t>(frames_as_double);
 
     std::vector<TrajectorySample> samples;
     samples.reserve(static_cast<std::size_t>(physics_frames));
@@ -435,7 +471,7 @@ std::vector<TrajectorySample> simulate_trajectory(const SimulationConfig &config
     RigidBodyState state = config.initial_state;
     SimulationClock clock;
 
-    for (std::int32_t frame = 0; frame < physics_frames; ++frame) {
+    for (std::size_t frame = 0; frame < physics_frames; ++frame) {
         samples.push_back(step_physics_frame(state, clock, config));
     }
 
@@ -466,7 +502,7 @@ TrajectorySample step_per_motor_physics_frame(
         SimulationClock &clock,
         const SimulationConfig &config,
         const std::function<MotorCommands(double)> &command_for_substep) {
-    if (config.physics_hz <= 0 || config.substep_hz <= 0 || config.mass_kg <= 0.0 ||
+    if (!valid_frame_timing(config, clock) ||
             !validate_per_motor_config(config.per_motor) || !command_for_substep) {
         return {};
     }
@@ -475,12 +511,17 @@ TrajectorySample step_per_motor_physics_frame(
     const SimulationClock initial_clock = clock;
     Vec3 propwash_sum;
     AerodynamicStepValues aerodynamic_sum;
+    RigidBodyState first_substep_state;
+    bool has_first_substep = false;
     const double substeps_per_frame = static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz);
     const double dt = 1.0 / static_cast<double>(config.substep_hz);
-    clock.substep_accumulator += substeps_per_frame;
-    const auto frame_substeps = static_cast<std::int32_t>(std::floor(clock.substep_accumulator + 1e-12));
-    clock.substep_accumulator -= frame_substeps;
-    for (std::int32_t step = 0; step < frame_substeps; ++step) {
+    const double next_accumulator = clock.substep_accumulator + substeps_per_frame;
+    const auto frame_substeps = static_cast<std::uint64_t>(std::floor(next_accumulator + 1e-12));
+    if (frame_substeps > std::numeric_limits<std::uint64_t>::max() - clock.total_substeps) {
+        return {};
+    }
+    clock.substep_accumulator = next_accumulator - static_cast<double>(frame_substeps);
+    for (std::uint64_t step = 0; step < frame_substeps; ++step) {
         const MotorCommands commands = command_for_substep(dt);
         if (!valid_motor_commands(commands)) {
             state = initial_state;
@@ -488,6 +529,15 @@ TrajectorySample step_per_motor_physics_frame(
             return {};
         }
         const AerodynamicStepValues aerodynamic = integrate_per_motor(state, config, commands, {}, dt);
+        if (!finite_state(state)) {
+            state = initial_state;
+            clock = initial_clock;
+            return {};
+        }
+        if (!has_first_substep) {
+            first_substep_state = state;
+            has_first_substep = true;
+        }
         aerodynamic_sum = add_aerodynamic_values(aerodynamic_sum, aerodynamic);
         propwash_sum = propwash_sum + state.propwash_disturbance_rad_s2;
     }
@@ -508,6 +558,9 @@ TrajectorySample step_per_motor_physics_frame(
             config.air_density_kg_m3,
             aerodynamic_sum.body_drag_force_applied,
             aerodynamic_sum.body_drag_torque_applied,
+            first_substep_state,
+            has_first_substep ? static_cast<double>(initial_clock.total_substeps + 1U) * dt : 0.0,
+            has_first_substep ? initial_clock.total_substeps + 1U : 0U,
     };
 }
 
@@ -528,10 +581,11 @@ DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
         SimulationClock &clock,
         const DualAircraftConfig &config,
         const std::function<DualMotorCommands(double)> &commands_for_substep) {
-    if (config.upper.physics_hz <= 0 || config.upper.substep_hz <= 0 ||
+    if (!valid_frame_timing(config.upper, clock) ||
             config.lower.physics_hz != config.upper.physics_hz ||
             config.lower.substep_hz != config.upper.substep_hz ||
-            config.upper.mass_kg <= 0.0 || config.lower.mass_kg <= 0.0 ||
+            !std::isfinite(config.lower.mass_kg) || config.lower.mass_kg <= 0.0 ||
+            !std::isfinite(config.lower.gravity_mps2) ||
             !validate_per_motor_config(config.upper.per_motor) ||
             !validate_per_motor_config(config.lower.per_motor) || !commands_for_substep) {
         return {};
@@ -568,6 +622,11 @@ DualAircraftTrajectorySample step_dual_aircraft_per_motor_physics_frame(
                 commands.lower,
                 {0.0, downwash_force_y_newtons, 0.0},
                 dt);
+        if (!finite_state(state.upper) || !finite_state(state.lower)) {
+            state = initial_state;
+            clock = initial_clock;
+            return {};
+        }
     }
     clock.total_substeps += static_cast<std::uint64_t>(frame_substeps);
     return {
@@ -584,9 +643,12 @@ TrajectorySample step_physics_frame(
         SimulationClock &clock,
         const SimulationConfig &config,
         const std::function<void(double)> &before_substep) {
-    if (config.physics_hz <= 0 || config.substep_hz <= 0 || config.mass_kg <= 0.0) {
+    if (!valid_frame_timing(config, clock) || !before_substep) {
         return {};
     }
+
+    const RigidBodyState initial_state = state;
+    const SimulationClock initial_clock = clock;
 
     const double substeps_per_frame = static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz);
     const double dt = 1.0 / static_cast<double>(config.substep_hz);
@@ -599,6 +661,11 @@ TrajectorySample step_physics_frame(
     for (std::int32_t step = 0; step < frame_substeps; ++step) {
         before_substep(dt);
         aerodynamic_sum = add_aerodynamic_values(aerodynamic_sum, integrate(state, config, dt));
+        if (!finite_state(state)) {
+            state = initial_state;
+            clock = initial_clock;
+            return {};
+        }
     }
     clock.total_substeps += static_cast<std::uint64_t>(frame_substeps);
 
@@ -615,6 +682,9 @@ TrajectorySample step_physics_frame(
             config.air_density_kg_m3,
             aerodynamic_sum.body_drag_force_applied,
             aerodynamic_sum.body_drag_torque_applied,
+            {},
+            0.0,
+            0,
     };
 }
 

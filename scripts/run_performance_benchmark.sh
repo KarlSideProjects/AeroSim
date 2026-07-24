@@ -102,36 +102,15 @@ if [ ! -d "$godot_cpp_dir/.git" ] || [ ! -f "$godot_cpp_dir/SConstruct" ]; then
     echo "godot-cpp checkout is required: $godot_cpp_dir" >&2
     exit 2
 fi
-scons_bin="${SCONS_BIN:-}"
-if [ -z "$scons_bin" ]; then
-    if command -v scons >/dev/null 2>&1; then
-        scons_bin="$(command -v scons)"
-    elif [ -x build/scons-venv/bin/scons ]; then
-        scons_bin="build/scons-venv/bin/scons"
-    elif [ -x .deps/venv/bin/scons ]; then
-        scons_bin=".deps/venv/bin/scons"
-    else
-        echo "SCons is required to rebuild the measured GDExtension" >&2
-        exit 2
-    fi
-fi
-
-GODOT_CPP_DIR="$godot_cpp_dir" "$scons_bin" target=template_debug platform=linux
-gdextension_path="bin/libaerosim_native.linux.template_debug.x86_64.so"
-if [ ! -s "$gdextension_path" ]; then
-    echo "rebuilt GDExtension is missing: $gdextension_path" >&2
-    exit 2
-fi
+source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"
+validate_native_provenance
+commit_sha="$AEROSIM_NATIVE_PROVENANCE_COMMIT_SHA"
+gdextension_sha256="$AEROSIM_NATIVE_PROVENANCE_GDEXTENSION_SHA256"
+native_source_sha256="$AEROSIM_NATIVE_PROVENANCE_NATIVE_SOURCE_SHA256"
 
 godot_version="$("$godot_bin" --version | head -n 1)"
 godot_sha256="$(sha256sum "$godot_bin" | cut -d ' ' -f 1)"
-godot_cpp_revision="$(git -C "$godot_cpp_dir" rev-parse HEAD)"
-gdextension_sha256="$(sha256sum "$gdextension_path" | cut -d ' ' -f 1)"
-native_source_sha256="$({ find src/native -type f -print0; printf 'SConstruct\0'; } \
-    | sort -z \
-    | xargs -0 sha256sum \
-    | sha256sum \
-    | cut -d ' ' -f 1)"
+godot_cpp_revision="ba0edfed90512ec64aba51d4295a3e7e30112f86"
 
 mkdir -p "$(dirname "$output_path")" .godot
 raw_path="${output_path%.json}.raw.json"
@@ -146,6 +125,7 @@ timeout 180s "$godot_bin" --path . --resolution 1280x720 --remote-debug local://
     --seconds "$seconds" \
     --effects "$effects" \
     --benchmark-mode "$benchmark_mode" \
+    --commit-sha "$commit_sha" \
     --godot-version "$godot_version" \
     --godot-sha256 "$godot_sha256" \
     --godot-cpp-revision "$godot_cpp_revision" \
