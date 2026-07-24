@@ -1181,6 +1181,8 @@ func _run_cold_start_probe() -> void:
     var screenshot_written := not screenshot_path.is_empty() and screenshot.save_png(screenshot_path) == OK
     var result := {
         "display_driver": DisplayServer.get_name(),
+        "rendering_method": RenderingServer.get_current_rendering_method(),
+        "rendering_driver": RenderingServer.get_current_rendering_driver_name(),
         "flyable": native != null and screen == "preflight" and not takeoff_requested and not paused and screenshot_written and _cold_start_frame_is_observable(screenshot),
         "frame_post_draw": true,
         "screen": screen,

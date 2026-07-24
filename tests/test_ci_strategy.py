@@ -207,6 +207,17 @@ class CiStrategyTest(unittest.TestCase):
             "python3 scripts/check_release_artifacts.py \"$out_zip\"",
             (ROOT / "scripts" / "export_linux_release.sh").read_text(encoding="utf-8"),
         )
+        export_script = (ROOT / "scripts" / "export_linux_release.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'grep -q \'^renderer/rendering_method="forward_plus"$\' project.godot',
+            export_script,
+        )
+        self.assertIn(
+            "grep -q '^rendering_device/fallback_to_opengl3=true$' project.godot",
+            export_script,
+        )
 
     def test_linux_reuses_its_debug_build_for_headed_runtime_gates(self):
         with self.subTest(contract="no standalone headed job"):
