@@ -4211,7 +4211,7 @@ func _refresh_osd() -> void:
     var default_right_stack_offset_y := 0.0
     if dashboard_panel != null and dashboard_panel.is_visible_in_tree():
         default_right_stack_offset_y = maxf(0.0, dashboard_panel.get_global_rect().end.y + 8.0 - float(OsdProfile.DEFAULT_POSITIONS["battery"].y) * viewport_size.y)
-    var active := screen in ["preflight", "flight", "finish", "osd"]
+    var active := screen in ["preflight", "flight", "finish", "osd"] and not (paused and screen == "flight")
     var snapshot := _osd_snapshot()
     var battery: Dictionary = snapshot.get("battery", {})
     var armed := bool(snapshot.get("armed", _flight_control_armed()))
@@ -4335,7 +4335,7 @@ func _refresh_flight_hud() -> void:
         flight_hud_layer.visible = screen not in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
         var status_margin := flight_hud_layer.get_node_or_null("StatusMargin") as Control
         if status_margin != null:
-            status_margin.visible = screen != "controller_confirmation"
+            status_margin.visible = screen != "controller_confirmation" and not (paused and screen == "flight")
     if pause_panel != null:
         pause_panel.visible = paused and screen == "flight" and not status_diagram_fullscreen
     if camera_panel != null:
@@ -4343,7 +4343,7 @@ func _refresh_flight_hud() -> void:
     if osd_panel != null:
         osd_panel.visible = screen == "osd"
     if controller_safety_panel != null:
-        controller_safety_panel.visible = controller_safety_latched and screen != "controller_confirmation"
+        controller_safety_panel.visible = controller_safety_latched and screen != "controller_confirmation" and not (paused and screen == "flight")
     if controller_safety_label != null:
         controller_safety_label.text = visible_error_message
     if controller_confirmation_panel != null:
