@@ -1573,6 +1573,23 @@ func test_pause_panel_exposes_the_frozen_overlay_contract() -> void:
     runtime.free()
 
 
+func test_status_diagram_from_pause_exposes_user_return_button() -> void:
+    var runtime := FlightRuntime.new()
+    runtime.flight_hud_layer = CanvasLayer.new()
+    runtime.add_child(runtime.flight_hud_layer)
+
+    runtime._build_pause_panel()
+    runtime._show_status_diagram_from_pause()
+
+    assert_true(runtime.status_diagram_fullscreen)
+    var back_button := runtime.status_diagram_back_button as Button
+    assert_not_null(back_button)
+    back_button.pressed.emit()
+    assert_false(runtime.status_diagram_fullscreen)
+    assert_true(runtime.pause_panel.visible)
+    runtime.free()
+
+
 func test_respawn_preserves_armed_state_and_resets_without_disarm() -> void:
     var runtime := FlightRuntime.new()
     var map := Node3D.new()

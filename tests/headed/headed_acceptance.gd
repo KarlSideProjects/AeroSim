@@ -390,8 +390,30 @@ func _run() -> void:
 	var pause_rates_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Rates")
 	var pause_camera_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Camera")
 	var pause_osd_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/OSD")
+	var pause_controller_monitor_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/ControllerMonitor")
+	var pause_status_diagram_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/StatusDiagram")
 	_expect(runtime.paused and pause_rates_button != null, "Pause Overlay exposes Rates")
 	_expect(pause_camera_button != null and pause_osd_button != null, "Pause Overlay exposes Camera and OSD")
+	_expect(pause_controller_monitor_button != null and pause_status_diagram_button != null, "Pause Overlay exposes Controller Monitor and Status Diagram")
+	if pause_controller_monitor_button != null:
+		_click(pause_controller_monitor_button)
+		await _settle(2)
+		_expect(runtime.screen == "controller_settings" and runtime.controller_settings_monitor_label != null and runtime.controller_settings_monitor_label.is_visible_in_tree(), "Pause Overlay Controller Monitor opens its live panel")
+		var pause_controller_back: Button = runtime.get_node_or_null("MainMenu/ControllerSettingsPanel/Rows/Back")
+		if pause_controller_back != null:
+			_click(pause_controller_back)
+		await _settle(2)
+		_expect(runtime.screen == "flight" and runtime.paused, "Controller Monitor Back returns to the paused flight")
+	if pause_status_diagram_button != null:
+		_click(pause_status_diagram_button)
+		await _settle(2)
+		_expect(runtime.status_diagram_fullscreen and runtime.status_diagram != null and runtime.status_diagram.call("get_layout_mode") == "full", "Pause Overlay Status Diagram opens its fullscreen dashboard")
+		var status_diagram_back_button: Button = runtime.status_diagram_back_button
+		_expect(status_diagram_back_button != null and status_diagram_back_button.is_visible_in_tree(), "Status Diagram exposes a user-accessible Back button")
+		if status_diagram_back_button != null:
+			_click(status_diagram_back_button)
+		await _settle(2)
+		_expect(not runtime.status_diagram_fullscreen and runtime.paused and pause_status_diagram_button.is_visible_in_tree(), "Status Diagram Back returns to the paused overlay")
 	_expect(runtime.get_node_or_null("FlightHud/FpvOsd") != null and runtime.get_node_or_null("FlightHud/AnalogNoise") != null, "flight HUD owns the FPV OSD and analog-noise overlay")
 	var camera_candidate: Dictionary = runtime.camera_profile.duplicate(true)
 	camera_candidate["camera_angle_deg"] = 35.0
@@ -582,10 +604,24 @@ func _run() -> void:
 	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6 and runtime.drone_body.linear_velocity.length() <= 1e-6 and runtime.drone_body.angular_velocity.length() <= 1e-6, "reset returns to the default SpawnNorth with cleared velocities after a fresh map load")
 
 	runtime.quit_on_exit = false
-	_tap(KEY_ESCAPE)
+	_tap(KEY_P)
+	await _settle(2)
+	var pause_reset_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Reset")
+	_expect(runtime.paused and pause_reset_button != null, "Pause Overlay exposes an actionable Reset button")
+	var reset_count_before_button: int = runtime.reset_count
+	if pause_reset_button != null:
+		_click(pause_reset_button)
+	await _settle(4)
+	_expect(runtime.reset_count > reset_count_before_button and not runtime.paused, "Pause Overlay Reset resumes the flight with reset semantics")
+	_tap(KEY_P)
+	await _settle(2)
+	var pause_exit_button: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/Exit")
+	_expect(runtime.paused and pause_exit_button != null, "Pause Overlay exposes an actionable Exit button")
+	if pause_exit_button != null:
+		_click(pause_exit_button)
 	await _settle(2)
 	await _snapshot("06_exit")
-	_expect(runtime.exit_requested and runtime.screen == "main_menu" and runtime.loaded_map == null and runtime.get_node_or_null("LoadedMap") == null, "exit frees the map and returns to the main menu stub")
+	_expect(runtime.exit_requested and runtime.screen == "main_menu" and runtime.loaded_map == null and runtime.get_node_or_null("LoadedMap") == null, "Pause Overlay Exit frees the map and returns to the main menu stub")
 	await _audit_localization(runtime)
 	if not _write_report():
 		quit(1)
