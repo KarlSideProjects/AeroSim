@@ -70,4 +70,7 @@ if [[ ! -f "$READY_FILE" ]]; then
     exit 1
 fi
 
-"$VENV_DIR/bin/python" "$ROOT_DIR/scripts/airsim_rpc_client_smoke.py" --port "$PORT" --dual
+if ! "$VENV_DIR/bin/python" "$ROOT_DIR/scripts/airsim_rpc_client_smoke.py" --port "$PORT" --dual; then
+    cat "$TMP_DIR/godot.log" >&2
+    exit 1
+fi
