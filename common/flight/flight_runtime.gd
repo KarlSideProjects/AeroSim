@@ -1083,6 +1083,8 @@ func _restore_startup_gamepad_session() -> void:
 
 func _save_gamepad_profile(profile: InputProfiles.GamepadProfile) -> Dictionary:
     var loaded: Dictionary = settings_store.load_document()
+    if not loaded.ok:
+        return {"ok": false, "error": "cannot save gamepad while settings are unavailable: %s" % loaded.error}
     var document: Dictionary = loaded.document
     document["confirmed_gamepad"] = profile.to_persisted_dict()
     var result: Dictionary = settings_store.save_document(document)

@@ -70,7 +70,7 @@ AirSim-class minimum 不是外觀仿製。AeroSim 必須在同一 Godot 產品�
 ### 範圍排除（Must-Not，避免範圍蔓延）
 以下**不列入**本產品需求：玩家進度/成就存檔、訓練課程系統、自動更新/回滾/簽章驗證、線上幽靈/排行榜/UGC 分享。
 
-**界線釐清**：「不做存檔」指玩家進度資料。**裝置與設定持久化（已確認的手把映射、rates、觸控布局、OSD preset 選擇）屬系統設定，必須跨 session 保留**——否則 G4B.UI1（已確認 ≤30 秒）、G5.5、G4B.7 無法成立。單場飛行內的暫態（當場 spawn 點、當場風況選擇）為 volatile，不持久化。
+**界線釐清**：「不做存檔」指玩家進度資料。**裝置與設定持久化（已確認的手把映射、rates、OSD preset 選擇）屬系統設定，必須跨 session 保留**。觸控布局需要完整的虛擬 Xbox 輸入契約，目前沒有可直接使用的 Godot 內建功能或外掛，故延後，不列入本期 settings domain。單場飛行內的暫態（當場 spawn 點、當場風況選擇）為 volatile，不持久化。
 
 ---
 
@@ -124,7 +124,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | 飛控核心語言 | C++ GDExtension（1kHz PID、六自由度積分、氣動模型、硬體參數模型皆在此層）。C# 於 iOS/Android 屬實驗性、Web 不支援，故不採用 | MIT（godot-cpp） | 無 |
 | 桌面渲染 | Forward+（Vulkan）優先；Godot RenderingDevice backend 不可用時 fallback 至 Compatibility（OpenGL 3） | MIT | 無 |
 | 行動渲染 | Mobile Renderer + LightmapGI 烘焙光照 | MIT | 無 |
-| 行動觸控輸入 | Godot 4.7 內建 VirtualJoystick（Fixed/Dynamic/Following）；iOS 控制器經 SDL3 | MIT | 無 |
+| 行動觸控輸入 | 本期 deferred；Godot 4.7 的 VirtualJoystick／TouchScreenButton 僅作未來 semantic-action adapter 的 primitives，不視為 Xbox 虛擬手把；實體 iOS 控制器仍走 SDL3 | MIT | 無 |
 | 氣動公式來源 | gym-pybullet-drones 之 drag / ground effect / downwash（移植公式並以其 Python 原版為 CI 數值 Oracle） | MIT | 無 |
 | 風場 / 紊流 | Dryden（MIL-F-8785C）+ 穩態風 + 風切，自研 C++ 實作 | 公開軍規標準 | 無 |
 | 自研飛控 | C++ 串級 PID（角速度內環 + 角度外環）+ 互補濾波 / Mahony | 自有 | 無 |
@@ -206,7 +206,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | 墜機重試迴圈 | Velocidrone / Uncrashed | 單鍵瞬時重生、計時自動重置、幽靈重播 |
 | 機體調參/虛擬工作台 | Betaflight Configurator / Liftoff / SITL Forge | 分頁式參數、rates 曲線即時預覽、以真實零件型號組機 |
 | 首次上手 | Velocidrone 控制器確認流程 | 裝置偵測 → 固定映射確認 → 直入練習場 |
-| 行動觸控布局 | FPV Freerider | 雙虛擬搖桿可調、可視性平衡 |
+| 行動觸控布局 | FPV Freerider | Future reference only；本期不實作 |
 | 極簡 HUD | Flowstate（開源） | FPV 眼鏡視角 OSD |
 
 #### 3.5.3 資訊架構剛性約束
@@ -439,13 +439,13 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 
 | Gate | 門檻 | 類型 | 範圍 |
 |---|---|---|---|
-| G4B.1 | 首次啟動至起飛 ≤ 90 秒（行動觸控 ≤ 60 秒），由維護者依固定腳本完成並於 issue 記錄計時 | USR | SC |
+| G4B.1 | 首次啟動至起飛 ≤ 90 秒，由維護者依固定腳本完成並於 issue 記錄計時 | USR | SC |
 | G4B.2 | 墜機→重飛功能語意：Reset 保持 armed、解除 pause 並恢復油門輸入；由 GUT 與 headed functional checks 驗證，不列入專用 GPU-A P99 門檻 | CI-A + DEV-M | SC |
 | G4B.3 | 固定 mapping 確認流程由維護者無協助完成，於 issue 記錄阻塞點與結論 | USR | DESK, AND |
 | G4B.4 | 維護者完成固定可用性檢核並於 issue 記錄結論；不要求外部 SUS 樣本 | USR | SC |
 | G4B.5 | 選單深度 ≤ 3 層，自動遍歷驗證 | CI-A | SC |
 | G4B.6 | Rates 介面與 Betaflight 曲線公式一致、即時預覽、JSON 與 Betaflight diff 可逐項核對；**PID/濾波顯示 sim profile 免責提示**（3.5.1 原則 2） | GPU-A | SC |
-| G4B.7 | 觸控布局可自訂持久化，誤觸率 ≤ 1%/分鐘；Android portion 本期 deferred | USR | AND, IOS（future） |
+| G4B.7 | 觸控布局與虛擬 Xbox 輸入本期 deferred；待行動／觸控 owner 凍結 semantic-action adapter、按鈕／軸映射與 persistence schema 後重新開票 | — | AND, IOS（future） |
 | G4B.8 | 本地化 zh-TW/en 覆蓋 100%、0 硬編碼字串（CI）；**UI 截斷/溢出稽核於 GPU runner 截圖比對**（headless 不得宣稱涵蓋此項） | CI-A + GPU-A | SC |
 | G4B.9 | UI 動效以 offset transforms 實作、layout 不變（自動斷言）、不阻塞輸入 > 100 ms | GPU-A | SC |
 | G4B.UI1 | **First Fly Flow**：維護者不看說明書——已確認固定 mapping 的相容手把 ≤ 30 秒起飛、未確認 ≤ 90 秒（含完成 Setup Flow）；無控制器時提示與 keyboard fallback 可用，於 issue 記錄計時與結論 | USR | SC |
@@ -463,7 +463,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 |---|---|---|---|
 | G5.1 | **逐 OS 控制器閘門**：Linux 以 Xbox 360 相容 gamepad 完成固定 mapping 確認 + 斷線重連；Windows / macOS 為 build-only，控制器實機分項維持 N/A（未驗證凍結） | DEV-M | WIN / MAC / LIN |
 | G5.2 | Android export/build-only；本期 deferred，OTG gamepad 實機分項維持 N/A（未驗證凍結） | — | AND（future） |
-| G5.3 | iOS（若 Lane 續行）：MFi（SDL3 路徑）+ VirtualJoystick（Fixed/Dynamic 雙模式）可完成 G2.3 姿態保持測試 | DEV-M | IOS |
+| G5.3 | iOS（若 Lane 續行）：MFi（SDL3 路徑）可完成 G2.3 姿態保持測試；觸控虛擬 Xbox 輸入另行 deferred | DEV-M | IOS |
 | G5.4 | 端到端延遲（搖桿電氣訊號→畫面，240fps+ 高速攝影）：桌面 ≤ 40 ms、行動 ≤ 60 ms | DEV-M | 各 Lane |
 | G5.5 | 固定 canonical 輸入映射與 schema version 跨 session 持久化，斷線重連不丟設定；v1 不提供玩家重綁或 mapping 匯入/匯出 | CI-A | SC |
 | G5.6 | **Channel Monitor 一等 UI**：固定映射下的 raw / normalized / deadzone / 按鍵狀態全數即時顯示，更新率 ≥ 30 Hz；自動檢核四項提示（油門低位、arm 映射、mode 映射、unknown 裝置）功能驗證 | GPU-A + DEV-M | SC |
@@ -483,7 +483,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 | G6.6 | **授權伺服器**：註冊→簽發→JWT 驗證全流程可用；離線寬限期機制（斷網 ≤ 72 小時可玩）；伺服器不可達時明確提示而非靜默鎖死 | CI-A + DEV-M | SC |
 | G6.7 | 交付流程演練：從客戶名單到發送安裝檔+授權金鑰之 SOP 全程演練一次成功，含撤銷授權 | DEV-M | SC |
 | G6.8 | **診斷支援包（回應審查 H10）**：`Settings > Diagnostics > Export Support Bundle` 一鍵匯出——build hash、OS/GPU/裝置資訊、授權狀態、近期 log、控制器 raw 取樣、輸入映射與 mapping schema version、最後錯誤；**自動化稽核：bundle 內 0 個 secrets / JWT / 個資（遮罩驗證）** | CI-A + DEV-M | SC |
-| G6.9 | **設定持久化表（回應審查 H9）**：Persistent（mapping/schema version/rates/OSD 配置/相機/觸控布局/語言/畫質）與 Volatile（本局 spawn/臨時風況/當場計時與遙測）逐項落地一致；settings schema 含 version；factory reset 可用；匯入失敗回退預設並明示 | CI-A | SC |
+| G6.9 | **設定持久化表（回應審查 H9）**：Persistent（mapping/schema version/rates/OSD 配置/相機/語言/畫質）與 Volatile（本局 spawn/臨時風況/當場計時與遙測）逐項落地一致；settings schema 含 version；factory reset 可用；匯入失敗回退預設並明示。觸控布局不在本期 domain allowlist。 | CI-A | SC |
 
 ---
 
