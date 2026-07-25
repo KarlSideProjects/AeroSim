@@ -58,7 +58,13 @@ class GymPyBulletDronesNoticeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             manifest = Path(directory) / "licenses.json"
             manifest.write_text(json.dumps({"dependencies": dependencies}), encoding="utf-8")
-            command = [sys.executable, str(LICENSE_SCAN), "--manifest", str(manifest)]
+            command = [
+                sys.executable,
+                str(LICENSE_SCAN),
+                "--manifest",
+                str(manifest),
+                "--allow-missing-terrain3d-attribution",
+            ]
             if notice_out:
                 command.extend(["--notice-out", str(notice_out)])
             return subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)

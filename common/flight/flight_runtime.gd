@@ -28,11 +28,12 @@ const ReplayIntegrationRunner = preload("res://common/flight/replay_integration_
 const LicenseProviderScript = preload("res://common/license/license_provider.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const LICENSE_PROVIDER_CONFIG_PATH := "res://config/license_provider.json"
-const DEFAULT_FREE_FLIGHT_MAP_ID := "industrial_yard"
+const DEFAULT_FREE_FLIGHT_MAP_ID := "terrain3d_range"
 const DEFAULT_FLIGHT_MODE := "ANGLE"
 const DEFAULT_WIND_PRESET := "calm"
 const MAP_SCENE_PATHS := {
-    "industrial_yard": "res://levels/free_flight/industrial_yard.tscn"
+    "industrial_yard": "res://levels/free_flight/industrial_yard.tscn",
+    "terrain3d_range": "res://levels/free_flight/terrain3d_range.tscn"
 }
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const AIRSIM_GROUND_BODY_CLEARANCE_M := 0.25

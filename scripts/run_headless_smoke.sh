@@ -48,11 +48,16 @@ rm -f "$output_path" "$csv_output_path" "$log_path"
 rm -rf .godot
 mkdir -p .godot build .deps
 touch build/.gdignore .deps/.gdignore
+printf '%s\n' \
+    'res://extensions/aerosim_native/aerosim_native.gdextension' \
+    'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
+"$godot_bin" --headless --path . --import
+
 printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .godot/extension_list.cfg
 
 "$godot_bin" --headless --fixed-fps 240 --path . --log-file "$log_path" \
     --script res://common/smoke/headless_smoke.gd -- \
-    --output "$output_path" --csv-output "$csv_output_path" "${args[@]}" &
+    --output "$output_path" --csv-output "$csv_output_path" --skip-runtime-map "${args[@]}" &
 godot_pid="$!"
 deadline=$((SECONDS + ${AEROSIM_HEADLESS_TIMEOUT_SECONDS:-1800}))
 terminated_after_completion=false
@@ -126,3 +131,8 @@ if ! artifacts_report_completion; then
     echo "headless smoke did not report completed=true: $output_path" >&2
     exit 1
 fi
+
+printf '%s\n' \
+    'res://extensions/aerosim_native/aerosim_native.gdextension' \
+    'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
+"$godot_bin" --headless --fixed-fps 240 --path . --script res://tests/headless/terrain3d_runtime_smoke.gd

@@ -44,6 +44,14 @@ import_log="$out_dir/import.log"
 godot_log="$out_dir/godot.log"
 junit="$out_dir/junit.xml"
 mkdir -p "$out_dir"
+mkdir -p .godot
+if [ "$recovery_mode" = true ]; then
+    printf '%s\n' 'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
+else
+    printf '%s\n' \
+        'res://extensions/aerosim_native/aerosim_native.gdextension' \
+        'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
+fi
 touch build/.gdignore
 rm -f "$import_log" "$godot_log" "$junit"
 

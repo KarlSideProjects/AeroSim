@@ -32,7 +32,7 @@ Player Mode lets a person enter the reference environment, control the primary m
 
 **Minimum acceptance:** A first-time user can reach a flyable scene, identify the active mode and vehicle state, fly, collide, respawn, pause, and exit without developer tools.
 
-**Current evidence:** Quick Fly preloads Industrial Yard behind the input confirmation, defaults to FPV, and offers the primary drone a rear third-person view; pause, reset, formal `SpawnNorth`/`SpawnSouth` cycling, Angle, Acro, and Altitude Hold paths exist in `common/flight/flight_runtime.gd`; headless smoke and GUT cover the marker contract and fixed Xbox event semantics. The full Playable Game Milestone remains incomplete.
+**Current evidence:** Quick Fly preloads Terrain Range behind the input confirmation, defaults to FPV, and offers the primary drone a rear third-person view; pause, reset, formal `SpawnNorth`/`SpawnSouth` cycling, Angle, Acro, and Altitude Hold paths exist in `common/flight/flight_runtime.gd`; headless smoke and GUT cover the marker contract and fixed Xbox event semantics. The full Playable Game Milestone remains incomplete.
 
 ### CAP-003: Lab Mode automation surface
 
@@ -46,9 +46,9 @@ Lab Mode lets software reset and control the simulation, address named vehicles,
 
 **Status:** Foundation
 
-The main menu retains a `Map` entry and a catalog-backed selection screen. The AirSim-class minimum exposes only one selectable environment, the Industrial Test Range, and does not show fake or Coming Soon maps. Later environments can be added to the catalog without replacing the Player Mode navigation flow.
+The main menu retains a `Map` entry and a catalog-backed selection screen. The AirSim-class minimum exposes only one selectable environment, Terrain Range, and does not show fake or Coming Soon maps. Industrial Yard remains an explicit maintained non-default map. Later environments can be added to the catalog without replacing the Player Mode navigation flow.
 
-The Industrial Test Range descriptor owns its formal spawn list and count. v1 contains exactly `SpawnNorth` and `SpawnSouth`; Reset returns to the current marker and Change Spawn cycles in descriptor order. The active spawn is volatile session state.
+The Terrain Range descriptor owns its formal spawn list and count. v1 contains exactly `SpawnNorth` and `SpawnSouth`; Reset returns to the current marker and Change Spawn cycles in descriptor order. The active spawn is volatile session state.
 
 **Minimum acceptance:** The Map screen lists exactly the environments present in the checked-in catalog, selects and persists the active entry, launches the selected scene through Quick Fly, handles a missing or invalid catalog entry explicitly, and remains usable with exactly one entry.
 
@@ -60,7 +60,7 @@ The main menu exposes exactly `Quick Fly`, `Lab Mode`, `Controller`, `Drone`, `M
 
 **Minimum acceptance:** Keyboard, gamepad, and mouse can reach and activate every entry; focus order and back navigation are deterministic; unavailable prerequisites route to an actionable setup state; `Quit` requires no developer shortcut; the menu remains readable at the qualified resolution.
 
-**Current evidence:** The current runtime builds `Quick Fly`, `Controller`, `Drone`, `Map`, and `Settings` buttons. `Lab Mode`, `Quit`, production navigation states, and complete accessibility behavior are not present.
+**Current evidence:** The current runtime builds `Quick Fly`, `Lab Mode`, `Controller`, `Drone`, `Map`, `Settings`, and `Quit` buttons. Production navigation states and complete accessibility behavior remain incomplete.
 
 ### CAP-006: Playable Game Milestone
 
@@ -190,11 +190,11 @@ Every camera and sensor observation uses one simulation-time clock. Pausing free
 
 **Status:** Confirmed target
 
-The minimum ships one coherent Industrial Test Range. It contains a launch area, warehouse and street geometry, an obstacle corridor, and a short Time Trial route in one Godot scene. The same environment supports Player Mode, Lab Mode, sensor tests, object placement, and visual acceptance.
+The default minimum ships Terrain Range, a Terrain3D launch area with a short Time Trial route. It supports Player Mode, Lab Mode, sensor tests, object placement, and visual acceptance; Industrial Yard remains an explicit maintained non-default map.
 
 **Minimum acceptance:** A person can recognize and navigate every zone; the route is flyable; scale, collision, lighting, and sensor outputs are plausible; all required screenshots pass the visual gates.
 
-**Current evidence:** The current branch contains the renderer-shared Industrial Yard scene with two formal spawn markers, launch platforms, route landmarks, and collision geometry. Full production visual acceptance remains incomplete.
+**Current evidence:** The current branch contains the renderer-shared Terrain Range scene with two formal spawn markers, a Terrain3D launch area, route landmarks, and collision geometry. Full production visual acceptance remains incomplete.
 
 ### CAP-031: Automated Godot-native scene asset pipeline
 

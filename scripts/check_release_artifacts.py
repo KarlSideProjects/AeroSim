@@ -19,16 +19,19 @@ NOTICE_PATHS = {
 }
 REQUIRED_NOTICE_TEXT = (
     "gym-pybullet-drones",
+    "Terrain3D",
 )
 MANIFEST = Path(__file__).resolve().parents[1] / "third_party" / "licenses.json"
 LINUX_RELEASE_ENTRIES = {
     "AeroSim-linux/AeroSim.x86_64",
     "AeroSim-linux/libaerosim_native.linux.template_release.x86_64.so",
+    "AeroSim-linux/libterrain.linux.release.x86_64.so",
     "AeroSim-linux/THIRD_PARTY_NOTICES.txt",
 }
 LINUX_NATIVE_ENTRIES = (
     "AeroSim-linux/AeroSim.x86_64",
     "AeroSim-linux/libaerosim_native.linux.template_release.x86_64.so",
+    "AeroSim-linux/libterrain.linux.release.x86_64.so",
 )
 LIBPYTHON_RE = re.compile(
     rb"(?<![A-Za-z0-9_])"
@@ -93,11 +96,19 @@ def scan_native_payload(archive: ZipFile, name: str) -> tuple[bool, set[str]]:
 
 def required_notice_text() -> tuple[str, ...]:
     dependencies = json.loads(MANIFEST.read_text(encoding="utf-8"))["dependencies"]
-    entry = next(item for item in dependencies if item["name"] == "gym-pybullet-drones")
+    entries = {
+        item["name"]: item
+        for item in dependencies
+        if item["name"] in {"gym-pybullet-drones", "Terrain3D"}
+    }
+    gym = entries["gym-pybullet-drones"]
+    terrain = entries["Terrain3D"]
     return (
         *REQUIRED_NOTICE_TEXT,
-        f"Attribution scope: {entry['attribution_scope']}",
-        entry["notice"],
+        f"Attribution scope: {gym['attribution_scope']}",
+        gym["notice"],
+        f"Attribution scope: {terrain['attribution_scope']}",
+        terrain["notice"],
     )
 
 

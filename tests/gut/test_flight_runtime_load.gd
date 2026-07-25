@@ -646,7 +646,7 @@ func test_main_menu_exposes_the_ordered_cap006_entries_and_defaults() -> void:
     assert_eq(runtime.main_menu_entries, ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"])
     assert_eq(runtime.default_flight_setup(), {
         "hardware_preset": "res://config/drones/5_inch_6s.json",
-        "map_id": "industrial_yard",
+        "map_id": "terrain3d_range",
         "mode": "ANGLE",
         "wind_preset": "calm",
     })
@@ -658,9 +658,12 @@ func test_flight_setup_localizes_dynamic_mode_values() -> void:
     Localization.set_locale("zh_TW")
     runtime.flight_setup = runtime.default_flight_setup()
     runtime._refresh_flight_setup_panel()
+    runtime._refresh_localized_ui()
 
     var mode_label := runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/Mode") as Label
     assert_eq(mode_label.text, "模式：角度")
+    var map_button := runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/Map") as Button
+    assert_eq(map_button.text, "地圖：地形飛行場")
 
     runtime.flight_setup["mode"] = "ACRO"
     runtime._refresh_flight_setup_panel()

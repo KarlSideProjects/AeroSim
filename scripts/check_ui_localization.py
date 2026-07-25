@@ -12,6 +12,7 @@ PRODUCTION_FILES = [
     ROOT / "common/flight/flight_runtime.gd",
     ROOT / "common/flight/status_diagram_debug.gd",
     ROOT / "levels/free_flight/industrial_yard.tscn",
+    ROOT / "levels/free_flight/terrain3d_range.tscn",
     ROOT / "levels/smoke/smoke.tscn",
 ]
 EXPORT_PRESETS = ROOT / "export_presets.cfg"

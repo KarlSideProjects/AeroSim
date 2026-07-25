@@ -1,7 +1,8 @@
 extends RefCounted
 
 const DESCRIPTOR_PATHS := {
-    "industrial_yard": "res://config/maps/industrial_yard.json"
+    "industrial_yard": "res://config/maps/industrial_yard.json",
+    "terrain3d_range": "res://config/maps/terrain3d_range.json"
 }
 const REQUIRED_FIELDS := [
     "id",

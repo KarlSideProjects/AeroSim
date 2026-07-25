@@ -8,6 +8,7 @@ trap 'rm -rf "$fixture"' EXIT
 
 mkdir -p "$fixture/levels/free_flight" "$fixture/config/maps"
 touch "$fixture/levels/free_flight/industrial_yard.tscn" "$fixture/config/maps/industrial_yard.json"
+touch "$fixture/levels/free_flight/terrain3d_range.tscn" "$fixture/config/maps/terrain3d_range.json"
 
 "$repo_root/scripts/check_shared_map_assets.sh" "$fixture"
 
