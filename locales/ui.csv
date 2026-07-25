@@ -273,3 +273,8 @@ ui.osd.signal_live,SIGNAL LIVE,訊號即時
 ui.osd.signal_offline,SIGNAL OFFLINE,訊號離線
 ui.osd.ready,READY,就緒
 ui.osd.reset_hint,R RESET,按 R 重設
+ui.gamepad_hud.title,XBOX MODE 2,XBOX Mode 2
+ui.gamepad_hud.climb,CLIMB,升降
+ui.gamepad_hud.actions,A ARM/TAKEOFF   Y MODE,A 解鎖／起飛   Y 模式
+ui.gamepad_hud.connected,CONNECTED,已連線
+ui.gamepad_hud.unavailable,CONTROLLER UNAVAILABLE,控制器無法使用

@@ -845,6 +845,23 @@ func test_motor_hud_stays_visible_for_minimal_osd_and_shows_paused_or_error_stat
     assert_eq(String(rotors.motor_hud.state), "error")
 
 
+func test_gamepad_hud_stays_visible_and_clears_sticks_without_a_controller() -> void:
+    var runtime := _attach_runtime_ui(_licensed_runtime())
+    runtime.screen = "flight"
+    runtime._refresh_flight_hud()
+
+    var panel := runtime.flight_hud_layer.get_node_or_null("GamepadHudMargin/GamepadHudPanel") as PanelContainer
+    var display := runtime.flight_hud_layer.get_node_or_null("GamepadHudMargin/GamepadHudPanel/GamepadTelemetryPanel") as Control
+    assert_not_null(panel)
+    assert_not_null(display)
+    if panel == null or display == null:
+        return
+    assert_true(panel.is_visible_in_tree())
+    assert_false(bool(display.state.connected))
+    assert_eq(float(display.state.yaw), 0.0)
+    assert_eq(float(display.state.roll), 0.0)
+
+
 func test_request_takeoff_does_not_inject_jump_velocity() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)

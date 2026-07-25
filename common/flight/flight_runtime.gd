@@ -12,6 +12,7 @@ const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const RotorTelemetryPanel = preload("res://common/flight/rotor_telemetry_panel.gd")
+const GamepadTelemetryPanel = preload("res://common/flight/gamepad_telemetry_panel.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
 const AirSimSettings = preload("res://common/rpc/airsim_settings.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
@@ -125,6 +126,8 @@ var motor_hud_panel: PanelContainer
 var motor_hud_labels: Dictionary = {}
 var motor_hud_rotor_panel: Control
 var motor_hud_spin_directions: Array = []
+var gamepad_hud_panel: PanelContainer
+var gamepad_hud_display: Control
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
@@ -3727,6 +3730,7 @@ func _build_flight_hud() -> void:
     add_child(layer)
     _build_analog_noise_overlay(layer)
     _build_osd(layer)
+    _build_gamepad_hud(layer)
     _build_motor_hud(layer)
 
     var margin := MarginContainer.new()
@@ -3783,6 +3787,22 @@ func _build_flight_hud() -> void:
     _build_finish_panel()
     _build_license_panel()
 
+
+func _build_gamepad_hud(layer: CanvasLayer) -> void:
+    var margin := MarginContainer.new()
+    margin.name = "GamepadHudMargin"
+    margin.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+    margin.offset_left = 10.0
+    margin.offset_top = -214.0
+    margin.offset_right = 292.0
+    margin.offset_bottom = -10.0
+    layer.add_child(margin)
+    gamepad_hud_panel = PanelContainer.new()
+    gamepad_hud_panel.name = "GamepadHudPanel"
+    margin.add_child(gamepad_hud_panel)
+    gamepad_hud_display = GamepadTelemetryPanel.new()
+    gamepad_hud_display.name = "GamepadTelemetryPanel"
+    gamepad_hud_panel.add_child(gamepad_hud_display)
 
 func _build_motor_hud(layer: CanvasLayer) -> void:
     var margin := MarginContainer.new()
@@ -4440,6 +4460,7 @@ func _refresh_flight_hud() -> void:
             var trial_state := _t("ui.hud.time_trial_finished") if time_trial.finished else _format("ui.hud.time_trial_next", [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()])
             time_trial_status_label.text = _format("ui.hud.time_trial", [trial_state, time_trial.elapsed_seconds])
     _refresh_motor_hud()
+    _refresh_gamepad_hud()
     _refresh_osd()
     if screen == "preflight":
         var armed := _flight_control_armed()
@@ -4486,6 +4507,25 @@ func _refresh_motor_hud() -> void:
         motor_hud = status_diagram.call("get_motor_hud_state", paused, last_error_message if screen == "error" else "", motor_hud_spin_directions)
     if motor_hud_rotor_panel != null and motor_hud_rotor_panel.has_method("set_motor_hud"):
         motor_hud_rotor_panel.call("set_motor_hud", motor_hud)
+
+func _refresh_gamepad_hud() -> void:
+    if gamepad_hud_panel == null or gamepad_hud_display == null:
+        return
+    gamepad_hud_panel.visible = screen in ["flight", "error"]
+    var connected := _has_active_gamepad_profile() and session_gamepad_device_id >= 0
+    gamepad_hud_display.call("set_controller_state", {
+        "connected": connected,
+        "title": _t("ui.gamepad_hud.title"),
+        "left_label": "%s / %s" % [_localized_controller_role("yaw"), _t("ui.gamepad_hud.climb")],
+        "right_label": "%s / %s" % [_localized_controller_role("roll"), _localized_controller_role("pitch")],
+        "actions": _t("ui.gamepad_hud.actions"),
+        "connection": _t("ui.gamepad_hud.connected") if connected else _t("ui.gamepad_hud.unavailable"),
+        "mode": _localized_flight_mode(flight_mode),
+        "yaw": _profile_axis("yaw") if connected else 0.0,
+        "throttle": _profile_axis("throttle") if connected else 0.0,
+        "roll": _profile_axis("roll") if connected else 0.0,
+        "pitch": _profile_axis("pitch") if connected else 0.0,
+    })
 
 func _handle_primary_action() -> void:
     if screen == "fallback_prompt":
