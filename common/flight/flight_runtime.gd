@@ -1516,6 +1516,7 @@ func _physics_process(delta: float) -> void:
             ]
             if flight_mode == "ASSISTED_HOLD":
                 step_args.append(assisted_vertical_velocity)
+                step_args.append(true)
             row = native.callv(step_args[0], step_args.slice(1))
         if _handle_native_step_failure(native, row, true):
             return
@@ -1527,6 +1528,7 @@ func _physics_process(delta: float) -> void:
             var free_flight_args := [Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw]
             if flight_mode == "ASSISTED_HOLD":
                 free_flight_args.append(assisted_vertical_velocity)
+                free_flight_args.append(true)
             row = native.callv(free_flight_method, free_flight_args)
         if _handle_native_step_failure(native, row, true):
             return

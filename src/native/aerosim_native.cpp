@@ -416,16 +416,16 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("step_acro_mode", "physics_hz", "substep_hz", "throttle", "roll_stick", "pitch_stick", "yaw_stick", "rc_rate", "super_rate", "expo"),
             &AeroSimNative::step_acro_mode);
     ClassDB::bind_method(
-            D_METHOD("step_altitude_hold_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "vertical_velocity_mps"),
+            D_METHOD("step_altitude_hold_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "vertical_velocity_mps", "heading_hold_enabled"),
             &AeroSimNative::step_altitude_hold_mode,
-            DEFVAL(0.0));
+            DEFVAL(0.0), DEFVAL(false));
     ClassDB::bind_method(
             D_METHOD("step_collision_angle_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules"),
             &AeroSimNative::step_collision_angle_mode);
     ClassDB::bind_method(
-            D_METHOD("step_collision_altitude_hold_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules", "vertical_velocity_mps"),
+            D_METHOD("step_collision_altitude_hold_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules", "vertical_velocity_mps", "heading_hold_enabled"),
             &AeroSimNative::step_collision_altitude_hold_mode,
-            DEFVAL(0.0));
+            DEFVAL(0.0), DEFVAL(false));
     ClassDB::bind_method(
             D_METHOD("step_collision_acro_mode", "physics_hz", "substep_hz", "throttle", "roll_stick", "pitch_stick", "yaw_stick", "rc_rate", "super_rate", "expo", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules"),
             &AeroSimNative::step_collision_acro_mode);
@@ -2144,7 +2144,8 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
         double roll_degrees,
         double pitch_degrees,
         double yaw_rate_degrees_per_second,
-        double vertical_velocity_mps) {
+        double vertical_velocity_mps,
+        bool heading_hold_enabled) {
     const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
         set_step_error("step_altitude_hold_mode", aerosim::StepStatus::InvalidConfig, "timing");
@@ -2164,6 +2165,7 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
     command.pitch_degrees = pitch_degrees;
     command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
     command.vertical_velocity_mps = vertical_velocity_mps;
+    command.heading_hold_enabled = heading_hold_enabled;
 
     const aerosim::StepStatus input_status = aerosim::validate_altitude_hold_step_inputs(
             simulation_state_, simulation_clock_, config, command, 0.0, simulation_state_.orientation);
@@ -2411,7 +2413,8 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
         double max_kinetic_energy_joules,
-        double vertical_velocity_mps) {
+        double vertical_velocity_mps,
+        bool heading_hold_enabled) {
     const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
         set_step_error("step_collision_altitude_hold_mode", aerosim::StepStatus::InvalidConfig, "timing");
@@ -2431,6 +2434,7 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     command.pitch_degrees = pitch_degrees;
     command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
     command.vertical_velocity_mps = vertical_velocity_mps;
+    command.heading_hold_enabled = heading_hold_enabled;
 
     aerosim::CollisionContact contact;
     contact.touching = touching;

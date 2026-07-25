@@ -356,7 +356,8 @@ public:
             double roll_degrees,
             double pitch_degrees,
             double yaw_rate_degrees_per_second,
-            double vertical_velocity_mps = 0.0);
+            double vertical_velocity_mps = 0.0,
+            bool heading_hold_enabled = false);
     godot::PackedFloat64Array step_collision_angle_mode(
             std::int32_t physics_hz,
             std::int32_t substep_hz,
@@ -401,7 +402,8 @@ public:
             double resolved_angular_velocity_y,
             double resolved_angular_velocity_z,
             double max_kinetic_energy_joules,
-            double vertical_velocity_mps = 0.0);
+            double vertical_velocity_mps = 0.0,
+            bool heading_hold_enabled = false);
     godot::PackedFloat64Array step_collision_acro_mode(
             std::int32_t physics_hz,
             std::int32_t substep_hz,
