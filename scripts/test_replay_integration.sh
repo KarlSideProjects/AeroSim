@@ -18,6 +18,8 @@ else
     validate_native_provenance
     mkdir -p "$project_path/.godot" "$project_path/build" "$project_path/.deps"
     touch "$project_path/build/.gdignore" "$project_path/.deps/.gdignore"
-    printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > "$project_path/.godot/extension_list.cfg"
+    printf '%s\n' \
+        'res://extensions/aerosim_native/aerosim_native.gdextension' \
+        'res://addons/terrain_3d/terrain.gdextension' > "$project_path/.godot/extension_list.cfg"
     "$godot_bin" --headless --path "$project_path" --script res://tests/headless/replay_integration.gd
 fi

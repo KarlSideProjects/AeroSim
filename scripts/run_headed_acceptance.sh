@@ -51,7 +51,9 @@ fi
 
 mkdir -p "$out_dir"
 mkdir -p .godot
-printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .godot/extension_list.cfg
+printf '%s\n' \
+    'res://extensions/aerosim_native/aerosim_native.gdextension' \
+    'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
 export AEROSIM_HEADED_COMMIT_SHA="$(git rev-parse HEAD)"
 log_path="$out_dir/godot.log"
 rm -f "$out_dir"/*.png "$out_dir/report.json" "$log_path" "$out_dir/xvfb.log"
@@ -83,6 +85,7 @@ for required_file in \
     "$out_dir/00_cold_start.png" \
     "$out_dir/00_keyboard_fallback_preconfirm.png" \
     "$out_dir/01_controller_confirmation.png" \
+    "$out_dir/01_terrain_range_preflight.png" \
     "$out_dir/01_third_person_preflight.png" \
     "$out_dir/02_keyboard_fallback.png" \
     "$out_dir/03_takeoff.png" \

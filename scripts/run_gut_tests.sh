@@ -44,6 +44,17 @@ import_log="$out_dir/import.log"
 godot_log="$out_dir/godot.log"
 junit="$out_dir/junit.xml"
 mkdir -p "$out_dir"
+mkdir -p .godot
+if [ "$recovery_mode" = true ]; then
+    project_config_backup="$(mktemp)"
+    cp project.godot "$project_config_backup"
+    trap 'cp "$project_config_backup" project.godot; rm -f "$project_config_backup"' EXIT
+    sed -i 's|enabled=PackedStringArray("res://addons/terrain_3d/plugin.cfg")|enabled=PackedStringArray()|' project.godot
+else
+    printf '%s\n' \
+        'res://extensions/aerosim_native/aerosim_native.gdextension' \
+        'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
+fi
 touch build/.gdignore
 rm -f "$import_log" "$godot_log" "$junit"
 
@@ -59,7 +70,7 @@ fi
 }
 
 if [ "$recovery_mode" = true ]; then
-    # Recovery import builds GUT's global class cache without loading native code.
+    # Recovery import builds GUT's global class cache without loading GDExtensions.
     # Keep the following CLI test run isolated from the generated extension cache.
     rm -f .godot/extension_list.cfg
 fi

@@ -135,7 +135,7 @@ func _run() -> void:
 		_click(no_controller_quick_fly)
 	await _settle(8)
 	await _snapshot("00_keyboard_fallback_preconfirm")
-	_expect(runtime.screen == "fallback_prompt" and runtime.loaded_map_id == "industrial_yard" and runtime.loaded_map != null and root.get_camera_3d() == runtime.chase_camera, "no-controller Quick Fly shows Industrial Yard through FPV before keyboard fallback confirmation")
+	_expect(runtime.screen == "fallback_prompt" and runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null and root.get_camera_3d() == runtime.chase_camera, "no-controller Quick Fly shows Terrain Range through FPV before keyboard fallback confirmation")
 	_tap(KEY_R)
 	await _settle(2)
 	_expect(runtime.screen == "fallback_prompt" and not runtime.takeoff_requested and not runtime.native.call("flight_control_armed"), "reset cannot bypass input confirmation")
@@ -271,7 +271,7 @@ func _run() -> void:
 	await _settle(10)
 	await _snapshot("01_controller_confirmation")
 	_expect(runtime.screen == "controller_confirmation", "known unconfirmed gamepad enters visible Xbox profile confirmation")
-	_expect(runtime.loaded_map_id == "industrial_yard" and runtime.loaded_map != null and root.get_camera_3d() == runtime.chase_camera, "Quick Fly confirmation shows Industrial Yard through the default FPV camera")
+	_expect(runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null and root.get_camera_3d() == runtime.chase_camera, "Quick Fly confirmation shows Terrain Range through the default FPV camera")
 	_expect(runtime.controller_confirmation_panel != null and runtime.controller_confirmation_panel.is_visible_in_tree(), "Controller confirmation panel is visible")
 	var mapping: Label = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/FixedMapping")
 	var axes: Label = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/LiveAxes")
@@ -298,14 +298,14 @@ func _run() -> void:
 		_click(confirm_button)
 	await _settle(10)
 	_expect(runtime.screen == "preflight", "confirmation enters low-throttle preflight")
-	_expect(runtime.loaded_map_id == "industrial_yard" and runtime.loaded_map != null, "Quick Fly preflight loads Industrial Yard")
+	_expect(runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null, "Quick Fly preflight loads Terrain Range")
 	var spawn := runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D if runtime.loaded_map != null else null
-	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6, "Industrial Yard load places the drone at SpawnNorth")
+	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6, "Terrain Range load places the drone at SpawnNorth")
 	var airsim_state: Dictionary = runtime._airsim_state("")
 	var airsim_kinematics: Dictionary = airsim_state.get("state", {}).get("kinematics_estimated", {})
 	var airsim_position: Dictionary = airsim_kinematics.get("position", {})
-	_expect(airsim_state.get("ok", false) and absf(float(airsim_position.get("x_val", 1.0))) <= 1e-6 and absf(float(airsim_position.get("y_val", 1.0))) <= 1e-6 and absf(float(airsim_position.get("z_val", 1.0))) <= 1e-6, "AirSim NED origin follows Industrial Yard SpawnNorth")
-	_expect(root.get_camera_3d() == runtime.chase_camera and runtime.chase_camera.current, "Industrial Yard preflight keeps ChaseCamera as the active Camera3D")
+	_expect(airsim_state.get("ok", false) and absf(float(airsim_position.get("x_val", 1.0))) <= 1e-6 and absf(float(airsim_position.get("y_val", 1.0))) <= 1e-6 and absf(float(airsim_position.get("z_val", 1.0))) <= 1e-6, "AirSim NED origin follows Terrain Range SpawnNorth")
+	_expect(root.get_camera_3d() == runtime.chase_camera and runtime.chase_camera.current, "Terrain Range preflight keeps ChaseCamera as the active Camera3D")
 	_inject_joy_button(known_device_id, JOY_BUTTON_BACK, true)
 	await _settle(4)
 	_inject_joy_button(known_device_id, JOY_BUTTON_BACK, false)
@@ -327,7 +327,7 @@ func _run() -> void:
 	runtime.quick_fly()
 	await _settle(4)
 	_expect(runtime.screen == "preflight" and root.get_camera_3d() == runtime.chase_camera and not runtime.third_person_view, "each Quick Fly session resets the player view to FPV")
-	_expect(runtime.time_trial != null and runtime.time_trial.checkpoint_positions.size() == 3, "Industrial Yard exposes a three-checkpoint Time Trial")
+	_expect(runtime.time_trial != null and runtime.time_trial.checkpoint_positions.size() == 3, "Terrain Range exposes a three-checkpoint Time Trial")
 	var trial_status: Label = runtime.get_node_or_null("FlightHud/StatusMargin/StatusPanel/StatusRows/TimeTrialStatus")
 	_expect(trial_status != null and trial_status.text.contains("TIME TRIAL") and trial_status.text.contains("NEXT 1/3"), "preflight HUD exposes the next Time Trial checkpoint")
 	var finish_position: Vector3 = runtime.loaded_map.get_node("TimeTrial/Finish").global_position
@@ -533,7 +533,7 @@ func _run() -> void:
 		_click(change_spawn_button)
 	await _settle(4)
 	var south_spawn_after_change := runtime.loaded_map.get_node_or_null("SpawnSouth") as Marker3D
-	_expect(runtime.screen == "flight" and runtime.loaded_map_id == "industrial_yard" and not runtime.paused and north_spawn_before_change != null and south_spawn_after_change != null and runtime.drone_body.global_position.distance_to(south_spawn_after_change.global_position) <= 1e-6, "Change Spawn cycles to the formal South spawn and resets the current Industrial Yard segment")
+	_expect(runtime.screen == "flight" and runtime.loaded_map_id == "terrain3d_range" and not runtime.paused and north_spawn_before_change != null and south_spawn_after_change != null and runtime.drone_body.global_position.distance_to(south_spawn_after_change.global_position) <= 1e-6, "Change Spawn cycles to the formal South spawn and resets the current Terrain Range segment")
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
@@ -544,7 +544,7 @@ func _run() -> void:
 	if finish_change_map != null:
 		_click(finish_change_map)
 	await _settle(4)
-	_expect(runtime.screen == "preflight" and runtime.loaded_map_id == "industrial_yard", "finish Change Map returns to preflight")
+	_expect(runtime.screen == "preflight" and runtime.loaded_map_id == "terrain3d_range", "finish Change Map returns to Terrain Range preflight")
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
@@ -562,14 +562,14 @@ func _run() -> void:
 	_expect(runtime.screen == "main_menu", "P cannot resume after Exit")
 	runtime.enter_preflight()
 	await _settle(4)
-	var industrial_yard_frame := await _snapshot("01_industrial_yard_preflight")
-	_expect(_max_color_ratio(industrial_yard_frame) < 0.99, "Industrial Yard preflight capture is not monochrome")
+	var terrain_range_frame := await _snapshot("01_terrain_range_preflight")
+	_expect(_max_color_ratio(terrain_range_frame) < 0.99, "Terrain Range preflight capture is not monochrome")
 	var camera_rpc: Array = runtime.airsim_rpc_server.dispatch([0, 142, "simGetImages", [[
 		{"camera_name": "0", "image_type": 0, "pixels_as_float": false, "compress": true},
 		{"camera_name": "0", "image_type": 1, "pixels_as_float": true, "compress": false},
 		{"camera_name": "0", "image_type": 5, "pixels_as_float": false, "compress": false},
 	], "", false]])
-	_expect(camera_rpc[2] == null and camera_rpc[3].size() == 3, "simGetImages returns all requested Industrial Yard camera responses in order")
+	_expect(camera_rpc[2] == null and camera_rpc[3].size() == 3, "simGetImages returns all requested Terrain Range camera responses in order")
 	if camera_rpc[2] == null and camera_rpc[3].size() == 3:
 		var scene_response: Dictionary = camera_rpc[3][0]
 		var depth_response: Dictionary = camera_rpc[3][1]
@@ -594,7 +594,7 @@ func _run() -> void:
 		_expect(paused_camera_rpc_again[3][0].image_data_float == paused_camera_rpc[3][0].image_data_float, "paused camera reads repeat the same depth frame")
 		runtime.airsim_rpc_server.dispatch([0, 146, "simPause", [false]])
 	_expect(not runtime.load_map("missing_map") and runtime.last_error_message.contains("missing_map"), "missing map load names the missing map explicitly")
-	_expect(runtime.loaded_map_id == "industrial_yard" and runtime.loaded_map != null, "missing map load keeps Industrial Yard active without a smoke fallback")
+	_expect(runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null, "missing map load keeps Terrain Range active without a smoke fallback")
 
 	var unknown_device_id := known_device_id + 1
 	device_state.replace_snapshot([], [])

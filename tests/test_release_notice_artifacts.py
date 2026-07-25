@@ -18,6 +18,7 @@ LICENSE_SCAN = ROOT / "scripts" / "check_licenses.py"
 MANIFEST = ROOT / "third_party" / "licenses.json"
 LINUX_EXECUTABLE = "AeroSim-linux/AeroSim.x86_64"
 LINUX_EXTENSION = "AeroSim-linux/libaerosim_native.linux.template_release.x86_64.so"
+LINUX_TERRAIN_EXTENSION = "AeroSim-linux/libterrain.linux.release.x86_64.so"
 LINUX_NOTICE = "AeroSim-linux/THIRD_PARTY_NOTICES.txt"
 
 
@@ -47,12 +48,14 @@ class ReleaseArtifactTestCase(unittest.TestCase):
         *,
         executable: bytes = b"\x7fELF executable",
         extension: bytes = b"\x7fELF extension",
+        terrain_extension: bytes = b"\x7fELF terrain extension",
         extra_entries: dict[str, bytes] | None = None,
         compression: int = ZIP_DEFLATED,
     ):
         with ZipFile(path, "w", compression) as archive:
             archive.writestr(LINUX_EXECUTABLE, executable)
             archive.writestr(LINUX_EXTENSION, extension)
+            archive.writestr(LINUX_TERRAIN_EXTENSION, terrain_extension)
             archive.writestr(LINUX_NOTICE, notice)
             for name, payload in (extra_entries or {}).items():
                 archive.writestr(name, payload)
@@ -317,6 +320,7 @@ class UbuntuReleaseArtifactAuditTest(ReleaseArtifactTestCase):
         cases = {
             "executable": {"executable": b"not an executable"},
             "extension": {"extension": b"not an extension"},
+            "terrain extension": {"terrain_extension": b"not a terrain extension"},
         }
         for name, payloads in cases.items():
             with self.subTest(payload=name), tempfile.TemporaryDirectory() as directory:
@@ -381,6 +385,7 @@ class UbuntuReleaseArtifactAuditTest(ReleaseArtifactTestCase):
                 archive.writestr(LINUX_NOTICE, notice)
                 archive.writestr(LINUX_EXECUTABLE, b"\x7fELF executable")
                 archive.writestr(LINUX_EXTENSION, b"\x7fELF extension")
+                archive.writestr(LINUX_TERRAIN_EXTENSION, b"\x7fELF terrain extension")
             self.mark_first_entry_encrypted(artifact)
             result = self.check(artifact)
 
@@ -408,6 +413,7 @@ class UbuntuReleaseArtifactAuditTest(ReleaseArtifactTestCase):
                 archive.writestr(LINUX_NOTICE, notice)
                 archive.writestr(LINUX_EXECUTABLE, b"\x7fELF executable")
                 archive.writestr(LINUX_EXTENSION, b"\x7fELF extension")
+                archive.writestr(LINUX_TERRAIN_EXTENSION, b"\x7fELF terrain extension")
             self.set_first_entry_compression(artifact, 99)
             result = self.check(artifact)
 

@@ -12,14 +12,20 @@ elif ! command -v "$godot_bin" >/dev/null; then
     exit 1
 fi
 
+mkdir -p .godot
+printf '%s\n' 'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
+
 for renderer in forward_plus mobile; do
     echo "loading Industrial Yard with $renderer renderer"
     "$godot_bin" --headless --path . --rendering-method "$renderer" \
         --script res://tests/headless/industrial_yard_renderer_smoke.gd
+    echo "loading Terrain Range with $renderer renderer"
+    "$godot_bin" --headless --path . --rendering-method "$renderer" \
+        --script res://tests/headless/terrain3d_range_smoke.gd
 done
 
 echo "running deterministic camera surface smoke"
 "$godot_bin" --headless --path . \
     --script res://tests/headless/camera_surface_smoke.gd
 
-echo "Industrial Yard renderer checks passed"
+echo "shared map renderer checks passed"

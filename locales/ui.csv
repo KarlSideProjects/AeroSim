@@ -13,7 +13,7 @@ ui.language.english,English,English
 ui.language.traditional_chinese,繁體中文,繁體中文
 ui.flight_setup.title,FLIGHT SETUP,飛行設定
 ui.flight_setup.drone,DRONE: 5-INCH 6S,無人機：5 吋 6S
-ui.flight_setup.map,MAP: Industrial Test Range,地圖：工業測試場
+ui.flight_setup.map,MAP: Terrain Range,地圖：地形飛行場
 ui.flight_setup.wind_preset,WIND PRESET,風場預設
 ui.flight_setup.mode,MODE: %s,模式：%s
 ui.wind.calm,Calm,平靜

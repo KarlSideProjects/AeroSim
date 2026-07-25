@@ -190,6 +190,9 @@ jobs:
       - name: Industrial Yard renderer smoke
         run: scripts/test_industrial_yard_renderers.sh
 
+      - name: Terrain3D dependency smoke
+        run: scripts/test_terrain3d_dependency.sh
+
       - name: Fetch godot-cpp
         run: |
           rm -rf "$GODOT_CPP_DIR"

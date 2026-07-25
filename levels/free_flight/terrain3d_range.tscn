@@ -1,0 +1,95 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Terrain3DAssets" path="res://assets/third_party/terrain3d_demo/demo/data/assets.tres" id="1"]
+[sub_resource type="Terrain3DMaterial" id="1"]
+
+[sub_resource type="StandardMaterial3D" id="2"]
+albedo_color = Color(0.11, 0.18, 0.12, 1)
+
+[sub_resource type="PlaneMesh" id="3"]
+size = Vector2(160, 160)
+
+[sub_resource type="BoxShape3D" id="4"]
+size = Vector3(160, 0.2, 160)
+
+[node name="Terrain3DRange" type="Node3D"]
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.8, 0.45, 0)
+light_energy = 1.7
+
+[node name="Terrain3D" type="Terrain3D" parent="."]
+data_directory = "res://assets/third_party/terrain3d_demo/demo/data"
+assets = ExtResource("1")
+material = SubResource("1")
+mesh_lods = 4
+mesh_size = 16
+collision_mode = 0
+collision_mask = 1
+
+[node name="LaunchGround" type="MeshInstance3D" parent="."]
+position = Vector3(0, -0.1, 0)
+mesh = SubResource("3")
+material_override = SubResource("2")
+metadata/airsim_segmentation_id = 1
+
+[node name="GroundCollision" type="StaticBody3D" parent="."]
+metadata/airsim_segmentation_id = 1
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="GroundCollision"]
+position = Vector3(0, -0.1, 0)
+shape = SubResource("4")
+
+[node name="SpawnNorth" type="Marker3D" parent="."]
+position = Vector3(0, 0.6, -24)
+
+[node name="DirectionLabel" type="Label3D" parent="SpawnNorth"]
+text = "ui.map.north_spawn"
+outline_size = 4
+font_size = 64
+
+[node name="SpawnSouth" type="Marker3D" parent="."]
+position = Vector3(40, 0.6, 40)
+
+[node name="DirectionLabel" type="Label3D" parent="SpawnSouth"]
+text = "ui.map.south_spawn"
+outline_size = 4
+font_size = 64
+
+[node name="TimeTrial" type="Node3D" parent="."]
+
+[node name="Checkpoint01" type="Marker3D" parent="TimeTrial"]
+position = Vector3(0, 1.2, -14)
+
+[node name="DirectionArrow" type="Label3D" parent="TimeTrial/Checkpoint01"]
+position = Vector3(0, 1.2, 0)
+text = "ui.map.checkpoint_1"
+outline_size = 6
+font_size = 52
+
+[node name="Checkpoint02" type="Marker3D" parent="TimeTrial"]
+position = Vector3(18, 1.2, 8)
+
+[node name="DirectionArrow" type="Label3D" parent="TimeTrial/Checkpoint02"]
+position = Vector3(0, 1.2, 0)
+text = "ui.map.checkpoint_2"
+outline_size = 6
+font_size = 52
+
+[node name="Checkpoint03" type="Marker3D" parent="TimeTrial"]
+position = Vector3(32, 1.2, 28)
+
+[node name="DirectionArrow" type="Label3D" parent="TimeTrial/Checkpoint03"]
+position = Vector3(0, 1.2, 0)
+text = "ui.map.checkpoint_3"
+outline_size = 6
+font_size = 52
+
+[node name="Finish" type="Marker3D" parent="TimeTrial"]
+position = Vector3(40, 3, 40)
+
+[node name="FinishLabel" type="Label3D" parent="TimeTrial/Finish"]
+position = Vector3(0, 1.5, 0)
+text = "ui.map.finish"
+outline_size = 8
+font_size = 64

@@ -6,6 +6,9 @@ import sys
 
 
 GYM_PYBULLET_DRONES = "gym-pybullet-drones"
+TERRAIN3D = "Terrain3D"
+TERRAIN3D_VERSION = "v1.0.2-stable (sha256:a071850250ec5e596aa54da61c01d75768774eb379ee997584d426a45f4884a2)"
+TERRAIN3D_HOMEPAGE = "https://github.com/TokisanGames/Terrain3D"
 GYM_PYBULLET_DRONES_CONTRACT = (
     Path(__file__).resolve().parents[1] / "oracles" / "gym_pybullet_drones_contract.json"
 )
@@ -71,6 +74,24 @@ def gym_pybullet_drones_attribution_error(
     return None
 
 
+def terrain3d_attribution_error(dependencies: list[dict], required: bool) -> str | None:
+    entries = [dependency for dependency in dependencies if dependency.get("name") == TERRAIN3D]
+    if not entries:
+        return "required attribution missing: Terrain3D" if required else None
+    if len(entries) != 1:
+        return "Terrain3D attribution invalid: duplicate manifest entries"
+    entry = entries[0]
+    if (
+        entry.get("license") != "MIT"
+        or entry.get("version") != TERRAIN3D_VERSION
+        or entry.get("homepage") != TERRAIN3D_HOMEPAGE
+        or "GDExtension" not in str(entry.get("attribution_scope", ""))
+        or not str(entry.get("notice", "")).startswith("MIT License\n\nCopyright")
+    ):
+        return "Terrain3D attribution invalid"
+    return None
+
+
 def write_notice(path: str, dependencies: list[dict]) -> None:
     lines = [
         "AeroSim third-party notices",
@@ -103,6 +124,7 @@ def main() -> int:
     parser.add_argument("--allowlist", default="config/license_allowlist.json")
     parser.add_argument("--notice-out")
     parser.add_argument("--allow-missing-gym-pybullet-drones-attribution", action="store_true")
+    parser.add_argument("--allow-missing-terrain3d-attribution", action="store_true")
     args = parser.parse_args()
 
     with open(args.allowlist, encoding="utf-8") as file:
@@ -118,6 +140,13 @@ def main() -> int:
     )
     if attribution_error:
         print(attribution_error, file=sys.stderr)
+        return 1
+    terrain3d_error = terrain3d_attribution_error(
+        dependencies,
+        required=not args.allow_missing_terrain3d_attribution,
+    )
+    if terrain3d_error:
+        print(terrain3d_error, file=sys.stderr)
         return 1
 
     violations = [

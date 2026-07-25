@@ -58,6 +58,7 @@ artifact.write_text(json.dumps({
 }, separators=(",", ":")) + "\n", encoding="utf-8")
 PY
 export AEROSIM_NATIVE_PROVENANCE="$native_provenance"
+scripts/test_terrain3d_dependency.sh
 scripts/run_gut_tests.sh
 scripts/test_native_atomic_boundary.sh
 scripts/run_headed_acceptance.sh --xvfb

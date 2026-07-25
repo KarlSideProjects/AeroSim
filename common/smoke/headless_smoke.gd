@@ -148,7 +148,7 @@ func _run() -> void:
     if not jolt_collision_verified:
         quit(1)
         return
-    if not await _verify_runtime_actions():
+    if not _has_arg("--skip-runtime-map") and not await _verify_runtime_actions():
         quit(1)
         return
     if not await _verify_gamepad_profile_actions():
@@ -1674,8 +1674,8 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly must reset the shared setup to its canonical defaults")
         scene.queue_free()
         return false
-    if scene.screen != "fallback_prompt" or scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
-        push_error("No-controller Quick Fly must show Industrial Yard through the FPV camera before keyboard fallback confirmation")
+    if scene.screen != "fallback_prompt" or scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
+        push_error("No-controller Quick Fly must show Terrain Range through the FPV camera before keyboard fallback confirmation")
         scene.queue_free()
         return false
     await _press_key(KEY_R)
@@ -1685,7 +1685,7 @@ func _verify_runtime_actions() -> bool:
         return false
     await _press_key(KEY_ESCAPE)
     if scene.screen != "main_menu" or scene.loaded_map != null or scene.get_node_or_null("LoadedMap") != null:
-        push_error("Canceling Quick Fly input fallback must free the preloaded Industrial Yard before returning to the menu")
+        push_error("Canceling Quick Fly input fallback must free the preloaded Terrain Range before returning to the menu")
         scene.queue_free()
         return false
     var native_before: Object = scene.native
@@ -1999,8 +1999,8 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly must exercise a fresh controller confirmation route before preflight")
         scene.queue_free()
         return false
-    if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
-        push_error("Known unconfirmed controller Quick Fly must show Industrial Yard through the FPV camera before confirmation")
+    if scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
+        push_error("Known unconfirmed controller Quick Fly must show Terrain Range through the FPV camera before confirmation")
         scene.queue_free()
         return false
     confirmation = scene.controller_confirmation_panel
@@ -2015,12 +2015,12 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly confirmation completion must enter low-throttle preflight, not the menu")
         scene.queue_free()
         return false
-    if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null:
-        push_error("Quick Fly preflight must load Industrial Yard as the default Free Flight map")
+    if scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null:
+        push_error("Quick Fly preflight must load Terrain Range as the default Free Flight map")
         scene.queue_free()
         return false
     if scene.get_viewport().get_camera_3d() != scene.chase_camera or not scene.chase_camera.current:
-        push_error("Industrial Yard preflight must keep ChaseCamera as the active Camera3D")
+        push_error("Terrain Range preflight must keep ChaseCamera as the active Camera3D")
         scene.queue_free()
         return false
     _inject_joy_button(known_device_id, JOY_BUTTON_BACK, true)
@@ -2051,15 +2051,15 @@ func _verify_runtime_actions() -> bool:
         return false
     var spawn := scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
     if spawn == null or scene.drone_body.global_position.distance_to(spawn.global_position) > 1e-6:
-        push_error("Industrial Yard load must place the drone at SpawnNorth")
+        push_error("Terrain Range load must place the drone at SpawnNorth")
         scene.queue_free()
         return false
     if scene.load_map("missing_map") or not scene.last_error_message.contains("missing_map"):
         push_error("Missing Free Flight maps must fail with the requested map id in the error")
         scene.queue_free()
         return false
-    if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null:
-        push_error("Missing map load must not fall back to or replace the active Industrial Yard map")
+    if scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null:
+        push_error("Missing map load must not fall back to or replace the active Terrain Range map")
         scene.queue_free()
         return false
     if not scene.has_method("set_gamepad_button_time_source"):
@@ -2325,8 +2325,8 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly must block the connected replacement unknown SDL device with an explicit KeyboardProfile fallback")
         scene.queue_free()
         return false
-    if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
-        push_error("Unknown-controller Quick Fly must show Industrial Yard through the FPV camera before keyboard fallback confirmation")
+    if scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
+        push_error("Unknown-controller Quick Fly must show Terrain Range through the FPV camera before keyboard fallback confirmation")
         scene.queue_free()
         return false
     scene.arm_takeoff_button.pressed.emit()
@@ -2463,11 +2463,11 @@ func _verify_runtime_actions() -> bool:
         return false
     spawn = scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
     if spawn == null or scene.drone_body.global_position.distance_to(spawn.global_position) > 1e-6 or scene.drone_body.linear_velocity.length() > 1e-6 or scene.drone_body.angular_velocity.length() > 1e-6:
-        push_error("flight_respawn action must return to Industrial Yard SpawnNorth and clear body velocity; position=%s linear=%s angular=%s" % [scene.drone_body.global_position, scene.drone_body.linear_velocity, scene.drone_body.angular_velocity])
+        push_error("flight_respawn action must return to Terrain Range SpawnNorth and clear body velocity; position=%s linear=%s angular=%s" % [scene.drone_body.global_position, scene.drone_body.linear_velocity, scene.drone_body.angular_velocity])
         scene.queue_free()
         return false
     if scene.get_viewport().get_camera_3d() != scene.chase_camera:
-        push_error("Industrial Yard reset must retain the active ChaseCamera Camera3D")
+        push_error("Terrain Range reset must retain the active ChaseCamera Camera3D")
         scene.queue_free()
         return false
     for _frame in range(Engine.physics_ticks_per_second / 4 + 1):

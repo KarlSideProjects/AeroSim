@@ -1165,7 +1165,8 @@ Dictionary AeroSimNative::finish_complete_replay_recording(
         return replay_status(false, &replay_recorder_->diagnostic());
     }
     Dictionary result = replay_status(true);
-    result["serialized"] = String(replay_recorder_->serialize().c_str());
+    const std::string serialized = replay_recorder_->serialize();
+    result["serialized"] = String(serialized.c_str());
     return result;
 }
 

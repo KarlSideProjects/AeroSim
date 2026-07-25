@@ -1,0 +1,10 @@
+{
+  "id": "terrain3d_range",
+  "name": "Terrain Range",
+  "type": "free_flight",
+  "recommended_aircraft": "5_inch_6s",
+  "wind_preset": "calm",
+  "spawn_count": 2,
+  "spawns": [{"name": "SpawnNorth"}, {"name": "SpawnSouth"}],
+  "mode": "free_flight"
+}

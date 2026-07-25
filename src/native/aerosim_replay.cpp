@@ -7,11 +7,9 @@
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
-#include <iomanip>
 #include <limits>
 #include <map>
 #include <new>
-#include <sstream>
 #include <utility>
 
 namespace aerosim {
@@ -617,9 +615,10 @@ bool bool_value(const JsonValue &value, bool &result) {
 std::string compact_json(const JsonValue &value);
 
 std::string compact_number(double value) {
-    std::ostringstream output;
-    output << std::setprecision(17) << value;
-    return output.str();
+    char buffer[64];
+    const auto result = std::to_chars(
+            std::begin(buffer), std::end(buffer), value, std::chars_format::general, std::numeric_limits<double>::max_digits10);
+    return result.ec == std::errc{} ? std::string(buffer, result.ptr) : "0";
 }
 
 std::string compact_json(const JsonValue &value) {
