@@ -81,7 +81,9 @@ for required_file in \
     "$log_path" \
     "$out_dir/report.json" \
     "$out_dir/00_cold_start.png" \
+    "$out_dir/00_keyboard_fallback_preconfirm.png" \
     "$out_dir/01_controller_confirmation.png" \
+    "$out_dir/01_third_person_preflight.png" \
     "$out_dir/02_keyboard_fallback.png" \
     "$out_dir/03_takeoff.png" \
     "$out_dir/04_paused.png" \

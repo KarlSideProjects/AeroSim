@@ -46,6 +46,10 @@ light_energy = 1.7
 current = true
 fov = 70.0
 
+[node name="ThirdPersonCamera" type="Camera3D" parent="."]
+current = false
+fov = 70.0
+
 [node name="ChaseCameraSecondary" type="Camera3D" parent="."]
 current = false
 fov = 70.0

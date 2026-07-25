@@ -1674,7 +1674,20 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly must reset the shared setup to its canonical defaults")
         scene.queue_free()
         return false
-    scene.show_main_menu()
+    if scene.screen != "fallback_prompt" or scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
+        push_error("No-controller Quick Fly must show Industrial Yard through the FPV camera before keyboard fallback confirmation")
+        scene.queue_free()
+        return false
+    await _press_key(KEY_R)
+    if scene.screen != "fallback_prompt" or scene.takeoff_requested or scene.native.call("flight_control_armed"):
+        push_error("Reset must not bypass Quick Fly input confirmation")
+        scene.queue_free()
+        return false
+    await _press_key(KEY_ESCAPE)
+    if scene.screen != "main_menu" or scene.loaded_map != null or scene.get_node_or_null("LoadedMap") != null:
+        push_error("Canceling Quick Fly input fallback must free the preloaded Industrial Yard before returning to the menu")
+        scene.queue_free()
+        return false
     var native_before: Object = scene.native
     var lab_entry := scene.get_node_or_null("MainMenu/Entries/LabMode") as Button
     if lab_entry == null:
@@ -1979,10 +1992,15 @@ func _verify_runtime_actions() -> bool:
     scene.persisted_gamepad_profile = null
     scene.session_gamepad_profile = null
     scene.session_gamepad_device_id = -1
+    scene.unload_map()
     quick_fly_button.pressed.emit()
     await process_frame
     if scene.screen != "controller_confirmation" or scene.controller_return_screen != "preflight":
         push_error("Quick Fly must exercise a fresh controller confirmation route before preflight")
+        scene.queue_free()
+        return false
+    if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
+        push_error("Known unconfirmed controller Quick Fly must show Industrial Yard through the FPV camera before confirmation")
         scene.queue_free()
         return false
     confirmation = scene.controller_confirmation_panel
@@ -2003,6 +2021,32 @@ func _verify_runtime_actions() -> bool:
         return false
     if scene.get_viewport().get_camera_3d() != scene.chase_camera or not scene.chase_camera.current:
         push_error("Industrial Yard preflight must keep ChaseCamera as the active Camera3D")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_BACK, true)
+    await process_frame
+    _inject_joy_button(known_device_id, JOY_BUTTON_BACK, false)
+    await process_frame
+    var third_person_camera := scene.get_node_or_null("ThirdPersonCamera") as Camera3D
+    if third_person_camera == null or scene.get_viewport().get_camera_3d() != third_person_camera or scene._airsim_camera_source() != scene.chase_camera:
+        push_error("Xbox BACK View Toggle must switch the player to a third-person camera without changing the AirSim FPV source")
+        scene.queue_free()
+        return false
+    var local_camera_offset: Vector3 = scene.drone_body.global_basis.inverse() * (third_person_camera.global_position - scene.drone_body.global_position)
+    if local_camera_offset.y <= 0.0 or local_camera_offset.z <= 0.0:
+        push_error("Third-person camera must remain above and behind the drone in body coordinates")
+        scene.queue_free()
+        return false
+    await _press_key(KEY_V)
+    if scene.get_viewport().get_camera_3d() != scene.chase_camera or not scene.chase_camera.current:
+        push_error("View Toggle must return the player to the FPV camera")
+        scene.queue_free()
+        return false
+    await _press_key(KEY_V)
+    scene.quick_fly()
+    await process_frame
+    if scene.screen != "preflight" or scene.get_viewport().get_camera_3d() != scene.chase_camera or scene.third_person_view:
+        push_error("Every new Quick Fly session must reset the primary player view to FPV")
         scene.queue_free()
         return false
     var spawn := scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
@@ -2262,10 +2306,15 @@ func _verify_runtime_actions() -> bool:
         push_error("Fallback coverage must replace the confirmed device with a connected unknown SDL device")
         scene.queue_free()
         return false
+    scene.unload_map()
     scene.quick_fly()
     await process_frame
     if scene.screen != "fallback_prompt" or scene.session_gamepad_profile != null or not scene.arm_status_label.text.contains("Unsupported controller") or scene.arm_takeoff_button.text != "USE KEYBOARD FALLBACK":
         push_error("Quick Fly must block the connected replacement unknown SDL device with an explicit KeyboardProfile fallback")
+        scene.queue_free()
+        return false
+    if scene.loaded_map_id != "industrial_yard" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
+        push_error("Unknown-controller Quick Fly must show Industrial Yard through the FPV camera before keyboard fallback confirmation")
         scene.queue_free()
         return false
     scene.arm_takeoff_button.pressed.emit()
@@ -2753,7 +2802,8 @@ func _verify_keyboard_profile_actions() -> bool:
         "flight_respawn": KEY_R,
         "flight_altitude_hold": KEY_H,
         "flight_acro": KEY_C,
-        "flight_exit": KEY_ESCAPE
+        "flight_exit": KEY_ESCAPE,
+        "flight_view_toggle": KEY_V,
     }
     for action in actions:
         if not InputMap.has_action(action):

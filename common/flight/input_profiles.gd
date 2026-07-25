@@ -111,11 +111,12 @@ class KeyboardProfile:
         "exit": "ESC",
         "arm": "T",
         "mode": "C",
+        "view": "V",
     }
 
 
 class ActionContract:
-    const ACTIONS := ["pause", "reset", "change_spawn", "exit", "arm", "mode"]
+    const ACTIONS := ["pause", "reset", "change_spawn", "exit", "arm", "mode", "view"]
     const GAMEPAD_DEFAULT_ACTIONS := {
         "pause": "START",
         "reset": "X",
@@ -123,6 +124,7 @@ class ActionContract:
         "exit": "B",
         "arm": "A",
         "mode": "Y",
+        "view": "BACK",
     }
     const KEYBOARD_INPUT_ACTIONS := {
         "flight_takeoff": {"keycode": KEY_T, "shift_pressed": false},
@@ -132,6 +134,7 @@ class ActionContract:
         "flight_altitude_hold": {"keycode": KEY_H, "shift_pressed": false},
         "flight_acro": {"keycode": KEY_C, "shift_pressed": false},
         "flight_exit": {"keycode": KEY_ESCAPE, "shift_pressed": false},
+        "flight_view_toggle": {"keycode": KEY_V, "shift_pressed": false},
     }
     const GAMEPAD_INPUT_ACTIONS := {
         "flight_takeoff": JOY_BUTTON_A,
@@ -140,6 +143,7 @@ class ActionContract:
         "flight_altitude_hold": JOY_BUTTON_Y,
         "flight_acro": GamepadProfile.ACRO_BUTTON,
         "flight_exit": JOY_BUTTON_B,
+        "flight_view_toggle": JOY_BUTTON_BACK,
     }
 
     static func default_bindings(profile_name: String) -> Dictionary:

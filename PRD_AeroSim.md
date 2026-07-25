@@ -239,7 +239,7 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 - `GamepadProfile`：固定映射軸/鍵、raw / normalized / 固定 deadzone、按鍵狀態、sticky throttle 模式（油門不回中語意）、UI 明示「非擬真操控」。
 - `KeyboardProfile`：離散輸入，僅保證可起飛/暫停/重生/退出，明示限制用途。
 
-**操作 Action Contract（回應審查 H2）**：pause / reset / change spawn / exit / arm / mode 於兩種 Profile 各有固定、版本化的 canonical 映射與畫面 glyph；v1 不提供玩家重綁，避免 session-only 映射造成重連或跨 session 歧義。Keyboard 固定為 `P` Pause、`R` Reset、`Shift+R` Change Spawn、`Esc` Exit、`T` Arm/Takeoff、`C` Mode；Xbox 固定為 `START` Pause、`X` Reset、`START+X` Change Spawn、`B` Exit、`A` Arm/Takeoff、`Y` Mode。`START+X` 是獨立 Change Spawn chord，不得觸發 Arm/Takeoff；**所有飛行中救援動作（reset/pause）必須「手不離主控制器」可達**。
+**操作 Action Contract（回應審查 H2）**：pause / reset / change spawn / exit / arm / mode / view 於兩種 Profile 各有固定、版本化的 canonical 映射與畫面 glyph；v1 不提供玩家重綁，避免 session-only 映射造成重連或跨 session 歧義。Keyboard 固定為 `P` Pause、`R` Reset、`Shift+R` Change Spawn、`Esc` Exit、`T` Arm/Takeoff、`C` Mode、`V` View；Xbox 固定為 `START` Pause、`X` Reset、`START+X` Change Spawn、`B` Exit、`A` Arm/Takeoff、`Y` Mode、`BACK` View。`START+X` 是獨立 Change Spawn chord，不得觸發 Arm/Takeoff；**所有飛行中救援動作（reset/pause）必須「手不離主控制器」可達**。
 
 **Quick Fly 狀態機（回應審查 H1）**：
 
