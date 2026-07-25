@@ -14,6 +14,10 @@ config/name="AeroSim"
 run/main_scene="res://levels/smoke/smoke.tscn"
 config/features=PackedStringArray("4.7")
 
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/terrain_3d/plugin.cfg")
+
 [input]
 
 flight_takeoff={
