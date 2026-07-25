@@ -20,6 +20,10 @@ with ZipFile(artifact, "w", ZIP_DEFLATED) as archive:
         "AeroSim-linux/libaerosim_native.linux.template_release.x86_64.so",
         b"\x7fELF delivery-drill-test",
     )
+    archive.writestr(
+        "AeroSim-linux/libterrain.linux.release.x86_64.so",
+        b"\x7fELF delivery-drill-test",
+    )
     archive.write(notice, "AeroSim-linux/THIRD_PARTY_NOTICES.txt")
 PY
 
