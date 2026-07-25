@@ -335,6 +335,22 @@ func _run() -> void:
 		runtime.time_trial.advance(finish_position, 0.25)
 	_expect(runtime.screen == "preflight" and not runtime.time_trial.finished, "preflight cannot finish a Time Trial before takeoff")
 	runtime._airsim_disarm_requested = false
+	for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y]:
+		_inject_joy_axis(known_device_id, axis, 0.0)
+	_inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 1.0)
+	_inject_joy_button(known_device_id, JOY_BUTTON_A, true)
+	await _settle(1)
+	_inject_joy_button(known_device_id, JOY_BUTTON_A, false)
+	await _settle(720)
+	var takeoff_spawn := runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
+	var takeoff_altitude: float = runtime.drone_body.global_position.y - takeoff_spawn.global_position.y if takeoff_spawn != null else -INF
+	_expect(runtime.flight_mode == "ASSISTED_HOLD", "A takeoff hands off to Assisted Hold while the arm-low stick remains down")
+	_expect(absf(takeoff_altitude - 1.0) <= 0.35, "A takeoff reaches and holds approximately one metre instead of leaving the scene: altitude=%.3f" % takeoff_altitude)
+	_expect(absf(runtime.drone_body.linear_velocity.y) <= 0.35, "A takeoff settles to a stationary vertical hover: velocity_y=%.3f" % runtime.drone_body.linear_velocity.y)
+	_audit_cockpit_three_way_split(runtime, "flight_1280x720")
+	await _snapshot("01_assisted_hover")
+	_inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.0)
+	await _settle(30)
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
 	var xbox_frd_axis_cases := [
@@ -996,6 +1012,8 @@ func _audit_overlay_geometry(runtime: Node, screen_name: String) -> void:
 	var surfaces: Array[Dictionary] = []
 	_add_overlay_surface(surfaces, "main_menu", runtime.get_node_or_null("MainMenu/Entries"))
 	_add_overlay_surface(surfaces, "flight_hud", runtime.get_node_or_null("FlightHud/StatusMargin/StatusPanel"))
+	_add_overlay_surface(surfaces, "gamepad_hud", runtime.get_node_or_null("FlightHud/GamepadHudMargin/GamepadHudPanel"))
+	_add_overlay_surface(surfaces, "motor_hud", runtime.get_node_or_null("FlightHud/MotorHudMargin/MotorHudPanel"))
 	var dashboard: CanvasLayer = runtime.status_diagram
 	if dashboard != null:
 		_add_overlay_surface(surfaces, "operations_dashboard", dashboard.get_node_or_null("DashboardMargin/DashboardPanel"))
@@ -1046,6 +1064,33 @@ func _audit_overlay_geometry(runtime: Node, screen_name: String) -> void:
 	var overlays: Dictionary = _layout_audit_evidence.get("overlays", {})
 	overlays[screen_name] = geometry
 	_layout_audit_evidence["overlays"] = overlays
+
+
+func _audit_cockpit_three_way_split(runtime: Node, screen_name: String) -> void:
+	var left_rail := runtime.get_node_or_null("FlightHud/LeftRail") as Control
+	var flight_view := runtime.get_node_or_null("FlightHud/FlightViewRegion") as Control
+	var right_rail := runtime.get_node_or_null("FlightHud/RightRail") as Control
+	_expect(left_rail != null and flight_view != null and right_rail != null, "%s exposes explicit left, flight-view, and right regions" % screen_name)
+	if left_rail == null or flight_view == null or right_rail == null:
+		return
+	var viewport_rect := root.get_viewport().get_visible_rect()
+	var left_rect := left_rail.get_global_rect()
+	var flight_rect := flight_view.get_global_rect()
+	var right_rect := right_rail.get_global_rect()
+	_expect(viewport_rect.encloses(left_rect) and viewport_rect.encloses(flight_rect) and viewport_rect.encloses(right_rect), "%s three regions stay inside the viewport" % screen_name)
+	_expect(left_rect.end.x <= flight_rect.position.x + 0.5 and flight_rect.end.x <= right_rect.position.x + 0.5, "%s three regions do not overlap" % screen_name)
+	_expect(flight_rect.size.x >= viewport_rect.size.x / 3.0, "%s preserves at least the center third for unobstructed flight" % screen_name)
+	var status_panel := runtime.get_node_or_null("FlightHud/StatusMargin/StatusPanel") as Control
+	var gamepad_panel := runtime.get_node_or_null("FlightHud/GamepadHudMargin/GamepadHudPanel") as Control
+	var motor_panel := runtime.get_node_or_null("FlightHud/MotorHudMargin/MotorHudPanel") as Control
+	var dashboard_panel := runtime.status_diagram.get_node_or_null("DashboardMargin/DashboardPanel") as Control if runtime.status_diagram != null else null
+	_expect(status_panel != null and left_rect.encloses(status_panel.get_global_rect()), "%s keeps status inside the left region" % screen_name)
+	_expect(gamepad_panel != null and left_rect.encloses(gamepad_panel.get_global_rect()), "%s keeps the Xbox graphic inside the left region" % screen_name)
+	_expect(motor_panel != null and right_rect.encloses(motor_panel.get_global_rect()), "%s keeps the four-rotor graphic inside the right region" % screen_name)
+	_expect(dashboard_panel != null and right_rect.encloses(dashboard_panel.get_global_rect()), "%s keeps telemetry inside the right region" % screen_name)
+	var body_drag_surface := runtime.body_drag_debug_panel.get("_panel") as Control if runtime.body_drag_debug_panel != null else null
+	_expect(body_drag_surface == null or not body_drag_surface.is_visible_in_tree(), "%s hides the lab aerodynamic debug surface from the player cockpit" % screen_name)
+
 
 func _add_overlay_surface(surfaces: Array[Dictionary], name: String, node: Node) -> void:
 	if node is Control and node.is_visible_in_tree():
