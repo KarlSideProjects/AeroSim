@@ -452,6 +452,14 @@ int main() {
         return fail("Altitude Hold mode transitions must not introduce a thrust step");
     }
 
+    aerosim::FlightCommand climb_hold = hover;
+    climb_hold.vertical_velocity_mps = 1.0;
+    altitude_hold_controller.step_altitude_hold_mode(
+            altitude_hold_state, altitude_hold_clock, config, climb_hold, hold_altitude_m, aerosim::Quat{});
+    if (altitude_hold_controller.control_state().altitude_hold_target_m <= hold_altitude_m) {
+        return fail("Assisted vertical command must advance the altitude-hold target before returning to hold");
+    }
+
     aerosim::RigidBodyState hold_state;
     aerosim::SimulationClock hold_clock;
     aerosim::FlightController hold_controller;

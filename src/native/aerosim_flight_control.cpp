@@ -202,7 +202,8 @@ bool valid_config(const SimulationConfig &config) {
 bool valid_flight_command(const FlightCommand &command) {
     return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
             std::isfinite(command.roll_degrees) && std::isfinite(command.pitch_degrees) &&
-            std::isfinite(command.yaw_rate_degrees_per_second);
+            std::isfinite(command.yaw_rate_degrees_per_second) &&
+            std::isfinite(command.vertical_velocity_mps) && std::abs(command.vertical_velocity_mps) <= 3.0;
 }
 
 bool valid_acro_command(const AcroCommand &command) {
@@ -468,7 +469,7 @@ const PidTimingStats &FlightController::pid_timing_stats() const {
 FlightControlState FlightController::control_state() const {
     return {target_angle_frd_, target_rate_frd_, rate_integral_, previous_rate_error_frd_, filtered_rate_derivative_frd_,
             static_cast<int>(mode_family_), control_initialized_, altitude_hold_captured_, altitude_hold_just_captured_,
-            motor_saturation_latched_, pid_saturation_latched_, motor_thrust_newtons_};
+            altitude_hold_target_m_, motor_saturation_latched_, pid_saturation_latched_, motor_thrust_newtons_};
 }
 
 const TelemetrySnapshot &FlightController::telemetry_snapshot() const {
@@ -1013,6 +1014,7 @@ TrajectorySample FlightController::step_altitude_hold_mode_impl(
         const double control_dt = frame_config.physics_hz > 0
                 ? 1.0 / static_cast<double>(frame_config.physics_hz)
                 : (frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0);
+        altitude_hold_target_m_ += command.vertical_velocity_mps * control_dt;
         const double estimate_alpha = alpha_from_tau(control_dt, kAltitudeHoldEstimateTauS);
         const double vertical_speed_mps = std::isfinite(state.velocity.y) ? state.velocity.y : 0.0;
         altitude_hold_filtered_altitude_m_ += vertical_speed_mps * control_dt;

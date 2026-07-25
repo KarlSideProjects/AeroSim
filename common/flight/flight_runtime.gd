@@ -41,6 +41,8 @@ const TAKEOFF_ASSIST_ALTITUDE_M := 1.0
 const TAKEOFF_ASSIST_MARGIN := 0.08
 const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
+const ASSISTED_MAX_YAW_RATE_DPS := 120.0
+const ASSISTED_MAX_VERTICAL_SPEED_MPS := 2.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
@@ -1359,11 +1361,17 @@ func _physics_process(delta: float) -> void:
             takeoff_assist_active = false
         elif drone_body != null and drone_body.global_position.y >= _spawn_position().y + TAKEOFF_ASSIST_ALTITUDE_M:
             takeoff_assist_active = false
+            native.call("capture_altitude_hold")
+            flight_mode = "ASSISTED_HOLD"
         else:
             throttle = takeoff_assist_throttle
     var angle_roll := _angle_roll_degrees()
     var angle_pitch := _angle_pitch_degrees()
     var angle_yaw := _angle_yaw_rate_degrees_per_second()
+    var assisted_vertical_velocity := _profile_axis("throttle") * ASSISTED_MAX_VERTICAL_SPEED_MPS if flight_mode == "ASSISTED_HOLD" and _has_active_gamepad_profile() else 0.0
+    if flight_mode == "ASSISTED_HOLD":
+        throttle = 0.5
+        angle_yaw = _profile_axis("yaw") * ASSISTED_MAX_YAW_RATE_DPS if _has_active_gamepad_profile() else 0.0
     var acro_roll := _profile_axis("roll") if _has_active_gamepad_profile() else _acro_roll_stick()
     var acro_pitch := _profile_axis("pitch") if _has_active_gamepad_profile() else _acro_pitch_stick()
     var acro_yaw := _profile_axis("yaw") if _has_active_gamepad_profile() else _acro_yaw_stick()
@@ -1481,8 +1489,8 @@ func _physics_process(delta: float) -> void:
                 energy_limit
             )
         else:
-            var step_method := "step_collision_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_collision_angle_mode"
-            row = native.call(
+            var step_method := "step_collision_altitude_hold_mode" if flight_mode in ["ALTITUDE_HOLD", "ASSISTED_HOLD"] else "step_collision_angle_mode"
+            var step_args := [
                 step_method,
                 Engine.physics_ticks_per_second,
                 1000,
@@ -1505,15 +1513,21 @@ func _physics_process(delta: float) -> void:
                 angular_velocity_body.y,
                 angular_velocity_body.z,
                 energy_limit
-            )
+            ]
+            if flight_mode == "ASSISTED_HOLD":
+                step_args.append(assisted_vertical_velocity)
+            row = native.callv(step_args[0], step_args.slice(1))
         if _handle_native_step_failure(native, row, true):
             return
     else:
         if flight_mode == "ACRO":
             row = native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, throttle, acro_roll, acro_pitch, acro_yaw, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo"))
         else:
-            var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
-            row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw)
+            var free_flight_method := "step_altitude_hold_mode" if flight_mode in ["ALTITUDE_HOLD", "ASSISTED_HOLD"] else "step_angle_mode"
+            var free_flight_args := [Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw]
+            if flight_mode == "ASSISTED_HOLD":
+                free_flight_args.append(assisted_vertical_velocity)
+            row = native.callv(free_flight_method, free_flight_args)
         if _handle_native_step_failure(native, row, true):
             return
     if _airsim_secondary_native != null and secondary_drone_body != null and (airsim_session == null or not airsim_session.is_paused()):
@@ -2742,6 +2756,8 @@ func _localized_flight_mode(mode: String) -> String:
             return _t("ui.dashboard.mode_acro")
         "ALTITUDE_HOLD":
             return _t("ui.dashboard.mode_altitude_hold")
+        "ASSISTED_HOLD":
+            return _t("ui.dashboard.mode_altitude_hold")
         "", "-":
             return _t("ui.dashboard.none")
         _:
@@ -2750,11 +2766,11 @@ func _localized_flight_mode(mode: String) -> String:
 func toggle_altitude_hold() -> void:
     if native == null or not takeoff_requested:
         return
-    if flight_mode == "ALTITUDE_HOLD":
+    if flight_mode in ["ALTITUDE_HOLD", "ASSISTED_HOLD"]:
         flight_mode = "ANGLE"
     else:
         native.call("capture_altitude_hold")
-        flight_mode = "ALTITUDE_HOLD"
+        flight_mode = "ASSISTED_HOLD"
     update_fallback_status()
 
 

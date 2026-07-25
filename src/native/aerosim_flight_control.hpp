@@ -12,6 +12,7 @@ struct FlightCommand {
     double roll_degrees = 0.0;
     double pitch_degrees = 0.0;
     double yaw_rate_degrees_per_second = 0.0;
+    double vertical_velocity_mps = 0.0;
 };
 
 struct RateProfile {
@@ -51,6 +52,7 @@ struct FlightControlState {
     bool control_initialized = false;
     bool altitude_hold_captured = false;
     bool altitude_hold_just_captured = false;
+    double altitude_hold_target_m = 0.0;
     std::array<bool, 4> motor_saturation_latched = {false, false, false, false};
     std::array<bool, 3> pid_saturation_latched = {false, false, false};
     double motor_thrust_newtons = 0.0;
