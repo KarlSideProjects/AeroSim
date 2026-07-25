@@ -1084,7 +1084,7 @@ func _restore_startup_gamepad_session() -> void:
 
 func _save_gamepad_profile(profile: InputProfiles.GamepadProfile) -> Dictionary:
     var loaded: Dictionary = settings_store.load_document()
-    if not loaded.ok:
+    if not loaded.ok and not (bool(loaded.get("recovered", false)) and String(loaded.get("error", "")).contains("confirmed_gamepad")):
         return {"ok": false, "error": "cannot save gamepad while settings are unavailable: %s" % loaded.error}
     var document: Dictionary = loaded.document
     document["confirmed_gamepad"] = profile.to_persisted_dict()
@@ -1352,8 +1352,6 @@ func _physics_process(delta: float) -> void:
             takeoff_assist_active = false
         elif drone_body != null and drone_body.global_position.y >= _spawn_position().y + TAKEOFF_ASSIST_ALTITUDE_M:
             takeoff_assist_active = false
-            session_gamepad_profile.throttle = takeoff_assist_throttle - TAKEOFF_ASSIST_MARGIN
-            throttle = session_gamepad_profile.throttle
         else:
             throttle = takeoff_assist_throttle
     var angle_roll := _angle_roll_degrees()
@@ -4584,6 +4582,10 @@ func _refresh_controller_confirmation() -> void:
         var axis := int(controller_confirmation_profile.axis_for_role[role])
         var raw := Input.get_joy_axis(controller_confirmation_device_id, axis)
         var normalized := _normalize_gamepad_axis(raw, controller_confirmation_profile.deadzone)
+        if controller_confirmation_profile.reversed_for_role[role]:
+            normalized = -normalized
+        if is_zero_approx(normalized):
+            normalized = 0.0
         mapping_lines.append(_format("ui.controller.mapping_line", [_localized_controller_role(role), axis, _localized_reversed_suffix() if controller_confirmation_profile.reversed_for_role[role] else ""]))
         live_axis_lines.append(_format("ui.controller.live_axis_line", [_localized_controller_role(role), raw, normalized]))
     confirmation_mapping_label.text = "\n".join(mapping_lines)
@@ -4637,9 +4639,7 @@ func _controller_monitor_bar(value: float) -> String:
     return "[%s|%s]" % ["-".repeat(marker), "-".repeat(16 - marker)]
 
 func _normalize_gamepad_axis(raw: float, deadzone: float) -> float:
-    if absf(raw) <= deadzone:
-        return 0.0
-    return sign(raw) * (absf(raw) - deadzone) / (1.0 - deadzone)
+    return InputProfiles.GamepadProfile.normalize_axis(raw, deadzone)
 
 func _handle_gamepad_button(event: InputEventJoypadButton) -> bool:
     if not _has_active_gamepad_profile() or event.device != session_gamepad_device_id:
@@ -4710,7 +4710,7 @@ func _profile_axis(role: String) -> float:
     var normalized := _normalize_gamepad_axis(raw, session_gamepad_profile.deadzone)
     if session_gamepad_profile.reversed_for_role[role]:
         normalized = -normalized
-    return normalized
+    return 0.0 if is_zero_approx(normalized) else normalized
 
 func _profile_throttle_raw() -> float:
     if not _has_active_gamepad_profile():
@@ -4721,8 +4721,7 @@ func _profile_throttle_raw() -> float:
 func _flight_throttle() -> float:
     if not _has_active_gamepad_profile():
         return KEYBOARD_FLIGHT_THROTTLE
-    session_gamepad_profile.apply_throttle_axis(_profile_throttle_raw())
-    return session_gamepad_profile.throttle
+    return clampf((_profile_axis("throttle") + 1.0) * 0.5, 0.0, 1.0)
 
 func _profile_throttle_is_low() -> bool:
     return _has_active_gamepad_profile() and session_gamepad_profile.throttle_axis_is_low(_profile_throttle_raw())

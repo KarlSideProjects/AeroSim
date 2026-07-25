@@ -255,6 +255,11 @@ class RecoverySettingsStore:
         return {"ok": true, "error": "", "document": retained_document}
 
 
+class GamepadSchemaRecoverySettingsStore extends RecoverySettingsStore:
+    func load_document() -> Dictionary:
+        return {"ok": false, "error": "unsupported confirmed_gamepad schema", "document": retained_document, "recovered": true}
+
+
 class PersistedGamepadSettingsStore:
     extends RefCounted
 
@@ -1854,6 +1859,19 @@ func test_gamepad_save_does_not_overwrite_settings_when_load_recovers() -> void:
     runtime.free()
 
 
+func test_gamepad_confirmation_replaces_only_a_recovered_legacy_profile() -> void:
+    var runtime := FlightRuntime.new()
+    var recovery_store := GamepadSchemaRecoverySettingsStore.new()
+    runtime.settings_store = recovery_store
+
+    var result: Dictionary = runtime._save_gamepad_profile(InputProfiles.GamepadProfile.new())
+
+    assert_true(result.ok, result.error)
+    assert_true(recovery_store.save_called)
+    assert_not_null(runtime.persisted_gamepad_profile)
+    runtime.free()
+
+
 func test_controller_monitor_renders_active_session_channels_and_unavailable_without_one() -> void:
     var runtime := _controller_monitor_runtime()
     autofree(runtime)
@@ -1864,51 +1882,51 @@ func test_controller_monitor_renders_active_session_channels_and_unavailable_wit
 
     var monitor: Label = runtime.controller_settings_monitor_label
     assert_string_contains(monitor.text, "CHANNEL MONITOR (30 Hz)")
-    assert_string_contains(monitor.text, "roll:     [------------|----] raw +0.500 | normalized +0.457")
-    assert_string_contains(monitor.text, "pitch:    [------------|----] raw -0.500 | normalized +0.457")
-    assert_string_contains(monitor.text, "yaw:      [---------|-------] raw +0.250 | normalized +0.185")
-    assert_string_contains(monitor.text, "throttle: [--|--------------] raw -0.750 | normalized -0.728 | LOW")
+    assert_string_contains(monitor.text, "roll:     [---------|-------] raw +0.250 | normalized +0.167")
+    assert_string_contains(monitor.text, "pitch:    [--------------|--] raw -0.750 | normalized +0.694")
+    assert_string_contains(monitor.text, "yaw:      [-----------|-----] raw +0.500 | normalized +0.420")
+    assert_string_contains(monitor.text, "throttle: [-----------|-----] raw -0.500 | normalized +0.420 | HIGH")
     assert_string_contains(monitor.text, "DEADZONE: 0.080 (fixed)")
     assert_string_contains(monitor.text, "ARM: RELEASED | flight control: DISARMED")
     assert_string_contains(monitor.text, "MODE: RELEASED | flight mode: ANGLE")
 
-    var high_throttle := InputEventJoypadMotion.new()
-    high_throttle.device = 0
-    high_throttle.axis = JOY_AXIS_RIGHT_Y
-    high_throttle.axis_value = 0.75
-    Input.parse_input_event(high_throttle)
+    var low_throttle := InputEventJoypadMotion.new()
+    low_throttle.device = 0
+    low_throttle.axis = JOY_AXIS_LEFT_Y
+    low_throttle.axis_value = 1.0
+    Input.parse_input_event(low_throttle)
     await get_tree().process_frame
     runtime._refresh_controller_settings()
-    assert_string_contains(monitor.text, "throttle: [--------------|--] raw +0.750 | normalized +0.728 | HIGH")
+    assert_string_contains(monitor.text, "throttle: [|----------------] raw +1.000 | normalized -1.000 | LOW")
 
-    var roll_deadzone := InputEventJoypadMotion.new()
-    roll_deadzone.device = 0
-    roll_deadzone.axis = JOY_AXIS_LEFT_X
-    roll_deadzone.axis_value = 0.08
-    Input.parse_input_event(roll_deadzone)
     var yaw_deadzone := InputEventJoypadMotion.new()
     yaw_deadzone.device = 0
-    yaw_deadzone.axis = JOY_AXIS_RIGHT_X
-    yaw_deadzone.axis_value = -0.08
+    yaw_deadzone.axis = JOY_AXIS_LEFT_X
+    yaw_deadzone.axis_value = 0.08
     Input.parse_input_event(yaw_deadzone)
+    var roll_deadzone := InputEventJoypadMotion.new()
+    roll_deadzone.device = 0
+    roll_deadzone.axis = JOY_AXIS_RIGHT_X
+    roll_deadzone.axis_value = -0.08
+    Input.parse_input_event(roll_deadzone)
     await get_tree().process_frame
     runtime._refresh_controller_settings()
-    assert_string_contains(monitor.text, "roll:     [--------|--------] raw +0.080 | normalized +0.000")
-    assert_string_contains(monitor.text, "yaw:      [--------|--------] raw -0.080 | normalized +0.000")
+    assert_string_contains(monitor.text, "roll:     [--------|--------] raw -0.080 | normalized +0.000")
+    assert_string_contains(monitor.text, "yaw:      [--------|--------] raw +0.080 | normalized +0.000")
 
     var throttle_boundary := InputEventJoypadMotion.new()
     throttle_boundary.device = 0
-    throttle_boundary.axis = JOY_AXIS_RIGHT_Y
+    throttle_boundary.axis = JOY_AXIS_LEFT_Y
     throttle_boundary.axis_value = 0.08
     Input.parse_input_event(throttle_boundary)
     await get_tree().process_frame
     runtime._refresh_controller_settings()
-    assert_string_contains(monitor.text, "throttle: [--------|--------] raw +0.080 | normalized +0.000 | LOW")
-    throttle_boundary.axis_value = 0.081
+    assert_string_contains(monitor.text, "throttle: [--------|--------] raw +0.080 | normalized +0.000 | HIGH")
+    throttle_boundary.axis_value = 0.92
     Input.parse_input_event(throttle_boundary)
     await get_tree().process_frame
     runtime._refresh_controller_settings()
-    assert_string_contains(monitor.text, "throttle: [--------|--------] raw +0.081 | normalized +0.001 | HIGH")
+    assert_string_contains(monitor.text, "throttle: [-|---------------] raw +0.920 | normalized -0.898 | LOW")
 
     runtime.session_gamepad_profile = null
     runtime.session_gamepad_device_id = -1
@@ -1946,18 +1964,15 @@ func test_startup_restores_persisted_profile_for_connected_channel_monitor() -> 
 
     var roll := InputEventJoypadMotion.new()
     roll.device = 7
-    roll.axis = JOY_AXIS_LEFT_X
+    roll.axis = JOY_AXIS_RIGHT_X
     roll.axis_value = 0.5
     Input.parse_input_event(roll)
     await get_tree().process_frame
     runtime.show_controller_settings()
 
-    assert_string_contains(runtime.controller_settings_monitor_label.text, "roll:     [------------|----] raw +0.500 | normalized +0.457")
+    assert_string_contains(runtime.controller_settings_monitor_label.text, "roll:     [-----------|-----] raw +0.500 | normalized +0.420")
     assert_false(runtime.takeoff_requested)
     assert_false(runtime.controller_safety_latched)
-    if runtime.session_gamepad_profile != null:
-        runtime.session_gamepad_profile.throttle = 0.8
-        assert_eq(runtime.persisted_gamepad_profile.throttle, 0.0)
 
 
 func test_startup_restore_requires_unlatched_supported_device() -> void:
@@ -1999,8 +2014,8 @@ func test_high_throttle_arm_button_stays_pressed_without_arming_native_control()
 
     var throttle := InputEventJoypadMotion.new()
     throttle.device = 0
-    throttle.axis = JOY_AXIS_RIGHT_Y
-    throttle.axis_value = 0.75
+    throttle.axis = JOY_AXIS_LEFT_Y
+    throttle.axis_value = -1.0
     Input.parse_input_event(throttle)
     await get_tree().process_frame
     var arm := InputEventJoypadButton.new()
@@ -2012,6 +2027,29 @@ func test_high_throttle_arm_button_stays_pressed_without_arming_native_control()
     assert_true(runtime.session_gamepad_profile.arm_pressed)
     assert_false(fake_native.armed)
     assert_false(runtime._flight_control_armed())
+
+
+func test_pure_angle_collective_uses_the_left_mode_two_vertical_axis() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime.session_gamepad_device_id = 0
+    runtime.session_gamepad_profile = InputProfiles.GamepadProfile.new()
+
+    var down := InputEventJoypadMotion.new()
+    down.device = 0
+    down.axis = JOY_AXIS_LEFT_Y
+    down.axis_value = 1.0
+    Input.parse_input_event(down)
+    await get_tree().process_frame
+    assert_almost_eq(runtime._flight_throttle(), 0.0, 0.000001)
+
+    var up := InputEventJoypadMotion.new()
+    up.device = 0
+    up.axis = JOY_AXIS_LEFT_Y
+    up.axis_value = -1.0
+    Input.parse_input_event(up)
+    await get_tree().process_frame
+    assert_almost_eq(runtime._flight_throttle(), 1.0, 0.000001)
 
 
 func test_controller_disconnect_latches_disarm_freeze_and_blocks_keyboard_resume() -> void:
@@ -2066,8 +2104,6 @@ func test_controller_reconnect_restores_profile_but_not_authority() -> void:
     assert_eq(runtime.screen, "preflight")
     assert_not_null(runtime.session_gamepad_profile)
     assert_eq(runtime.session_gamepad_device_id, 7)
-    runtime.session_gamepad_profile.throttle = 0.8
-    assert_eq(runtime.persisted_gamepad_profile.throttle, 0.0)
     runtime.arm_and_takeoff()
     assert_true(runtime.controller_safety_latched)
     runtime.free()

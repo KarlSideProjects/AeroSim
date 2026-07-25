@@ -245,17 +245,13 @@ func test_confirmed_profile_serialization_excludes_device_and_live_input_state()
     var profile := InputProfiles.GamepadProfile.new()
     profile.arm_pressed = true
     profile.mode_pressed = true
-    profile.throttle = 0.8
-    profile.sticky_throttle = true
 
     var persisted: Dictionary = profile.to_persisted_dict()
 
     assert_eq(persisted["profile_schema_version"], InputProfiles.GamepadProfile.SCHEMA_VERSION)
     assert_false(persisted.has("device_id"))
-    assert_false(persisted.has("throttle"))
     assert_false(persisted.has("arm_pressed"))
     assert_false(persisted.has("mode_pressed"))
-    assert_false(persisted.has("sticky_throttle"))
 
 
 func test_valid_profile_round_trips_without_runtime_state() -> void:
@@ -267,7 +263,6 @@ func test_valid_profile_round_trips_without_runtime_state() -> void:
     assert_eq(restored.reversed_for_role, profile.reversed_for_role)
     assert_eq(restored.arm_button, profile.arm_button)
     assert_eq(restored.mode_button, profile.mode_button)
-    assert_eq(restored.throttle, 0.0)
     assert_false(restored.arm_pressed)
     assert_false(restored.mode_pressed)
 

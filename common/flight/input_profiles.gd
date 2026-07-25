@@ -1,16 +1,15 @@
 class GamepadProfile:
-    const SCHEMA_VERSION := 1
+    const SCHEMA_VERSION := 2
     const RAW_AXIS_DEADZONE := 0.08
     const THROTTLE_LOW_THRESHOLD := RAW_AXIS_DEADZONE
+    const CENTER_RESPONSE_SOFTNESS := 0.10
     const ACRO_BUTTON := JOY_BUTTON_RIGHT_SHOULDER
 
     var deadzone := RAW_AXIS_DEADZONE
-    var throttle := 0.0
-    var axis_for_role := {"roll": JOY_AXIS_LEFT_X, "pitch": JOY_AXIS_LEFT_Y, "yaw": JOY_AXIS_RIGHT_X, "throttle": JOY_AXIS_RIGHT_Y}
-    var reversed_for_role := {"roll": false, "pitch": true, "yaw": false, "throttle": false}
+    var axis_for_role := {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}
+    var reversed_for_role := {"yaw": false, "throttle": true, "roll": false, "pitch": true}
     var arm_button := JOY_BUTTON_A
     var mode_button := JOY_BUTTON_Y
-    var sticky_throttle := true
     var profile_schema_version := SCHEMA_VERSION
     var arm_pressed := false
     var mode_pressed := false
@@ -25,19 +24,21 @@ class GamepadProfile:
         if not is_supported_device(device_id, device_state):
             return null
         var gamepad := GamepadProfile.new()
-        gamepad.axis_for_role = {"roll": JOY_AXIS_LEFT_X, "pitch": JOY_AXIS_LEFT_Y, "yaw": JOY_AXIS_RIGHT_X, "throttle": JOY_AXIS_RIGHT_Y}
-        gamepad.reversed_for_role = {"roll": false, "pitch": true, "yaw": false, "throttle": false}
+        gamepad.axis_for_role = {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}
+        gamepad.reversed_for_role = {"yaw": false, "throttle": true, "roll": false, "pitch": true}
         gamepad.arm_button = JOY_BUTTON_A
         gamepad.mode_button = JOY_BUTTON_Y
         return gamepad
 
-    func apply_throttle_axis(value: float) -> void:
-        if absf(value) <= RAW_AXIS_DEADZONE:
-            return
-        throttle = clampf(value, 0.0, 1.0)
-
     func throttle_axis_is_low(value: float) -> bool:
-        return value <= THROTTLE_LOW_THRESHOLD
+        return value >= 1.0 - THROTTLE_LOW_THRESHOLD
+
+    static func normalize_axis(raw: float, deadzone: float) -> float:
+        if absf(raw) <= deadzone:
+            return 0.0
+        var magnitude := (absf(raw) - deadzone) / (1.0 - deadzone)
+        magnitude *= lerpf(1.0 - CENTER_RESPONSE_SOFTNESS, 1.0, magnitude * magnitude)
+        return sign(raw) * magnitude
 
     func to_persisted_dict() -> Dictionary:
         return {
@@ -64,8 +65,8 @@ class GamepadProfile:
             return {"ok": false, "error": "unsupported confirmed_gamepad schema"}
         if typeof(source["axis_for_role"]) != TYPE_DICTIONARY or typeof(source["reversed_for_role"]) != TYPE_DICTIONARY:
             return {"ok": false, "error": "confirmed_gamepad mappings must be objects"}
-        var expected_axes := {"roll": JOY_AXIS_LEFT_X, "pitch": JOY_AXIS_LEFT_Y, "yaw": JOY_AXIS_RIGHT_X, "throttle": JOY_AXIS_RIGHT_Y}
-        var expected_reversed := {"roll": false, "pitch": true, "yaw": false, "throttle": false}
+        var expected_axes := {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}
+        var expected_reversed := {"yaw": false, "throttle": true, "roll": false, "pitch": true}
         for role in source["axis_for_role"].keys():
             if not expected_axes.has(role):
                 return {"ok": false, "error": "unknown confirmed_gamepad axis role: %s" % role}
