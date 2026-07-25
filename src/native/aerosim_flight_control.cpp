@@ -1077,8 +1077,10 @@ TrajectorySample FlightController::step_altitude_hold_mode_impl(
                 position_hold_target_world_.y - position_hold_filtered_world_.y,
                 position_hold_target_world_.z - position_hold_filtered_world_.z,
         };
-        roll_degrees = std::clamp(error.z * 8.0 - state.velocity.z * 3.0, -30.0, 30.0);
-        pitch_degrees = std::clamp(-error.x * 8.0 + state.velocity.x * 3.0, -30.0, 30.0);
+        const Vec3 body_error_frd = y_up_to_frd(world_to_body(estimated_attitude, error));
+        const Vec3 body_velocity_frd = y_up_to_frd(world_to_body(estimated_attitude, state.velocity));
+        roll_degrees = std::clamp(body_error_frd.y * 8.0 - body_velocity_frd.y * 3.0, -30.0, 30.0);
+        pitch_degrees = std::clamp(-body_error_frd.x * 8.0 + body_velocity_frd.x * 3.0, -30.0, 30.0);
     } else {
         position_hold_captured_ = false;
     }

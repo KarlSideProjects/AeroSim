@@ -722,6 +722,8 @@ func _record_replay_command(vehicle_name: String, controls: Dictionary, timestam
     if not _replay_recording_active or native == null:
         return
     var mode := String(controls.get("mode", "ANGLE"))
+    if mode == "ASSISTED_HOLD":
+        mode = "ALTITUDE_HOLD"
     var recorded_timestamp_us := _replay_timestamp_us() if timestamp_us < 0 else _replay_timestamp_for_recorded_frame(timestamp_us)
     var result: Dictionary
     if native.has_method("record_replay_mode_command"):
@@ -738,7 +740,10 @@ func _record_replay_command(vehicle_name: String, controls: Dictionary, timestam
             _acro_rate("super_rate"),
             _acro_rate("expo"),
             float(controls.get("altitude_m", 0.0)),
-            0)
+            0,
+            float(controls.get("vertical_velocity_mps", 0.0)),
+            bool(controls.get("heading_hold_enabled", false)),
+            bool(controls.get("position_hold_enabled", false)))
     else:
         result = native.call(
             "record_replay_command",
@@ -1549,6 +1554,12 @@ func _physics_process(delta: float) -> void:
         _airsim_collision_seen = true
         _airsim_collision_normal = drone_body.contact_normal
         _airsim_collision_point = drone_body.global_position
+        if flight_mode == "ASSISTED_HOLD" and assisted_vertical_velocity < -0.05 and absf(drone_body.linear_velocity.y) <= 0.25:
+            native.call("disarm_flight_control")
+            _airsim_disarm_requested = true
+            takeoff_requested = false
+            drone_body.freeze = true
+            drone_body.sleeping = true
         drone_body.reset_contact()
     if px4_sitl_bridge == null:
         _record_replay_command(_airsim_vehicle_name, {
@@ -1561,6 +1572,9 @@ func _physics_process(delta: float) -> void:
             "acro_pitch": acro_pitch,
             "acro_yaw": acro_yaw,
             "altitude_m": drone_body.global_position.y if drone_body != null else 0.0,
+            "vertical_velocity_mps": assisted_vertical_velocity,
+            "heading_hold_enabled": flight_mode == "ASSISTED_HOLD",
+            "position_hold_enabled": flight_mode == "ASSISTED_HOLD",
         }, replay_timestamp_us)
     if row.size() >= 13:
         last_collision_authority = int(row[12])

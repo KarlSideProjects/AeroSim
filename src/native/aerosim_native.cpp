@@ -330,8 +330,8 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("record_replay_command", "timestamp_us", "vehicle_name", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "controller_authority"),
             &AeroSimNative::record_replay_command);
     ClassDB::bind_method(
-            D_METHOD("record_replay_mode_command", "timestamp_us", "vehicle_name", "mode", "throttle", "roll", "pitch", "yaw", "rc_rate", "super_rate", "expo", "measured_altitude_m", "controller_authority"),
-            &AeroSimNative::record_replay_mode_command);
+            D_METHOD("record_replay_mode_command", "timestamp_us", "vehicle_name", "mode", "throttle", "roll", "pitch", "yaw", "rc_rate", "super_rate", "expo", "measured_altitude_m", "controller_authority", "vertical_velocity_mps", "heading_hold_enabled", "position_hold_enabled"),
+            &AeroSimNative::record_replay_mode_command, DEFVAL(0.0), DEFVAL(false), DEFVAL(false));
     ClassDB::bind_method(
             D_METHOD("record_replay_actuator_command", "timestamp_us", "vehicle_name", "motor_0", "motor_1", "motor_2", "motor_3", "controller_authority"),
             &AeroSimNative::record_replay_actuator_command);
@@ -967,7 +967,10 @@ Dictionary AeroSimNative::record_replay_mode_command(
         double super_rate,
         double expo,
         double measured_altitude_m,
-        std::int32_t controller_authority) {
+        std::int32_t controller_authority,
+        double vertical_velocity_mps,
+        bool heading_hold_enabled,
+        bool position_hold_enabled) {
     if (replay_recorder_ == nullptr || timestamp_us < 0) {
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
         return replay_status(false, &diagnostic);
@@ -981,7 +984,7 @@ Dictionary AeroSimNative::record_replay_mode_command(
     const std::string mode_name = std::string(mode.utf8().get_data());
     if (mode_name == "ACRO") {
         command_mode = aerosim::ReplayCommandMode::Acro;
-    } else if (mode_name == "ALTITUDE_HOLD") {
+    } else if (mode_name == "ALTITUDE_HOLD" || mode_name == "ASSISTED_HOLD") {
         command_mode = aerosim::ReplayCommandMode::AltitudeHold;
     } else if (mode_name == "ANGLE") {
         command_mode = aerosim::ReplayCommandMode::Angle;
@@ -994,6 +997,9 @@ Dictionary AeroSimNative::record_replay_mode_command(
     angle_command.roll_degrees = roll;
     angle_command.pitch_degrees = pitch;
     angle_command.yaw_rate_degrees_per_second = yaw;
+    angle_command.vertical_velocity_mps = vertical_velocity_mps;
+    angle_command.heading_hold_enabled = heading_hold_enabled;
+    angle_command.position_hold_enabled = position_hold_enabled;
     aerosim::AcroCommand acro_command;
     acro_command.throttle = throttle;
     acro_command.roll_stick = roll;

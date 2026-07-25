@@ -169,7 +169,10 @@ public:
             double super_rate,
             double expo,
             double measured_altitude_m,
-            std::int32_t controller_authority);
+            std::int32_t controller_authority,
+            double vertical_velocity_mps,
+            bool heading_hold_enabled,
+            bool position_hold_enabled);
     godot::Dictionary record_replay_actuator_command(
             std::int64_t timestamp_us,
             const godot::String &vehicle_name,
