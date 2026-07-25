@@ -2141,6 +2141,11 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     _inject_joy_button(known_device_id, JOY_BUTTON_A, false)
+    for _frame in range(360):
+        await physics_frame
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.0)
+    await physics_frame
+    await physics_frame
     _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.70)
     for _frame in range(60):
         await physics_frame
@@ -2156,6 +2161,7 @@ func _verify_runtime_actions() -> bool:
     for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y]:
         _inject_joy_axis(known_device_id, axis, 0.0)
     scene.native.call("reset_flight")
+    scene.flight_mode = "ANGLE"
     scene.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
     scene.drone_body.reset_contact()
     _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, -0.50)

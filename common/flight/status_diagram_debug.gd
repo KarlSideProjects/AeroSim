@@ -29,7 +29,7 @@ var _heading: Label
 var _environment_snapshot: Dictionary = {}
 
 func _ready() -> void:
-    layer = 20
+    layer = 40
     name = "StatusDiagramDebug"
     var margin := MarginContainer.new()
     margin.name = "DashboardMargin"

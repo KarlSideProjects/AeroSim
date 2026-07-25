@@ -886,7 +886,10 @@ func test_request_takeoff_does_not_inject_jump_velocity() -> void:
 
     assert_true(runtime.takeoff_requested)
     assert_true(runtime.takeoff_assist_active)
-    assert_eq(runtime.takeoff_assist_throttle, 0.38)
+    assert_eq(runtime.flight_mode, "ASSISTED_HOLD")
+    assert_true(runtime.assisted_throttle_waiting_for_neutral)
+    assert_eq(runtime.takeoff_assist_commanded_altitude_m, 0.0)
+    assert_eq(runtime.assisted_hover_throttle, 0.3)
     assert_false(body.freeze)
     assert_eq(body.global_position, spawn.global_position)
     assert_eq(body.linear_velocity, Vector3.ZERO)

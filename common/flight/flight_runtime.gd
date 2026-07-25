@@ -38,12 +38,14 @@ const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const AIRSIM_GROUND_BODY_CLEARANCE_M := 0.25
 const KEYBOARD_FLIGHT_THROTTLE := 0.75
 const TAKEOFF_ASSIST_ALTITUDE_M := 1.0
-const TAKEOFF_ASSIST_MARGIN := 0.08
+const TAKEOFF_ASSIST_VERTICAL_SPEED_MPS := 0.75
 const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const ASSISTED_MAX_YAW_RATE_DPS := 120.0
 const ASSISTED_MAX_VERTICAL_SPEED_MPS := 2.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
+const COCKPIT_LEFT_RAIL_WIDTH := 360.0
+const COCKPIT_RIGHT_RAIL_WIDTH := 436.0
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 const THIRD_PERSON_CAMERA_OFFSET := Vector3(0.0, 0.8, 1.8)
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
@@ -82,7 +84,9 @@ var exit_requested := false
 var quit_on_exit := true
 var takeoff_requested := false
 var takeoff_assist_active := false
-var takeoff_assist_throttle := 0.0
+var takeoff_assist_commanded_altitude_m := 0.0
+var assisted_throttle_waiting_for_neutral := false
+var assisted_hover_throttle := 0.5
 var reset_count := 0
 var last_profile_status := ""
 var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]
@@ -1369,20 +1373,26 @@ func _physics_process(delta: float) -> void:
         native.call("arm_flight_control", 0.0)
     var throttle := _flight_throttle()
     if takeoff_assist_active:
-        if not _has_active_gamepad_profile() or absf(_profile_throttle_raw()) > InputProfiles.GamepadProfile.THROTTLE_LOW_THRESHOLD:
+        if not _has_active_gamepad_profile():
             takeoff_assist_active = false
-        elif drone_body != null and drone_body.global_position.y >= _spawn_position().y + TAKEOFF_ASSIST_ALTITUDE_M:
-            takeoff_assist_active = false
-            native.call("capture_altitude_hold")
-            flight_mode = "ASSISTED_HOLD"
-        else:
-            throttle = takeoff_assist_throttle
     var angle_roll := _angle_roll_degrees()
     var angle_pitch := _angle_pitch_degrees()
     var angle_yaw := _angle_yaw_rate_degrees_per_second()
-    var assisted_vertical_velocity := _profile_axis("throttle") * ASSISTED_MAX_VERTICAL_SPEED_MPS if flight_mode == "ASSISTED_HOLD" and _has_active_gamepad_profile() else 0.0
+    var assisted_vertical_velocity := 0.0
+    if flight_mode == "ASSISTED_HOLD" and _has_active_gamepad_profile():
+        if takeoff_assist_active:
+            var takeoff_remaining_m := TAKEOFF_ASSIST_ALTITUDE_M - takeoff_assist_commanded_altitude_m
+            if takeoff_remaining_m > 0.0 and delta > 0.0:
+                assisted_vertical_velocity = minf(TAKEOFF_ASSIST_VERTICAL_SPEED_MPS, takeoff_remaining_m / delta)
+                takeoff_assist_commanded_altitude_m += assisted_vertical_velocity * delta
+            else:
+                takeoff_assist_active = false
+        elif assisted_throttle_waiting_for_neutral:
+            assisted_throttle_waiting_for_neutral = absf(_profile_throttle_raw()) > InputProfiles.GamepadProfile.THROTTLE_LOW_THRESHOLD
+        else:
+            assisted_vertical_velocity = _profile_axis("throttle") * ASSISTED_MAX_VERTICAL_SPEED_MPS
     if flight_mode == "ASSISTED_HOLD":
-        throttle = 0.5
+        throttle = assisted_hover_throttle
         angle_yaw = _profile_axis("yaw") * ASSISTED_MAX_YAW_RATE_DPS if _has_active_gamepad_profile() else 0.0
     var acro_roll := _profile_axis("roll") if _has_active_gamepad_profile() else _acro_roll_stick()
     var acro_pitch := _profile_axis("pitch") if _has_active_gamepad_profile() else _acro_pitch_stick()
@@ -1877,19 +1887,19 @@ func request_takeoff() -> void:
     set_paused(false)
     takeoff_requested = true
     takeoff_assist_active = false
-    takeoff_assist_throttle = 0.0
+    takeoff_assist_commanded_altitude_m = 0.0
+    assisted_throttle_waiting_for_neutral = false
     update_fallback_status()
-    if _has_active_gamepad_profile() and native != null and native.has_method("hardware_power_diagnostics"):
-        var diagnostics: Dictionary = native.call("hardware_power_diagnostics")
-        var hover_throttle := float(diagnostics.get("hover_throttle", 0.0))
-        if is_finite(hover_throttle) and hover_throttle > 0.0:
-            takeoff_assist_throttle = clampf(hover_throttle + TAKEOFF_ASSIST_MARGIN, 0.0, 1.0)
-            takeoff_assist_active = true
+    takeoff_assist_active = _has_active_gamepad_profile() and native != null
     if drone_body != null:
         if not reset_to_spawn():
             return
         drone_body.freeze = false
         drone_body.sleeping = false
+        if takeoff_assist_active:
+            flight_mode = "ASSISTED_HOLD"
+            assisted_throttle_waiting_for_neutral = true
+            assisted_hover_throttle = _configured_hover_throttle()
     if time_trial != null:
         time_trial.start()
     _refresh_flight_hud()
@@ -2257,7 +2267,8 @@ func respawn() -> void:
     _reset_airsim_flight_state(true)
     _airsim_disarm_requested = false
     takeoff_assist_active = false
-    takeoff_assist_throttle = 0.0
+    takeoff_assist_commanded_altitude_m = 0.0
+    assisted_throttle_waiting_for_neutral = false
     screen = "flight"
     flight_mode = "ANGLE"
     takeoff_requested = true
@@ -2810,6 +2821,7 @@ func toggle_altitude_hold() -> void:
     else:
         native.call("capture_altitude_hold")
         flight_mode = "ASSISTED_HOLD"
+        assisted_hover_throttle = _configured_hover_throttle()
     update_fallback_status()
 
 
@@ -3783,6 +3795,7 @@ func _build_flight_hud() -> void:
     layer.layer = 30
     flight_hud_layer = layer
     add_child(layer)
+    _build_cockpit_regions(layer)
     _build_analog_noise_overlay(layer)
     _build_osd(layer)
     _build_gamepad_hud(layer)
@@ -3811,6 +3824,7 @@ func _build_flight_hud() -> void:
     key_hints_label = Label.new()
     key_hints_label.name = "KeyHints"
     key_hints_label.text = _t("ui.hints")
+    key_hints_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     rows.add_child(key_hints_label)
 
     arm_status_label = Label.new()
@@ -3847,13 +3861,37 @@ func _build_flight_hud() -> void:
     _build_license_panel()
 
 
+func _build_cockpit_regions(layer: CanvasLayer) -> void:
+    var left_rail := Panel.new()
+    left_rail.name = "LeftRail"
+    left_rail.set_anchors_preset(Control.PRESET_LEFT_WIDE)
+    left_rail.offset_right = COCKPIT_LEFT_RAIL_WIDTH
+    left_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    layer.add_child(left_rail)
+
+    var flight_view := Control.new()
+    flight_view.name = "FlightViewRegion"
+    flight_view.set_anchors_preset(Control.PRESET_FULL_RECT)
+    flight_view.offset_left = COCKPIT_LEFT_RAIL_WIDTH
+    flight_view.offset_right = -COCKPIT_RIGHT_RAIL_WIDTH
+    flight_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    layer.add_child(flight_view)
+
+    var right_rail := Panel.new()
+    right_rail.name = "RightRail"
+    right_rail.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+    right_rail.offset_left = -COCKPIT_RIGHT_RAIL_WIDTH
+    right_rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    layer.add_child(right_rail)
+
+
 func _build_gamepad_hud(layer: CanvasLayer) -> void:
     var margin := MarginContainer.new()
     margin.name = "GamepadHudMargin"
     margin.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
     margin.offset_left = 10.0
-    margin.offset_top = -214.0
-    margin.offset_right = 292.0
+    margin.offset_top = -224.0
+    margin.offset_right = COCKPIT_LEFT_RAIL_WIDTH - 10.0
     margin.offset_bottom = -10.0
     layer.add_child(margin)
     gamepad_hud_panel = PanelContainer.new()
@@ -3867,8 +3905,8 @@ func _build_motor_hud(layer: CanvasLayer) -> void:
     var margin := MarginContainer.new()
     margin.name = "MotorHudMargin"
     margin.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
-    margin.offset_left = -292.0
-    margin.offset_top = -202.0
+    margin.offset_left = -COCKPIT_RIGHT_RAIL_WIDTH + 10.0
+    margin.offset_top = -224.0
     margin.offset_right = -10.0
     margin.offset_bottom = -10.0
     margin.add_theme_constant_override("margin_left", 6)
@@ -4301,7 +4339,7 @@ func _build_status_diagram() -> void:
             body_drag_debug_panel = body_drag_panel_script.new()
             add_child(body_drag_debug_panel)
             if body_drag_debug_panel.has_method("set_screen_visible"):
-                body_drag_debug_panel.call("set_screen_visible", screen in ["preflight", "flight", "lab_mode", "finish"])
+                body_drag_debug_panel.call("set_screen_visible", screen == "lab_mode")
 
 
 func _refresh_camera_panel() -> void:
@@ -4455,7 +4493,7 @@ func _refresh_flight_hud() -> void:
     if main_menu_layer != null:
         main_menu_layer.visible = screen in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
     if body_drag_debug_panel != null and body_drag_debug_panel.has_method("set_screen_visible"):
-        body_drag_debug_panel.call("set_screen_visible", screen in ["preflight", "flight", "lab_mode", "finish"])
+        body_drag_debug_panel.call("set_screen_visible", screen == "lab_mode")
     if main_menu_entries_container != null:
         main_menu_entries_container.visible = screen == "main_menu"
     if flight_setup_panel != null:
@@ -4472,6 +4510,11 @@ func _refresh_flight_hud() -> void:
         graphics_panel.visible = screen == "graphics"
     if flight_hud_layer != null:
         flight_hud_layer.visible = screen not in ["main_menu", "flight_setup", "settings", "controller_settings", "rates", "graphics"]
+        var cockpit_visible := screen in ["preflight", "flight", "finish", "error"]
+        for region_name in ["LeftRail", "FlightViewRegion", "RightRail"]:
+            var cockpit_region := flight_hud_layer.get_node_or_null(region_name) as Control
+            if cockpit_region != null:
+                cockpit_region.visible = cockpit_visible
         var status_margin := flight_hud_layer.get_node_or_null("StatusMargin") as Control
         if status_margin != null:
             status_margin.visible = screen != "controller_confirmation" and not (paused and screen == "flight")
@@ -4482,7 +4525,7 @@ func _refresh_flight_hud() -> void:
     if osd_panel != null:
         osd_panel.visible = screen == "osd"
     if controller_safety_panel != null:
-        controller_safety_panel.visible = controller_safety_latched and screen != "controller_confirmation" and not (paused and screen == "flight")
+        controller_safety_panel.visible = controller_safety_latched and screen not in ["controller_confirmation", "fallback_prompt"] and not (paused and screen == "flight")
     if controller_safety_label != null:
         controller_safety_label.text = visible_error_message
     if controller_confirmation_panel != null:
@@ -4803,6 +4846,13 @@ func _flight_throttle() -> float:
     if not _has_active_gamepad_profile():
         return KEYBOARD_FLIGHT_THROTTLE
     return clampf((_profile_axis("throttle") + 1.0) * 0.5, 0.0, 1.0)
+
+func _configured_hover_throttle() -> float:
+    if native != null and native.has_method("hardware_power_diagnostics"):
+        var hover_throttle := float(native.call("hardware_power_diagnostics").get("hover_throttle", 0.5))
+        if is_finite(hover_throttle) and hover_throttle > 0.0:
+            return clampf(hover_throttle, 0.0, 1.0)
+    return 0.5
 
 func _profile_throttle_is_low() -> bool:
     return _has_active_gamepad_profile() and session_gamepad_profile.throttle_axis_is_low(_profile_throttle_raw())
