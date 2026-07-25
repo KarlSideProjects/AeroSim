@@ -13,7 +13,7 @@ func set_controller_state(value: Dictionary) -> void:
 func _draw() -> void:
     var connected := bool(state.get("connected", false))
     var color := Color(0.18, 0.78, 1.0) if connected else Color(0.45, 0.45, 0.45)
-    draw_string(ThemeDB.fallback_font, Vector2(85.0, 18.0), String(state.get("title", "XBOX MODE 2")), HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, Color.WHITE)
+    draw_string(ThemeDB.fallback_font, Vector2(85, 18), String(state.get("title", "XBOX MODE 2")), HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, Color.WHITE)
     draw_string(ThemeDB.fallback_font, Vector2(92.0, 35.0), String(state.get("mode", "-")), HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, color)
     draw_circle(Vector2(141.0, 108.0), 70.0, Color(0.04, 0.07, 0.11, 0.94))
     draw_arc(Vector2(141.0, 108.0), 70.0, 0.0, TAU, 32, color, 2.0)

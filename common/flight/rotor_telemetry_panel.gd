@@ -18,7 +18,7 @@ func _process(delta: float) -> void:
         queue_redraw()
 
 func _draw() -> void:
-    draw_string(ThemeDB.fallback_font, Vector2(84.0, 18.0), "LIVE MOTOR TELEMETRY", HORIZONTAL_ALIGNMENT_LEFT, -1.0, 13, Color.WHITE)
+    draw_string(ThemeDB.fallback_font, Vector2(84, 18), "LIVE MOTOR TELEMETRY", HORIZONTAL_ALIGNMENT_LEFT, -1.0, 13, Color.WHITE)
     var cells: Array = motor_hud.get("cells", [])
     var centers := [Vector2(72.0, 65.0), Vector2(210.0, 65.0), Vector2(72.0, 145.0), Vector2(210.0, 145.0)]
     for index in range(centers.size()):
