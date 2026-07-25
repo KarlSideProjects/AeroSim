@@ -2109,9 +2109,14 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox throttle axis must change simulated thrust instead of using a fixed runtime throttle")
         scene.queue_free()
         return false
-    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, 0.50)
-    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.25)
-    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, -0.50)
+    for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y]:
+        _inject_joy_axis(known_device_id, axis, 0.0)
+    scene.native.call("reset_flight")
+    scene.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+    scene.drone_body.reset_contact()
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, -0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, -0.25)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.50)
     for _frame in range(30):
         await physics_frame
     var angle_rates := Vector3(
@@ -2120,8 +2125,8 @@ func _verify_runtime_actions() -> bool:
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
     )
     var angle_rates_frd := AirSimCoordinateContract.godot_body_to_frd(angle_rates)
-    if angle_rates_frd.x <= 0.01 or angle_rates_frd.y <= 0.01 or angle_rates_frd.z <= 0.01:
-        push_error("Xbox positive roll, pitch, and yaw axes must produce positive FRD angular velocity in Angle mode")
+    if angle_rates_frd.x >= -0.01 or angle_rates_frd.y >= -0.01 or angle_rates_frd.z >= -0.01:
+        push_error("Xbox Mode 2 roll, pitch, and yaw axes must produce the expected negative FRD response in Angle mode")
         scene.queue_free()
         return false
     button_clock.milliseconds = 100
