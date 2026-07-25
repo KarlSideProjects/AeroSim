@@ -14,7 +14,7 @@ Godot 4.7 + C++ GDExtension 的最小專案骨架。
 - Python 3
 - `g++` 或相容 C++17 compiler
 - `scons`（若本機沒有，`scripts/verify_issue_11.sh` 會安裝到 `.deps/venv`）
-- `godot-cpp`：`scripts/verify_issue_11.sh` 會 checkout 到 `docs/versions/godot-4.7.lock` 指定 commit
+- `godot-cpp`：固定 commit 已隨 repo 放在 `third_party/godot-cpp/`，不需要另外下載
 
 ## 版本鎖定政策
 
@@ -45,7 +45,7 @@ GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64
 若第一次啟動時出現找不到 `libaerosim_native`，先建置 Linux debug GDExtension：
 
 ```bash
-GODOT_CPP_DIR=/path/to/godot-cpp scons target=template_debug platform=linux
+GODOT_CPP_DIR=third_party/godot-cpp scons target=template_debug platform=linux
 ```
 
 啟動後依畫面上的控制提示操作；Xbox 手把會顯示對應的手把按鍵，未連接手把時可使用鍵盤提示。
@@ -63,7 +63,7 @@ scripts/test_native.sh
 python3 scripts/check_licenses.py
 scripts/test_license_scan.sh
 python3 -m unittest license_server.test_license_server
-GODOT_CPP_DIR=/path/to/godot-cpp scons target=template_debug platform=linux
+GODOT_CPP_DIR=third_party/godot-cpp scons target=template_debug platform=linux
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5
 ```
 
