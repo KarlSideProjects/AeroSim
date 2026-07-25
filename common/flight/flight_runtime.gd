@@ -11,6 +11,8 @@ const CameraProfile = preload("res://common/flight/camera_profile.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
+const RotorTelemetryPanel = preload("res://common/flight/rotor_telemetry_panel.gd")
+const GamepadTelemetryPanel = preload("res://common/flight/gamepad_telemetry_panel.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
 const AirSimSettings = preload("res://common/rpc/airsim_settings.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
@@ -39,6 +41,8 @@ const TAKEOFF_ASSIST_ALTITUDE_M := 1.0
 const TAKEOFF_ASSIST_MARGIN := 0.08
 const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
+const ASSISTED_MAX_YAW_RATE_DPS := 120.0
+const ASSISTED_MAX_VERTICAL_SPEED_MPS := 2.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 const THIRD_PERSON_CAMERA_OFFSET := Vector3(0.0, 0.8, 1.8)
@@ -124,6 +128,10 @@ var controller_settings_panel: Control
 var flight_hud_layer: CanvasLayer
 var motor_hud_panel: PanelContainer
 var motor_hud_labels: Dictionary = {}
+var motor_hud_rotor_panel: Control
+var motor_hud_spin_directions: Array = []
+var gamepad_hud_panel: PanelContainer
+var gamepad_hud_display: Control
 var key_hints_label: Label
 var arm_status_label: Label
 var player_view_label: Label
@@ -297,6 +305,7 @@ func _ready() -> void:
     if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
         last_error_message = hardware_config.last_error
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
+    motor_hud_spin_directions = hardware_config.current.get("spin_direction", [])
     if not _configure_secondary_native(hardware_config):
         push_error("Named vehicle runtime setup failed: %s" % last_error_message)
         if airsim_rpc_server != null and airsim_rpc_server.is_running():
@@ -718,6 +727,8 @@ func _record_replay_command(vehicle_name: String, controls: Dictionary, timestam
     if not _replay_recording_active or native == null:
         return
     var mode := String(controls.get("mode", "ANGLE"))
+    if mode == "ASSISTED_HOLD":
+        mode = "ALTITUDE_HOLD"
     var recorded_timestamp_us := _replay_timestamp_us() if timestamp_us < 0 else _replay_timestamp_for_recorded_frame(timestamp_us)
     var result: Dictionary
     if native.has_method("record_replay_mode_command"):
@@ -734,7 +745,10 @@ func _record_replay_command(vehicle_name: String, controls: Dictionary, timestam
             _acro_rate("super_rate"),
             _acro_rate("expo"),
             float(controls.get("altitude_m", 0.0)),
-            0)
+            0,
+            float(controls.get("vertical_velocity_mps", 0.0)),
+            bool(controls.get("heading_hold_enabled", false)),
+            bool(controls.get("position_hold_enabled", false)))
     else:
         result = native.call(
             "record_replay_command",
@@ -1089,7 +1103,7 @@ func _restore_startup_gamepad_session() -> void:
 
 func _save_gamepad_profile(profile: InputProfiles.GamepadProfile) -> Dictionary:
     var loaded: Dictionary = settings_store.load_document()
-    if not loaded.ok:
+    if not loaded.ok and not (bool(loaded.get("recovered", false)) and String(loaded.get("error", "")).contains("confirmed_gamepad")):
         return {"ok": false, "error": "cannot save gamepad while settings are unavailable: %s" % loaded.error}
     var document: Dictionary = loaded.document
     document["confirmed_gamepad"] = profile.to_persisted_dict()
@@ -1359,13 +1373,17 @@ func _physics_process(delta: float) -> void:
             takeoff_assist_active = false
         elif drone_body != null and drone_body.global_position.y >= _spawn_position().y + TAKEOFF_ASSIST_ALTITUDE_M:
             takeoff_assist_active = false
-            session_gamepad_profile.throttle = takeoff_assist_throttle - TAKEOFF_ASSIST_MARGIN
-            throttle = session_gamepad_profile.throttle
+            native.call("capture_altitude_hold")
+            flight_mode = "ASSISTED_HOLD"
         else:
             throttle = takeoff_assist_throttle
     var angle_roll := _angle_roll_degrees()
     var angle_pitch := _angle_pitch_degrees()
     var angle_yaw := _angle_yaw_rate_degrees_per_second()
+    var assisted_vertical_velocity := _profile_axis("throttle") * ASSISTED_MAX_VERTICAL_SPEED_MPS if flight_mode == "ASSISTED_HOLD" and _has_active_gamepad_profile() else 0.0
+    if flight_mode == "ASSISTED_HOLD":
+        throttle = 0.5
+        angle_yaw = _profile_axis("yaw") * ASSISTED_MAX_YAW_RATE_DPS if _has_active_gamepad_profile() else 0.0
     var acro_roll := _profile_axis("roll") if _has_active_gamepad_profile() else _acro_roll_stick()
     var acro_pitch := _profile_axis("pitch") if _has_active_gamepad_profile() else _acro_pitch_stick()
     var acro_yaw := _profile_axis("yaw") if _has_active_gamepad_profile() else _acro_yaw_stick()
@@ -1483,8 +1501,8 @@ func _physics_process(delta: float) -> void:
                 energy_limit
             )
         else:
-            var step_method := "step_collision_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_collision_angle_mode"
-            row = native.call(
+            var step_method := "step_collision_altitude_hold_mode" if flight_mode in ["ALTITUDE_HOLD", "ASSISTED_HOLD"] else "step_collision_angle_mode"
+            var step_args := [
                 step_method,
                 Engine.physics_ticks_per_second,
                 1000,
@@ -1507,15 +1525,25 @@ func _physics_process(delta: float) -> void:
                 angular_velocity_body.y,
                 angular_velocity_body.z,
                 energy_limit
-            )
+            ]
+            if flight_mode == "ASSISTED_HOLD":
+                step_args.append(assisted_vertical_velocity)
+                step_args.append(true)
+                step_args.append(true)
+            row = native.callv(step_args[0], step_args.slice(1))
         if _handle_native_step_failure(native, row, true):
             return
     else:
         if flight_mode == "ACRO":
             row = native.call("step_acro_mode", Engine.physics_ticks_per_second, 1000, throttle, acro_roll, acro_pitch, acro_yaw, _acro_rate("rc_rate"), _acro_rate("super_rate"), _acro_rate("expo"))
         else:
-            var free_flight_method := "step_altitude_hold_mode" if flight_mode == "ALTITUDE_HOLD" else "step_angle_mode"
-            row = native.call(free_flight_method, Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw)
+            var free_flight_method := "step_altitude_hold_mode" if flight_mode in ["ALTITUDE_HOLD", "ASSISTED_HOLD"] else "step_angle_mode"
+            var free_flight_args := [Engine.physics_ticks_per_second, 1000, throttle, angle_roll, angle_pitch, angle_yaw]
+            if flight_mode == "ASSISTED_HOLD":
+                free_flight_args.append(assisted_vertical_velocity)
+                free_flight_args.append(true)
+                free_flight_args.append(true)
+            row = native.callv(free_flight_method, free_flight_args)
         if _handle_native_step_failure(native, row, true):
             return
     if _airsim_secondary_native != null and secondary_drone_body != null and (airsim_session == null or not airsim_session.is_paused()):
@@ -1533,6 +1561,12 @@ func _physics_process(delta: float) -> void:
         _airsim_collision_seen = true
         _airsim_collision_normal = drone_body.contact_normal
         _airsim_collision_point = drone_body.global_position
+        if flight_mode == "ASSISTED_HOLD" and assisted_vertical_velocity < -0.05 and absf(drone_body.linear_velocity.y) <= 0.25:
+            native.call("disarm_flight_control")
+            _airsim_disarm_requested = true
+            takeoff_requested = false
+            drone_body.freeze = true
+            drone_body.sleeping = true
         drone_body.reset_contact()
     if px4_sitl_bridge == null:
         _record_replay_command(_airsim_vehicle_name, {
@@ -1545,6 +1579,9 @@ func _physics_process(delta: float) -> void:
             "acro_pitch": acro_pitch,
             "acro_yaw": acro_yaw,
             "altitude_m": drone_body.global_position.y if drone_body != null else 0.0,
+            "vertical_velocity_mps": assisted_vertical_velocity,
+            "heading_hold_enabled": flight_mode == "ASSISTED_HOLD",
+            "position_hold_enabled": flight_mode == "ASSISTED_HOLD",
         }, replay_timestamp_us)
     if row.size() >= 13:
         last_collision_authority = int(row[12])
@@ -1940,6 +1977,7 @@ func apply_flight_setup(raw_setup: Dictionary) -> bool:
         if not hardware_config.apply_to_runtime(self, String(candidate.hardware_preset)):
             last_error_message = hardware_config.last_error
             return false
+        motor_hud_spin_directions = hardware_config.current.get("spin_direction", [])
         _apply_hardware_camera_defaults(hardware_config)
     flight_setup = candidate
     flight_mode = String(candidate.mode)
@@ -2757,6 +2795,8 @@ func _localized_flight_mode(mode: String) -> String:
             return _t("ui.dashboard.mode_acro")
         "ALTITUDE_HOLD":
             return _t("ui.dashboard.mode_altitude_hold")
+        "ASSISTED_HOLD":
+            return _t("ui.dashboard.mode_altitude_hold")
         "", "-":
             return _t("ui.dashboard.none")
         _:
@@ -2765,11 +2805,11 @@ func _localized_flight_mode(mode: String) -> String:
 func toggle_altitude_hold() -> void:
     if native == null or not takeoff_requested:
         return
-    if flight_mode == "ALTITUDE_HOLD":
+    if flight_mode in ["ALTITUDE_HOLD", "ASSISTED_HOLD"]:
         flight_mode = "ANGLE"
     else:
         native.call("capture_altitude_hold")
-        flight_mode = "ALTITUDE_HOLD"
+        flight_mode = "ASSISTED_HOLD"
     update_fallback_status()
 
 
@@ -3745,6 +3785,7 @@ func _build_flight_hud() -> void:
     add_child(layer)
     _build_analog_noise_overlay(layer)
     _build_osd(layer)
+    _build_gamepad_hud(layer)
     _build_motor_hud(layer)
 
     var margin := MarginContainer.new()
@@ -3806,6 +3847,22 @@ func _build_flight_hud() -> void:
     _build_license_panel()
 
 
+func _build_gamepad_hud(layer: CanvasLayer) -> void:
+    var margin := MarginContainer.new()
+    margin.name = "GamepadHudMargin"
+    margin.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+    margin.offset_left = 10.0
+    margin.offset_top = -214.0
+    margin.offset_right = 292.0
+    margin.offset_bottom = -10.0
+    layer.add_child(margin)
+    gamepad_hud_panel = PanelContainer.new()
+    gamepad_hud_panel.name = "GamepadHudPanel"
+    margin.add_child(gamepad_hud_panel)
+    gamepad_hud_display = GamepadTelemetryPanel.new()
+    gamepad_hud_display.name = "GamepadTelemetryPanel"
+    gamepad_hud_panel.add_child(gamepad_hud_display)
+
 func _build_motor_hud(layer: CanvasLayer) -> void:
     var margin := MarginContainer.new()
     margin.name = "MotorHudMargin"
@@ -3823,30 +3880,9 @@ func _build_motor_hud(layer: CanvasLayer) -> void:
     motor_hud_panel = PanelContainer.new()
     motor_hud_panel.name = "MotorHudPanel"
     margin.add_child(motor_hud_panel)
-    var rows := VBoxContainer.new()
-    rows.name = "Rows"
-    motor_hud_panel.add_child(rows)
-    var title := Label.new()
-    title.name = "Title"
-    title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    title.add_theme_font_size_override("font_size", 14)
-    title.text = _t("ui.motor_hud.title")
-    rows.add_child(title)
-    var grid := GridContainer.new()
-    grid.name = "Grid"
-    grid.columns = 2
-    rows.add_child(grid)
-    for label_name in ["FL", "FR", "RL", "RR"]:
-        var label := Label.new()
-        label.name = label_name
-        label.custom_minimum_size = Vector2(132.0, 64.0)
-        label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-        label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-        label.add_theme_font_size_override("font_size", 13)
-        label.add_theme_constant_override("line_spacing", -2)
-        label.text = _format("ui.motor_hud.unavailable", [label_name])
-        grid.add_child(label)
-        motor_hud_labels[label_name] = label
+    motor_hud_rotor_panel = RotorTelemetryPanel.new()
+    motor_hud_rotor_panel.name = "RotorTelemetryPanel"
+    motor_hud_panel.add_child(motor_hud_rotor_panel)
 
 
 func _build_analog_noise_overlay(layer: CanvasLayer) -> void:
@@ -4486,6 +4522,7 @@ func _refresh_flight_hud() -> void:
             var trial_state := _t("ui.hud.time_trial_finished") if time_trial.finished else _format("ui.hud.time_trial_next", [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()])
             time_trial_status_label.text = _format("ui.hud.time_trial", [trial_state, time_trial.elapsed_seconds])
     _refresh_motor_hud()
+    _refresh_gamepad_hud()
     _refresh_osd()
     if screen == "preflight":
         var armed := _flight_control_armed()
@@ -4527,16 +4564,30 @@ func _refresh_motor_hud() -> void:
     if motor_hud_panel == null:
         return
     motor_hud_panel.visible = screen in ["flight", "error"]
-    var title := motor_hud_panel.get_node_or_null("Rows/Title") as Label
-    if title != null:
-        title.text = _t("ui.motor_hud.title")
     var motor_hud := {"cells": []}
     if status_diagram != null and status_diagram.has_method("get_motor_hud_state"):
-        motor_hud = status_diagram.call("get_motor_hud_state", paused, last_error_message if screen == "error" else "")
-    for cell in motor_hud.cells:
-        var label := motor_hud_labels.get(String(cell.label)) as Label
-        if label != null:
-            label.text = String(cell.text)
+        motor_hud = status_diagram.call("get_motor_hud_state", paused, last_error_message if screen == "error" else "", motor_hud_spin_directions)
+    if motor_hud_rotor_panel != null and motor_hud_rotor_panel.has_method("set_motor_hud"):
+        motor_hud_rotor_panel.call("set_motor_hud", motor_hud)
+
+func _refresh_gamepad_hud() -> void:
+    if gamepad_hud_panel == null or gamepad_hud_display == null:
+        return
+    gamepad_hud_panel.visible = screen in ["flight", "error"]
+    var connected := _has_active_gamepad_profile() and session_gamepad_device_id >= 0
+    gamepad_hud_display.call("set_controller_state", {
+        "connected": connected,
+        "title": _t("ui.gamepad_hud.title"),
+        "left_label": "%s / %s" % [_localized_controller_role("yaw"), _t("ui.gamepad_hud.climb")],
+        "right_label": "%s / %s" % [_localized_controller_role("roll"), _localized_controller_role("pitch")],
+        "actions": _t("ui.gamepad_hud.actions"),
+        "connection": _t("ui.gamepad_hud.connected") if connected else _t("ui.gamepad_hud.unavailable"),
+        "mode": _localized_flight_mode(flight_mode),
+        "yaw": _profile_axis("yaw") if connected else 0.0,
+        "throttle": _profile_axis("throttle") if connected else 0.0,
+        "roll": _profile_axis("roll") if connected else 0.0,
+        "pitch": _profile_axis("pitch") if connected else 0.0,
+    })
 
 func _handle_primary_action() -> void:
     if screen == "fallback_prompt":
@@ -4612,6 +4663,10 @@ func _refresh_controller_confirmation() -> void:
         var axis := int(controller_confirmation_profile.axis_for_role[role])
         var raw := Input.get_joy_axis(controller_confirmation_device_id, axis)
         var normalized := _normalize_gamepad_axis(raw, controller_confirmation_profile.deadzone)
+        if controller_confirmation_profile.reversed_for_role[role]:
+            normalized = -normalized
+        if is_zero_approx(normalized):
+            normalized = 0.0
         mapping_lines.append(_format("ui.controller.mapping_line", [_localized_controller_role(role), axis, _localized_reversed_suffix() if controller_confirmation_profile.reversed_for_role[role] else ""]))
         live_axis_lines.append(_format("ui.controller.live_axis_line", [_localized_controller_role(role), raw, normalized]))
     confirmation_mapping_label.text = "\n".join(mapping_lines)
@@ -4665,9 +4720,7 @@ func _controller_monitor_bar(value: float) -> String:
     return "[%s|%s]" % ["-".repeat(marker), "-".repeat(16 - marker)]
 
 func _normalize_gamepad_axis(raw: float, deadzone: float) -> float:
-    if absf(raw) <= deadzone:
-        return 0.0
-    return sign(raw) * (absf(raw) - deadzone) / (1.0 - deadzone)
+    return InputProfiles.GamepadProfile.normalize_axis(raw, deadzone)
 
 func _handle_gamepad_button(event: InputEventJoypadButton) -> bool:
     if not _has_active_gamepad_profile() or event.device != session_gamepad_device_id:
@@ -4738,7 +4791,7 @@ func _profile_axis(role: String) -> float:
     var normalized := _normalize_gamepad_axis(raw, session_gamepad_profile.deadzone)
     if session_gamepad_profile.reversed_for_role[role]:
         normalized = -normalized
-    return normalized
+    return 0.0 if is_zero_approx(normalized) else normalized
 
 func _profile_throttle_raw() -> float:
     if not _has_active_gamepad_profile():
@@ -4749,8 +4802,7 @@ func _profile_throttle_raw() -> float:
 func _flight_throttle() -> float:
     if not _has_active_gamepad_profile():
         return KEYBOARD_FLIGHT_THROTTLE
-    session_gamepad_profile.apply_throttle_axis(_profile_throttle_raw())
-    return session_gamepad_profile.throttle
+    return clampf((_profile_axis("throttle") + 1.0) * 0.5, 0.0, 1.0)
 
 func _profile_throttle_is_low() -> bool:
     return _has_active_gamepad_profile() and session_gamepad_profile.throttle_axis_is_low(_profile_throttle_raw())

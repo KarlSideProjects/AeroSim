@@ -452,6 +452,35 @@ int main() {
         return fail("Altitude Hold mode transitions must not introduce a thrust step");
     }
 
+    aerosim::FlightCommand climb_hold = hover;
+    climb_hold.vertical_velocity_mps = 1.0;
+    altitude_hold_controller.step_altitude_hold_mode(
+            altitude_hold_state, altitude_hold_clock, config, climb_hold, hold_altitude_m, aerosim::Quat{});
+    if (altitude_hold_controller.control_state().altitude_hold_target_m <= hold_altitude_m) {
+        return fail("Assisted vertical command must advance the altitude-hold target before returning to hold");
+    }
+    aerosim::FlightCommand heading_hold = hover;
+    heading_hold.heading_hold_enabled = true;
+    altitude_hold_state.orientation.z = std::sin(0.5 * 0.4);
+    altitude_hold_state.orientation.w = std::cos(0.5 * 0.4);
+    altitude_hold_controller.step_altitude_hold_mode(
+            altitude_hold_state, altitude_hold_clock, config, heading_hold, hold_altitude_m, altitude_hold_state.orientation);
+    if (std::abs(altitude_hold_controller.control_state().heading_hold_target_radians - 0.4) > 0.01) {
+        return fail("Assisted heading hold must capture the noisy estimated heading when yaw returns to center");
+    }
+    aerosim::FlightCommand position_hold = hover;
+    position_hold.position_hold_enabled = true;
+    altitude_hold_state.position = {2.0, hold_altitude_m, -1.0};
+    const aerosim::Vec3 captured_position = altitude_hold_state.position;
+    altitude_hold_controller.step_altitude_hold_mode(
+            altitude_hold_state, altitude_hold_clock, config, position_hold, hold_altitude_m, altitude_hold_state.orientation);
+    const aerosim::Vec3 position_target = altitude_hold_controller.control_state().position_hold_target_world;
+    if (std::abs(position_target.x - captured_position.x) > 1e-6 ||
+            std::abs(position_target.y - captured_position.y) > 1e-6 ||
+            std::abs(position_target.z - captured_position.z) > 1e-6) {
+        return fail("Assisted position hold must capture a horizontal target when the right stick returns to center");
+    }
+
     aerosim::RigidBodyState hold_state;
     aerosim::SimulationClock hold_clock;
     aerosim::FlightController hold_controller;

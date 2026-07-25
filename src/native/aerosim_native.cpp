@@ -330,8 +330,8 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("record_replay_command", "timestamp_us", "vehicle_name", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "controller_authority"),
             &AeroSimNative::record_replay_command);
     ClassDB::bind_method(
-            D_METHOD("record_replay_mode_command", "timestamp_us", "vehicle_name", "mode", "throttle", "roll", "pitch", "yaw", "rc_rate", "super_rate", "expo", "measured_altitude_m", "controller_authority"),
-            &AeroSimNative::record_replay_mode_command);
+            D_METHOD("record_replay_mode_command", "timestamp_us", "vehicle_name", "mode", "throttle", "roll", "pitch", "yaw", "rc_rate", "super_rate", "expo", "measured_altitude_m", "controller_authority", "vertical_velocity_mps", "heading_hold_enabled", "position_hold_enabled"),
+            &AeroSimNative::record_replay_mode_command, DEFVAL(0.0), DEFVAL(false), DEFVAL(false));
     ClassDB::bind_method(
             D_METHOD("record_replay_actuator_command", "timestamp_us", "vehicle_name", "motor_0", "motor_1", "motor_2", "motor_3", "controller_authority"),
             &AeroSimNative::record_replay_actuator_command);
@@ -416,14 +416,16 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("step_acro_mode", "physics_hz", "substep_hz", "throttle", "roll_stick", "pitch_stick", "yaw_stick", "rc_rate", "super_rate", "expo"),
             &AeroSimNative::step_acro_mode);
     ClassDB::bind_method(
-            D_METHOD("step_altitude_hold_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second"),
-            &AeroSimNative::step_altitude_hold_mode);
+            D_METHOD("step_altitude_hold_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "vertical_velocity_mps", "heading_hold_enabled", "position_hold_enabled"),
+            &AeroSimNative::step_altitude_hold_mode,
+            DEFVAL(0.0), DEFVAL(false), DEFVAL(false));
     ClassDB::bind_method(
             D_METHOD("step_collision_angle_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules"),
             &AeroSimNative::step_collision_angle_mode);
     ClassDB::bind_method(
-            D_METHOD("step_collision_altitude_hold_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules"),
-            &AeroSimNative::step_collision_altitude_hold_mode);
+            D_METHOD("step_collision_altitude_hold_mode", "physics_hz", "substep_hz", "throttle", "roll_degrees", "pitch_degrees", "yaw_rate_degrees_per_second", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules", "vertical_velocity_mps", "heading_hold_enabled", "position_hold_enabled"),
+            &AeroSimNative::step_collision_altitude_hold_mode,
+            DEFVAL(0.0), DEFVAL(false), DEFVAL(false));
     ClassDB::bind_method(
             D_METHOD("step_collision_acro_mode", "physics_hz", "substep_hz", "throttle", "roll_stick", "pitch_stick", "yaw_stick", "rc_rate", "super_rate", "expo", "touching", "normal_x", "normal_y", "normal_z", "impulse_x", "impulse_y", "impulse_z", "restitution", "resolved_velocity_x", "resolved_velocity_y", "resolved_velocity_z", "resolved_angular_velocity_x", "resolved_angular_velocity_y", "resolved_angular_velocity_z", "max_kinetic_energy_joules"),
             &AeroSimNative::step_collision_acro_mode);
@@ -965,7 +967,10 @@ Dictionary AeroSimNative::record_replay_mode_command(
         double super_rate,
         double expo,
         double measured_altitude_m,
-        std::int32_t controller_authority) {
+        std::int32_t controller_authority,
+        double vertical_velocity_mps,
+        bool heading_hold_enabled,
+        bool position_hold_enabled) {
     if (replay_recorder_ == nullptr || timestamp_us < 0) {
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
         return replay_status(false, &diagnostic);
@@ -979,7 +984,7 @@ Dictionary AeroSimNative::record_replay_mode_command(
     const std::string mode_name = std::string(mode.utf8().get_data());
     if (mode_name == "ACRO") {
         command_mode = aerosim::ReplayCommandMode::Acro;
-    } else if (mode_name == "ALTITUDE_HOLD") {
+    } else if (mode_name == "ALTITUDE_HOLD" || mode_name == "ASSISTED_HOLD") {
         command_mode = aerosim::ReplayCommandMode::AltitudeHold;
     } else if (mode_name == "ANGLE") {
         command_mode = aerosim::ReplayCommandMode::Angle;
@@ -992,6 +997,9 @@ Dictionary AeroSimNative::record_replay_mode_command(
     angle_command.roll_degrees = roll;
     angle_command.pitch_degrees = pitch;
     angle_command.yaw_rate_degrees_per_second = yaw;
+    angle_command.vertical_velocity_mps = vertical_velocity_mps;
+    angle_command.heading_hold_enabled = heading_hold_enabled;
+    angle_command.position_hold_enabled = position_hold_enabled;
     aerosim::AcroCommand acro_command;
     acro_command.throttle = throttle;
     acro_command.roll_stick = roll;
@@ -2141,7 +2149,10 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
         double throttle,
         double roll_degrees,
         double pitch_degrees,
-        double yaw_rate_degrees_per_second) {
+        double yaw_rate_degrees_per_second,
+        double vertical_velocity_mps,
+        bool heading_hold_enabled,
+        bool position_hold_enabled) {
     const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
         set_step_error("step_altitude_hold_mode", aerosim::StepStatus::InvalidConfig, "timing");
@@ -2160,6 +2171,9 @@ PackedFloat64Array AeroSimNative::step_altitude_hold_mode(
     command.roll_degrees = roll_degrees;
     command.pitch_degrees = pitch_degrees;
     command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
+    command.vertical_velocity_mps = vertical_velocity_mps;
+    command.heading_hold_enabled = heading_hold_enabled;
+    command.position_hold_enabled = position_hold_enabled;
 
     const aerosim::StepStatus input_status = aerosim::validate_altitude_hold_step_inputs(
             simulation_state_, simulation_clock_, config, command, 0.0, simulation_state_.orientation);
@@ -2406,7 +2420,10 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
         double resolved_angular_velocity_x,
         double resolved_angular_velocity_y,
         double resolved_angular_velocity_z,
-        double max_kinetic_energy_joules) {
+        double max_kinetic_energy_joules,
+        double vertical_velocity_mps,
+        bool heading_hold_enabled,
+        bool position_hold_enabled) {
     const StepSnapshot snapshot = snapshot_step();
     if (physics_hz <= 0 || substep_hz <= 0) {
         set_step_error("step_collision_altitude_hold_mode", aerosim::StepStatus::InvalidConfig, "timing");
@@ -2425,6 +2442,9 @@ PackedFloat64Array AeroSimNative::step_collision_altitude_hold_mode(
     command.roll_degrees = roll_degrees;
     command.pitch_degrees = pitch_degrees;
     command.yaw_rate_degrees_per_second = yaw_rate_degrees_per_second;
+    command.vertical_velocity_mps = vertical_velocity_mps;
+    command.heading_hold_enabled = heading_hold_enabled;
+    command.position_hold_enabled = position_hold_enabled;
 
     aerosim::CollisionContact contact;
     contact.touching = touching;

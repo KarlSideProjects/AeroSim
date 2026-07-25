@@ -69,6 +69,13 @@ flight_view_toggle={
 common/physics_ticks_per_second=240
 3d/physics_engine="Jolt Physics"
 
+[display/window]
+
+size/viewport_width=1920
+size/viewport_height=900
+size/window_width_override=1920
+size/window_height_override=900
+
 [rendering]
 
 renderer/rendering_method="forward_plus"

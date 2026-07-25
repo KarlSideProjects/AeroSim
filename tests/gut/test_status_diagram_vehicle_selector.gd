@@ -174,7 +174,7 @@ func test_motor_hud_uses_physical_nose_up_order_and_converts_radians_to_rpm() ->
     ]
 
     dashboard.update_from_snapshot(snapshot, 1_000_000)
-    var motor_hud: Dictionary = dashboard.get_motor_hud_state(false, "")
+    var motor_hud: Dictionary = dashboard.get_motor_hud_state(false, "", ["cw", "ccw", "ccw", "cw"])
 
     assert_eq(motor_hud.state, "live")
     assert_eq(motor_hud.cells.map(func(cell: Dictionary) -> String: return cell.label), ["FL", "FR", "RL", "RR"])
@@ -182,6 +182,9 @@ func test_motor_hud_uses_physical_nose_up_order_and_converts_radians_to_rpm() ->
     assert_string_contains(String(motor_hud.cells[0].text), "600 RPM")
     assert_string_contains(String(motor_hud.cells[0].text), "5.00 A")
     assert_string_contains(String(motor_hud.cells[0].text), "SAT")
+    assert_eq(motor_hud.cells[0].spin_direction, "cw")
+    assert_eq(motor_hud.cells[0].speed_rad_s, 20.0 * PI)
+    assert_eq(motor_hud.cells[0].thrust_newtons, 4.0)
 
 
 func test_motor_hud_marks_missing_saturation_as_unavailable() -> void:

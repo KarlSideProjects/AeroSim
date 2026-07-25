@@ -1616,7 +1616,10 @@ std::string command_json(const FlightCommand &command) {
     return "{\"throttle\":" + compact_number(command.throttle) +
             ",\"roll_degrees\":" + compact_number(command.roll_degrees) +
             ",\"pitch_degrees\":" + compact_number(command.pitch_degrees) +
-            ",\"yaw_rate_degrees_per_second\":" + compact_number(command.yaw_rate_degrees_per_second) + "}";
+            ",\"yaw_rate_degrees_per_second\":" + compact_number(command.yaw_rate_degrees_per_second) +
+            ",\"vertical_velocity_mps\":" + compact_number(command.vertical_velocity_mps) +
+            ",\"heading_hold_enabled\":" + std::string(command.heading_hold_enabled ? "true" : "false") +
+            ",\"position_hold_enabled\":" + std::string(command.position_hold_enabled ? "true" : "false") + "}";
 }
 
 std::string acro_command_json(const AcroCommand &command) {
@@ -1691,9 +1694,17 @@ bool parse_command(const JsonValue &value, FlightCommand &command) {
     const JsonValue *roll = field(value, "roll_degrees");
     const JsonValue *pitch = field(value, "pitch_degrees");
     const JsonValue *yaw = field(value, "yaw_rate_degrees_per_second");
-    return throttle != nullptr && roll != nullptr && pitch != nullptr && yaw != nullptr &&
-            number_value(*throttle, command.throttle) && number_value(*roll, command.roll_degrees) &&
-            number_value(*pitch, command.pitch_degrees) && number_value(*yaw, command.yaw_rate_degrees_per_second);
+    if (throttle == nullptr || roll == nullptr || pitch == nullptr || yaw == nullptr ||
+            !number_value(*throttle, command.throttle) || !number_value(*roll, command.roll_degrees) ||
+            !number_value(*pitch, command.pitch_degrees) || !number_value(*yaw, command.yaw_rate_degrees_per_second)) {
+        return false;
+    }
+    const JsonValue *vertical_velocity = field(value, "vertical_velocity_mps");
+    const JsonValue *heading_hold = field(value, "heading_hold_enabled");
+    const JsonValue *position_hold = field(value, "position_hold_enabled");
+    return (vertical_velocity == nullptr || number_value(*vertical_velocity, command.vertical_velocity_mps)) &&
+            (heading_hold == nullptr || bool_value(*heading_hold, command.heading_hold_enabled)) &&
+            (position_hold == nullptr || bool_value(*position_hold, command.position_hold_enabled));
 }
 
 bool parse_acro_command(const JsonValue &value, AcroCommand &command) {
@@ -3441,14 +3452,19 @@ ReplayDivergence compare_replay_sessions(
                         divergence_number(left.measured_altitude_m), divergence_number(right.measured_altitude_m), tolerance);
                 return result;
             }
-            const double left_values[] = {left.command.throttle, left.command.roll_degrees, left.command.pitch_degrees, left.command.yaw_rate_degrees_per_second};
-            const double right_values[] = {right.command.throttle, right.command.roll_degrees, right.command.pitch_degrees, right.command.yaw_rate_degrees_per_second};
-            const char *fields[] = {"command.throttle", "command.roll_degrees", "command.pitch_degrees", "command.yaw_rate_degrees_per_second"};
-            for (int value_index = 0; value_index < 4; ++value_index) {
+            const double left_values[] = {left.command.throttle, left.command.roll_degrees, left.command.pitch_degrees, left.command.yaw_rate_degrees_per_second, left.command.vertical_velocity_mps};
+            const double right_values[] = {right.command.throttle, right.command.roll_degrees, right.command.pitch_degrees, right.command.yaw_rate_degrees_per_second, right.command.vertical_velocity_mps};
+            const char *fields[] = {"command.throttle", "command.roll_degrees", "command.pitch_degrees", "command.yaw_rate_degrees_per_second", "command.vertical_velocity_mps"};
+            for (int value_index = 0; value_index < 5; ++value_index) {
                 if (!same_or_close(left_values[value_index], right_values[value_index], tolerance)) {
                     report(left.timestamp_us, left.vehicle_name, fields[value_index], divergence_number(left_values[value_index]), divergence_number(right_values[value_index]), tolerance);
                     return result;
                 }
+            }
+            if (left.command.heading_hold_enabled != right.command.heading_hold_enabled ||
+                    left.command.position_hold_enabled != right.command.position_hold_enabled) {
+                report(left.timestamp_us, left.vehicle_name, "command.assisted_hold", "different", "different", tolerance);
+                return result;
             }
             if (left.command_mode == ReplayCommandMode::Acro) {
                 const double left_acro_values[] = {left.acro_command.throttle, left.acro_command.roll_stick,

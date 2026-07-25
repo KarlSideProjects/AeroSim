@@ -625,6 +625,9 @@ bool test_replay_command_modes_and_inactive_vehicle() {
     }
     aerosim::FlightCommand angle;
     angle.throttle = 0.4;
+    angle.vertical_velocity_mps = 0.1;
+    angle.heading_hold_enabled = true;
+    angle.position_hold_enabled = true;
     aerosim::AcroCommand acro;
     acro.throttle = 0.45;
     acro.roll_stick = 0.1;
@@ -648,7 +651,10 @@ bool test_replay_command_modes_and_inactive_vehicle() {
             loaded.session.events[1].actuator_commands != actuators.normalized ||
             loaded.session.events[3].command_mode != aerosim::ReplayCommandMode::Acro ||
             loaded.session.events[4].command_mode != aerosim::ReplayCommandMode::AltitudeHold ||
-            loaded.session.events[4].measured_altitude_m != 1.2) {
+            loaded.session.events[4].measured_altitude_m != 1.2 ||
+            loaded.session.events[4].command.vertical_velocity_mps != 0.1 ||
+            !loaded.session.events[4].command.heading_hold_enabled ||
+            !loaded.session.events[4].command.position_hold_enabled) {
         return false;
     }
     const aerosim::SimulationConfig config = replay_test_config();

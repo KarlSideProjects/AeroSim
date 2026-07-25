@@ -202,7 +202,14 @@ bool valid_config(const SimulationConfig &config) {
 bool valid_flight_command(const FlightCommand &command) {
     return std::isfinite(command.throttle) && command.throttle >= 0.0 && command.throttle <= 1.0 &&
             std::isfinite(command.roll_degrees) && std::isfinite(command.pitch_degrees) &&
-            std::isfinite(command.yaw_rate_degrees_per_second);
+            std::isfinite(command.yaw_rate_degrees_per_second) &&
+            std::isfinite(command.vertical_velocity_mps) && std::abs(command.vertical_velocity_mps) <= 3.0;
+}
+
+double yaw_radians(const Quat &orientation) {
+    return std::atan2(
+            2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
+            1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z));
 }
 
 bool valid_acro_command(const AcroCommand &command) {
@@ -468,7 +475,7 @@ const PidTimingStats &FlightController::pid_timing_stats() const {
 FlightControlState FlightController::control_state() const {
     return {target_angle_frd_, target_rate_frd_, rate_integral_, previous_rate_error_frd_, filtered_rate_derivative_frd_,
             static_cast<int>(mode_family_), control_initialized_, altitude_hold_captured_, altitude_hold_just_captured_,
-            motor_saturation_latched_, pid_saturation_latched_, motor_thrust_newtons_};
+            altitude_hold_target_m_, heading_hold_target_radians_, position_hold_target_world_, motor_saturation_latched_, pid_saturation_latched_, motor_thrust_newtons_};
 }
 
 const TelemetrySnapshot &FlightController::telemetry_snapshot() const {
@@ -997,6 +1004,11 @@ TrajectorySample FlightController::step_altitude_hold_mode_impl(
         altitude_hold_vertical_speed_mps_ = 0.0;
         altitude_hold_trim_throttle_ = 0.0;
         altitude_hold_just_captured_ = false;
+        heading_hold_captured_ = false;
+        heading_hold_target_radians_ = 0.0;
+        position_hold_captured_ = false;
+        position_hold_target_world_ = {};
+        position_hold_filtered_world_ = {};
     }
     double target_throttle = 0.0;
     SimulationConfig frame_config = config;
@@ -1013,6 +1025,7 @@ TrajectorySample FlightController::step_altitude_hold_mode_impl(
         const double control_dt = frame_config.physics_hz > 0
                 ? 1.0 / static_cast<double>(frame_config.physics_hz)
                 : (frame_config.substep_hz > 0 ? 1.0 / static_cast<double>(frame_config.substep_hz) : 0.0);
+        altitude_hold_target_m_ += command.vertical_velocity_mps * control_dt;
         const double estimate_alpha = alpha_from_tau(control_dt, kAltitudeHoldEstimateTauS);
         const double vertical_speed_mps = std::isfinite(state.velocity.y) ? state.velocity.y : 0.0;
         altitude_hold_filtered_altitude_m_ += vertical_speed_mps * control_dt;
@@ -1045,12 +1058,52 @@ TrajectorySample FlightController::step_altitude_hold_mode_impl(
     pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
+    double roll_degrees = command.roll_degrees;
+    double pitch_degrees = command.pitch_degrees;
+    const bool horizontal_input = std::abs(roll_degrees) > 0.01 || std::abs(pitch_degrees) > 0.01;
+    if (command.position_hold_enabled && !horizontal_input) {
+        if (!position_hold_captured_) {
+            position_hold_captured_ = true;
+            position_hold_target_world_ = state.position;
+            position_hold_filtered_world_ = state.position;
+        }
+        const double position_dt = frame_config.physics_hz > 0 ? 1.0 / static_cast<double>(frame_config.physics_hz) : 0.0;
+        const double position_alpha = alpha_from_tau(position_dt, 0.20);
+        position_hold_filtered_world_.x += state.velocity.x * position_dt + (state.position.x - position_hold_filtered_world_.x) * position_alpha;
+        position_hold_filtered_world_.y += state.velocity.y * position_dt + (state.position.y - position_hold_filtered_world_.y) * position_alpha;
+        position_hold_filtered_world_.z += state.velocity.z * position_dt + (state.position.z - position_hold_filtered_world_.z) * position_alpha;
+        const Vec3 error{
+                position_hold_target_world_.x - position_hold_filtered_world_.x,
+                position_hold_target_world_.y - position_hold_filtered_world_.y,
+                position_hold_target_world_.z - position_hold_filtered_world_.z,
+        };
+        const Vec3 body_error_frd = y_up_to_frd(world_to_body(estimated_attitude, error));
+        const Vec3 body_velocity_frd = y_up_to_frd(world_to_body(estimated_attitude, state.velocity));
+        roll_degrees = std::clamp(body_error_frd.y * 8.0 - body_velocity_frd.y * 3.0, -30.0, 30.0);
+        pitch_degrees = std::clamp(-body_error_frd.x * 8.0 + body_velocity_frd.x * 3.0, -30.0, 30.0);
+    } else {
+        position_hold_captured_ = false;
+    }
     const Vec3 desired_angles_frd{
-            radians(command.roll_degrees),
-            radians(command.pitch_degrees),
+            radians(roll_degrees),
+            radians(pitch_degrees),
             0.0,
     };
-    const Vec3 desired_rates_frd{0.0, 0.0, radians(command.yaw_rate_degrees_per_second)};
+    double yaw_rate_degrees_per_second = command.yaw_rate_degrees_per_second;
+    if (command.heading_hold_enabled && std::abs(yaw_rate_degrees_per_second) <= 0.01) {
+        const double measured_heading = yaw_radians(estimated_attitude);
+        if (!heading_hold_captured_) {
+            heading_hold_captured_ = true;
+            heading_hold_target_radians_ = measured_heading;
+        }
+        yaw_rate_degrees_per_second = std::clamp(
+                normalize_angle_radians(heading_hold_target_radians_ - measured_heading) * 180.0 / 3.14159265358979323846 * 3.0,
+                -120.0,
+                120.0);
+    } else {
+        heading_hold_captured_ = false;
+    }
+    const Vec3 desired_rates_frd{0.0, 0.0, radians(yaw_rate_degrees_per_second)};
     const TrajectorySample sample = step_per_motor_physics_frame(state, clock, frame_config, [&](double dt) {
         const MotorCommands commands_for_substep = control_substep(
                 state,
@@ -1092,6 +1145,11 @@ void FlightController::reset_flight(RigidBodyState &state, SimulationClock &cloc
     altitude_hold_vertical_speed_mps_ = 0.0;
     altitude_hold_trim_throttle_ = 0.0;
     altitude_hold_just_captured_ = false;
+    heading_hold_captured_ = false;
+    heading_hold_target_radians_ = 0.0;
+    position_hold_captured_ = false;
+    position_hold_target_world_ = {};
+    position_hold_filtered_world_ = {};
     target_angle_frd_ = {};
     target_rate_frd_ = {};
     previous_rate_error_frd_ = {};

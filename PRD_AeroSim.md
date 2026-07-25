@@ -3,12 +3,13 @@
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v4.1.8（AirSim-class minimum；2026-07-24 UI/UX 成品標準與 Android lane 決策同步） |
+| 版本 | v4.1.9（AirSim-class minimum；2026-07-25 Mode 2 輔助飛行 cockpit 決策同步） |
 | 文件狀態 | 產品邊界已核准；GitHub issue 同步中 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
+- v4.1.9：凍結 Xbox Mode 2 為左搖桿 Yaw/Throttle、右搖桿 Roll/Pitch；A 受控起飛至約 1 m 後進入輔助定高／定向／定點，Y 回 Angle Mode。遊戲預設 1920×900，常駐顯示手把輸入與四槳轉速／推力／旋向圖，並由 replay 保留輔助控制指令。
 - v4.1.8：確認第一版 UI/UX 標準由 CAP-006/G4.6 的完整可玩成品承擔；G2.9 僅保留為未來 Betaflight 開發對照，不作 UI/UX 或 Ubuntu qualification 門檻。
 - v4.1.7：Android Player Mode 本期 deferred，不產生、不簽章、不驗收 Android APK 或側載；保留未來可獨立重啟的 Android lane，且不阻擋 Ubuntu minimum。
 - v4.1.5：凍結 v1 輸入映射（不提供玩家重綁）；Industrial Test Range 改以 descriptor 的正式 `SpawnNorth`／`SpawnSouth` 清單循環出生；Keyboard `R`／Xbox `X` 只做 Reset，Xbox `START+X` 才做 Change Spawn，且永不作 Arm/Takeoff；新增 GPU-A Reset/Respawn P99 專用 gate，分別量測 plain X 與 Pause Overlay Reset，各至少 200 次並以 armed、pause off、非零 throttle 已被 physics/control telemetry 接受為終點。
@@ -240,6 +241,10 @@ Ubuntu x86_64 是唯一必須同時通過 Player Mode、Lab Mode、PX4、RPC、�
 - `KeyboardProfile`：離散輸入，僅保證可起飛/暫停/重生/退出，明示限制用途。
 
 **操作 Action Contract（回應審查 H2）**：pause / reset / change spawn / exit / arm / mode / view 於兩種 Profile 各有固定、版本化的 canonical 映射與畫面 glyph；v1 不提供玩家重綁，避免 session-only 映射造成重連或跨 session 歧義。Keyboard 固定為 `P` Pause、`R` Reset、`Shift+R` Change Spawn、`Esc` Exit、`T` Arm/Takeoff、`C` Mode、`V` View；Xbox 固定為 `START` Pause、`X` Reset、`START+X` Change Spawn、`B` Exit、`A` Arm/Takeoff、`Y` Mode、`BACK` View。`START+X` 是獨立 Change Spawn chord，不得觸發 Arm/Takeoff；**所有飛行中救援動作（reset/pause）必須「手不離主控制器」可達**。
+
+**Mode 2 輔助飛行與 cockpit（v4.1.9）**：Xbox canonical 軸固定為左搖桿 `X=Yaw`、`Y=Throttle`，右搖桿 `X=Roll`、`Y=Pitch`；飛行語意採 FRD，畫面以中文/英文 caption 明示。`A` 僅在油門低位時 arm，並以 hover throttle 的受控輸出升至約 1 m；到達後自動 capture 高度、航向與水平位置。輔助模式中左 Y 是 ±2 m/s 升降命令、左 X 是 ±120°/s yaw（回中 capture heading）、右搖桿是最大 30° 的傾角命令（回中 capture position）；`Y` 切回 Angle Mode 並清除輔助目標。接觸地面且仍持續下降才可自動 disarm，不得因空中低油門誤觸發。完整 command 必須錄入 deterministic replay。
+
+遊戲預設 viewport/視窗為 **1920×900**。飛行畫面固定顯示 Xbox 手把圖（兩搖桿即時位置、Mode 2 標籤、連線狀態）與四旋翼圖（每槳動態盤面、CW/CCW 旋向、推力、RPM、飽和狀態）；兩面板不可遮擋中央飛行視野。
 
 **Quick Fly 狀態機（回應審查 H1）**：
 

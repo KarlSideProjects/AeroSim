@@ -1941,26 +1941,26 @@ func _verify_runtime_actions() -> bool:
         push_error("Controller confirmation must expose fixed mapping, live axes, and confirmation action")
         scene.queue_free()
         return false
-    for expected_mapping in ["roll -> Axis 0", "pitch -> Axis 1", "yaw -> Axis 2", "throttle -> Axis 3"]:
+    for expected_mapping in ["roll -> Axis 2", "pitch -> Axis 3", "yaw -> Axis 0", "throttle -> Axis 1"]:
         if not mapping.text.contains(expected_mapping):
             push_error("Controller confirmation must show the fixed Xbox mapping: %s" % expected_mapping)
             scene.queue_free()
             return false
     for expected_axis in [
-        "roll: Raw +0.500 | Normalized +0.457",
-        "pitch: Raw -0.500 | Normalized -0.457",
-        "yaw: Raw +0.250 | Normalized +0.185",
-        "throttle: Raw -0.750 | Normalized -0.728"
+        "roll: Raw +0.250 | Normalized +0.167",
+        "pitch: Raw -0.750 | Normalized +0.694",
+        "yaw: Raw +0.500 | Normalized +0.420",
+        "throttle: Raw -0.500 | Normalized +0.420"
     ]:
         if not axes.text.contains(expected_axis):
             push_error("Controller confirmation must show the expected live axis value: %s" % expected_axis)
             scene.queue_free()
             return false
     for update in [
-        {"axis": JOY_AXIS_LEFT_X, "value": -0.5, "expected": "roll: Raw -0.500 | Normalized -0.457"},
-        {"axis": JOY_AXIS_LEFT_Y, "value": 0.5, "expected": "pitch: Raw +0.500 | Normalized +0.457"},
-        {"axis": JOY_AXIS_RIGHT_X, "value": -0.25, "expected": "yaw: Raw -0.250 | Normalized -0.185"},
-        {"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "throttle: Raw +0.750 | Normalized +0.728"}
+        {"axis": JOY_AXIS_LEFT_X, "value": -0.5, "expected": "yaw: Raw -0.500 | Normalized -0.420"},
+        {"axis": JOY_AXIS_LEFT_Y, "value": 0.5, "expected": "throttle: Raw +0.500 | Normalized -0.420"},
+        {"axis": JOY_AXIS_RIGHT_X, "value": -0.25, "expected": "roll: Raw -0.250 | Normalized -0.167"},
+        {"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "pitch: Raw +0.750 | Normalized -0.694"}
     ]:
         _inject_joy_axis(known_device_id, update.axis, update.value)
         await process_frame
@@ -2068,7 +2068,7 @@ func _verify_runtime_actions() -> bool:
         return false
     var button_clock := ButtonClock.new()
     scene.set_gamepad_button_time_source(button_clock.now_ms)
-    for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X]:
+    for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y]:
         _inject_joy_axis(known_device_id, axis, 0.04)
     await process_frame
     await process_frame
@@ -2076,21 +2076,21 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox axes inside the profile deadzone must produce zero flight input")
         scene.queue_free()
         return false
-    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.50)
     await process_frame
     await process_frame
     if scene._profile_axis("pitch") >= 0.0:
         push_error("Positive Xbox pitch raw input must be reversed before flight control")
         scene.queue_free()
         return false
-    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, -0.50)
     await process_frame
     await process_frame
     if scene._profile_axis("pitch") <= 0.0:
         push_error("Negative Xbox pitch raw input must retain the opposite reversed sign")
         scene.queue_free()
         return false
-    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.75)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.75)
     await process_frame
     await process_frame
     if not scene.arm_status_label.text.contains("HIGH"):
@@ -2113,7 +2113,7 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox Arm release state must be observable in the flight HUD")
         scene.queue_free()
         return false
-    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, -0.75)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 1.0)
     await process_frame
     await process_frame
     if not scene.arm_status_label.text.contains("LOW"):
@@ -2141,11 +2141,11 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     _inject_joy_button(known_device_id, JOY_BUTTON_A, false)
-    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.70)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.70)
     for _frame in range(60):
         await physics_frame
     var high_profile_thrust := float(scene.native.call("flight_control_diagnostics").get("motor_thrust_newtons", 0.0))
-    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.20)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.70)
     for _frame in range(60):
         await physics_frame
     var low_profile_thrust := float(scene.native.call("flight_control_diagnostics").get("motor_thrust_newtons", 0.0))
@@ -2153,9 +2153,14 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox throttle axis must change simulated thrust instead of using a fixed runtime throttle")
         scene.queue_free()
         return false
-    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, 0.50)
-    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.50)
-    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.25)
+    for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y]:
+        _inject_joy_axis(known_device_id, axis, 0.0)
+    scene.native.call("reset_flight")
+    scene.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+    scene.drone_body.reset_contact()
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, -0.50)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, -0.25)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.50)
     for _frame in range(30):
         await physics_frame
     var angle_rates := Vector3(
@@ -2164,15 +2169,15 @@ func _verify_runtime_actions() -> bool:
         float(scene.native.call("flight_control_diagnostics").get("angular_velocity_z_rad_s", 0.0))
     )
     var angle_rates_frd := AirSimCoordinateContract.godot_body_to_frd(angle_rates)
-    if angle_rates_frd.x <= 0.01 or angle_rates_frd.y <= 0.01 or angle_rates_frd.z <= 0.01:
-        push_error("Xbox positive roll, pitch, and yaw axes must produce positive FRD angular velocity in Angle mode")
+    if angle_rates_frd.x >= -0.01 or angle_rates_frd.y >= -0.01 or angle_rates_frd.z >= -0.01:
+        push_error("Xbox Mode 2 roll, pitch, and yaw axes must produce the expected negative FRD response in Angle mode")
         scene.queue_free()
         return false
     button_clock.milliseconds = 100
     _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
     await process_frame
     await process_frame
-    if scene.flight_mode != "ALTITUDE_HOLD" or not scene.arm_status_label.text.contains("Mode PRESSED"):
+    if scene.flight_mode != "ASSISTED_HOLD" or not scene.arm_status_label.text.contains("Mode PRESSED"):
         push_error("Xbox Mode press must switch flight mode and be observable in the flight HUD")
         scene.queue_free()
         return false
@@ -2185,7 +2190,7 @@ func _verify_runtime_actions() -> bool:
     button_clock.milliseconds = 149
     _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
     await process_frame
-    if scene.flight_mode != "ALTITUDE_HOLD":
+    if scene.flight_mode != "ASSISTED_HOLD":
         push_error("Xbox Mode presses inside 50 ms must be debounced")
         scene.queue_free()
         return false
@@ -2204,8 +2209,8 @@ func _verify_runtime_actions() -> bool:
         return false
     _inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
     _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, -0.50)
-    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.50)
     _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, -0.25)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.50)
     await process_frame
     await process_frame
     if scene._angle_roll_degrees() >= 0.0 or scene._angle_pitch_degrees() >= 0.0 or scene._angle_yaw_rate_degrees_per_second() >= 0.0:
@@ -2234,9 +2239,10 @@ func _verify_runtime_actions() -> bool:
         return false
     scene.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
     scene.drone_body.reset_contact()
-    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, 0.65)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_X, 0.0)
     _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.0)
-    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.0)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_X, 0.65)
+    _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.0)
     await process_frame
     await process_frame
     if scene._profile_axis("roll") <= 0.0 or scene._profile_axis("pitch") != 0.0 or scene._profile_axis("yaw") != 0.0:
@@ -2393,7 +2399,7 @@ func _verify_runtime_actions() -> bool:
         return false
 
     await _press_key(KEY_H)
-    if scene.flight_mode != "ALTITUDE_HOLD" or not scene.fallback_status_label.text.contains("Mode: ALTITUDE_HOLD"):
+    if scene.flight_mode != "ASSISTED_HOLD" or not scene.fallback_status_label.text.contains("Mode: ALTITUDE_HOLD"):
         push_error("flight_altitude_hold action must switch the existing status line to Altitude Hold")
         scene.queue_free()
         return false
@@ -2838,29 +2844,26 @@ func _verify_keyboard_profile_actions() -> bool:
 
 func _verify_gamepad_profile_actions() -> bool:
     var profile := InputProfiles.GamepadProfile.new()
-    if profile.profile_schema_version != 1:
+    if profile.profile_schema_version != 2:
         push_error("GamepadProfile must use the fixed Xbox profile schema version")
         return false
-    if profile.axis_for_role != {"roll": 0, "pitch": 1, "yaw": 2, "throttle": 3}:
+    if profile.axis_for_role != {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}:
         push_error("GamepadProfile must freeze the four distinct Xbox axes")
         return false
     if profile.arm_button != JOY_BUTTON_A or profile.mode_button != JOY_BUTTON_Y:
         push_error("GamepadProfile must freeze distinct Xbox Arm and Mode buttons")
         return false
-    if not profile.sticky_throttle or profile.RAW_AXIS_DEADZONE < 0.08 or profile.RAW_AXIS_DEADZONE > 0.10:
-        push_error("GamepadProfile must retain sticky throttle and a named raw-axis deadzone")
+    if profile.RAW_AXIS_DEADZONE < 0.08 or profile.RAW_AXIS_DEADZONE > 0.10:
+        push_error("GamepadProfile must retain the named raw-axis deadzone")
         return false
-    profile.apply_throttle_axis(0.07)
-    if not is_equal_approx(profile.throttle, 0.0):
-        push_error("GamepadProfile throttle must ignore input inside the fixed deadzone")
+    if not is_zero_approx(InputProfiles.GamepadProfile.normalize_axis(0.07, profile.RAW_AXIS_DEADZONE)):
+        push_error("GamepadProfile axes must ignore input inside the fixed deadzone")
         return false
-    profile.apply_throttle_axis(0.09)
-    if not is_equal_approx(profile.throttle, 0.09):
-        push_error("GamepadProfile throttle must update when raw input exceeds the fixed deadzone")
+    if absf(InputProfiles.GamepadProfile.normalize_axis(0.5, profile.RAW_AXIS_DEADZONE) - 0.42038) > 0.00001:
+        push_error("GamepadProfile axes must use the fixed centered response curve")
         return false
-    profile.apply_throttle_axis(0.02)
-    if not is_equal_approx(profile.throttle, 0.09):
-        push_error("GamepadProfile throttle must remain sticky when input returns inside the deadzone")
+    if not profile.throttle_axis_is_low(1.0) or profile.throttle_axis_is_low(-1.0):
+        push_error("GamepadProfile arm safety must require the left stick to be down")
         return false
 
     var actions := {
@@ -2920,14 +2923,14 @@ func _verify_xbox_default_profile() -> bool:
         if not InputProfiles.GamepadProfile.is_supported_device(device_id, production_gamepad_device_state):
             continue
         var profile := InputProfiles.GamepadProfile.xbox_default(device_id, production_gamepad_device_state)
-        if profile == null or profile.profile_schema_version != 1:
+        if profile == null or profile.profile_schema_version != 2:
             push_error("A known SDL device must receive the fixed Xbox profile schema")
             return false
-        if profile.axis_for_role != {"roll": 0, "pitch": 1, "yaw": 2, "throttle": 3}:
+        if profile.axis_for_role != {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}:
             push_error("A known SDL device must receive four distinct Xbox axes")
             return false
-        if profile.arm_button == profile.mode_button or not profile.sticky_throttle or profile.RAW_AXIS_DEADZONE < 0.08 or profile.RAW_AXIS_DEADZONE > 0.10:
-            push_error("A known SDL device must receive distinct buttons, sticky throttle, and a raw-axis deadzone")
+        if profile.arm_button == profile.mode_button or profile.RAW_AXIS_DEADZONE < 0.08 or profile.RAW_AXIS_DEADZONE > 0.10:
+            push_error("A known SDL device must receive distinct buttons and a raw-axis deadzone")
             return false
     return true
 

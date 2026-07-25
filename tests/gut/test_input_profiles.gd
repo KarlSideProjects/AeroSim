@@ -1,6 +1,7 @@
 extends GutTest
 
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
 
 
 class FakeDeviceState:
@@ -38,23 +39,67 @@ func test_known_xbox_device_gets_the_fixed_profile() -> void:
     )
 
 
+func test_xbox_profile_uses_canonical_mode_two_axes() -> void:
+    var profile = InputProfiles.GamepadProfile.xbox_default(7, FakeDeviceState.new([7]))
+
+    assert_eq(profile.axis_for_role, {
+        "yaw": JOY_AXIS_LEFT_X,
+        "throttle": JOY_AXIS_LEFT_Y,
+        "roll": JOY_AXIS_RIGHT_X,
+        "pitch": JOY_AXIS_RIGHT_Y,
+    })
+    assert_eq(profile.reversed_for_role, {
+        "yaw": false,
+        "throttle": true,
+        "roll": false,
+        "pitch": true,
+    })
+
+
+func test_prior_xbox_profile_schema_is_rejected_instead_of_silently_remapped() -> void:
+    var prior_profile := {
+        "profile_schema_version": 1,
+        "axis_for_role": {
+            "roll": JOY_AXIS_LEFT_X,
+            "pitch": JOY_AXIS_LEFT_Y,
+            "yaw": JOY_AXIS_RIGHT_X,
+            "throttle": JOY_AXIS_RIGHT_Y,
+        },
+        "reversed_for_role": {
+            "roll": false,
+            "pitch": true,
+            "yaw": false,
+            "throttle": false,
+        },
+        "arm_button": JOY_BUTTON_A,
+        "mode_button": JOY_BUTTON_Y,
+        "deadzone": 0.08,
+    }
+
+    assert_false(InputProfiles.GamepadProfile.validate_persisted_dict(prior_profile).ok)
+
+
+func test_mode_two_arm_safety_requires_the_left_stick_to_be_physically_down() -> void:
+    var profile := InputProfiles.GamepadProfile.xbox_default(7, FakeDeviceState.new([7]))
+
+    assert_true(profile.throttle_axis_is_low(1.0))
+    assert_false(profile.throttle_axis_is_low(-1.0))
+
+
+func test_mode_two_axis_curve_is_symmetric_and_softens_the_center() -> void:
+    var runtime := FlightRuntime.new()
+    var positive := runtime._normalize_gamepad_axis(0.5, InputProfiles.GamepadProfile.RAW_AXIS_DEADZONE)
+    var negative := runtime._normalize_gamepad_axis(-0.5, InputProfiles.GamepadProfile.RAW_AXIS_DEADZONE)
+
+    assert_almost_eq(positive, 0.42038, 0.00001)
+    assert_almost_eq(negative, -0.42038, 0.00001)
+    runtime.free()
+
+
 func test_unknown_xbox_device_is_rejected() -> void:
     var profile = InputProfiles.GamepadProfile.xbox_default(8, FakeDeviceState.new([7]))
 
     assert_null(profile, "Unknown SDL devices must not be assigned an unsafe guessed control mapping.")
-
-
-func test_throttle_stays_sticky_inside_the_deadzone() -> void:
-    var profile := InputProfiles.GamepadProfile.new()
-    profile.apply_throttle_axis(0.75)
-    profile.apply_throttle_axis(profile.RAW_AXIS_DEADZONE)
-
-    assert_almost_eq(
-        profile.throttle,
-        0.75,
-        0.000001,
-        "Deadzone noise must not make an armed aircraft's sticky throttle jump."
-    )
 
 
 func test_action_contract_exposes_fixed_profile_defaults() -> void:

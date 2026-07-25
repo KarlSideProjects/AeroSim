@@ -169,7 +169,10 @@ public:
             double super_rate,
             double expo,
             double measured_altitude_m,
-            std::int32_t controller_authority);
+            std::int32_t controller_authority,
+            double vertical_velocity_mps,
+            bool heading_hold_enabled,
+            bool position_hold_enabled);
     godot::Dictionary record_replay_actuator_command(
             std::int64_t timestamp_us,
             const godot::String &vehicle_name,
@@ -355,7 +358,10 @@ public:
             double throttle,
             double roll_degrees,
             double pitch_degrees,
-            double yaw_rate_degrees_per_second);
+            double yaw_rate_degrees_per_second,
+            double vertical_velocity_mps = 0.0,
+            bool heading_hold_enabled = false,
+            bool position_hold_enabled = false);
     godot::PackedFloat64Array step_collision_angle_mode(
             std::int32_t physics_hz,
             std::int32_t substep_hz,
@@ -399,7 +405,10 @@ public:
             double resolved_angular_velocity_x,
             double resolved_angular_velocity_y,
             double resolved_angular_velocity_z,
-            double max_kinetic_energy_joules);
+            double max_kinetic_energy_joules,
+            double vertical_velocity_mps = 0.0,
+            bool heading_hold_enabled = false,
+            bool position_hold_enabled = false);
     godot::PackedFloat64Array step_collision_acro_mode(
             std::int32_t physics_hz,
             std::int32_t substep_hz,
