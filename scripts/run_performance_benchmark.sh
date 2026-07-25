@@ -116,7 +116,9 @@ mkdir -p "$(dirname "$output_path")" .godot
 raw_path="${output_path%.json}.raw.json"
 chart_path="${output_path%.json}.svg"
 rm -f "$raw_path" "$output_path" "$chart_path"
-printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .godot/extension_list.cfg
+printf '%s\n' \
+    'res://extensions/aerosim_native/aerosim_native.gdextension' \
+    'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
 
 timeout 180s "$godot_bin" --path . --resolution 1280x720 --remote-debug local:// \
     --script res://tests/performance/physics_benchmark.gd -- \
