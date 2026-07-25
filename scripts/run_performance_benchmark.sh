@@ -2,7 +2,7 @@
 set -euo pipefail
 
 godot_bin="${GODOT_BIN:-godot}"
-godot_cpp_dir="${GODOT_CPP_DIR:-.deps/godot-cpp}"
+godot_cpp_dir="${GODOT_CPP_DIR:-third_party/godot-cpp}"
 output_path="build/performance_report.json"
 warmup_seconds=10
 seconds=60
@@ -98,8 +98,8 @@ if ! command -v "$godot_bin" >/dev/null 2>&1; then
     echo "Godot 4.7 executable is required: $godot_bin" >&2
     exit 2
 fi
-if [ ! -d "$godot_cpp_dir/.git" ] || [ ! -f "$godot_cpp_dir/SConstruct" ]; then
-    echo "godot-cpp checkout is required: $godot_cpp_dir" >&2
+if [ ! -f "$godot_cpp_dir/SConstruct" ]; then
+    echo "godot-cpp source is required: $godot_cpp_dir" >&2
     exit 2
 fi
 source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"

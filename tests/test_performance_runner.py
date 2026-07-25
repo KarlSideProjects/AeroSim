@@ -288,7 +288,7 @@ class PerformanceRunnerTest(unittest.TestCase):
             )
 
             self.assertEqual(completed.returncode, 2, completed.stderr)
-            self.assertIn("godot-cpp checkout is required", completed.stderr)
+            self.assertIn("godot-cpp source is required", completed.stderr)
 
 
 if __name__ == "__main__":

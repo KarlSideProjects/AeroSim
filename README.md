@@ -14,7 +14,35 @@ Godot 4.7 + C++ GDExtension 的最小專案骨架。
 - Python 3
 - `g++` 或相容 C++17 compiler
 - `scons`（若本機沒有，`scripts/verify_issue_11.sh` 會安裝到 `.deps/venv`）
-- `godot-cpp`：`scripts/verify_issue_11.sh` 會 checkout 到 `docs/versions/godot-4.7.lock` 指定 commit
+- `godot-cpp`：固定 commit 已隨 repo 放在 `third_party/godot-cpp/`，不需要另外下載
+
+## 快速開始（Linux）
+
+```bash
+git clone https://github.com/jhihweijhan/AeroSim.git
+cd AeroSim
+git switch main
+```
+
+先建置 GDExtension；`godot-cpp` 已包含在 repo，不需另外下載：
+
+```bash
+python3 -m pip install --user scons  # 若 scons 尚未安裝
+GODOT_CPP_DIR=third_party/godot-cpp scons target=template_debug platform=linux
+```
+
+設定 Godot 4.7 執行檔後啟動編輯器：
+
+```bash
+export GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64
+"$GODOT_BIN" --editor --path .
+```
+
+在編輯器按 `F6` 執行目前的 smoke 場景，或按 `F5` 執行專案主場景。也可不開編輯器直接執行：
+
+```bash
+"$GODOT_BIN" --path .
+```
 
 ## 版本鎖定政策
 
@@ -42,10 +70,10 @@ GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64
 "$GODOT_BIN" --path .
 ```
 
-若第一次啟動時出現找不到 `libaerosim_native`，先建置 Linux debug GDExtension：
+若啟動時出現找不到 `libaerosim_native`，回到 repo 根目錄重新建置：
 
 ```bash
-GODOT_CPP_DIR=/path/to/godot-cpp scons target=template_debug platform=linux
+GODOT_CPP_DIR=third_party/godot-cpp scons target=template_debug platform=linux
 ```
 
 啟動後依畫面上的控制提示操作；Xbox 手把會顯示對應的手把按鍵，未連接手把時可使用鍵盤提示。
@@ -63,7 +91,7 @@ scripts/test_native.sh
 python3 scripts/check_licenses.py
 scripts/test_license_scan.sh
 python3 -m unittest license_server.test_license_server
-GODOT_CPP_DIR=/path/to/godot-cpp scons target=template_debug platform=linux
+GODOT_CPP_DIR=third_party/godot-cpp scons target=template_debug platform=linux
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5
 ```
 
@@ -83,7 +111,7 @@ GitHub Actions 會執行：
 2. 授權掃描，並確認 GPL fixture 會 fail。
 3. 授權伺服器 API 整合測試。
 4. 下載並驗證 Godot `4.7-stable` Linux editor hash。
-5. 下載鎖定 commit 的 godot-cpp，建置 Linux GDExtension。
+5. 使用 repo 內鎖定 commit 的 godot-cpp，建置 Linux GDExtension。
 6. headless smoke，確認 GDScript 可呼叫 native probe 並輸出檔案。
 7. Linux headed acceptance 與 release artifact checks。
 8. Linux replay terminal-state artifact 與 build provenance 檢查。
