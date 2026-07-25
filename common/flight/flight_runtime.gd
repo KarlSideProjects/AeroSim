@@ -41,6 +41,7 @@ const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
+const THIRD_PERSON_CAMERA_OFFSET := Vector3(0.0, 0.8, 1.8)
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
@@ -48,6 +49,7 @@ const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 @onready var fallback_status_label: Label3D = %FallbackStatus
 @onready var drone_body = get_node_or_null("DroneBody")
 @onready var chase_camera := get_node_or_null("ChaseCamera") as Camera3D
+@onready var third_person_camera := get_node_or_null("ThirdPersonCamera") as Camera3D
 @onready var secondary_drone_body = get_node_or_null("DroneBodySecondary")
 @onready var secondary_chase_camera := get_node_or_null("ChaseCameraSecondary") as Camera3D
 
@@ -124,6 +126,7 @@ var motor_hud_panel: PanelContainer
 var motor_hud_labels: Dictionary = {}
 var key_hints_label: Label
 var arm_status_label: Label
+var player_view_label: Label
 var arm_takeoff_button: Button
 var lab_back_button: Button
 var license_panel: Control
@@ -154,6 +157,7 @@ var controller_confirmation_panel: Control
 var controller_confirmation_profile: InputProfiles.GamepadProfile
 var controller_confirmation_device_id := -1
 var controller_return_screen := "preflight"
+var third_person_view := false
 var confirmation_mapping_label: Label
 var confirmation_axes_label: Label
 var controller_settings_device_label: Label
@@ -454,6 +458,7 @@ func _reconcile_license_after_provider_action() -> void:
 
 func _show_license_blocked(message: String) -> void:
     last_error_message = message
+    unload_map()
     screen = "license_blocked"
     takeoff_requested = false
     _refresh_flight_hud()
@@ -1260,14 +1265,16 @@ func _unhandled_input(event: InputEvent) -> void:
         arm_and_takeoff()
     elif event.is_action_pressed("flight_pause") and screen == "flight":
         set_paused(not paused)
-    elif event.is_action_pressed("flight_change_spawn"):
+    elif event.is_action_pressed("flight_change_spawn") and screen in ["preflight", "flight", "finish"]:
         change_spawn()
-    elif event.is_action_pressed("flight_respawn"):
+    elif event.is_action_pressed("flight_respawn") and screen in ["preflight", "flight", "finish"]:
         respawn()
     elif event.is_action_pressed("flight_acro"):
         toggle_acro_mode()
     elif event.is_action_pressed("flight_altitude_hold"):
         toggle_altitude_hold()
+    elif event.is_action_pressed("flight_view_toggle"):
+        toggle_player_view()
     elif event.is_action_pressed("flight_exit"):
         if screen == "lab_mode":
             return_from_lab_mode()
@@ -1987,6 +1994,12 @@ func quick_fly() -> void:
         screen = "error"
         _refresh_flight_hud()
         return
+    third_person_view = false
+    if drone_body != null and drone_body.is_inside_tree() and not load_map(String(flight_setup.get("map_id", DEFAULT_FREE_FLIGHT_MAP_ID))):
+        screen = "error"
+        _refresh_flight_hud()
+        return
+    controller_return_screen = "preflight"
     var device_id := _first_connected_device()
     var current_profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)
     if current_profile == null:
@@ -2053,6 +2066,8 @@ func _cancel_controller_route() -> void:
     if target == "controller_settings":
         show_controller_settings()
     else:
+        if target == "preflight":
+            unload_map()
         show_main_menu()
 
 func accept_controller_confirmation() -> void:
@@ -2064,6 +2079,7 @@ func accept_controller_confirmation() -> void:
         return
     var save_result := _save_gamepad_profile(profile)
     if not save_result.ok:
+        unload_map()
         last_error_message = "Controller profile was not persisted"
         screen = "error"
         _refresh_flight_hud()
@@ -2104,7 +2120,12 @@ func accept_fallback() -> void:
 
 func enter_preflight() -> void:
     var map_id := String(flight_setup.get("map_id", DEFAULT_FREE_FLIGHT_MAP_ID))
-    if not load_map(map_id):
+    if loaded_map_id == map_id and loaded_map != null:
+        if not reset_to_spawn():
+            screen = "error"
+            _refresh_flight_hud()
+            return
+    elif not load_map(map_id):
         screen = "error"
         _refresh_flight_hud()
         return
@@ -3756,6 +3777,10 @@ func _build_flight_hud() -> void:
     arm_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     rows.add_child(arm_status_label)
 
+    player_view_label = Label.new()
+    player_view_label.name = "PlayerView"
+    rows.add_child(player_view_label)
+
     time_trial_status_label = Label.new()
     time_trial_status_label.name = "TimeTrialStatus"
     rows.add_child(time_trial_status_label)
@@ -4443,6 +4468,9 @@ func _refresh_flight_hud() -> void:
         license_diagnostics_button.visible = screen == "license_blocked" and actions.has("diagnostics")
         license_exit_button.visible = actions.has("exit")
     key_hints_label.text = _t("ui.hints.gamepad" if _has_active_gamepad_profile() else "ui.hints")
+    if player_view_label != null:
+        player_view_label.visible = loaded_map != null and screen in ["preflight", "flight", "finish"]
+        player_view_label.text = _t("ui.view.third_person" if third_person_view else "ui.view.fpv")
     _refresh_rates_panel()
     _refresh_graphics_panel()
     arm_takeoff_button.disabled = screen in ["main_menu", "license_blocked"] or (controller_safety_latched and screen != "fallback_prompt")
@@ -4746,14 +4774,23 @@ func _profile_input_status() -> String:
 func _update_chase_camera() -> void:
     if chase_camera == null or drone_body == null:
         return
-    chase_camera.current = true
-    if screen in ["preflight", "flight", "finish"]:
+    var player_map_view := loaded_map != null and screen in ["preflight", "flight", "finish", "controller_confirmation", "fallback_prompt"]
+    if player_map_view:
         chase_camera.global_position = drone_body.global_position + drone_body.global_basis * Vector3(0.0, 0.03, 0.0)
         chase_camera.global_basis = drone_body.global_basis * Basis(Vector3.RIGHT, deg_to_rad(float(camera_profile.camera_angle_deg)))
         chase_camera.fov = float(camera_profile.fov_deg)
     else:
         chase_camera.global_position = drone_body.global_position + CHASE_CAMERA_OFFSET
         chase_camera.look_at(drone_body.global_position, Vector3.UP)
+    if third_person_camera != null and third_person_view and screen in ["preflight", "flight", "finish"]:
+        third_person_camera.global_position = drone_body.global_position + drone_body.global_basis * THIRD_PERSON_CAMERA_OFFSET
+        third_person_camera.look_at(drone_body.global_position + drone_body.global_basis * Vector3(0.0, 0.2, 0.0), Vector3.UP)
+        third_person_camera.current = true
+        chase_camera.current = false
+    else:
+        chase_camera.current = true
+        if third_person_camera != null:
+            third_person_camera.current = false
     if secondary_drone_body != null and secondary_chase_camera != null and secondary_drone_body.visible:
         if screen in ["preflight", "flight", "finish"]:
             secondary_chase_camera.global_position = secondary_drone_body.global_position + secondary_drone_body.global_basis * Vector3(0.0, 0.03, 0.0)
@@ -4762,6 +4799,14 @@ func _update_chase_camera() -> void:
         else:
             secondary_chase_camera.global_position = secondary_drone_body.global_position + CHASE_CAMERA_OFFSET
             secondary_chase_camera.look_at(secondary_drone_body.global_position, Vector3.UP)
+
+
+func toggle_player_view() -> void:
+    if loaded_map == null or not screen in ["preflight", "flight", "finish"]:
+        return
+    third_person_view = not third_person_view
+    _update_chase_camera()
+    _refresh_flight_hud()
 
 
 func _apply_camera_profile() -> void:

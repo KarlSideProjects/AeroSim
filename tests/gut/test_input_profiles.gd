@@ -64,6 +64,10 @@ func test_action_contract_exposes_fixed_profile_defaults() -> void:
     assert_eq(keyboard["change_spawn"], "SHIFT+R")
     assert_eq(gamepad["reset"], "X")
     assert_eq(gamepad["change_spawn"], "START+X")
+    assert_true(keyboard.has("view"))
+    assert_true(gamepad.has("view"))
+    assert_eq(keyboard.get("view"), "V")
+    assert_eq(gamepad.get("view"), "BACK")
 
     assert_eq(InputProfiles.ActionContract.glyph(keyboard, "reset"), "R")
 
