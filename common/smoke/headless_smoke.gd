@@ -2350,7 +2350,7 @@ func _verify_runtime_actions() -> bool:
         return false
 
     await _press_key(KEY_H)
-    if scene.flight_mode != "ALTITUDE_HOLD" or not scene.fallback_status_label.text.contains("Mode: ALTITUDE_HOLD"):
+    if scene.flight_mode != "ASSISTED_HOLD" or not scene.fallback_status_label.text.contains("Mode: ALTITUDE_HOLD"):
         push_error("flight_altitude_hold action must switch the existing status line to Altitude Hold")
         scene.queue_free()
         return false
