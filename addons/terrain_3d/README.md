@@ -1,5 +1,3 @@
-![Terrain3D Logo](/doc/docs/images/terrain3d.jpg)
-
 # Terrain3D
 A high performance, editable terrain system for Godot 4.
 
