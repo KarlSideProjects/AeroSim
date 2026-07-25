@@ -825,24 +825,24 @@ func test_motor_hud_stays_visible_for_minimal_osd_and_shows_paused_or_error_stat
     runtime._refresh_flight_hud()
 
     var panel := runtime.flight_hud_layer.get_node_or_null("MotorHudMargin/MotorHudPanel") as PanelContainer
-    var fl := runtime.flight_hud_layer.get_node_or_null("MotorHudMargin/MotorHudPanel/Rows/Grid/FL") as Label
+    var rotors := runtime.flight_hud_layer.get_node_or_null("MotorHudMargin/MotorHudPanel/RotorTelemetryPanel") as Control
     assert_not_null(panel)
-    assert_not_null(fl)
-    if panel == null or fl == null:
+    assert_not_null(rotors)
+    if panel == null or rotors == null:
         return
     assert_true(panel.is_visible_in_tree())
-    assert_string_contains(fl.text, "FL")
-    assert_string_contains(fl.text, "600 RPM")
+    assert_eq(String(rotors.motor_hud.state), "live")
+    assert_eq(int(round(float(rotors.motor_hud.cells[0].speed_rad_s) * 60.0 / TAU)), 600)
 
     runtime.paused = true
     runtime._refresh_flight_hud()
-    assert_string_contains(fl.text, "UNAVAILABLE")
+    assert_eq(String(rotors.motor_hud.state), "unavailable")
     runtime.paused = false
     runtime.screen = "error"
     runtime.last_error_message = "AeroSimNative.step: InvalidState"
     runtime._refresh_flight_hud()
     assert_true(panel.is_visible_in_tree())
-    assert_string_contains(fl.text, "ERROR")
+    assert_eq(String(rotors.motor_hud.state), "error")
 
 
 func test_request_takeoff_does_not_inject_jump_velocity() -> void:

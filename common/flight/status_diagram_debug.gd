@@ -128,7 +128,7 @@ func get_render_evidence() -> Dictionary:
     }
 
 
-func get_motor_hud_state(paused: bool, error_message: String) -> Dictionary:
+func get_motor_hud_state(paused: bool, error_message: String, spin_directions: Array = []) -> Dictionary:
     if not error_message.is_empty():
         return _motor_hud_unavailable("error", "error")
     if paused:
@@ -152,6 +152,11 @@ func get_motor_hud_state(paused: bool, error_message: String) -> Dictionary:
         var saturation_suffix := _t("ui.motor_hud.saturated") if bool(motor.get("saturated", false)) else ""
         cells.append({
             "label": String(position.label),
+            "thrust_newtons": float(motor.thrust_newtons),
+            "speed_rad_s": float(motor.speed_rad_s),
+            "current_a": float(motor.current_a),
+            "saturated": bool(motor.saturated),
+            "spin_direction": String(spin_directions[int(position.telemetry_index)]) if spin_directions.size() == MOTOR_HUD_ORDER.size() else "",
             "text": _format("ui.motor_hud.cell", [
                 String(position.label),
                 float(motor.thrust_newtons),

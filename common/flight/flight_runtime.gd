@@ -11,6 +11,7 @@ const CameraProfile = preload("res://common/flight/camera_profile.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
+const RotorTelemetryPanel = preload("res://common/flight/rotor_telemetry_panel.gd")
 const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
 const AirSimSettings = preload("res://common/rpc/airsim_settings.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
@@ -122,6 +123,8 @@ var controller_settings_panel: Control
 var flight_hud_layer: CanvasLayer
 var motor_hud_panel: PanelContainer
 var motor_hud_labels: Dictionary = {}
+var motor_hud_rotor_panel: Control
+var motor_hud_spin_directions: Array = []
 var key_hints_label: Label
 var arm_status_label: Label
 var arm_takeoff_button: Button
@@ -293,6 +296,7 @@ func _ready() -> void:
     if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
         last_error_message = hardware_config.last_error
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
+    motor_hud_spin_directions = hardware_config.current.get("spin_direction", [])
     if not _configure_secondary_native(hardware_config):
         push_error("Named vehicle runtime setup failed: %s" % last_error_message)
         if airsim_rpc_server != null and airsim_rpc_server.is_running():
@@ -1931,6 +1935,7 @@ func apply_flight_setup(raw_setup: Dictionary) -> bool:
         if not hardware_config.apply_to_runtime(self, String(candidate.hardware_preset)):
             last_error_message = hardware_config.last_error
             return false
+        motor_hud_spin_directions = hardware_config.current.get("spin_direction", [])
         _apply_hardware_camera_defaults(hardware_config)
     flight_setup = candidate
     flight_mode = String(candidate.mode)
@@ -3796,30 +3801,9 @@ func _build_motor_hud(layer: CanvasLayer) -> void:
     motor_hud_panel = PanelContainer.new()
     motor_hud_panel.name = "MotorHudPanel"
     margin.add_child(motor_hud_panel)
-    var rows := VBoxContainer.new()
-    rows.name = "Rows"
-    motor_hud_panel.add_child(rows)
-    var title := Label.new()
-    title.name = "Title"
-    title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    title.add_theme_font_size_override("font_size", 14)
-    title.text = _t("ui.motor_hud.title")
-    rows.add_child(title)
-    var grid := GridContainer.new()
-    grid.name = "Grid"
-    grid.columns = 2
-    rows.add_child(grid)
-    for label_name in ["FL", "FR", "RL", "RR"]:
-        var label := Label.new()
-        label.name = label_name
-        label.custom_minimum_size = Vector2(132.0, 64.0)
-        label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-        label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-        label.add_theme_font_size_override("font_size", 13)
-        label.add_theme_constant_override("line_spacing", -2)
-        label.text = _format("ui.motor_hud.unavailable", [label_name])
-        grid.add_child(label)
-        motor_hud_labels[label_name] = label
+    motor_hud_rotor_panel = RotorTelemetryPanel.new()
+    motor_hud_rotor_panel.name = "RotorTelemetryPanel"
+    motor_hud_panel.add_child(motor_hud_rotor_panel)
 
 
 func _build_analog_noise_overlay(layer: CanvasLayer) -> void:
@@ -4497,16 +4481,11 @@ func _refresh_motor_hud() -> void:
     if motor_hud_panel == null:
         return
     motor_hud_panel.visible = screen in ["flight", "error"]
-    var title := motor_hud_panel.get_node_or_null("Rows/Title") as Label
-    if title != null:
-        title.text = _t("ui.motor_hud.title")
     var motor_hud := {"cells": []}
     if status_diagram != null and status_diagram.has_method("get_motor_hud_state"):
-        motor_hud = status_diagram.call("get_motor_hud_state", paused, last_error_message if screen == "error" else "")
-    for cell in motor_hud.cells:
-        var label := motor_hud_labels.get(String(cell.label)) as Label
-        if label != null:
-            label.text = String(cell.text)
+        motor_hud = status_diagram.call("get_motor_hud_state", paused, last_error_message if screen == "error" else "", motor_hud_spin_directions)
+    if motor_hud_rotor_panel != null and motor_hud_rotor_panel.has_method("set_motor_hud"):
+        motor_hud_rotor_panel.call("set_motor_hud", motor_hud)
 
 func _handle_primary_action() -> void:
     if screen == "fallback_prompt":
