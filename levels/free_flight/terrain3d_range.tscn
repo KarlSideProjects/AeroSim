@@ -1,10 +1,21 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Terrain3DAssets" path="res://assets/third_party/terrain3d_demo/demo/data/assets.tres" id="1"]
 [sub_resource type="Terrain3DMaterial" id="1"]
 
 [sub_resource type="BoxShape3D" id="4"]
 size = Vector3(160, 0.2, 160)
+
+[sub_resource type="StandardMaterial3D" id="5"]
+albedo_color = Color(0.22, 0.3, 0.16, 1)
+metallic = 0.15
+roughness = 0.72
+
+[sub_resource type="BoxMesh" id="6"]
+size = Vector3(4, 0.3, 4)
+
+[sub_resource type="BoxShape3D" id="7"]
+size = Vector3(4, 0.3, 4)
 
 [node name="Terrain3DRange" type="Node3D"]
 
@@ -28,6 +39,17 @@ metadata/airsim_segmentation_id = 1
 position = Vector3(0, -0.1, 0)
 shape = SubResource("4")
 
+[node name="SpawnNorthPlatform" type="StaticBody3D" parent="."]
+position = Vector3(0, 0.15, -24)
+metadata/airsim_segmentation_id = 2
+
+[node name="Mesh" type="MeshInstance3D" parent="SpawnNorthPlatform"]
+mesh = SubResource("6")
+surface_material_override/0 = SubResource("5")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SpawnNorthPlatform"]
+shape = SubResource("7")
+
 [node name="SpawnNorth" type="Marker3D" parent="."]
 position = Vector3(0, 0.6, -24)
 
@@ -43,6 +65,17 @@ position = Vector3(40, 0.6, 40)
 text = "ui.map.south_spawn"
 outline_size = 4
 font_size = 64
+
+[node name="SpawnSouthPlatform" type="StaticBody3D" parent="."]
+position = Vector3(40, 0.15, 40)
+metadata/airsim_segmentation_id = 8
+
+[node name="Mesh" type="MeshInstance3D" parent="SpawnSouthPlatform"]
+mesh = SubResource("6")
+surface_material_override/0 = SubResource("5")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SpawnSouthPlatform"]
+shape = SubResource("7")
 
 [node name="TimeTrial" type="Node3D" parent="."]
 

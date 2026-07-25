@@ -301,6 +301,10 @@ func _run() -> void:
 	_expect(runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null, "Quick Fly preflight loads Terrain Range")
 	var spawn := runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D if runtime.loaded_map != null else null
 	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6, "Terrain Range load places the drone at SpawnNorth")
+	var north_platform := runtime.loaded_map.get_node_or_null("SpawnNorthPlatform") as StaticBody3D if runtime.loaded_map != null else null
+	var north_platform_mesh := north_platform.get_node_or_null("Mesh") as MeshInstance3D if north_platform != null else null
+	var north_platform_collision := north_platform.get_node_or_null("CollisionShape3D") as CollisionShape3D if north_platform != null else null
+	_expect(north_platform != null and north_platform_mesh != null and north_platform_mesh.is_visible_in_tree() and north_platform_collision != null and north_platform_collision.shape is BoxShape3D and int(north_platform.get_meta("airsim_segmentation_id", -1)) == 2 and spawn != null and absf(north_platform.global_position.x - spawn.global_position.x) <= 1e-6 and absf(north_platform.global_position.z - spawn.global_position.z) <= 1e-6, "Terrain Range SpawnNorth has a visible, collision-bearing launch platform without moving the canonical spawn")
 	var airsim_state: Dictionary = runtime._airsim_state("")
 	var airsim_kinematics: Dictionary = airsim_state.get("state", {}).get("kinematics_estimated", {})
 	var airsim_position: Dictionary = airsim_kinematics.get("position", {})
@@ -533,7 +537,12 @@ func _run() -> void:
 		_click(change_spawn_button)
 	await _settle(4)
 	var south_spawn_after_change := runtime.loaded_map.get_node_or_null("SpawnSouth") as Marker3D
-	_expect(runtime.screen == "flight" and runtime.loaded_map_id == "terrain3d_range" and not runtime.paused and north_spawn_before_change != null and south_spawn_after_change != null and runtime.drone_body.global_position.distance_to(south_spawn_after_change.global_position) <= 1e-6, "Change Spawn cycles to the formal South spawn and resets the current Terrain Range segment")
+	var south_platform_after_change := runtime.loaded_map.get_node_or_null("SpawnSouthPlatform") as StaticBody3D if runtime.loaded_map != null else null
+	var south_platform_collision := south_platform_after_change.get_node_or_null("CollisionShape3D") as CollisionShape3D if south_platform_after_change != null else null
+	_expect(runtime.screen == "flight" and runtime.loaded_map_id == "terrain3d_range" and not runtime.paused and north_spawn_before_change != null and south_spawn_after_change != null and runtime.drone_body.global_position.distance_to(south_spawn_after_change.global_position) <= 1e-6 and south_platform_after_change != null and south_platform_collision != null and south_platform_collision.shape is BoxShape3D and int(south_platform_after_change.get_meta("airsim_segmentation_id", -1)) == 8 and absf(south_platform_after_change.global_position.x - south_spawn_after_change.global_position.x) <= 1e-6 and absf(south_platform_after_change.global_position.z - south_spawn_after_change.global_position.z) <= 1e-6, "Change Spawn reaches the retained South spawn on its collision-bearing platform")
+	var south_spawn_airsim_state: Dictionary = runtime._airsim_state("")
+	var south_spawn_airsim_position: Dictionary = south_spawn_airsim_state.get("state", {}).get("kinematics_estimated", {}).get("position", {})
+	_expect(south_spawn_airsim_state.get("ok", false) and absf(float(south_spawn_airsim_position.get("x_val", 1.0))) <= 1e-6 and absf(float(south_spawn_airsim_position.get("y_val", 1.0))) <= 1e-6 and absf(float(south_spawn_airsim_position.get("z_val", 1.0))) <= 1e-6, "Change Spawn keeps the AirSim NED origin at the active formal spawn")
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()

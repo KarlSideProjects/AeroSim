@@ -53,6 +53,33 @@ func _run() -> void:
             push_error("Terrain3D range is missing %s" % node_name)
             quit(1)
             return
+    var launch_platforms := [
+        {"name": "SpawnNorthPlatform", "spawn": "SpawnNorth", "segmentation_id": 2},
+        {"name": "SpawnSouthPlatform", "spawn": "SpawnSouth", "segmentation_id": 8},
+    ]
+    for launch_platform_spec in launch_platforms:
+        var platform := scene.get_node_or_null(String(launch_platform_spec.name)) as StaticBody3D
+        var spawn := scene.get_node(String(launch_platform_spec.spawn)) as Marker3D
+        var platform_mesh := platform.get_node_or_null("Mesh") as MeshInstance3D if platform != null else null
+        var platform_collision := platform.get_node_or_null("CollisionShape3D") as CollisionShape3D if platform != null else null
+        var platform_shape := platform_collision.shape as BoxShape3D if platform_collision != null else null
+        if platform == null or platform_mesh == null or platform_mesh.mesh == null or platform_shape == null or not platform_mesh.is_visible_in_tree():
+            push_error("Terrain3D range %s must be a visible collision-bearing launch platform" % launch_platform_spec.name)
+            quit(1)
+            return
+        if int(platform.get_meta("airsim_segmentation_id", -1)) != int(launch_platform_spec.segmentation_id):
+            push_error("Terrain3D range %s must retain its stable AirSim segmentation ID" % launch_platform_spec.name)
+            quit(1)
+            return
+        if platform.global_position.distance_to(Vector3(spawn.global_position.x, platform.global_position.y, spawn.global_position.z)) > 1e-6 or platform.global_transform.basis.y.dot(Vector3.UP) < 0.9999:
+            push_error("Terrain3D range %s must be level and centered below %s" % [launch_platform_spec.name, launch_platform_spec.spawn])
+            quit(1)
+            return
+        var hit := scene.get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(spawn.global_position, spawn.global_position + Vector3.DOWN * 2.0))
+        if hit.get("collider") != platform:
+            push_error("Terrain3D range %s must provide external collision clearance below %s" % [launch_platform_spec.name, launch_platform_spec.spawn])
+            quit(1)
+            return
     for spawn_name in ["SpawnNorth", "SpawnSouth"]:
         var spawn := scene.get_node(spawn_name) as Marker3D
         var hit: Vector3 = terrain.call("get_intersection", Vector3(spawn.position.x, 50, spawn.position.z), Vector3.DOWN, true)
