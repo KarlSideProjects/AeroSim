@@ -14,6 +14,7 @@ struct FlightCommand {
     double yaw_rate_degrees_per_second = 0.0;
     double vertical_velocity_mps = 0.0;
     bool heading_hold_enabled = false;
+    bool position_hold_enabled = false;
 };
 
 struct RateProfile {
@@ -55,6 +56,7 @@ struct FlightControlState {
     bool altitude_hold_just_captured = false;
     double altitude_hold_target_m = 0.0;
     double heading_hold_target_radians = 0.0;
+    Vec3 position_hold_target_world;
     std::array<bool, 4> motor_saturation_latched = {false, false, false, false};
     std::array<bool, 3> pid_saturation_latched = {false, false, false};
     double motor_thrust_newtons = 0.0;
@@ -183,6 +185,9 @@ private:
     bool altitude_hold_just_captured_ = false;
     bool heading_hold_captured_ = false;
     double heading_hold_target_radians_ = 0.0;
+    bool position_hold_captured_ = false;
+    Vec3 position_hold_target_world_;
+    Vec3 position_hold_filtered_world_;
     std::array<double, 3> rate_integral_ = {0.0, 0.0, 0.0};
     Vec3 target_angle_frd_;
     Vec3 target_rate_frd_;

@@ -475,7 +475,7 @@ const PidTimingStats &FlightController::pid_timing_stats() const {
 FlightControlState FlightController::control_state() const {
     return {target_angle_frd_, target_rate_frd_, rate_integral_, previous_rate_error_frd_, filtered_rate_derivative_frd_,
             static_cast<int>(mode_family_), control_initialized_, altitude_hold_captured_, altitude_hold_just_captured_,
-            altitude_hold_target_m_, heading_hold_target_radians_, motor_saturation_latched_, pid_saturation_latched_, motor_thrust_newtons_};
+            altitude_hold_target_m_, heading_hold_target_radians_, position_hold_target_world_, motor_saturation_latched_, pid_saturation_latched_, motor_thrust_newtons_};
 }
 
 const TelemetrySnapshot &FlightController::telemetry_snapshot() const {
@@ -1006,6 +1006,9 @@ TrajectorySample FlightController::step_altitude_hold_mode_impl(
         altitude_hold_just_captured_ = false;
         heading_hold_captured_ = false;
         heading_hold_target_radians_ = 0.0;
+        position_hold_captured_ = false;
+        position_hold_target_world_ = {};
+        position_hold_filtered_world_ = {};
     }
     double target_throttle = 0.0;
     SimulationConfig frame_config = config;
@@ -1055,9 +1058,33 @@ TrajectorySample FlightController::step_altitude_hold_mode_impl(
     pid_timing_stats_ = armed_ ? PidTimingStats{static_cast<double>(frame_config.substep_hz), 0.0, 0} : PidTimingStats{};
     std::array<double, 3> pid_output = {0.0, 0.0, 0.0};
     std::array<bool, 3> pid_saturated = {false, false, false};
+    double roll_degrees = command.roll_degrees;
+    double pitch_degrees = command.pitch_degrees;
+    const bool horizontal_input = std::abs(roll_degrees) > 0.01 || std::abs(pitch_degrees) > 0.01;
+    if (command.position_hold_enabled && !horizontal_input) {
+        if (!position_hold_captured_) {
+            position_hold_captured_ = true;
+            position_hold_target_world_ = state.position;
+            position_hold_filtered_world_ = state.position;
+        }
+        const double position_dt = frame_config.physics_hz > 0 ? 1.0 / static_cast<double>(frame_config.physics_hz) : 0.0;
+        const double position_alpha = alpha_from_tau(position_dt, 0.20);
+        position_hold_filtered_world_.x += state.velocity.x * position_dt + (state.position.x - position_hold_filtered_world_.x) * position_alpha;
+        position_hold_filtered_world_.y += state.velocity.y * position_dt + (state.position.y - position_hold_filtered_world_.y) * position_alpha;
+        position_hold_filtered_world_.z += state.velocity.z * position_dt + (state.position.z - position_hold_filtered_world_.z) * position_alpha;
+        const Vec3 error{
+                position_hold_target_world_.x - position_hold_filtered_world_.x,
+                position_hold_target_world_.y - position_hold_filtered_world_.y,
+                position_hold_target_world_.z - position_hold_filtered_world_.z,
+        };
+        roll_degrees = std::clamp(error.z * 8.0 - state.velocity.z * 3.0, -30.0, 30.0);
+        pitch_degrees = std::clamp(-error.x * 8.0 + state.velocity.x * 3.0, -30.0, 30.0);
+    } else {
+        position_hold_captured_ = false;
+    }
     const Vec3 desired_angles_frd{
-            radians(command.roll_degrees),
-            radians(command.pitch_degrees),
+            radians(roll_degrees),
+            radians(pitch_degrees),
             0.0,
     };
     double yaw_rate_degrees_per_second = command.yaw_rate_degrees_per_second;
@@ -1118,6 +1145,9 @@ void FlightController::reset_flight(RigidBodyState &state, SimulationClock &cloc
     altitude_hold_just_captured_ = false;
     heading_hold_captured_ = false;
     heading_hold_target_radians_ = 0.0;
+    position_hold_captured_ = false;
+    position_hold_target_world_ = {};
+    position_hold_filtered_world_ = {};
     target_angle_frd_ = {};
     target_rate_frd_ = {};
     previous_rate_error_frd_ = {};
