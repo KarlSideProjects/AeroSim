@@ -41,9 +41,9 @@ func _run() -> void:
         quit(1)
         return
     var terrain_data := (terrain as Terrain3D).data
-    var grass_sample := terrain_data.get_texture_id(Vector3(80, 0, 80))
-    var soil_sand_sample := terrain_data.get_texture_id(Vector3(12, 0, 18))
-    var rock_sample := terrain_data.get_texture_id(Vector3(42, 0, 24))
+    var grass_sample := terrain_data.get_texture_id(Vector3(80, 0, -80))
+    var soil_sand_sample := terrain_data.get_texture_id(Vector3(8, 0, -36))
+    var rock_sample := terrain_data.get_texture_id(Vector3(24, 0, -44))
     if int(grass_sample.x) != 1 or int(soil_sand_sample.y) != 2 or int(rock_sample.y) != 0 or soil_sand_sample.z < 0.99 or rock_sample.z < 0.99:
         push_error("Terrain3D range must paint grass, soil/sand, and rock layers in the initial player-visible area")
         quit(1)

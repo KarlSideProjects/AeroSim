@@ -22,14 +22,17 @@ func _run() -> void:
     camera.look_at(Vector3(32, 0, 24), Vector3.UP)
     terrain.set_camera(camera)
     var terrain_data := terrain.data
+    var north_region := Vector2i(0, -1)
+    if not terrain_data.has_region(north_region):
+        terrain_data.add_region_blank(north_region, false)
     for x in range(0, 161):
-        for z in range(0, 161):
+        for z in range(-160, 1):
             var position := Vector3(x, 0, z)
             terrain_data.set_control_base_id(position, 1)
             terrain_data.set_control_overlay_id(position, 1)
             terrain_data.set_control_blend(position, 0.0)
-            var soil_sand_weight := clampf(1.0 - (Vector2(x - 12, z - 18).length() - 10.0) / 8.0, 0.0, 1.0)
-            var rock_weight := clampf(1.0 - (Vector2(x - 42, z - 24).length() - 10.0) / 8.0, 0.0, 1.0)
+            var soil_sand_weight := clampf(1.0 - (Vector2(x - 8, z + 36).length() - 8.0) / 6.0, 0.0, 1.0)
+            var rock_weight := clampf(1.0 - (Vector2(x - 24, z + 44).length() - 8.0) / 6.0, 0.0, 1.0)
             if soil_sand_weight > rock_weight:
                 terrain_data.set_control_overlay_id(position, 2)
                 terrain_data.set_control_blend(position, soil_sand_weight)
