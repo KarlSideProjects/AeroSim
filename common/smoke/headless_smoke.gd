@@ -2069,7 +2069,7 @@ func _verify_runtime_actions() -> bool:
         push_error("Xbox Arm release state must be observable in the flight HUD")
         scene.queue_free()
         return false
-    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.75)
+    _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 1.0)
     await process_frame
     await process_frame
     if not scene.arm_status_label.text.contains("LOW"):
@@ -2128,7 +2128,7 @@ func _verify_runtime_actions() -> bool:
     _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
     await process_frame
     await process_frame
-    if scene.flight_mode != "ALTITUDE_HOLD" or not scene.arm_status_label.text.contains("Mode PRESSED"):
+    if scene.flight_mode != "ASSISTED_HOLD" or not scene.arm_status_label.text.contains("Mode PRESSED"):
         push_error("Xbox Mode press must switch flight mode and be observable in the flight HUD")
         scene.queue_free()
         return false
@@ -2141,7 +2141,7 @@ func _verify_runtime_actions() -> bool:
     button_clock.milliseconds = 149
     _inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
     await process_frame
-    if scene.flight_mode != "ALTITUDE_HOLD":
+    if scene.flight_mode != "ASSISTED_HOLD":
         push_error("Xbox Mode presses inside 50 ms must be debounced")
         scene.queue_free()
         return false
