@@ -86,7 +86,7 @@ var takeoff_requested := false
 var takeoff_assist_active := false
 var takeoff_assist_commanded_altitude_m := 0.0
 var assisted_throttle_waiting_for_neutral := false
-var assisted_hover_throttle := 0.5
+var assisted_hover_throttle := 0.0
 var reset_count := 0
 var last_profile_status := ""
 var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]
@@ -1890,7 +1890,8 @@ func request_takeoff() -> void:
     takeoff_assist_commanded_altitude_m = 0.0
     assisted_throttle_waiting_for_neutral = false
     update_fallback_status()
-    takeoff_assist_active = _has_active_gamepad_profile() and native != null
+    assisted_hover_throttle = _configured_hover_throttle()
+    takeoff_assist_active = _has_active_gamepad_profile() and assisted_hover_throttle > 0.0
     if drone_body != null:
         if not reset_to_spawn():
             return
@@ -1899,7 +1900,6 @@ func request_takeoff() -> void:
         if takeoff_assist_active:
             flight_mode = "ASSISTED_HOLD"
             assisted_throttle_waiting_for_neutral = true
-            assisted_hover_throttle = _configured_hover_throttle()
     if time_trial != null:
         time_trial.start()
     _refresh_flight_hud()
@@ -2819,9 +2819,11 @@ func toggle_altitude_hold() -> void:
     if flight_mode in ["ALTITUDE_HOLD", "ASSISTED_HOLD"]:
         flight_mode = "ANGLE"
     else:
+        assisted_hover_throttle = _configured_hover_throttle()
+        if assisted_hover_throttle <= 0.0:
+            return
         native.call("capture_altitude_hold")
         flight_mode = "ASSISTED_HOLD"
-        assisted_hover_throttle = _configured_hover_throttle()
     update_fallback_status()
 
 
@@ -4849,10 +4851,10 @@ func _flight_throttle() -> float:
 
 func _configured_hover_throttle() -> float:
     if native != null and native.has_method("hardware_power_diagnostics"):
-        var hover_throttle := float(native.call("hardware_power_diagnostics").get("hover_throttle", 0.5))
+        var hover_throttle := float(native.call("hardware_power_diagnostics").get("hover_throttle", 0.0))
         if is_finite(hover_throttle) and hover_throttle > 0.0:
             return clampf(hover_throttle, 0.0, 1.0)
-    return 0.5
+    return 0.0
 
 func _profile_throttle_is_low() -> bool:
     return _has_active_gamepad_profile() and session_gamepad_profile.throttle_axis_is_low(_profile_throttle_raw())
