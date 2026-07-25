@@ -26,6 +26,10 @@ class Terrain3DDependencyTest(unittest.TestCase):
         self.assertEqual(entry["version"], VERSION)
         self.assertEqual(entry["homepage"], "https://github.com/TokisanGames/Terrain3D")
         self.assertIn(RELEASE_SHA256, (ROOT / "assets" / "third_party" / "terrain3d" / "asset_notes.md").read_text())
+        material_entry = next(item for item in manifest["dependencies"] if item["name"] == "ambientCG Ground037 and Rock023")
+        self.assertEqual(material_entry["license"], "CC0-1.0")
+        self.assertEqual(material_entry["homepage"], "https://ambientcg.com/")
+        self.assertIn("Terrain Range grass, soil/sand, and rock", material_entry["attribution_scope"])
 
     def test_license_gate_rejects_missing_terrain3d_attribution(self) -> None:
         manifest = json.loads((ROOT / "third_party" / "licenses.json").read_text())

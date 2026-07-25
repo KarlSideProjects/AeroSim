@@ -1,6 +1,7 @@
 extends SceneTree
 
 const TerrainRange = preload("res://levels/free_flight/terrain3d_range.tscn")
+const TerrainAssets = preload("res://assets/third_party/terrain3d_demo/demo/data/assets.tres")
 
 func _initialize() -> void:
     call_deferred("_run")
@@ -21,6 +22,32 @@ func _run() -> void:
     camera.look_at(Vector3.ZERO, Vector3.UP)
     terrain.call("set_camera", camera)
     await process_frame
+    var material_layers := {}
+    for texture_id in TerrainAssets.get_texture_count():
+        var texture := TerrainAssets.get_texture(texture_id) as Terrain3DTextureAsset
+        if texture != null:
+            material_layers[texture.name] = texture
+    for layer_name in ["Grass", "SoilSand", "Rock"]:
+        var layer := material_layers.get(layer_name) as Terrain3DTextureAsset
+        if layer == null or layer.albedo_texture == null:
+            push_error("Terrain3D range must provide a textured %s ground layer" % layer_name)
+            quit(1)
+            return
+    var grass_color := (material_layers["Grass"] as Terrain3DTextureAsset).albedo_color
+    var soil_sand_color := (material_layers["SoilSand"] as Terrain3DTextureAsset).albedo_color
+    var rock_color := (material_layers["Rock"] as Terrain3DTextureAsset).albedo_color
+    if grass_color.is_equal_approx(soil_sand_color) or grass_color.is_equal_approx(rock_color) or soil_sand_color.is_equal_approx(rock_color):
+        push_error("Terrain3D range ground layers must use distinct grass, soil/sand, and rock colors")
+        quit(1)
+        return
+    var terrain_data := (terrain as Terrain3D).data
+    var grass_sample := terrain_data.get_texture_id(Vector3(80, 0, 80))
+    var soil_sand_sample := terrain_data.get_texture_id(Vector3(12, 0, 18))
+    var rock_sample := terrain_data.get_texture_id(Vector3(42, 0, 24))
+    if int(grass_sample.x) != 1 or int(soil_sand_sample.y) != 2 or int(rock_sample.y) != 0 or soil_sand_sample.z < 0.99 or rock_sample.z < 0.99:
+        push_error("Terrain3D range must paint grass, soil/sand, and rock layers in the initial player-visible area")
+        quit(1)
+        return
     for node_name in ["GroundCollision", "SpawnNorth", "SpawnSouth", "TimeTrial/Finish"]:
         if scene.get_node_or_null(node_name) == null:
             push_error("Terrain3D range is missing %s" % node_name)

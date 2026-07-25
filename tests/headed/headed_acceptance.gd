@@ -578,6 +578,8 @@ func _run() -> void:
 		var scene_image := Image.new()
 		var scene_decode := scene_image.load_png_from_buffer(scene_response.image_data_uint8)
 		_expect(scene_decode == OK and not scene_image.is_empty() and _max_color_ratio(scene_image) < 0.99, "Scene PNG decodes to an observable rendered view")
+		var natural_ground_colors := _natural_ground_color_counts(scene_image)
+		_expect(int(natural_ground_colors.grass) >= 12 and int(natural_ground_colors.soil_sand) >= 12, "Terrain Range AirSim scene capture contains visible grass and soil/sand ground colors")
 		_expect(depth_response.image_type == 1 and depth_response.pixels_as_float and depth_response.image_data_float.size() == 256 * 144, "DepthPlanar response has one float per pixel")
 		_expect(segmentation_response.image_type == 5 and segmentation_response.image_data_uint8.size() == 256 * 144 * 3, "Segmentation raw response has RGB bytes")
 		var segmentation_ids := {}
@@ -729,6 +731,21 @@ func _max_color_ratio(image: Image) -> float:
 		counts[color] = int(counts.get(color, 0)) + 1
 		max_count = maxi(max_count, counts[color])
 	return float(max_count) / float(image.get_width() * image.get_height())
+
+func _natural_ground_color_counts(image: Image) -> Dictionary:
+	image.convert(Image.FORMAT_RGBA8)
+	var grass := 0
+	var soil_sand := 0
+	var data := image.get_data()
+	for offset in range(0, data.size(), 4):
+		var red := int(data[offset])
+		var green := int(data[offset + 1])
+		var blue := int(data[offset + 2])
+		if green >= red + 10 and green >= blue + 10 and green >= 40:
+			grass += 1
+		elif red >= green + 25 and green >= blue + 10 and red >= 70:
+			soil_sand += 1
+	return {"grass": grass, "soil_sand": soil_sand}
 
 func _tap(keycode: Key) -> void:
 	for pressed in [true, false]:
