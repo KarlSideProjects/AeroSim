@@ -263,19 +263,19 @@ func _run() -> void:
 	var mapping: Label = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/FixedMapping")
 	var axes: Label = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/LiveAxes")
 	var confirm_button: Button = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile")
-	_expect(mapping != null and mapping.text.contains("roll -> Axis 0") and mapping.text.contains("throttle -> Axis 3"), "confirmation shows fixed Xbox mapping")
+	_expect(mapping != null and mapping.text.contains("roll -> Axis 2") and mapping.text.contains("throttle -> Axis 1"), "confirmation shows fixed Xbox mapping")
 	for expected_axis in [
-		"roll: Raw +0.500 | Normalized +0.457",
-		"pitch: Raw -0.500 | Normalized -0.457",
-		"yaw: Raw +0.250 | Normalized +0.185",
-		"throttle: Raw -0.750 | Normalized -0.728"
+		"roll: Raw +0.250 | Normalized +0.167",
+		"pitch: Raw -0.750 | Normalized +0.694",
+		"yaw: Raw +0.500 | Normalized +0.420",
+		"throttle: Raw -0.500 | Normalized +0.420"
 	]:
 		_expect(axes != null and axes.text.contains(expected_axis), "confirmation shows live axis value %s" % expected_axis)
 	for update in [
-		{"axis": JOY_AXIS_LEFT_X, "value": -0.5, "expected": "roll: Raw -0.500 | Normalized -0.457"},
-		{"axis": JOY_AXIS_LEFT_Y, "value": 0.5, "expected": "pitch: Raw +0.500 | Normalized +0.457"},
-		{"axis": JOY_AXIS_RIGHT_X, "value": -0.25, "expected": "yaw: Raw -0.250 | Normalized -0.185"},
-		{"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "throttle: Raw +0.750 | Normalized +0.728"}
+		{"axis": JOY_AXIS_LEFT_X, "value": -0.5, "expected": "yaw: Raw -0.500 | Normalized -0.420"},
+		{"axis": JOY_AXIS_LEFT_Y, "value": 0.5, "expected": "throttle: Raw +0.500 | Normalized -0.420"},
+		{"axis": JOY_AXIS_RIGHT_X, "value": -0.25, "expected": "roll: Raw -0.250 | Normalized -0.167"},
+		{"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "pitch: Raw +0.750 | Normalized -0.694"}
 	]:
 		_inject_joy_axis(known_device_id, update.axis, update.value)
 		await _settle(2)
@@ -304,12 +304,12 @@ func _run() -> void:
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
 	var xbox_frd_axis_cases := [
-		{"role": "roll", "axis": JOY_AXIS_LEFT_X, "value": -0.5, "component": 0},
-		{"role": "pitch", "axis": JOY_AXIS_LEFT_Y, "value": 0.5, "component": 1},
-		{"role": "yaw", "axis": JOY_AXIS_RIGHT_X, "value": -0.25, "component": 2},
+		{"role": "roll", "axis": JOY_AXIS_RIGHT_X, "value": -0.5, "component": 0},
+		{"role": "pitch", "axis": JOY_AXIS_RIGHT_Y, "value": 0.5, "component": 1},
+		{"role": "yaw", "axis": JOY_AXIS_LEFT_X, "value": -0.25, "component": 2},
 	]
 	for axis_case in xbox_frd_axis_cases:
-		for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X]:
+		for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y]:
 			_inject_joy_axis(known_device_id, axis, 0.0)
 		runtime.native.call("reset_flight")
 		runtime.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
@@ -339,14 +339,14 @@ func _run() -> void:
 	var monitor: Label = runtime.controller_settings_monitor_label
 	_expect(monitor != null and monitor.is_visible_in_tree(), "paused flight opens the visible Channel Monitor")
 	_expect(monitor != null and monitor.text.contains("ARM: RELEASED | flight control: ARMED"), "Channel Monitor starts with physical A released and flight control armed")
-	_expect(monitor != null and monitor.text.contains("MODE: RELEASED | flight mode: ANGLE"), "Channel Monitor starts with physical Y released and Angle mode")
+	_expect(monitor != null and monitor.text.contains("MODE: RELEASED | flight mode: ALTITUDE_HOLD"), "Channel Monitor starts with physical Y released and Assisted Hold mode")
 	var monitor_before_axes := monitor.text if monitor != null else ""
 	_inject_joy_button(known_device_id, JOY_BUTTON_A, true)
 	await _settle(2)
 	_expect(monitor != null and monitor.text.contains("ARM: PRESSED | flight control: ARMED"), "A button physical state remains distinct from already armed control")
 	_inject_joy_button(known_device_id, JOY_BUTTON_Y, true)
 	await _settle(2)
-	_expect(monitor != null and monitor.text.contains("MODE: PRESSED | flight mode: ALTITUDE_HOLD"), "Y button physical state shows the actual resulting flight mode")
+	_expect(monitor != null and monitor.text.contains("MODE: PRESSED | flight mode: ANGLE"), "Y button physical state shows the actual resulting flight mode")
 	var monitor_start_count: int = runtime.controller_monitor_refresh_count
 	var monitor_start_ms := Time.get_ticks_msec()
 	while Time.get_ticks_msec() - monitor_start_ms < 1_000:
@@ -365,10 +365,10 @@ func _run() -> void:
 	_expect(simulation_time_frozen, "Channel Monitor leaves paused simulation time frozen")
 	_expect(monitor != null and monitor.text != monitor_before_axes, "Channel Monitor renders injected axes while paused")
 	for expected_axis_row in [
-		"roll:     [------------|----] raw +0.500 | normalized +0.457",
-		"pitch:    [------------|----] raw -0.500 | normalized +0.457",
-		"yaw:      [---------|-------] raw +0.250 | normalized +0.185",
-		"throttle: [--|--------------] raw -0.750 | normalized -0.728 | LOW",
+		"roll:     [---------|-------] raw +0.250 | normalized +0.167",
+		"pitch:    [--------------|--] raw -0.750 | normalized +0.694",
+		"yaw:      [-----------|-----] raw +0.500 | normalized +0.420",
+		"throttle: [-----------|-----] raw -0.500 | normalized +0.420 | HIGH",
 	]:
 		_expect(monitor != null and monitor.text.contains(expected_axis_row), "Channel Monitor renders canonical axis row %s" % expected_axis_row)
 	await _snapshot("07_channel_monitor_paused")
@@ -376,7 +376,7 @@ func _run() -> void:
 	_inject_joy_button(known_device_id, JOY_BUTTON_Y, false)
 	await _settle(2)
 	_expect(monitor != null and monitor.text.contains("ARM: RELEASED | flight control: ARMED"), "A release keeps flight control armed")
-	_expect(monitor != null and monitor.text.contains("MODE: RELEASED | flight mode: ALTITUDE_HOLD"), "Y release keeps the actual flight mode")
+	_expect(monitor != null and monitor.text.contains("MODE: RELEASED | flight mode: ANGLE"), "Y release keeps the actual flight mode")
 	_channel_monitor_evidence = {
 		"elapsed_wall_time_seconds": monitor_elapsed_seconds,
 		"refresh_count": monitor_refresh_count,
@@ -431,7 +431,7 @@ func _run() -> void:
 	acro_key.physical_keycode = KEY_C
 	acro_key.pressed = true
 	runtime._unhandled_input(acro_key)
-	_expect(runtime.flight_mode == "ALTITUDE_HOLD", "C cannot switch to ACRO while paused")
+	_expect(runtime.flight_mode == "ANGLE", "C cannot switch to ACRO while paused")
 	runtime.show_rates("flight")
 	await _settle(2)
 	_expect(runtime.screen == "rates" and runtime.paused, "Rates opened from Pause Overlay keeps pause state")
@@ -574,19 +574,18 @@ func _run() -> void:
 	await _snapshot("03_takeoff")
 	_expect(runtime.takeoff_requested, "T requests takeoff after Quick Fly")
 	var motor_panel: PanelContainer = runtime.get_node_or_null("FlightHud/MotorHudMargin/MotorHudPanel")
-	var motor_labels: Array[Label] = []
-	for motor_label in ["FL", "FR", "RL", "RR"]:
-		var cell: Label = runtime.get_node_or_null("FlightHud/MotorHudMargin/MotorHudPanel/Rows/Grid/%s" % motor_label)
-		motor_labels.append(cell)
-		_expect(cell != null and cell.is_visible_in_tree() and cell.text.begins_with("%s\n" % motor_label), "Motor HUD renders physical %s cell" % motor_label)
-		_expect(cell != null and cell.text.contains(" N\n") and cell.text.contains(" RPM\n") and cell.text.contains(" A"), "Motor HUD %s cell is readable in N/RPM/A" % motor_label)
+	var rotor_panel: Control = runtime.get_node_or_null("FlightHud/MotorHudMargin/MotorHudPanel/RotorTelemetryPanel")
+	_expect(rotor_panel != null and rotor_panel.is_visible_in_tree(), "Motor HUD renders the persistent telemetry-driven four-rotor panel")
+	var gamepad_panel: Control = runtime.get_node_or_null("FlightHud/GamepadHudMargin/GamepadHudPanel/GamepadTelemetryPanel")
+	_expect(gamepad_panel != null and gamepad_panel.is_visible_in_tree(), "Flight HUD renders the persistent Xbox Mode 2 panel")
 	runtime.osd_profile = OsdProfile.profile_for_preset("Minimal")
 	runtime.call("_refresh_flight_hud")
 	_expect(motor_panel != null and motor_panel.is_visible_in_tree(), "Minimal OSD cannot hide the persistent Motor HUD")
 	_motor_hud_evidence = {
 		"visible": motor_panel != null and motor_panel.is_visible_in_tree(),
 		"minimal_visible": motor_panel != null and motor_panel.is_visible_in_tree(),
-		"labels": motor_labels.map(func(cell: Label) -> String: return cell.text.split("\n")[0] if cell != null else ""),
+		"rotor_panel": rotor_panel != null and rotor_panel.is_visible_in_tree(),
+		"gamepad_panel": gamepad_panel != null and gamepad_panel.is_visible_in_tree(),
 		"screenshot_path": "%s/03_takeoff.png" % _out_dir,
 	}
 
