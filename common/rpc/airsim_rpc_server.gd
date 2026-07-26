@@ -44,6 +44,7 @@ var _scene_object_handler: Callable
 var _environment_handler: Callable
 var _replay_simulation_handler: Callable
 var _replay_async_handler: Callable
+var _reset_environment_replay_handler: Callable
 var _publication_error_handler: Callable
 var _reset_start_handler: Callable
 var _reset_status_handler: Callable
@@ -87,9 +88,10 @@ func set_scene_environment_backend(scene_object_handler: Callable, environment_h
     _environment_handler = environment_handler
 
 
-func set_replay_handlers(simulation_handler: Callable, async_handler: Callable) -> void:
+func set_replay_handlers(simulation_handler: Callable, async_handler: Callable, reset_environment_handler: Callable = Callable()) -> void:
     _replay_simulation_handler = simulation_handler
     _replay_async_handler = async_handler
+    _reset_environment_replay_handler = reset_environment_handler
 
 
 func set_publication_error_handler(handler: Callable) -> void:
@@ -421,6 +423,10 @@ func _publish_reset_commit() -> void:
     if _replay_simulation_handler.is_valid():
         _replay_simulation_handler.call(4, 0.0)
     session.reset()
+    # Reset's native replay event must precede its baseline, while the public
+    # session epoch must be zero before that baseline takes a timestamp.
+    if _reset_environment_replay_handler.is_valid():
+        _reset_environment_replay_handler.call()
     reset_vehicle_control_state()
 
 

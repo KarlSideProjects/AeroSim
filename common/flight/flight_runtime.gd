@@ -300,7 +300,10 @@ func _ready() -> void:
     )
     airsim_rpc_server.set_sensor_backend(Callable(self, "_airsim_sensor"))
     airsim_rpc_server.set_scene_environment_backend(Callable(self, "_airsim_scene_object"), Callable(self, "_airsim_environment"))
-    airsim_rpc_server.set_replay_handlers(Callable(self, "_record_replay_simulation_operation"), Callable(self, "_record_replay_async"))
+    airsim_rpc_server.set_replay_handlers(
+        Callable(self, "_record_replay_simulation_operation"),
+        Callable(self, "_record_replay_async"),
+        Callable(self, "_record_replay_reset_environment"))
     airsim_rpc_server.set_publication_error_handler(Callable(self, "_reset_publication_error"))
     airsim_rpc_server.set_reset_lifecycle_handlers(
         Callable(self, "_begin_rpc_reset"),
@@ -905,10 +908,11 @@ func _record_replay_simulation_operation(operation: int, value: float) -> void:
         push_error("Complete replay simulation recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
     elif operation == 4 or operation == 5:
         _replay_epoch_pending = true
-        if operation == 4 and environment_state != null:
-            # Replay Reset clears active environment state during application.
-            # Keep the committed reset baseline immediately after it.
-            _record_replay_environment(_environment_rpc_snapshot(environment_state.snapshot()))
+
+
+func _record_replay_reset_environment() -> void:
+    if environment_state != null:
+        _record_replay_environment(_environment_rpc_snapshot(environment_state.snapshot()))
 
 
 func _record_replay_async(simulation_time_seconds: float, vehicle_name: String, command_id: String, method: String, lifecycle: int) -> void:

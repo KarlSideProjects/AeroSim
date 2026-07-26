@@ -50,6 +50,7 @@ class ResetRecordingNative extends FakeNative:
     var reset_flight_count := 0
     var disarm_count := 0
     var replay_event_order: Array[String] = []
+    var replay_timestamps: Array[int] = []
 
     func reset_flight() -> void:
         reset_flight_count += 1
@@ -59,8 +60,9 @@ class ResetRecordingNative extends FakeNative:
         disarm_count += 1
         super.disarm_flight_control()
 
-    func record_replay_simulation_operation(_timestamp_us: int, operation: int, _value: float) -> Dictionary:
+    func record_replay_simulation_operation(timestamp_us: int, operation: int, _value: float) -> Dictionary:
         replay_event_order.append("reset" if operation == 4 else "operation_%d" % operation)
+        replay_timestamps.append(timestamp_us)
         if operation == 5:
             reset_operation_count += 1
         return {"ok": true}
@@ -68,8 +70,9 @@ class ResetRecordingNative extends FakeNative:
     func configure_wind(_config: Dictionary) -> void:
         pass
 
-    func record_replay_environment(_timestamp_us: int, _state_json: String) -> Dictionary:
+    func record_replay_environment(timestamp_us: int, _state_json: String) -> Dictionary:
         replay_event_order.append("environment")
+        replay_timestamps.append(timestamp_us)
         environment_record_count += 1
         return {"ok": true}
 
@@ -2566,7 +2569,7 @@ func test_rpc_reset_timeout_preserves_public_session_and_control_state() -> void
     map.queue_free()
 
 
-func test_rpc_reset_records_replay_reset_before_committed_environment_baseline() -> void:
+func test_rpc_reset_replay_starts_a_new_timestamp_epoch_after_its_environment_baseline() -> void:
     var runtime := FlightRuntime.new()
     var map := Node3D.new()
     var spawn := Marker3D.new()
@@ -2583,7 +2586,9 @@ func test_rpc_reset_records_replay_reset_before_committed_environment_baseline()
     runtime.airsim_rpc_server = preload("res://common/rpc/airsim_rpc_server.gd").new()
     runtime.airsim_rpc_server.set_session(runtime.airsim_session)
     runtime.airsim_rpc_server.set_replay_handlers(
-        Callable(runtime, "_record_replay_simulation_operation"), Callable())
+        Callable(runtime, "_record_replay_simulation_operation"),
+        Callable(),
+        Callable(runtime, "_record_replay_reset_environment"))
     runtime.airsim_rpc_server.set_reset_lifecycle_handlers(
         Callable(runtime, "_begin_rpc_reset"),
         Callable(runtime, "_rpc_reset_status"),
@@ -2594,8 +2599,15 @@ func test_rpc_reset_records_replay_reset_before_committed_environment_baseline()
     assert_eq(runtime._rpc_reset_status(int(result.generation)).state, "committed")
     runtime.airsim_rpc_server._active_reset_generation = int(result.generation)
     runtime.airsim_rpc_server._flush_pending_reset_waiters()
+    runtime.airsim_session.advance_frame()
+    runtime._record_replay_simulation_operation(2, 1.0)
+    runtime.airsim_session.advance_frame()
+    runtime._record_replay_simulation_operation(2, 1.0)
 
-    assert_eq(runtime.native.replay_event_order, ["reset", "environment"])
+    assert_eq(runtime.native.replay_event_order, ["reset", "environment", "operation_2", "operation_2"])
+    assert_gt(runtime.native.replay_timestamps[1], runtime.native.replay_timestamps[0])
+    assert_gt(runtime.native.replay_timestamps[2], runtime.native.replay_timestamps[1])
+    assert_gt(runtime.native.replay_timestamps[3], runtime.native.replay_timestamps[2])
     assert_eq(runtime.native.environment_record_count, 1)
     assert_eq(float(runtime.environment_state.snapshot().rain), 0.0)
     runtime.airsim_rpc_server.free()
