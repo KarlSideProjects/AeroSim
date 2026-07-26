@@ -7,8 +7,11 @@ const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const LanguageProfile = preload("res://common/flight/language_profile.gd")
 const Localization = preload("res://common/flight/localization.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const AirSimCameraSurface = preload("res://common/rpc/airsim_camera_surface.gd")
+const EnvironmentState = preload("res://common/rpc/environment_state.gd")
 const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
+const TimeTrial = preload("res://common/flight/time_trial.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
@@ -39,6 +42,31 @@ class FakeNative:
 
     func hardware_power_diagnostics() -> Dictionary:
         return {"hover_throttle": 0.30}
+
+
+class ResetRecordingNative extends FakeNative:
+    var reset_operation_count := 0
+    var environment_record_count := 0
+
+    func record_replay_simulation_operation(_timestamp_us: int, operation: int, _value: float) -> Dictionary:
+        if operation == 5:
+            reset_operation_count += 1
+        return {"ok": true}
+
+    func configure_wind(_config: Dictionary) -> void:
+        pass
+
+    func record_replay_environment(_timestamp_us: int, _state_json: String) -> Dictionary:
+        environment_record_count += 1
+        return {"ok": true}
+
+
+class ArmRejectingNative extends FakeNative:
+    func arm_flight_control(_timestamp: float) -> bool:
+        return false
+
+    func flight_control_arm_reject_code() -> String:
+        return "test_arm_rejected"
 
 
 class FailingStepNative:
@@ -180,6 +208,24 @@ class FakeTakeoffBody extends RefCounted:
     func apply_native_state(position: Vector3, _orientation: Quaternion, velocity: Vector3, _angular: Vector3) -> void:
         global_position = position
         linear_velocity = velocity
+
+
+class UnacknowledgedResetBody extends RefCounted:
+    var global_position := Vector3.ZERO
+    var global_transform := Transform3D.IDENTITY
+    var linear_velocity := Vector3.ZERO
+    var angular_velocity := Vector3.ZERO
+    var freeze := true
+    var sleeping := true
+
+    func reset_contact() -> void:
+        pass
+
+    func queue_reset_state(_position: Vector3, _orientation: Quaternion, token: int) -> int:
+        return token
+
+    func reset_acknowledged(_token: int) -> bool:
+        return false
 
 
 class QuickFlyRuntime extends FlightRuntime:
@@ -2170,6 +2216,129 @@ func test_reset_commits_primary_and_secondary_bodies_before_preflight_ready() ->
     assert_true(runtime._airsim_secondary_native.disarmed)
     runtime.drone_body.free()
     runtime.secondary_drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_reset_pending_does_not_publish_replay_environment_or_time_trial_state() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    spawn.position = Vector3(8.0, 2.0, -6.0)
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = UnacknowledgedResetBody.new()
+    runtime.native = ResetRecordingNative.new()
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.environment_state = EnvironmentState.new()
+    assert_true(runtime.environment_state.apply({"rain": 0.75, "weather_enabled": true}).ok)
+    runtime.time_trial = TimeTrial.new()
+    runtime.time_trial.configure([Vector3(1.0, 0.0, 0.0)], Vector3(2.0, 0.0, 0.0))
+    runtime.time_trial.start()
+    runtime.time_trial.elapsed_seconds = 4.0
+    runtime._replay_recording_active = true
+    runtime.screen = "flight"
+    var camera_world := Node3D.new()
+    runtime.chase_camera = Camera3D.new()
+    camera_world.add_child(runtime.chase_camera)
+    var camera_surface := AirSimCameraSurface.new()
+    camera_world.add_child(camera_surface)
+    get_tree().root.add_child(camera_world)
+    camera_surface.configure(
+        camera_world,
+        Callable(runtime, "_airsim_camera_source"),
+        Callable(runtime, "_airsim_camera_vehicle"),
+        runtime.airsim_session,
+        {},
+        Callable(runtime, "_airsim_camera_origin"))
+
+    assert_true(runtime.reset_to_spawn())
+
+    assert_eq(runtime.native.reset_operation_count, 0)
+    assert_eq(float(runtime.environment_state.snapshot().rain), 0.75)
+    assert_true(runtime.time_trial.active)
+    assert_eq(runtime.time_trial.elapsed_seconds, 4.0)
+    assert_eq(runtime._airsim_state("" ).get("error"), "reset_pending")
+    assert_eq(runtime._airsim_sensor(2, "imu", "").get("error"), "reset_pending")
+    assert_null(runtime._airsim_camera_source())
+    var image_result := camera_surface.capture([{
+        "camera_name": "front_center",
+        "image_type": 0,
+        "pixels_as_float": false,
+        "compress": false,
+    }], "")
+    assert_eq(image_result.get("error"), "camera source is unavailable")
+    runtime.free()
+    map.queue_free()
+    camera_world.queue_free()
+
+
+func test_reset_ack_timeout_discards_unpublished_reset_side_effects() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = UnacknowledgedResetBody.new()
+    runtime.native = ResetRecordingNative.new()
+    runtime.environment_state = EnvironmentState.new()
+    assert_true(runtime.environment_state.apply({"rain": 0.4, "weather_enabled": true}).ok)
+    runtime.time_trial = TimeTrial.new()
+    runtime.time_trial.configure([Vector3(1.0, 0.0, 0.0)], Vector3(2.0, 0.0, 0.0))
+    runtime.time_trial.start()
+    runtime.time_trial.elapsed_seconds = 3.0
+    runtime._replay_recording_active = true
+    runtime.screen = "flight"
+
+    assert_true(runtime.reset_to_spawn())
+    for _frame in 9:
+        runtime._advance_reset_pending()
+
+    assert_eq(runtime.screen, "error")
+    assert_true(runtime.paused)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(runtime.drone_body.sleeping)
+    assert_eq(runtime.native.reset_operation_count, 0)
+    assert_eq(runtime.native.environment_record_count, 0)
+    assert_eq(float(runtime.environment_state.snapshot().rain), 0.4)
+    assert_true(runtime.time_trial.active)
+    assert_eq(runtime.time_trial.elapsed_seconds, 3.0)
+    runtime.free()
+    map.queue_free()
+
+
+func test_post_commit_arm_failure_leaves_the_reset_transaction_safely_terminal() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = ArmRejectingNative.new()
+    runtime.keyboard_fallback_explicitly_selected = true
+    runtime.screen = "preflight"
+    runtime.time_trial = TimeTrial.new()
+    runtime.time_trial.configure([Vector3(1.0, 0.0, 0.0)], Vector3(2.0, 0.0, 0.0))
+
+    runtime.arm_and_takeoff()
+    await _await_runtime_reset_commit(runtime)
+
+    assert_eq(runtime.screen, "error")
+    assert_true(runtime.paused)
+    assert_false(runtime.takeoff_requested)
+    assert_false(runtime.time_trial.active)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(runtime.drone_body.sleeping)
+    assert_true(runtime.native.disarmed)
+    assert_eq(runtime.last_error_message, "Quick Fly cannot arm: test_arm_rejected")
+    runtime.drone_body.free()
     runtime.free()
     map.queue_free()
 

@@ -49,3 +49,22 @@
 - Recovery GUT retains the existing three malformed Terrain Range fixture
   orphans and emits the existing Android daemon connection warning; neither
   produces a test failure or error.
+
+## Atomicity review follow-up — round 1
+
+- Reset side effects that become externally meaningful—replay reset records,
+  environment changes, time-trial reset, scene-catalog reset, acceleration
+  baseline, and secondary collision publication—now wait for all body ACKs.
+  A timeout keeps the pre-reset environment and time-trial state and records no
+  replay reset event.
+- Pending AirSim state, sensor, scene/environment, and image requests now
+  receive `reset_pending` (or an unavailable camera source for image capture),
+  rather than a mix of the pre-reset body and reset native data. AirSim FPV is
+  restored through the normal chase-camera source after commit.
+- Native/PX4 arm is now attempted before entering flight, unpausing, unfreezing
+  a body, starting a time trial, or setting `takeoff_requested`. An arm failure
+  performs terminal safe cleanup; unlike an ACK timeout it deliberately resets
+  the time trial as part of the failed takeoff transaction.
+- New GUT coverage proves pending state/image rejection and deferred
+  replay/environment/time-trial publication, timeout rollback, and post-commit
+  native-arm failure cleanup.
