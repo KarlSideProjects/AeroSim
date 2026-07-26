@@ -662,6 +662,57 @@ func test_switching_to_industrial_yard_unloads_the_retained_terrain_range() -> v
     assert_false(is_instance_valid(terrain_range))
 
 
+func test_license_invalid_after_cancel_unloads_the_retained_terrain_range() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quick_fly()
+    var retained_map := runtime.loaded_map
+    runtime._cancel_controller_route()
+    (runtime.license_provider as FakeLicenseProvider).snapshot = {
+        "ok": false,
+        "status": "revoked",
+        "last_online_result": "revoked",
+    }
+
+    runtime.quick_fly()
+
+    assert_eq(runtime.screen, "license_blocked")
+    assert_null(runtime.loaded_map)
+    assert_eq(runtime.loaded_map_id, "")
+
+    await get_tree().process_frame
+
+    assert_false(is_instance_valid(retained_map))
+
+
+func test_exit_after_cancel_disarms_freezes_and_unloads_the_retained_terrain_range() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quit_on_exit = false
+    runtime.quick_fly()
+    var retained_map := runtime.loaded_map
+    runtime._cancel_controller_route()
+    var native := FakeNative.new()
+    native.armed = true
+    runtime.native = native
+    runtime.takeoff_requested = true
+    runtime.drone_body.freeze = false
+
+    runtime.request_exit()
+
+    assert_true(runtime.exit_requested)
+    assert_eq(runtime.screen, "main_menu")
+    assert_false(runtime.takeoff_requested)
+    assert_true(runtime.paused)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(native.disarmed)
+    assert_false(native.armed)
+    assert_null(runtime.loaded_map)
+    assert_eq(runtime.loaded_map_id, "")
+
+    await get_tree().process_frame
+
+    assert_false(is_instance_valid(retained_map))
+
+
 func test_other_maps_keep_the_runtime_weather_environment_fallback() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)
