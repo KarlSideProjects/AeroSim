@@ -70,6 +70,7 @@ var airsim_camera_surface: AirSimCameraSurface
 var scene_object_catalog: SceneObjectCatalog
 var environment_state: EnvironmentState
 var airsim_stop_file := ""
+var _map_scene_paths: Dictionary = MAP_SCENE_PATHS.duplicate()
 var loaded_map: Node3D
 var loaded_map_id := ""
 var loaded_map_wind_preset := "calm"
@@ -2318,7 +2319,7 @@ func load_map(map_id: String) -> bool:
     var descriptor: Dictionary = maps.load_descriptor(map_id)
     if not maps.last_ok:
         return _set_map_error("Cannot load Free Flight map %s: %s" % [map_id, maps.last_error])
-    var scene_path := str(MAP_SCENE_PATHS.get(map_id, ""))
+    var scene_path := str(_map_scene_paths.get(map_id, ""))
     if scene_path.is_empty() or not ResourceLoader.exists(scene_path):
         return _set_map_error("Cannot load Free Flight map %s: scene is unavailable" % map_id)
     var scene := load(scene_path) as PackedScene

@@ -520,6 +520,22 @@ func test_terrain_range_missing_authored_environment_does_not_receive_a_blank_fa
     assert_string_contains(runtime.last_error_message, "required AeroSimEnvironment")
 
 
+func test_load_map_rejects_terrain_range_without_an_authored_environment() -> void:
+    var runtime := _runtime_with_terrain_range_scene("res://tests/fixtures/maps/terrain_range_missing_environment.tscn")
+
+    assert_false(runtime.load_map("terrain3d_range"))
+    assert_null(runtime.loaded_map)
+    assert_string_contains(runtime.last_error_message, "required AeroSimEnvironment")
+
+
+func test_load_map_rejects_terrain_range_with_an_unresourced_environment() -> void:
+    var runtime := _runtime_with_terrain_range_scene("res://tests/fixtures/maps/terrain_range_unresourced_environment.tscn")
+
+    assert_false(runtime.load_map("terrain3d_range"))
+    assert_null(runtime.loaded_map)
+    assert_string_contains(runtime.last_error_message, "required AeroSimEnvironment")
+
+
 func test_other_maps_keep_the_runtime_weather_environment_fallback() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)
@@ -532,6 +548,14 @@ func test_other_maps_keep_the_runtime_weather_environment_fallback() -> void:
     runtime._apply_environment_visuals({"weather_enabled": false, "fog": 0.0, "time_of_day_enabled": false, "move_sun": true})
 
     assert_not_null(map.get_node_or_null("AeroSimEnvironment"))
+
+
+func _runtime_with_terrain_range_scene(scene_path: String) -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime._map_scene_paths = FlightRuntime.MAP_SCENE_PATHS.duplicate()
+    runtime._map_scene_paths["terrain3d_range"] = scene_path
+    return runtime
 
 
 func test_quick_fly_fails_loudly_when_license_provider_configuration_fails() -> void:
