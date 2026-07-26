@@ -505,6 +505,35 @@ func test_environment_reset_restores_map_authored_fog() -> void:
     assert_almost_eq(world_environment.environment.fog_density, 0.0025, 0.000001)
 
 
+func test_terrain_range_missing_authored_environment_does_not_receive_a_blank_fallback() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var map := Node3D.new()
+    autofree(map)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.loaded_map_id = "terrain3d_range"
+
+    runtime._apply_environment_visuals({"weather_enabled": false, "fog": 0.0, "time_of_day_enabled": false, "move_sun": true})
+
+    assert_null(map.get_node_or_null("AeroSimEnvironment"))
+    assert_string_contains(runtime.last_error_message, "required AeroSimEnvironment")
+
+
+func test_other_maps_keep_the_runtime_weather_environment_fallback() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var map := Node3D.new()
+    autofree(map)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.loaded_map_id = "industrial_yard"
+
+    runtime._apply_environment_visuals({"weather_enabled": false, "fog": 0.0, "time_of_day_enabled": false, "move_sun": true})
+
+    assert_not_null(map.get_node_or_null("AeroSimEnvironment"))
+
+
 func test_quick_fly_fails_loudly_when_license_provider_configuration_fails() -> void:
     var runtime := _runtime_with_missing_license_config()
     assert_eq(runtime.screen, "license_blocked")

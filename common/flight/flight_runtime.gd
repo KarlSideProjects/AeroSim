@@ -2327,6 +2327,10 @@ func load_map(map_id: String) -> bool:
     var map_root := scene.instantiate() as Node3D
     if map_root == null:
         return _set_map_error("Cannot load Free Flight map %s: scene root must be Node3D" % map_id)
+    if map_id == "terrain3d_range":
+        var environment := map_root.get_node_or_null("AeroSimEnvironment") as WorldEnvironment
+        if environment == null or environment.environment == null:
+            return _set_map_error("Cannot load Free Flight map terrain3d_range: required AeroSimEnvironment is missing")
     unload_map()
     map_root.name = "LoadedMap"
     add_child(map_root)
@@ -2379,12 +2383,16 @@ func reset_to_spawn() -> bool:
     if scene_object_catalog != null:
         scene_object_catalog.reset()
     if environment_state != null:
-        _apply_environment_result(environment_state.reset())
+        var reset_environment := _apply_environment_result(environment_state.reset())
+        if not reset_environment.ok:
+            return _set_map_error(String(reset_environment.error))
         var baseline_preset := selected_wind_preset if not selected_wind_preset.is_empty() else loaded_map_wind_preset
-        _apply_environment_result(environment_state.apply({
+        var baseline_environment := _apply_environment_result(environment_state.apply({
             "wind_preset": baseline_preset,
             "steady_wind": scene_steady_wind_mps,
         }))
+        if not baseline_environment.ok:
+            return _set_map_error(String(baseline_environment.error))
     return true
 
 func _reset_secondary_kinematic_contexts() -> void:
@@ -2563,20 +2571,27 @@ func _apply_environment_result(result: Dictionary) -> Dictionary:
         native.call("configure_wind", wind_config)
         if _airsim_secondary_native != null:
             _airsim_secondary_native.call("configure_wind", wind_config)
-    _apply_environment_visuals(result.state)
+    if not _apply_environment_visuals(result.state):
+        return {"ok": false, "error": last_error_message}
     _record_replay_environment(_environment_rpc_snapshot(result.state))
     return {"ok": true, "value": _environment_rpc_snapshot(result.state)}
 
 
-func _apply_environment_visuals(state: Dictionary) -> void:
+func _apply_environment_visuals(state: Dictionary) -> bool:
     if loaded_map == null:
-        return
+        return true
     var world_environment := loaded_map.get_node_or_null("AeroSimEnvironment") as WorldEnvironment
     if world_environment == null:
+        if loaded_map_id == "terrain3d_range":
+            last_error_message = "Terrain Range is missing required AeroSimEnvironment"
+            return false
         world_environment = WorldEnvironment.new()
         world_environment.name = "AeroSimEnvironment"
         loaded_map.add_child(world_environment)
     if world_environment.environment == null:
+        if loaded_map_id == "terrain3d_range":
+            last_error_message = "Terrain Range required AeroSimEnvironment has no Environment resource"
+            return false
         world_environment.environment = Environment.new()
     var visual_environment: Environment = world_environment.environment
     if not world_environment.has_meta("aerosim_initial_fog_enabled"):
@@ -2593,6 +2608,7 @@ func _apply_environment_visuals(state: Dictionary) -> void:
         var sun_direction: Vector3 = state.get("sun_position", Vector3(0.0, 1.0, 0.0))
         if sun != null and sun_direction.length_squared() > 0.0:
             sun.rotation = Vector3(-asin(clampf(sun_direction.y, -1.0, 1.0)), atan2(sun_direction.x, sun_direction.z), 0.0)
+    return true
 
 
 func _normalize_environment_payload(raw: Dictionary) -> Dictionary:
