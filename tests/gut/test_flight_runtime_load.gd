@@ -182,8 +182,14 @@ class FakeTakeoffBody extends RefCounted:
 
 
 class QuickFlyRuntime extends FlightRuntime:
+    var reset_to_spawn_calls := 0
+
     func _ready() -> void:
         pass
+
+    func reset_to_spawn() -> bool:
+        reset_to_spawn_calls += 1
+        return super.reset_to_spawn()
 
 
 class FakeDeviceState:
@@ -550,6 +556,7 @@ func test_second_quick_fly_reuses_the_loaded_terrain_range_and_resets_spawn() ->
     runtime.drone_body.global_position = Vector3(99.0, 99.0, 99.0)
     runtime.environment_state.apply({"rain": 0.75, "wind_preset": "severe"})
     runtime.quick_fly()
+    runtime.accept_fallback()
 
     assert_not_null(first_loaded_map)
     assert_same(runtime.loaded_map, first_loaded_map)
@@ -559,6 +566,22 @@ func test_second_quick_fly_reuses_the_loaded_terrain_range_and_resets_spawn() ->
     assert_eq(runtime.loaded_map_wind_preset, "calm")
     assert_eq(float(runtime.environment_state.snapshot().rain), 0.0)
     assert_eq(String(runtime.environment_state.snapshot().wind_preset), "calm")
+
+
+func test_second_quick_fly_with_an_active_profile_reuses_the_map_and_resets_once() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.gamepad_device_state = FakeDeviceState.new(true)
+    runtime.session_gamepad_device_id = 7
+    runtime.session_gamepad_profile = InputProfiles.GamepadProfile.xbox_default(7, runtime.gamepad_device_state)
+
+    runtime.quick_fly()
+    var first_loaded_map := runtime.loaded_map
+    var reset_calls_before: int = runtime.reset_to_spawn_calls
+    runtime.quick_fly()
+
+    assert_not_null(first_loaded_map)
+    assert_same(runtime.loaded_map, first_loaded_map)
+    assert_eq(runtime.reset_to_spawn_calls - reset_calls_before, 1)
 
 
 func test_other_maps_keep_the_runtime_weather_environment_fallback() -> void:

@@ -2045,7 +2045,8 @@ func quick_fly() -> void:
         _refresh_flight_hud()
         return
     third_person_view = true
-    if drone_body != null and drone_body.is_inside_tree():
+    var map_id := String(flight_setup.get("map_id", DEFAULT_FREE_FLIGHT_MAP_ID))
+    if drone_body != null and drone_body.is_inside_tree() and (loaded_map_id != map_id or loaded_map == null):
         enter_preflight()
         if screen == "error":
             return
