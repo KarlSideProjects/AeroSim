@@ -117,3 +117,6 @@
 ## Round 3 verification evidence
 
 - Focused RPC suite: 27 tests / 226 assertions, all passed.
+- Normal full GUT: 272 tests / 1,626 assertions, 0 failures, 0 errors.
+- `scripts/test_replay_integration.sh` completed with
+  `complete-session replay integration: PASS`.
