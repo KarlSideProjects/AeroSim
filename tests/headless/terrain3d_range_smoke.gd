@@ -22,6 +22,27 @@ func _run() -> void:
     camera.look_at(Vector3.ZERO, Vector3.UP)
     terrain.call("set_camera", camera)
     await process_frame
+    var sun := scene.get_node_or_null("Sun") as DirectionalLight3D
+    if sun == null or not sun.shadow_enabled or sun.light_energy <= 0.0:
+        push_error("Terrain3D range must provide a shadow-casting directional sun")
+        quit(1)
+        return
+    var world_environment := scene.get_node_or_null("AeroSimEnvironment") as WorldEnvironment
+    var environment := world_environment.environment if world_environment != null else null
+    if environment == null or environment.background_mode != Environment.BG_SKY or environment.sky == null or environment.sky.sky_material == null:
+        push_error("Terrain3D range must provide a sky environment")
+        quit(1)
+        return
+    if not environment.fog_enabled or environment.fog_density <= 0.0 or environment.tonemap_mode == Environment.TONE_MAPPER_LINEAR:
+        push_error("Terrain3D range must provide fog and non-linear tone mapping")
+        quit(1)
+        return
+    var cloud_layer := scene.get_node_or_null("CloudLayer") as Node3D
+    var clouds := cloud_layer.find_children("*", "MeshInstance3D", true, false) if cloud_layer != null else []
+    if clouds.is_empty() or clouds.any(func(cloud: Node) -> bool: return (cloud as MeshInstance3D).mesh == null or not cloud.is_visible_in_tree()):
+        push_error("Terrain3D range must provide visible cloud geometry")
+        quit(1)
+        return
     var material_layers := {}
     for texture_id in TerrainAssets.get_texture_count():
         var texture := TerrainAssets.get_texture(texture_id) as Terrain3DTextureAsset

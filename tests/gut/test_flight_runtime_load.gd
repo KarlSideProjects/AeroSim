@@ -485,6 +485,26 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
     assert_not_null(runtime_script)
 
 
+func test_environment_reset_restores_map_authored_fog() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var map := Node3D.new()
+    autofree(map)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    var world_environment := WorldEnvironment.new()
+    world_environment.name = "AeroSimEnvironment"
+    world_environment.environment = Environment.new()
+    world_environment.environment.fog_enabled = true
+    world_environment.environment.fog_density = 0.0025
+    map.add_child(world_environment)
+
+    runtime._apply_environment_visuals({"weather_enabled": false, "fog": 0.0, "time_of_day_enabled": false, "move_sun": true})
+
+    assert_true(world_environment.environment.fog_enabled)
+    assert_almost_eq(world_environment.environment.fog_density, 0.0025, 0.000001)
+
+
 func test_quick_fly_fails_loudly_when_license_provider_configuration_fails() -> void:
     var runtime := _runtime_with_missing_license_config()
     assert_eq(runtime.screen, "license_blocked")

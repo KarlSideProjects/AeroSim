@@ -2579,8 +2579,15 @@ func _apply_environment_visuals(state: Dictionary) -> void:
     if world_environment.environment == null:
         world_environment.environment = Environment.new()
     var visual_environment: Environment = world_environment.environment
-    visual_environment.fog_enabled = bool(state.get("weather_enabled", false)) and float(state.get("fog", 0.0)) > 0.0
-    visual_environment.fog_density = float(state.get("fog", 0.0)) * 0.05
+    if not world_environment.has_meta("aerosim_initial_fog_enabled"):
+        world_environment.set_meta("aerosim_initial_fog_enabled", visual_environment.fog_enabled)
+        world_environment.set_meta("aerosim_initial_fog_density", visual_environment.fog_density)
+    if bool(state.get("weather_enabled", false)):
+        visual_environment.fog_enabled = float(state.get("fog", 0.0)) > 0.0
+        visual_environment.fog_density = float(state.get("fog", 0.0)) * 0.05
+    else:
+        visual_environment.fog_enabled = bool(world_environment.get_meta("aerosim_initial_fog_enabled"))
+        visual_environment.fog_density = float(world_environment.get_meta("aerosim_initial_fog_density"))
     if bool(state.get("time_of_day_enabled", false)) and bool(state.get("move_sun", true)):
         var sun := loaded_map.get_node_or_null("Sun") as DirectionalLight3D
         var sun_direction: Vector3 = state.get("sun_position", Vector3(0.0, 1.0, 0.0))

@@ -301,6 +301,9 @@ func _run() -> void:
 	_expect(runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null, "Quick Fly preflight loads Terrain Range")
 	var spawn := runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D if runtime.loaded_map != null else null
 	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6, "Terrain Range load places the drone at SpawnNorth")
+	var natural_environment := runtime.loaded_map.get_node_or_null("AeroSimEnvironment") as WorldEnvironment if runtime.loaded_map != null else null
+	var natural_clouds := runtime.loaded_map.get_node_or_null("CloudLayer") as Node3D if runtime.loaded_map != null else null
+	_expect(natural_environment != null and natural_environment.environment != null and natural_environment.environment.background_mode == Environment.BG_SKY and natural_environment.environment.sky != null and natural_environment.environment.fog_enabled and natural_environment.environment.tonemap_mode != Environment.TONE_MAPPER_LINEAR and natural_clouds != null and not natural_clouds.find_children("*", "MeshInstance3D", true, false).is_empty(), "Terrain Range preflight snapshot includes the fixed sky, cloud, fog, and tone-mapped environment")
 	var north_platform := runtime.loaded_map.get_node_or_null("SpawnNorthPlatform") as StaticBody3D if runtime.loaded_map != null else null
 	var north_platform_mesh := north_platform.get_node_or_null("Mesh") as MeshInstance3D if north_platform != null else null
 	var north_platform_collision := north_platform.get_node_or_null("CollisionShape3D") as CollisionShape3D if north_platform != null else null

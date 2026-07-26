@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Terrain3DAssets" path="res://assets/third_party/terrain3d_demo/demo/data/assets.tres" id="1"]
 [sub_resource type="Terrain3DMaterial" id="1"]
@@ -30,11 +30,69 @@ height = 4.0
 radius = 2.0
 height = 4.0
 
+[sub_resource type="ProceduralSkyMaterial" id="11"]
+sky_top_color = Color(0.12, 0.35, 0.68, 1)
+sky_horizon_color = Color(0.68, 0.82, 0.94, 1)
+ground_bottom_color = Color(0.1, 0.14, 0.11, 1)
+ground_horizon_color = Color(0.55, 0.65, 0.62, 1)
+sun_angle_max = 18.0
+sun_curve = 0.08
+sun_energy_multiplier = 2.0
+
+[sub_resource type="Sky" id="12"]
+sky_material = SubResource("11")
+
+[sub_resource type="Environment" id="13"]
+background_mode = 2
+sky = SubResource("12")
+background_energy_multiplier = 0.8
+fog_enabled = true
+fog_light_color = Color(0.75, 0.84, 0.9, 1)
+fog_light_energy = 0.7
+fog_density = 0.0025
+fog_sky_affect = 0.5
+tonemap_mode = 2
+tonemap_exposure = 1.05
+tonemap_white = 1.8
+
+[sub_resource type="StandardMaterial3D" id="14"]
+albedo_color = Color(0.94, 0.96, 1, 1)
+roughness = 1.0
+shading_mode = 0
+cull_mode = 2
+
+[sub_resource type="SphereMesh" id="15"]
+material = SubResource("14")
+
 [node name="Terrain3DRange" type="Node3D"]
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
 rotation = Vector3(-0.8, 0.45, 0)
 light_energy = 1.7
+shadow_enabled = true
+
+[node name="AeroSimEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("13")
+
+[node name="CloudLayer" type="Node3D" parent="."]
+
+[node name="CloudWest" type="MeshInstance3D" parent="CloudLayer"]
+position = Vector3(-22, 34, -72)
+scale = Vector3(20, 2.5, 7)
+mesh = SubResource("15")
+cast_shadow = 0
+
+[node name="CloudCenter" type="MeshInstance3D" parent="CloudLayer"]
+position = Vector3(4, 38, -88)
+scale = Vector3(24, 3, 8)
+mesh = SubResource("15")
+cast_shadow = 0
+
+[node name="CloudEast" type="MeshInstance3D" parent="CloudLayer"]
+position = Vector3(30, 33, -70)
+scale = Vector3(18, 2.2, 6)
+mesh = SubResource("15")
+cast_shadow = 0
 
 [node name="Terrain3D" type="Terrain3D" parent="."]
 data_directory = "res://assets/third_party/terrain3d_demo/demo/data"
