@@ -22,16 +22,21 @@ class DriverUnavailable(RuntimeError):
     pass
 
 
-def read_stage(path: Path) -> str:
+def read_stages(path: Path) -> list[str]:
     try:
-        return str(json.loads(path.read_text(encoding="utf-8")).get("stage", ""))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return ""
+        return []
+    stages = payload.get("stages", [])
+    if isinstance(stages, list):
+        return [str(stage) for stage in stages]
+    current = payload.get("stage", "")
+    return [str(current)] if current else []
 
 
 def wait_for_stage(path: Path, stage: str, deadline: float) -> None:
     while time.monotonic() < deadline:
-        if read_stage(path) == stage:
+        if stage in read_stages(path):
             return
         time.sleep(0.05)
     raise DriverUnavailable(f"timed out waiting for stage {stage}")
@@ -87,6 +92,7 @@ def main() -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     stage_path = args.out_dir / "stage.json"
     unavailable_path = args.out_dir / "external-unavailable.json"
+    browser_click_sent_path = args.out_dir / "browser-click-sent.json"
     evidence_path = args.out_dir / "external-evidence.json"
     deadline = time.monotonic() + 45.0
     evidence: dict = {"driver": "ydotool+grim", "actions": [], "screenshots": []}
@@ -107,11 +113,13 @@ def main() -> int:
         screenshot(args.out_dir / "02_panel_open_requested.png")
         evidence["screenshots"].append("02_panel_open_requested.png")
 
-        wait_for_stage(stage_path, "panel_focus_observed", deadline)
         run_input(browser_point)
+        write_json(browser_click_sent_path, {"event": "browser_click_sent", "time": time.time()})
         screenshot(args.out_dir / "03_browser_clicked.png")
         evidence["actions"].append("clicked_browser_coordinate")
         evidence["screenshots"].append("03_browser_clicked.png")
+
+        wait_for_stage(stage_path, "panel_focus_observed", deadline)
 
         wait_for_stage(stage_path, "await_game_focus", deadline)
         run_input(game_point)

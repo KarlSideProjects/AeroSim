@@ -23,6 +23,18 @@ func _init() -> void:
 		failures.append("file URI is not correctly encoded: %s" % uri)
 	if not GspLauncher.is_native_wayland("Wayland") or GspLauncher.is_native_wayland("X11"):
 		failures.append("native Wayland detection accepts the wrong display backend")
+	var shell_open_failure := GspLauncher.shell_open_result(true, false, "file:///tmp/panel.html")
+	if bool(shell_open_failure.get("ok", true)) or not String(shell_open_failure.get("error", "")).contains("OS.shell_open"):
+		failures.append("requested shell-open failure must fail launch with an actionable error")
+	var suppressed_open := GspLauncher.shell_open_result(false, false, "file:///tmp/panel.html")
+	if not bool(suppressed_open.get("ok", false)):
+		failures.append("suppressed panel opening must remain a successful launch")
+
+	var retained_stages := GspHeadedAcceptance.append_stage([], "captured")
+	retained_stages = GspHeadedAcceptance.append_stage(retained_stages, "release")
+	retained_stages = GspHeadedAcceptance.append_stage(retained_stages, "panel_open_requested")
+	if not GspHeadedAcceptance.stage_observed(retained_stages, "captured"):
+		failures.append("stage history must retain captured after later stages are written")
 
 	var not_qualified := GspHeadedAcceptance.environment_qualification(1.0, false)
 	if not_qualified.get("status") != "environment_not_qualified" or int(not_qualified.get("exit_code", 0)) != 2:
@@ -32,12 +44,15 @@ func _init() -> void:
 	var terminal_outcome := GspHeadedAcceptance.terminal_outcome("environment_not_qualified")
 	if terminal_outcome.get("message") != "NOT_QUALIFIED" or int(terminal_outcome.get("exit_code", 0)) != 2 or bool(terminal_outcome.get("emit_failures", true)):
 		failures.append("environment_not_qualified must print NOT_QUALIFIED without failure errors")
-	if not GspHeadedAcceptance.observed_focus_steps([], "focus_out", false, false).is_empty():
+	if not GspHeadedAcceptance.observed_focus_steps([], "focus_out", false, false, false).is_empty():
 		failures.append("focus labels must not be synthesized without the capture/release sequence")
-	var panel_focus := GspHeadedAcceptance.observed_focus_steps(["capture", "release"], "focus_out", false, false)
+	var premature_panel_focus := GspHeadedAcceptance.observed_focus_steps(["capture", "release"], "focus_out", false, false, false)
+	if premature_panel_focus != ["capture", "release"]:
+		failures.append("panel focus must wait for external browser-click acknowledgement")
+	var panel_focus := GspHeadedAcceptance.observed_focus_steps(["capture", "release"], "focus_out", false, false, true)
 	if panel_focus != ["capture", "release", "panel_focus"]:
-		failures.append("panel focus requires an observed focus-out notification")
-	var game_focus := GspHeadedAcceptance.observed_focus_steps(panel_focus, "focus_in", true, true)
+		failures.append("panel focus requires an observed focus-out notification after browser click acknowledgement")
+	var game_focus := GspHeadedAcceptance.observed_focus_steps(panel_focus, "focus_in", true, true, false)
 	if game_focus != ["capture", "release", "panel_focus", "game_focus"]:
 		failures.append("game focus requires observed focus-in and pointer/focus state")
 

@@ -34,7 +34,7 @@ fi
 
 mkdir -p "$out_dir"
 rm -f "$out_dir/report.json"
-rm -f "$out_dir/stage.json" "$out_dir/external-unavailable.json" "$out_dir/external-evidence.json"
+rm -f "$out_dir/stage.json" "$out_dir/browser-click-sent.json" "$out_dir/external-unavailable.json" "$out_dir/external-evidence.json"
 python3 scripts/gsp_wayland_driver.py --out-dir "$out_dir" >"$out_dir/driver.log" 2>&1 &
 driver_pid=$!
 set +e
@@ -43,10 +43,24 @@ timeout 45s "$godot_bin" --display-driver wayland --path . \
     --out-dir "$out_dir" >"$out_dir/godot.log" 2>&1
 godot_status=$?
 set -e
-if kill -0 "$driver_pid" 2>/dev/null; then
-    kill "$driver_pid" 2>/dev/null || true
+if [ "$godot_status" -eq 0 ]; then
+	driver_deadline=$((SECONDS + 10))
+	while kill -0 "$driver_pid" 2>/dev/null && [ "$SECONDS" -lt "$driver_deadline" ]; do
+		sleep 0.1
+	done
 fi
-wait "$driver_pid" 2>/dev/null || true
+if kill -0 "$driver_pid" 2>/dev/null; then
+	kill "$driver_pid" 2>/dev/null || true
+fi
+set +e
+wait "$driver_pid" 2>/dev/null
+driver_status=$?
+set -e
+
+if [ "$godot_status" -eq 0 ] && [ "$driver_status" -ne 0 ]; then
+	echo "GSP external Wayland evidence driver failed with status $driver_status" >&2
+	exit 1
+fi
 
 if [ "$godot_status" -eq 2 ]; then
     python3 - "$out_dir/report.json" <<'PY'

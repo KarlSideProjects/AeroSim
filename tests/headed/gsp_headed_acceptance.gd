@@ -6,10 +6,13 @@ var _failures: Array[String] = []
 var _out_dir := "build/gsp-headed"
 var _stage_path := ""
 var _external_unavailable_path := ""
+var _browser_click_sent_path := ""
 var _pointer_inside := false
 var _awaiting_panel_focus := false
 var _awaiting_game_focus := false
+var _panel_focus_out_observed := false
 var _focus_steps: Array[String] = []
+var _stage_history: Array[String] = []
 var _owned_launcher: Node = null
 
 
@@ -40,13 +43,24 @@ static func environment_qualification(scale_factor: float, input_automation_avai
 	}
 
 
-static func observed_focus_steps(current_steps: Array[String], event: String, pointer_inside: bool, window_focused: bool) -> Array[String]:
+static func observed_focus_steps(current_steps: Array[String], event: String, pointer_inside: bool, window_focused: bool, external_click_sent: bool) -> Array[String]:
 	var steps := current_steps.duplicate()
-	if event == "focus_out" and steps == ["capture", "release"]:
+	if event == "focus_out" and steps == ["capture", "release"] and external_click_sent:
 		steps.append("panel_focus")
-	elif event == "focus_in" and steps == ["capture", "release", "panel_focus"] and pointer_inside and window_focused:
+	elif event == "focus_in" and steps == ["capture", "release", "panel_focus"] and pointer_inside and window_focused and not external_click_sent:
 		steps.append("game_focus")
 	return steps
+
+
+static func append_stage(history: Array[String], stage: String) -> Array[String]:
+	var stages := history.duplicate()
+	if not stages.has(stage):
+		stages.append(stage)
+	return stages
+
+
+static func stage_observed(history: Array[String], stage: String) -> bool:
+	return history.has(stage)
 
 
 static func terminal_outcome(status: String) -> Dictionary:
@@ -63,12 +77,11 @@ func _notification(what: int) -> void:
 	elif what == Node.NOTIFICATION_WM_MOUSE_EXIT:
 		_pointer_inside = false
 	elif what == Node.NOTIFICATION_WM_WINDOW_FOCUS_OUT and _awaiting_panel_focus:
-		_focus_steps = observed_focus_steps(_focus_steps, "focus_out", _pointer_inside, false)
-		if _focus_steps == ["capture", "release", "panel_focus"]:
-			_write_stage("panel_focus_observed")
+		_panel_focus_out_observed = true
+		_try_record_panel_focus()
 	elif what == Node.NOTIFICATION_WM_WINDOW_FOCUS_IN and _awaiting_game_focus:
 		var is_focused := DisplayServer.window_is_focused(DisplayServer.MAIN_WINDOW_ID)
-		_focus_steps = observed_focus_steps(_focus_steps, "focus_in", _pointer_inside, is_focused)
+		_focus_steps = observed_focus_steps(_focus_steps, "focus_in", _pointer_inside, is_focused, false)
 		if _focus_steps == ["capture", "release", "panel_focus", "game_focus"]:
 			_write_stage("game_focus_observed")
 
@@ -77,6 +90,9 @@ func _run() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("res://%s" % _out_dir))
 	_stage_path = ProjectSettings.globalize_path("res://%s/stage.json" % _out_dir)
 	_external_unavailable_path = ProjectSettings.globalize_path("res://%s/external-unavailable.json" % _out_dir)
+	_browser_click_sent_path = ProjectSettings.globalize_path("res://%s/browser-click-sent.json" % _out_dir)
+	if FileAccess.file_exists(_browser_click_sent_path):
+		DirAccess.remove_absolute(_browser_click_sent_path)
 	_owned_launcher = GspLauncher.new()
 	var launch: Dictionary = _owned_launcher.launch({"enabled": true, "open": false})
 	_expect(bool(launch.get("ok", false)), "GSP startup succeeds on native Wayland")
@@ -114,6 +130,7 @@ func _run() -> void:
 		_focus_steps.append("release")
 
 	_awaiting_panel_focus = true
+	_panel_focus_out_observed = false
 	_write_stage("open_panel")
 	var opened: bool = _owned_launcher.open_panel(String(launch.panel_url))
 	_write_stage("panel_open_requested", {"opened": opened})
@@ -155,6 +172,7 @@ func _wait_for_initial_focus() -> bool:
 
 func _wait_for_focus_step(step: String) -> void:
 	for _frame in 600:
+		_try_record_panel_focus()
 		if _focus_steps.has(step):
 			return
 		if FileAccess.file_exists(_external_unavailable_path):
@@ -164,11 +182,20 @@ func _wait_for_focus_step(step: String) -> void:
 		_failures.append("timed out waiting for observed %s" % step)
 
 
+func _try_record_panel_focus() -> void:
+	if not _awaiting_panel_focus or not _panel_focus_out_observed or not FileAccess.file_exists(_browser_click_sent_path):
+		return
+	_focus_steps = observed_focus_steps(_focus_steps, "focus_out", _pointer_inside, false, true)
+	if _focus_steps == ["capture", "release", "panel_focus"]:
+		_write_stage("panel_focus_observed")
+
+
 func _write_stage(stage: String, extra: Dictionary = {}) -> void:
+	_stage_history = append_stage(_stage_history, stage)
 	var file := FileAccess.open(_stage_path, FileAccess.WRITE)
 	if file == null:
 		return
-	var evidence := {"stage": stage, "time_ms": Time.get_ticks_msec()}
+	var evidence := {"stage": stage, "stages": _stage_history, "time_ms": Time.get_ticks_msec()}
 	for key in extra:
 		evidence[key] = extra[key]
 	file.store_string(JSON.stringify(evidence))

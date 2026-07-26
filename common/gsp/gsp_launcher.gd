@@ -57,13 +57,15 @@ func launch(options: Dictionary = {}) -> Dictionary:
 	if not bool(installed.get("ok", false)):
 		return installed
 	var url := file_uri(String(installed.path))
+	var open_requested := bool(launch_options.get("open", false))
 	var opened := true
-	if bool(launch_options.get("open", false)):
+	if open_requested:
 		opened = open_panel(url)
-	if not bool(launch_options.get("open", false)) or not opened:
+	if not open_requested or not opened:
 		print("GSP panel URL: %s" % url)
-	return {
-		"ok": true,
+	var shell_result: Dictionary = shell_open_result(open_requested, opened, url)
+	var result := {
+		"ok": bool(shell_result.get("ok", false)),
 		"enabled": true,
 		"display_name": display_name,
 		"window_mode": DisplayServer.window_get_mode(),
@@ -73,10 +75,19 @@ func launch(options: Dictionary = {}) -> Dictionary:
 		"opened": opened,
 		"panel_hash": installed.hash,
 	}
+	if not bool(shell_result.get("ok", false)):
+		result["error"] = shell_result.get("error", "OS.shell_open failed")
+	return result
 
 
 func open_panel(url: String) -> bool:
 	return OS.shell_open(url) == OK
+
+
+static func shell_open_result(open_requested: bool, opened: bool, url: String) -> Dictionary:
+	if open_requested and not opened:
+		return {"ok": false, "error": "OS.shell_open failed for panel URL: %s" % url}
+	return {"ok": true}
 
 
 func install_panel(data_directory: String) -> Dictionary:
