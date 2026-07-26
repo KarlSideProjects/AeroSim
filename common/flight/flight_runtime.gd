@@ -2044,7 +2044,7 @@ func quick_fly() -> void:
         screen = "error"
         _refresh_flight_hud()
         return
-    third_person_view = false
+    third_person_view = true
     if drone_body != null and drone_body.is_inside_tree() and not load_map(String(flight_setup.get("map_id", DEFAULT_FREE_FLIGHT_MAP_ID))):
         screen = "error"
         _refresh_flight_hud()
@@ -4911,7 +4911,7 @@ func _update_chase_camera() -> void:
     else:
         chase_camera.global_position = drone_body.global_position + CHASE_CAMERA_OFFSET
         chase_camera.look_at(drone_body.global_position, Vector3.UP)
-    if third_person_camera != null and third_person_view and screen in ["preflight", "flight", "finish"]:
+    if third_person_camera != null and third_person_view and screen in ["preflight", "flight", "finish", "controller_confirmation", "fallback_prompt"]:
         third_person_camera.global_position = drone_body.global_position + drone_body.global_basis * THIRD_PERSON_CAMERA_OFFSET
         third_person_camera.look_at(drone_body.global_position + drone_body.global_basis * Vector3(0.0, 0.2, 0.0), Vector3.UP)
         third_person_camera.current = true

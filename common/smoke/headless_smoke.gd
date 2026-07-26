@@ -1999,8 +1999,9 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly must exercise a fresh controller confirmation route before preflight")
         scene.queue_free()
         return false
-    if scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
-        push_error("Known unconfirmed controller Quick Fly must show Terrain Range through the FPV camera before confirmation")
+    var third_person_camera := scene.get_node_or_null("ThirdPersonCamera") as Camera3D
+    if scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null or third_person_camera == null or scene.get_viewport().get_camera_3d() != third_person_camera or not scene.third_person_view or scene._airsim_camera_source() != scene.chase_camera:
+        push_error("Known unconfirmed controller Quick Fly must show the third-person player view without changing the AirSim FPV source")
         scene.queue_free()
         return false
     confirmation = scene.controller_confirmation_panel
@@ -2019,17 +2020,8 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly preflight must load Terrain Range as the default Free Flight map")
         scene.queue_free()
         return false
-    if scene.get_viewport().get_camera_3d() != scene.chase_camera or not scene.chase_camera.current:
-        push_error("Terrain Range preflight must keep ChaseCamera as the active Camera3D")
-        scene.queue_free()
-        return false
-    _inject_joy_button(known_device_id, JOY_BUTTON_BACK, true)
-    await process_frame
-    _inject_joy_button(known_device_id, JOY_BUTTON_BACK, false)
-    await process_frame
-    var third_person_camera := scene.get_node_or_null("ThirdPersonCamera") as Camera3D
-    if third_person_camera == null or scene.get_viewport().get_camera_3d() != third_person_camera or scene._airsim_camera_source() != scene.chase_camera:
-        push_error("Xbox BACK View Toggle must switch the player to a third-person camera without changing the AirSim FPV source")
+    if third_person_camera == null or scene.get_viewport().get_camera_3d() != third_person_camera or not scene.third_person_view or scene._airsim_camera_source() != scene.chase_camera:
+        push_error("Terrain Range Quick Fly preflight must default the player to third-person without changing the AirSim FPV source")
         scene.queue_free()
         return false
     var local_camera_offset: Vector3 = scene.drone_body.global_basis.inverse() * (third_person_camera.global_position - scene.drone_body.global_position)
@@ -2039,14 +2031,21 @@ func _verify_runtime_actions() -> bool:
         return false
     await _press_key(KEY_V)
     if scene.get_viewport().get_camera_3d() != scene.chase_camera or not scene.chase_camera.current:
-        push_error("View Toggle must return the player to the FPV camera")
+        push_error("View Toggle must switch the default third-person player view to FPV")
         scene.queue_free()
         return false
-    await _press_key(KEY_V)
     scene.quick_fly()
     await process_frame
-    if scene.screen != "preflight" or scene.get_viewport().get_camera_3d() != scene.chase_camera or scene.third_person_view:
-        push_error("Every new Quick Fly session must reset the primary player view to FPV")
+    if scene.screen != "preflight" or scene.get_viewport().get_camera_3d() != third_person_camera or not scene.third_person_view or scene._airsim_camera_source() != scene.chase_camera:
+        push_error("Every new Quick Fly session must reset the primary player view to third-person without changing the AirSim FPV source")
+        scene.queue_free()
+        return false
+    _inject_joy_button(known_device_id, JOY_BUTTON_BACK, true)
+    await process_frame
+    _inject_joy_button(known_device_id, JOY_BUTTON_BACK, false)
+    await process_frame
+    if scene.get_viewport().get_camera_3d() != scene.chase_camera or scene.third_person_view:
+        push_error("Xbox BACK View Toggle must switch the default third-person player view back to FPV")
         scene.queue_free()
         return false
     var spawn := scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D

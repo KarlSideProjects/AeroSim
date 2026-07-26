@@ -611,6 +611,38 @@ func test_quick_fly_reapplies_default_setup_after_a_prior_setup_choice() -> void
     assert_eq(runtime.selected_wind_preset, "calm")
 
 
+func test_quick_fly_defaults_the_player_view_to_third_person_before_controller_routing() -> void:
+    var runtime := _licensed_runtime()
+    runtime.third_person_view = false
+
+    runtime.quick_fly()
+
+    assert_true(runtime.third_person_view)
+
+
+func test_controller_confirmation_keeps_the_selected_third_person_player_view() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := Node3D.new()
+    var chase := Camera3D.new()
+    var third_person := Camera3D.new()
+    var map := Node3D.new()
+    for node in [body, chase, third_person, map]:
+        get_tree().root.add_child(node)
+        autofree(node)
+    runtime.drone_body = body
+    runtime.chase_camera = chase
+    runtime.third_person_camera = third_person
+    runtime.loaded_map = map
+    runtime.screen = "controller_confirmation"
+    runtime.third_person_view = true
+
+    runtime._update_chase_camera()
+
+    assert_true(third_person.current)
+    assert_false(chase.current)
+
+
 func test_controller_confirmation_from_menu_returns_to_menu() -> void:
     var runtime := _licensed_runtime()
     runtime.gamepad_device_state = FakeDeviceState.new()
