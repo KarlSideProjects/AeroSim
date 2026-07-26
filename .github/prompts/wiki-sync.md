@@ -24,14 +24,14 @@ must not read repository secrets、不得安裝套件、不得接觸 workflow �
 2. 每個新增或修改的主張都必須由目前 repository 中的權威來源 **explicitly supported by evidence**。
    對能力狀態沿用 Available、Foundation、Confirmed target；對相容性沿用 verified、target、unsupported。
 3. 不確定或找不到證據時，保留既有內容並明確不更新；不要腦補。
-4. 只在真的有衍生更新時建立 branch。branch 名稱只能是 `wiki-ai/repo-$GITHUB_SHA` 或
-   `wiki-ai/issue-$WIKI_ISSUE_NUMBER`。commit message 必須包含 `[wiki-ai]`。
-5. 修改後執行 `python3 scripts/check_docs.py`。若檢查失敗，不能建立 PR。
+4. workflow 已建立受信任的 `WIKI_BRANCH`。只在真的有衍生更新時建立 `docs/wiki/**` 的最小
+   commit；commit message 必須包含 `[wiki-ai]`。不得切換 branch、push 或建立 PR。
+5. 修改後執行 `python3 scripts/check_docs.py`。若檢查失敗，不能建立 commit。
 6. 對 issue lifecycle：只有 issue 的已證實結果足以改變已實作、已拒絕或已取代資訊時才更新；
    未關閉討論不得提升為 Available 或 verified。
 
 ## PR
 
-若有更新，建立 `docs/wiki/**` 的最小 commit、push branch，並以 `gh pr create` 開 PR。PR body
-必須列出來源、變更摘要、status 的證據與執行的文件檢查。你 **must not merge**、不得啟用
-auto-merge、不得修改來源 issue。若無更新，明確輸出「無 Wiki 更新需求」並結束。
+若有更新，workflow 會在只可修改 `docs/wiki/**` 的機械驗證與文件檢查通過後 push branch 並建立
+PR。你 **must not merge**、不得啟用 auto-merge、不得修改來源 issue。若無更新，明確輸出
+「無 Wiki 更新需求」並結束。

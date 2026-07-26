@@ -10,6 +10,9 @@ sources:
   - common/flight/flight_runtime.gd
   - common/flight/hardware_config.gd
   - common/rpc/airsim_coordinate_contract.gd
+  - common/rpc/airsim_session.gd
+  - common/rpc/airsim_sensor_suite.gd
+  - docs/dataset_recording.md
 last_verified: 2026-07-26
 ---
 
@@ -29,6 +32,7 @@ flowchart TD
     HardwareConfig --> Native
     Runtime --> AirSim[AirSim msgpack RPC\nLab Mode]
     Runtime --> PX4[PX4 MAVLink / HIL bridge]
+    Runtime --> Dataset[Dataset Recording]
     PX4 --> Native
     Runtime --> Evidence[headless smoke / GUT]
     Core --> Evidence
@@ -108,13 +112,14 @@ sequenceDiagram
 
 ## Contract Atlas
 
-| 契約 | 白話用途 | 擁有者 | 證據與驗證 |
-| --- | --- | --- | --- |
-| External Coordinate Contract | 所有 public spatial payload 只用 NED／FRD／SI；Godot Y-up 留在內部。 | coordinate contract module | coordinate contract GUT fixtures 與 ADR 0011。 |
-| GDScript ↔ native boundary | Godot 透過註冊的 `AeroSimNative` methods 操作原生核心。 | GDExtension binding | native binding、headless smoke。 |
-| airframe configuration | JSON/schema 參數同時驅動 Godot runtime 與 native models。 | HardwareConfig | schema、hardware parameter document、native configuration tests。 |
-| AirSim / PX4 boundary | AirSim command 與 PX4 actuator 都進同一 vehicle/runtime context。 | RPC server / PX4 bridge | RPC、PX4 bridge 與 coordinate tests。 |
-| Sensor Timebase | sensor timestamp 只取 simulation time；pause 不會偷走時間。 | AirSimSession / sensor suite | sensor rate、pause 與 deterministic fixture tests。 |
+| 契約 | 白話用途 | 擁有者 | 權威來源 | 證據與驗證 | 狀態 |
+| --- | --- | --- | --- | --- | --- |
+| External Coordinate Contract | 所有 public spatial payload 只用 NED／FRD／SI；Godot Y-up 留在內部。 | coordinate contract module | `common/rpc/airsim_coordinate_contract.gd`、ADR 0011 | coordinate contract GUT fixtures | Confirmed target |
+| GDScript ↔ native boundary | Godot 透過註冊的 `AeroSimNative` methods 操作原生核心。 | GDExtension binding | `src/native/register_types.cpp`、`src/native/aerosim_native.cpp` | native binding、headless smoke | Foundation |
+| airframe configuration | JSON/schema 參數同時驅動 Godot runtime 與 native models。 | HardwareConfig | `config/drone_schema.json`、`config/drones/`、`common/flight/hardware_config.gd` | hardware configuration native tests | Foundation |
+| AirSim / PX4 boundary | AirSim command 與 PX4 actuator 都進同一 vehicle/runtime context。 | RPC server / PX4 bridge | `common/rpc/airsim_rpc_server.gd`、`common/rpc/px4_sitl_bridge.gd`、compatibility manifest | RPC、PX4 bridge、coordinate tests | Confirmed target |
+| Sensor Timebase | sensor timestamp 只取 simulation time；pause 不會偷走時間。 | AirSimSession / sensor suite | `common/rpc/airsim_session.gd`、`common/rpc/airsim_sensor_suite.gd` | sensor rate、pause 與 deterministic fixture tests | Confirmed target |
+| Replay / Dataset boundary | replay 重建控制與條件；dataset 保留時間對齊觀測，兩者不可互稱。 | native replay / recording pipeline | `src/native/aerosim_native.cpp`、`docs/dataset_recording.md` | replay integration 與 dataset validation | Foundation / Confirmed target |
 
 ## 改動後跑什麼
 

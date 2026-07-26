@@ -58,6 +58,7 @@ jobs:
           DISPATCH_DIFF_RANGE: ${{ inputs.diff_range || '' }}
           ISSUE_NUMBER: ${{ github.event.issue.number || '' }}
           ISSUE_ACTION: ${{ github.event.action || '' }}
+          ISSUE_LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "issues" ]; then
@@ -67,6 +68,10 @@ jobs:
                 exit 1
                 ;;
             esac
+            if ! python3 scripts/wiki_sync_policy.py "$ISSUE_ACTION" "$ISSUE_LABELS"; then
+              echo '::error::issue event is not approved for Wiki sync'
+              exit 1
+            fi
             printf 'WIKI_MODE=issue-change\n' >> "$GITHUB_ENV"
             printf 'WIKI_ISSUE_NUMBER=%s\n' "$ISSUE_NUMBER" >> "$GITHUB_ENV"
             printf 'WIKI_EVENT_ACTION=%s\n' "$ISSUE_ACTION" >> "$GITHUB_ENV"
@@ -90,6 +95,13 @@ jobs:
             fi
             printf 'WIKI_DIFF_RANGE=%s\n' "$WIKI_DIFF_RANGE" >> "$GITHUB_ENV"
           fi
+          if [ "$EVENT_NAME" = "issues" ]; then
+            WIKI_BRANCH="wiki-ai/issue-$ISSUE_NUMBER"
+          else
+            WIKI_BRANCH="wiki-ai/repo-$AFTER_SHA"
+          fi
+          git switch -c "$WIKI_BRANCH"
+          printf 'WIKI_BRANCH=%s\n' "$WIKI_BRANCH" >> "$GITHUB_ENV"
 
       - name: Propose Wiki update
         env:
@@ -107,5 +119,45 @@ jobs:
           fi
           claude -p "$(cat .github/prompts/wiki-sync.md)" \
             --model opus \
-            --allowedTools "Read,Grep,Glob,Write,Edit,Bash(git status:*),Bash(git diff:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh issue view:*),Bash(gh pr create:*)" \
+            --allowedTools "Read,Grep,Glob,Write,Edit,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git commit:*),Bash(gh issue view:*)" \
             --max-turns 40
+
+      - name: Verify and publish Wiki PR
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WIKI_BRANCH: ${{ env.WIKI_BRANCH }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo '::error::Wiki agent left uncommitted changes'
+            exit 1
+          fi
+          CHANGED_PATHS="$(git diff --name-only "origin/$DEFAULT_BRANCH...HEAD")"
+          if [ -z "$CHANGED_PATHS" ]; then
+            echo '無 Wiki 更新需求'
+            exit 0
+          fi
+          while IFS= read -r path; do
+            case "$path" in
+              docs/wiki/*) ;;
+              *)
+                echo "::error::只可修改 docs/wiki/** -> $path"
+                exit 1
+                ;;
+            esac
+          done <<< "$CHANGED_PATHS"
+          case "$(git log -1 --format=%s)" in
+            *'[wiki-ai]'*) ;;
+            *)
+              echo '::error::Wiki commit must contain [wiki-ai]'
+              exit 1
+              ;;
+          esac
+          python3 scripts/check_docs.py
+          git push origin "HEAD:refs/heads/$WIKI_BRANCH"
+          gh pr create \
+            --base "$DEFAULT_BRANCH" \
+            --head "$WIKI_BRANCH" \
+            --title 'docs: sync Wiki evidence' \
+            --body 'Automated Wiki proposal. Source evidence and status are recorded in the changed Wiki metadata. This PR is not auto-merged.'
