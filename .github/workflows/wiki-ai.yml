@@ -1,0 +1,111 @@
+name: Wiki AI Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      diff_range:
+        description: '分析的 diff 範圍（留空 = HEAD~1..HEAD）'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    paths:
+      - 'PRD_AeroSim.md'
+      - 'docs/adr/**'
+      - 'docs/decisions/**'
+      - 'docs/product_capabilities.md'
+      - 'docs/airsim_reference_policy.md'
+      - '.github/TRIAGE.md'
+      - '.out-of-scope/**'
+      - 'src/native/**'
+      - 'common/flight/**'
+      - 'common/rpc/**'
+      - 'config/drones/**'
+      - 'config/drone_schema.json'
+      - 'config/airsim_compatibility_manifest.json'
+      - 'levels/**'
+      - 'extensions/aerosim_native/**'
+      - 'project.godot'
+      - 'docs/wiki/**'
+  issues:
+    types: [opened, edited, closed, reopened, labeled, unlabeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  sync:
+    if: >-
+      ${{ (github.event_name != 'push' || !contains(github.event.head_commit.message, '[wiki-ai]')) &&
+          (github.event_name != 'issues' || contains(github.event.issue.labels.*.name, 'wiki-sync')) }}
+    runs-on: [self-hosted, Linux, X64]
+    concurrency:
+      group: wiki-ai-${{ github.event.issue.number || github.sha }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Prepare trusted sync context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          DISPATCH_DIFF_RANGE: ${{ inputs.diff_range || '' }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || '' }}
+          ISSUE_ACTION: ${{ github.event.action || '' }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "issues" ]; then
+            case "$ISSUE_NUMBER" in
+              ''|*[!0-9]*)
+                echo '::error::issue number must be decimal'
+                exit 1
+                ;;
+            esac
+            printf 'WIKI_MODE=issue-change\n' >> "$GITHUB_ENV"
+            printf 'WIKI_ISSUE_NUMBER=%s\n' "$ISSUE_NUMBER" >> "$GITHUB_ENV"
+            printf 'WIKI_EVENT_ACTION=%s\n' "$ISSUE_ACTION" >> "$GITHUB_ENV"
+          else
+            printf 'WIKI_MODE=repo-change\n' >> "$GITHUB_ENV"
+            if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+              WIKI_DIFF_RANGE="${DISPATCH_DIFF_RANGE:-HEAD~1..HEAD}"
+            else
+              WIKI_DIFF_RANGE="$BEFORE_SHA..$AFTER_SHA"
+            fi
+            if [[ ! "$WIKI_DIFF_RANGE" =~ ^[A-Za-z0-9][A-Za-z0-9._~^/-]*\.\.[A-Za-z0-9][A-Za-z0-9._~^/-]*$ ]]; then
+              echo '::error::invalid diff range'
+              exit 1
+            fi
+            WIKI_DIFF_START="${WIKI_DIFF_RANGE%%..*}"
+            WIKI_DIFF_END="${WIKI_DIFF_RANGE#*..}"
+            if ! git rev-parse --verify "$WIKI_DIFF_START^{commit}" >/dev/null || \
+                ! git rev-parse --verify "$WIKI_DIFF_END^{commit}" >/dev/null; then
+              echo '::error::invalid diff range'
+              exit 1
+            fi
+            printf 'WIKI_DIFF_RANGE=%s\n' "$WIKI_DIFF_RANGE" >> "$GITHUB_ENV"
+          fi
+
+      - name: Propose Wiki update
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            echo '::error::CLAUDE_CODE_OAUTH_TOKEN secret 未設定——Wiki 同步無法執行。'
+            exit 1
+          fi
+          if ! command -v claude >/dev/null 2>&1; then
+            echo '::error::self-hosted runner 上找不到 claude CLI。'
+            exit 1
+          fi
+          claude -p "$(cat .github/prompts/wiki-sync.md)" \
+            --model opus \
+            --allowedTools "Read,Grep,Glob,Write,Edit,Bash(git status:*),Bash(git diff:*),Bash(git switch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(gh issue view:*),Bash(gh pr create:*)" \
+            --max-turns 40
