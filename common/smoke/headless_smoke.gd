@@ -1674,8 +1674,14 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly must reset the shared setup to its canonical defaults")
         scene.queue_free()
         return false
-    if scene.screen != "fallback_prompt" or scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
-        push_error("No-controller Quick Fly must show Terrain Range through the FPV camera before keyboard fallback confirmation")
+    var fallback_third_person_camera := scene.get_node_or_null("ThirdPersonCamera") as Camera3D
+    if scene.screen != "fallback_prompt" or scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null or fallback_third_person_camera == null or scene.get_viewport().get_camera_3d() != fallback_third_person_camera or not scene.third_person_view or scene._airsim_camera_source() != scene.chase_camera:
+        push_error("No-controller Quick Fly must show Terrain Range through the third-person player camera while AirSim remains FPV before keyboard fallback confirmation")
+        scene.queue_free()
+        return false
+    var fallback_local_camera_offset: Vector3 = scene.drone_body.global_basis.inverse() * (fallback_third_person_camera.global_position - scene.drone_body.global_position)
+    if fallback_local_camera_offset.y <= 0.0 or fallback_local_camera_offset.z <= 0.0:
+        push_error("No-controller Quick Fly third-person camera must remain above and behind the drone")
         scene.queue_free()
         return false
     await _press_key(KEY_R)
@@ -2030,8 +2036,8 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     await _press_key(KEY_V)
-    if scene.get_viewport().get_camera_3d() != scene.chase_camera or not scene.chase_camera.current:
-        push_error("View Toggle must switch the default third-person player view to FPV")
+    if scene.get_viewport().get_camera_3d() != scene.chase_camera or not scene.chase_camera.current or scene._airsim_camera_source() != scene.chase_camera:
+        push_error("View Toggle must switch the default third-person player view to FPV while preserving the AirSim source")
         scene.queue_free()
         return false
     scene.quick_fly()
@@ -2044,8 +2050,8 @@ func _verify_runtime_actions() -> bool:
     await process_frame
     _inject_joy_button(known_device_id, JOY_BUTTON_BACK, false)
     await process_frame
-    if scene.get_viewport().get_camera_3d() != scene.chase_camera or scene.third_person_view:
-        push_error("Xbox BACK View Toggle must switch the default third-person player view back to FPV")
+    if scene.get_viewport().get_camera_3d() != scene.chase_camera or scene.third_person_view or scene._airsim_camera_source() != scene.chase_camera:
+        push_error("Xbox BACK View Toggle must switch the default third-person player view back to FPV while preserving the AirSim source")
         scene.queue_free()
         return false
     var spawn := scene.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
@@ -2324,8 +2330,8 @@ func _verify_runtime_actions() -> bool:
         push_error("Quick Fly must block the connected replacement unknown SDL device with an explicit KeyboardProfile fallback")
         scene.queue_free()
         return false
-    if scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null or scene.get_viewport().get_camera_3d() != scene.chase_camera:
-        push_error("Unknown-controller Quick Fly must show Terrain Range through the FPV camera before keyboard fallback confirmation")
+    if scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null or third_person_camera == null or scene.get_viewport().get_camera_3d() != third_person_camera or not scene.third_person_view or scene._airsim_camera_source() != scene.chase_camera:
+        push_error("Unknown-controller Quick Fly must show Terrain Range through the third-person player camera while AirSim remains FPV before keyboard fallback confirmation")
         scene.queue_free()
         return false
     scene.arm_takeoff_button.pressed.emit()

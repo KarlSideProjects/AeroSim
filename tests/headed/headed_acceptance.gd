@@ -135,7 +135,11 @@ func _run() -> void:
 		_click(no_controller_quick_fly)
 	await _settle(8)
 	await _snapshot("00_keyboard_fallback_preconfirm")
-	_expect(runtime.screen == "fallback_prompt" and runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null and root.get_camera_3d() == runtime.chase_camera, "no-controller Quick Fly shows Terrain Range through FPV before keyboard fallback confirmation")
+	var fallback_third_person_camera := runtime.get_node_or_null("ThirdPersonCamera") as Camera3D
+	_expect(runtime.screen == "fallback_prompt" and runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null and fallback_third_person_camera != null and root.get_camera_3d() == fallback_third_person_camera and runtime.third_person_view and runtime._airsim_camera_source() == runtime.chase_camera, "no-controller Quick Fly shows Terrain Range through the default third-person player camera while AirSim remains FPV before keyboard fallback confirmation")
+	if fallback_third_person_camera != null:
+		var fallback_local_camera_offset: Vector3 = runtime.drone_body.global_basis.inverse() * (fallback_third_person_camera.global_position - runtime.drone_body.global_position)
+		_expect(fallback_local_camera_offset.y > 0.0 and fallback_local_camera_offset.z > 0.0, "no-controller Quick Fly keeps the third-person camera above and behind the drone")
 	_tap(KEY_R)
 	await _settle(2)
 	_expect(runtime.screen == "fallback_prompt" and not runtime.takeoff_requested and not runtime.native.call("flight_control_armed"), "reset cannot bypass input confirmation")
@@ -323,7 +327,7 @@ func _run() -> void:
 	await _snapshot("01_third_person_preflight")
 	_tap(KEY_V)
 	await _settle(2)
-	_expect(root.get_camera_3d() == runtime.chase_camera and runtime.chase_camera.current and player_view != null and player_view.text == "VIEW: FPV", "V switches the default player view to FPV with the matching HUD label")
+	_expect(root.get_camera_3d() == runtime.chase_camera and runtime.chase_camera.current and runtime._airsim_camera_source() == runtime.chase_camera and player_view != null and player_view.text == "VIEW: FPV", "V switches the default player view to FPV with the matching HUD label while preserving the AirSim source")
 	runtime.quick_fly()
 	await _settle(4)
 	_expect(runtime.screen == "preflight" and root.get_camera_3d() == third_person_camera and runtime.third_person_view and runtime._airsim_camera_source() == runtime.chase_camera and player_view != null and player_view.text == "VIEW: THIRD PERSON", "each Quick Fly session resets the player view to third-person while AirSim remains FPV")
