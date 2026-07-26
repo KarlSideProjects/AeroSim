@@ -28,6 +28,7 @@ trap 'rm -f "$out_file" "$err_file"' EXIT
 if python3 scripts/check_licenses.py \
     --allow-missing-gym-pybullet-drones-attribution \
     --allow-missing-terrain3d-attribution \
+    --allow-missing-ambientcg-attribution \
     --manifest tests/fixtures/gpl_dependency.json >"$out_file" 2>"$err_file"; then
     cat "$out_file"
     echo "GPL fixture unexpectedly passed" >&2

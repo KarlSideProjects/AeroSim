@@ -35,6 +35,7 @@ func configure(
     _world_origin_provider = world_origin_provider
     _session = session
     _settings = settings.duplicate(true)
+    _prewarm_render_target()
 
 
 func capture(requests: Array, vehicle_name: String, _external: bool = false) -> Dictionary:
@@ -103,18 +104,7 @@ func _validate_request(request: Variant) -> Dictionary:
 
 
 func _prepare_camera(request: Dictionary, vehicle_name: String) -> Dictionary:
-    if _render_viewport == null:
-        _render_viewport = SubViewport.new()
-        _render_viewport.name = "AirSimCameraRenderTarget"
-        _render_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-        _render_viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
-        _render_viewport.transparent_bg = false
-        add_child(_render_viewport)
-        _render_camera = Camera3D.new()
-        _render_camera.name = "AirSimCamera"
-        _render_camera.near = 0.05
-        _render_camera.far = MAX_DEPTH_METERS
-        _render_viewport.add_child(_render_camera)
+    _ensure_render_target()
     if _world_root.get_viewport() == null or _world_root.get_viewport().world_3d == null:
         return {"ok": false, "error": "camera world has no World3D"}
     _render_viewport.world_3d = _world_root.get_viewport().world_3d
@@ -123,9 +113,7 @@ func _prepare_camera(request: Dictionary, vehicle_name: String) -> Dictionary:
     if width < 2 or height < 2 or width > 4096 or height > 4096:
         return {"ok": false, "error": "camera CaptureSettings dimensions must be from 2 to 4096 pixels"}
     _render_viewport.size = Vector2i(width, height)
-    var source_camera: Camera3D = null
-    if _source_camera_provider.is_valid():
-        source_camera = _source_camera_provider.call(vehicle_name) if _source_camera_provider.get_argument_count() > 0 else _source_camera_provider.call()
+    var source_camera := _source_camera(vehicle_name)
     if source_camera == null or not is_instance_valid(source_camera):
         return {"ok": false, "error": "camera source is unavailable"}
     _render_camera.global_transform = source_camera.global_transform
@@ -145,6 +133,58 @@ func _prepare_camera(request: Dictionary, vehicle_name: String) -> Dictionary:
         _render_camera.global_basis = body.global_basis * Basis(relative_orientation)
     _render_camera.current = true
     return {"ok": true, "camera": _render_camera}
+
+
+func _prewarm_render_target() -> void:
+    _ensure_render_target()
+    if _world_root == null or not is_instance_valid(_world_root):
+        return
+    var world_viewport := _world_root.get_viewport()
+    if world_viewport == null or world_viewport.world_3d == null:
+        return
+    var source_camera := _source_camera("")
+    if source_camera == null or not is_instance_valid(source_camera):
+        return
+    _render_viewport.world_3d = world_viewport.world_3d
+    _render_viewport.size = Vector2i(DEFAULT_WIDTH, DEFAULT_HEIGHT)
+    _sync_render_camera(source_camera)
+
+
+func _process(_delta: float) -> void:
+    if _render_viewport == null:
+        return
+    var source_camera := _source_camera("")
+    if source_camera == null or not is_instance_valid(source_camera):
+        return
+    _sync_render_camera(source_camera)
+
+
+func _ensure_render_target() -> void:
+    if _render_viewport != null:
+        return
+    _render_viewport = SubViewport.new()
+    _render_viewport.name = "AirSimCameraRenderTarget"
+    _render_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+    _render_viewport.render_target_clear_mode = SubViewport.CLEAR_MODE_ALWAYS
+    _render_viewport.transparent_bg = false
+    add_child(_render_viewport)
+    _render_camera = Camera3D.new()
+    _render_camera.name = "AirSimCamera"
+    _render_camera.near = 0.05
+    _render_camera.far = MAX_DEPTH_METERS
+    _render_viewport.add_child(_render_camera)
+
+
+func _source_camera(vehicle_name: String) -> Camera3D:
+    if not _source_camera_provider.is_valid():
+        return null
+    return _source_camera_provider.call(vehicle_name) if _source_camera_provider.get_argument_count() > 0 else _source_camera_provider.call()
+
+
+func _sync_render_camera(source_camera: Camera3D) -> void:
+    _render_camera.global_transform = source_camera.global_transform
+    _render_camera.fov = source_camera.fov
+    _render_camera.current = true
 
 
 func _capture_request(request: Dictionary, camera: Camera3D, image_cache: Dictionary, geometry_cache: Dictionary, vehicle_name: String) -> Dictionary:

@@ -9,6 +9,8 @@ GYM_PYBULLET_DRONES = "gym-pybullet-drones"
 TERRAIN3D = "Terrain3D"
 TERRAIN3D_VERSION = "v1.0.2-stable (sha256:a071850250ec5e596aa54da61c01d75768774eb379ee997584d426a45f4884a2)"
 TERRAIN3D_HOMEPAGE = "https://github.com/TokisanGames/Terrain3D"
+AMBIENT_CG = "ambientCG Ground037 and Rock023"
+AMBIENT_CG_HOMEPAGE = "https://ambientcg.com/"
 GYM_PYBULLET_DRONES_CONTRACT = (
     Path(__file__).resolve().parents[1] / "oracles" / "gym_pybullet_drones_contract.json"
 )
@@ -92,6 +94,25 @@ def terrain3d_attribution_error(dependencies: list[dict], required: bool) -> str
     return None
 
 
+def ambientcg_attribution_error(dependencies: list[dict]) -> str | None:
+    entries = [dependency for dependency in dependencies if dependency.get("name") == AMBIENT_CG]
+    if not entries:
+        return f"required attribution missing: {AMBIENT_CG}"
+    if len(entries) != 1:
+        return "ambientCG attribution invalid: duplicate manifest entries"
+    entry = entries[0]
+    scope = str(entry.get("attribution_scope", ""))
+    notice = str(entry.get("notice", ""))
+    if (
+        entry.get("license") != "CC0-1.0"
+        or entry.get("homepage") != AMBIENT_CG_HOMEPAGE
+        or not all(term in scope for term in ("Ground037", "Rock023", "grass, soil/sand, and rock"))
+        or "Creative Commons CC0 1.0" not in notice
+    ):
+        return "ambientCG attribution invalid"
+    return None
+
+
 def write_notice(path: str, dependencies: list[dict]) -> None:
     lines = [
         "AeroSim third-party notices",
@@ -125,6 +146,7 @@ def main() -> int:
     parser.add_argument("--notice-out")
     parser.add_argument("--allow-missing-gym-pybullet-drones-attribution", action="store_true")
     parser.add_argument("--allow-missing-terrain3d-attribution", action="store_true")
+    parser.add_argument("--allow-missing-ambientcg-attribution", action="store_true")
     args = parser.parse_args()
 
     with open(args.allowlist, encoding="utf-8") as file:
@@ -147,6 +169,10 @@ def main() -> int:
     )
     if terrain3d_error:
         print(terrain3d_error, file=sys.stderr)
+        return 1
+    ambientcg_error = None if args.allow_missing_ambientcg_attribution else ambientcg_attribution_error(dependencies)
+    if ambientcg_error:
+        print(ambientcg_error, file=sys.stderr)
         return 1
 
     violations = [

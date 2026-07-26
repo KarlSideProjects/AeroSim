@@ -14,6 +14,13 @@ BENCHMARK_SOURCE = (ROOT / "tests" / "performance" / "physics_benchmark.gd").rea
 
 
 class PerformanceRunnerTest(unittest.TestCase):
+    def test_lavapipe_smoke_uses_compatibility_without_downgrading_the_gate(self):
+        runner_source = (ROOT / "scripts" / "run_performance_benchmark.sh").read_text(encoding="utf-8")
+
+        self.assertIn('if [ "$benchmark_mode" = "smoke" ]; then', runner_source)
+        self.assertIn('rendering_args=(--rendering-method gl_compatibility)', runner_source)
+        self.assertIn('timeout 180s "$godot_bin" "${rendering_args[@]}"', runner_source)
+
     def test_benchmark_source_activates_the_complete_effect_workload(self):
         for method in (
             "set_a3_drag_model",
@@ -154,6 +161,8 @@ class PerformanceRunnerTest(unittest.TestCase):
             self.assertEqual(measurement["sampling_source"], "EngineProfiler._tick")
             self.assertEqual(measurement["physics_engine"], "Jolt Physics")
             self.assertEqual(measurement["vsync_mode"], 0)
+            if "lvp_icd.json" in environment.get("VK_ICD_FILENAMES", ""):
+                self.assertEqual(measurement["rendering_method"], "gl_compatibility")
             self.assertIn("4.7", measurement["godot_version"])
             self.assertRegex(measurement["godot_sha256"], r"^[0-9a-f]{64}$")
             self.assertRegex(measurement["godot_cpp_revision"], r"^[0-9a-f]{40}$")

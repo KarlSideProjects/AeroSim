@@ -10,6 +10,8 @@ const DEFAULT_PORT: int = 41451
 const MAX_CLIENTS: int = 16
 const MAX_CLIENT_BUFFER_BYTES: int = 1_048_576
 const MAX_PENDING_ASYNC_TASKS: int = 64
+const MAX_PENDING_RESET_WAITERS: int = 64
+const RESET_RESPONSE_TIMEOUT_MS: int = 10_000
 const MAX_COMMAND_DURATION_FRAMES: int = 1_000_000
 
 var bind_address: String = DEFAULT_BIND_ADDRESS
@@ -21,6 +23,8 @@ var settings: Dictionary = {}
 var reset_handler: Callable
 var _clients: Array = []
 var _client_buffers: Dictionary = {}
+var _client_epochs: Dictionary = {}
+var _next_client_epoch := 1
 var _pending_step_responses: Array[Dictionary] = []
 var _pending_async_responses: Array[Dictionary] = []
 var _cancelled_async_responses: Array[Dictionary] = []
@@ -40,6 +44,13 @@ var _scene_object_handler: Callable
 var _environment_handler: Callable
 var _replay_simulation_handler: Callable
 var _replay_async_handler: Callable
+var _reset_environment_replay_handler: Callable
+var _publication_error_handler: Callable
+var _reset_start_handler: Callable
+var _reset_status_handler: Callable
+var _reset_abort_handler: Callable
+var _pending_reset_waiters: Array[Dictionary] = []
+var _active_reset_generation := 0
 
 
 func set_session(owner_session: AirSimSession, owner_reset_handler: Callable = Callable()) -> void:
@@ -77,9 +88,20 @@ func set_scene_environment_backend(scene_object_handler: Callable, environment_h
     _environment_handler = environment_handler
 
 
-func set_replay_handlers(simulation_handler: Callable, async_handler: Callable) -> void:
+func set_replay_handlers(simulation_handler: Callable, async_handler: Callable, reset_environment_handler: Callable = Callable()) -> void:
     _replay_simulation_handler = simulation_handler
     _replay_async_handler = async_handler
+    _reset_environment_replay_handler = reset_environment_handler
+
+
+func set_publication_error_handler(handler: Callable) -> void:
+    _publication_error_handler = handler
+
+
+func set_reset_lifecycle_handlers(start_handler: Callable, status_handler: Callable, abort_handler: Callable) -> void:
+    _reset_start_handler = start_handler
+    _reset_status_handler = status_handler
+    _reset_abort_handler = abort_handler
 
 
 func cancel_pending_async_tasks(reason: String = "RPC session terminated") -> void:
@@ -134,10 +156,13 @@ func stop() -> void:
         client.disconnect_from_host()
     _clients.clear()
     _client_buffers.clear()
+    _client_epochs.clear()
     _pending_step_responses.clear()
     _pending_async_responses.clear()
     _cancelled_async_responses.clear()
     _active_async_by_vehicle.clear()
+    _pending_reset_waiters.clear()
+    _active_reset_generation = 0
     _running = false
     set_process(false)
 
@@ -163,6 +188,10 @@ func _process(_delta: float) -> void:
 func poll() -> void:
     if not _running:
         return
+    # A physical reset can outlive every transport waiter.  Reconcile it
+    # before accepting new requests so a later reset never attaches to a
+    # generation that has already committed or failed.
+    _flush_pending_reset_waiters()
     while _tcp_server.is_connection_available():
         var client: StreamPeerTCP = _tcp_server.take_connection()
         if client == null:
@@ -172,6 +201,8 @@ func poll() -> void:
             continue
         _clients.append(client)
         _client_buffers[client.get_instance_id()] = PackedByteArray()
+        _client_epochs[client.get_instance_id()] = _next_client_epoch
+        _next_client_epoch += 1
 
     for client in _clients.duplicate():
         client.poll()
@@ -213,10 +244,18 @@ func _process_client_buffer(client: StreamPeerTCP) -> void:
             buffer = PackedByteArray()
             break
         var response: Array
-        if typeof(decoded.value) == TYPE_ARRAY:
-            response = dispatch(decoded.value)
-        else:
+        if typeof(decoded.value) != TYPE_ARRAY:
             response = _error_response(null, "RPC request must be an array")
+        else:
+            var validation := _validate_request(decoded.value)
+            if not bool(validation["ok"]):
+                response = _error_response(validation["message_id"], String(validation["error"]))
+            elif decoded.value[2] == "reset" and _reset_start_handler.is_valid():
+                _queue_reset_waiter(client, decoded.value)
+                buffer = buffer.slice(consumed)
+                continue
+            else:
+                response = dispatch(decoded.value)
         var is_explicit_step: bool = response[2] == null and typeof(decoded.value) == TYPE_ARRAY and decoded.value.size() == 4 and decoded.value[2] in ["simContinueForFrames", "simContinueForTime"]
         var is_async_vehicle_command: bool = response[2] == null and typeof(decoded.value) == TYPE_ARRAY and decoded.value.size() == 4 and _is_async_vehicle_method(decoded.value[2])
         if is_explicit_step:
@@ -242,12 +281,16 @@ func _remove_client(client: StreamPeerTCP) -> void:
     client.disconnect_from_host()
     _clients.erase(client)
     _client_buffers.erase(client.get_instance_id())
+    _client_epochs.erase(client.get_instance_id())
     for pending in _pending_step_responses.duplicate():
         if pending["client"] == client:
             _pending_step_responses.erase(pending)
     for pending in _pending_async_responses.duplicate():
         if pending["client"] == client:
             _cancel_pending_task(pending, "RPC client disconnected")
+    for waiter in _pending_reset_waiters.duplicate():
+        if waiter["client"] == client:
+            _pending_reset_waiters.erase(waiter)
     for pending in _cancelled_async_responses.duplicate():
         if pending["client"] == client:
             _cancelled_async_responses.erase(pending)
@@ -293,6 +336,7 @@ func _cancel_pending_task(pending: Dictionary, reason: String, notify_backend: b
 
 func _flush_pending_step_responses() -> void:
     if session.is_explicit_step_active():
+        _flush_pending_reset_waiters()
         return
     for pending in _pending_step_responses.duplicate():
         var client: StreamPeerTCP = pending["client"]
@@ -302,6 +346,111 @@ func _flush_pending_step_responses() -> void:
         if not _send_response(client, _success_response(pending["message_id"], null)):
             _remove_client(client)
     _flush_pending_async_responses()
+    _flush_pending_reset_waiters()
+
+
+func _queue_reset_waiter(client: StreamPeerTCP, request: Array) -> void:
+    var message_id = request[1]
+    if typeof(request[3]) != TYPE_ARRAY or not request[3].is_empty():
+        _send_or_remove(client, _error_response(message_id, "reset expects no parameters"))
+        return
+    var client_epoch := int(_client_epochs.get(client.get_instance_id(), -1))
+    for waiter in _pending_reset_waiters:
+        if int(waiter["client_epoch"]) == client_epoch and waiter["message_id"] == message_id:
+            return
+    if _pending_reset_waiters.size() >= MAX_PENDING_RESET_WAITERS:
+        _send_or_remove(client, _error_response(message_id, "too many pending reset requests"))
+        return
+    var generation := _active_reset_generation
+    if generation == 0:
+        var result = _reset_start_handler.call()
+        if typeof(result) != TYPE_DICTIONARY or not bool(result.get("ok", false)):
+            _send_or_remove(client, _error_response(message_id, String(result.get("error", "reset rejected")) if typeof(result) == TYPE_DICTIONARY else "reset handler returned an invalid result"))
+            return
+        generation = int(result.get("generation", 0))
+        if generation <= 0:
+            _send_or_remove(client, _error_response(message_id, "reset handler returned an invalid generation"))
+            return
+        _active_reset_generation = generation
+    # Concurrent AirSim reset calls join the one active physical generation;
+    # every retained request receives that generation's final outcome.
+    _pending_reset_waiters.append({
+        "client": client,
+        "client_epoch": client_epoch,
+        "message_id": message_id,
+        "generation": generation,
+        "deadline_ms": Time.get_ticks_msec() + RESET_RESPONSE_TIMEOUT_MS,
+    })
+
+
+func _flush_pending_reset_waiters() -> void:
+    var generation := _active_reset_generation
+    if generation <= 0:
+        return
+    if not _reset_status_handler.is_valid():
+        return
+    # Completion wins the race with a caller deadline: once runtime has
+    # committed, reset publication and its matching success responses are the
+    # only valid outcome, even if this poll happens after the deadline.
+    var status = _reset_status_handler.call(generation)
+    if typeof(status) != TYPE_DICTIONARY:
+        _complete_reset_waiters(generation, false, "reset status handler returned an invalid result")
+        return
+    var state := String(status.get("state", "pending"))
+    if state == "committed":
+        _publish_reset_commit()
+        _complete_reset_waiters(generation, true)
+        return
+    if state != "pending":
+        _complete_reset_waiters(generation, false, String(status.get("error", "reset failed")))
+        return
+    var now_ms := Time.get_ticks_msec()
+    var timed_out := false
+    for waiter in _pending_reset_waiters:
+        if int(waiter["generation"]) == generation and now_ms >= int(waiter["deadline_ms"]):
+            timed_out = true
+            break
+    if timed_out:
+        if _reset_abort_handler.is_valid():
+            _reset_abort_handler.call(generation, "RPC reset response timed out")
+        _complete_reset_waiters(generation, false, "reset timeout")
+
+
+func _publish_reset_commit() -> void:
+    # This is the sole AirSim-facing reset publication for a deferred reset:
+    # replay, session clock, and control latches change together immediately
+    # before the corresponding transport replies are written.
+    if _replay_simulation_handler.is_valid():
+        _replay_simulation_handler.call(4, 0.0)
+    session.reset()
+    # Reset's native replay event must precede its baseline, while the public
+    # session epoch must be zero before that baseline takes a timestamp.
+    if _reset_environment_replay_handler.is_valid():
+        _reset_environment_replay_handler.call()
+    reset_vehicle_control_state()
+
+
+func _complete_reset_waiters(generation: int, ok: bool, error: String = "") -> void:
+    for waiter in _pending_reset_waiters.duplicate():
+        if int(waiter["generation"]) != generation:
+            continue
+        _pending_reset_waiters.erase(waiter)
+        var client: StreamPeerTCP = waiter["client"]
+        if not _client_is_current(client, int(waiter["client_epoch"])):
+            continue
+        var response := _success_response(waiter["message_id"], null) if ok else _error_response(waiter["message_id"], error)
+        _send_or_remove(client, response)
+    if _active_reset_generation == generation:
+        _active_reset_generation = 0
+
+
+func _client_is_current(client: StreamPeerTCP, epoch: int) -> bool:
+    return _clients.has(client) and int(_client_epochs.get(client.get_instance_id(), -1)) == epoch
+
+
+func _send_or_remove(client: StreamPeerTCP, response: Array) -> void:
+    if not _send_response(client, response):
+        _remove_client(client)
 
 
 func _flush_pending_async_responses() -> void:
@@ -393,16 +542,16 @@ func _async_timeout_frames(method: String, params: Array) -> int:
 
 
 func dispatch(request: Array) -> Array:
-    if request.size() != 4:
-        return _error_response(null, "RPC request must contain four fields")
-    if request[0] != 0:
-        return _error_response(request[1], "unsupported RPC request type")
-
+    var validation := _validate_request(request)
+    if not bool(validation["ok"]):
+        return _error_response(validation["message_id"], String(validation["error"]))
     var message_id = request[1]
-    var method = request[2]
-    var params = request[3]
-    if typeof(method) != TYPE_STRING or typeof(params) != TYPE_ARRAY:
-        return _error_response(message_id, "RPC method and params have invalid types")
+    var method: String = request[2]
+    var params: Array = request[3]
+    if _is_mutating_method(method):
+        var publication_error := _publication_error()
+        if not publication_error.is_empty():
+            return _error_response(message_id, publication_error)
 
     match method:
         "ping":
@@ -435,12 +584,11 @@ func dispatch(request: Array) -> Array:
         "reset":
             if not params.is_empty():
                 return _error_response(message_id, "reset expects no parameters")
-            if _replay_simulation_handler.is_valid():
-                _replay_simulation_handler.call(4, 0.0)
-            session.reset()
             if reset_handler.is_valid():
-                reset_handler.call()
-            reset_vehicle_control_state()
+                var reset_result = reset_handler.call()
+                if typeof(reset_result) == TYPE_DICTIONARY and not bool(reset_result.get("ok", false)):
+                    return _error_response(message_id, String(reset_result.get("error", "reset rejected")))
+            _publish_reset_commit()
             return _success_response(message_id, null)
         "getServerVersion":
             if not params.is_empty():
@@ -496,6 +644,16 @@ func dispatch(request: Array) -> Array:
             return _dispatch_vehicle_command(message_id, method, params)
         _:
             return _error_response(message_id, "unsupported RPC method: %s" % method)
+
+
+func _validate_request(request: Array) -> Dictionary:
+    if request.size() != 4:
+        return {"ok": false, "message_id": null, "error": "RPC request must contain four fields"}
+    if request[0] != 0:
+        return {"ok": false, "message_id": request[1], "error": "unsupported RPC request type"}
+    if typeof(request[2]) != TYPE_STRING or typeof(request[3]) != TYPE_ARRAY:
+        return {"ok": false, "message_id": request[1], "error": "RPC method and params have invalid types"}
+    return {"ok": true, "message_id": request[1], "error": ""}
 
 
 func _dispatch_scene_object(message_id, method: String, params: Array) -> Array:
@@ -619,6 +777,9 @@ func _dispatch_is_api_control_enabled(message_id, params: Array) -> Array:
     var vehicle := _resolve_vehicle(message_id, params[0])
     if not vehicle.ok:
         return vehicle.response
+    var publication_error := _publication_error()
+    if not publication_error.is_empty():
+        return _error_response(message_id, publication_error)
     return _success_response(message_id, bool(_api_control[vehicle.name]))
 
 
@@ -735,6 +896,9 @@ func _dispatch_images(message_id, params: Array) -> Array:
     var vehicle := _resolve_vehicle(message_id, params[1])
     if not vehicle.ok:
         return vehicle.response
+    var publication_error := _publication_error()
+    if not publication_error.is_empty():
+        return _error_response(message_id, publication_error)
     if not _camera_handler.is_valid():
         return _error_response(message_id, "camera backend is unavailable")
     var result = _camera_handler.call(params[0], String(vehicle.name), false)
@@ -758,6 +922,21 @@ func _state_for_vehicle(name: String) -> Dictionary:
     if typeof(result) != TYPE_DICTIONARY or not bool(result.get("ok", false)):
         return {"ok": false, "error": String(result.get("error", "vehicle state backend rejected the request")) if typeof(result) == TYPE_DICTIONARY else "vehicle state backend returned an invalid snapshot"}
     return {"ok": true, "state": result["state"].duplicate(true)}
+
+
+func _publication_error() -> String:
+    if not _publication_error_handler.is_valid():
+        return ""
+    return String(_publication_error_handler.call())
+
+
+func _is_mutating_method(method: String) -> bool:
+    return method in [
+        "simPause", "simContinueForFrames", "simContinueForTime",
+        "enableApiControl", "armDisarm", "cancelLastTask",
+        "simSpawnObject", "simSetObjectPose", "simDestroyObject", "simSetSegmentationObjectID",
+        "simEnableWeather", "simSetWeatherParameter", "simSetTimeOfDay", "simSetEnvironment",
+    ] or _is_async_vehicle_method(method)
 
 
 func _dispatch_cancel_last_task(message_id, params: Array) -> Array:

@@ -6,6 +6,41 @@ const MsgpackCodec = preload("res://common/rpc/msgpack_codec.gd")
 var command_calls: Array = []
 
 
+class ResetLifecycleHarness extends RefCounted:
+    var generation := 0
+    var state := "idle"
+    var starts := 0
+    var aborts := 0
+    var replay_operations: Array[int] = []
+    var replay_events: Array[String] = []
+
+    func start_reset() -> Dictionary:
+        starts += 1
+        generation += 1
+        state = "pending"
+        return {"ok": true, "generation": generation}
+
+    func reset_status(requested_generation: int) -> Dictionary:
+        if requested_generation != generation:
+            return {"state": "failed", "error": "stale generation"}
+        return {"state": state, "error": "reset failed"}
+
+    func abort_reset(requested_generation: int, _reason: String) -> void:
+        if requested_generation == generation:
+            aborts += 1
+            state = "failed"
+
+    func publication_error() -> String:
+        return "reset_pending" if state == "pending" else ""
+
+    func record_replay(operation: int, _value: float) -> void:
+        replay_operations.append(operation)
+        replay_events.append("reset" if operation == 4 else "operation_%d" % operation)
+
+    func record_reset_environment() -> void:
+        replay_events.append("environment")
+
+
 func _install_test_backend(server: AirSimRpcServer) -> void:
     server.set_vehicle_backend(
         Callable(self, "_test_state"),
@@ -76,6 +111,37 @@ func test_reset_vehicle_control_state_clears_api_and_armed_latches() -> void:
 
     server.reset_vehicle_control_state()
 
+    assert_false(server._api_control["Drone1"])
+    assert_false(server._armed["Drone1"])
+
+
+func test_synchronous_no_ack_reset_uses_the_complete_replay_publication_sequence() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var lifecycle := ResetLifecycleHarness.new()
+    server.set_session(server.session, Callable(lifecycle, "start_reset"))
+    server.set_replay_handlers(
+        Callable(lifecycle, "record_replay"),
+        Callable(),
+        Callable(lifecycle, "record_reset_environment"))
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41466,
+        "RpcEnabled": false,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    if not startup.ok:
+        return
+    server.session.simulation_time_seconds = 2.0
+    server._api_control["Drone1"] = true
+    server._armed["Drone1"] = true
+
+    assert_eq(server.dispatch([0, 709, "reset", []]), [1, 709, null, null])
+    assert_eq(lifecycle.starts, 1)
+    assert_eq(lifecycle.replay_events, ["reset", "environment"])
+    assert_eq(server.session.simulation_time_seconds, 0.0)
     assert_false(server._api_control["Drone1"])
     assert_false(server._armed["Drone1"])
 
@@ -187,6 +253,285 @@ func test_loopback_transport_dispatches_one_messagepack_request() -> void:
     var response: Dictionary = MsgpackCodec.decode(response_bytes)
     assert_true(response.ok)
     assert_eq(response.value, [1, 9, null, true])
+    server.stop()
+
+
+func test_loopback_reset_defers_matching_responses_until_one_generation_commits() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var lifecycle := ResetLifecycleHarness.new()
+    server.set_reset_lifecycle_handlers(
+        Callable(lifecycle, "start_reset"),
+        Callable(lifecycle, "reset_status"),
+        Callable(lifecycle, "abort_reset"))
+    server.set_publication_error_handler(Callable(lifecycle, "publication_error"))
+    server.set_replay_handlers(Callable(lifecycle, "record_replay"), Callable())
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41461,
+        "RpcEnabled": true,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    if not startup.ok:
+        return
+    server.session.simulation_time_seconds = 3.0
+    server._api_control["Drone1"] = true
+    server._armed["Drone1"] = true
+
+    var client := StreamPeerTCP.new()
+    autofree(client)
+    assert_eq(client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41461), OK)
+    for _attempt in 20:
+        server.poll()
+        client.poll()
+        if client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+            break
+        await get_tree().process_frame
+    assert_eq(client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
+    if client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+        server.stop()
+        return
+
+    assert_eq(client.put_data(MsgpackCodec.encode([0, 701, "reset", []])), OK)
+    # A duplicate MessagePack id on the same connection is a retransmission,
+    # not a second waiter or a second response correlation.
+    assert_eq(client.put_data(MsgpackCodec.encode([0, 701, "reset", []])), OK)
+    assert_eq(client.put_data(MsgpackCodec.encode([0, 702, "reset", []])), OK)
+    for _attempt in 3:
+        server.poll()
+        client.poll()
+        await get_tree().process_frame
+    assert_eq(lifecycle.starts, 1)
+    assert_eq(server._pending_reset_waiters.size(), 2)
+    assert_eq(client.get_available_bytes(), 0)
+    assert_eq(server.session.simulation_time_seconds, 3.0)
+    assert_true(server._api_control["Drone1"])
+    assert_true(server._armed["Drone1"])
+    var blocked_pause: Array = server.dispatch([0, 703, "simPause", [true]])
+    assert_string_contains(blocked_pause[2], "reset_pending")
+    assert_eq(lifecycle.replay_operations.size(), 0)
+
+    lifecycle.state = "committed"
+    server.poll()
+    client.poll()
+    var bytes: PackedByteArray = client.get_data(client.get_available_bytes())[1]
+    var first := MsgpackCodec.decode(bytes)
+    var second := MsgpackCodec.decode(bytes.slice(first.consumed))
+    assert_eq(first.value, [1, 701, null, null])
+    assert_eq(second.value, [1, 702, null, null])
+    assert_eq(lifecycle.replay_operations, [4])
+    assert_eq(server.session.simulation_time_seconds, 0.0)
+    assert_false(server._api_control["Drone1"])
+    assert_false(server._armed["Drone1"])
+    server.stop()
+
+
+func test_loopback_reset_timeout_aborts_generation_without_public_reset() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var lifecycle := ResetLifecycleHarness.new()
+    server.set_reset_lifecycle_handlers(
+        Callable(lifecycle, "start_reset"),
+        Callable(lifecycle, "reset_status"),
+        Callable(lifecycle, "abort_reset"))
+    server.set_publication_error_handler(Callable(lifecycle, "publication_error"))
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41462,
+        "RpcEnabled": true,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    if not startup.ok:
+        return
+    server.session.simulation_time_seconds = 4.0
+    server._api_control["Drone1"] = true
+    server._armed["Drone1"] = true
+    var client := StreamPeerTCP.new()
+    autofree(client)
+    client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41462)
+    for _attempt in 20:
+        server.poll()
+        client.poll()
+        if client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+            break
+        await get_tree().process_frame
+    assert_eq(client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
+    if client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+        server.stop()
+        return
+    assert_eq(client.put_data(MsgpackCodec.encode([0, 704, "reset", []])), OK)
+    server.poll()
+    server._pending_reset_waiters[0]["deadline_ms"] = 0
+    server.poll()
+    client.poll()
+    var response := MsgpackCodec.decode(client.get_data(client.get_available_bytes())[1])
+    assert_string_contains(response.value[2], "reset timeout")
+    assert_eq(lifecycle.aborts, 1)
+    assert_eq(server.session.simulation_time_seconds, 4.0)
+    assert_true(server._api_control["Drone1"])
+    assert_true(server._armed["Drone1"])
+    server.stop()
+
+
+func test_loopback_reset_committed_before_poll_wins_over_expired_deadline() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var lifecycle := ResetLifecycleHarness.new()
+    server.set_reset_lifecycle_handlers(
+        Callable(lifecycle, "start_reset"),
+        Callable(lifecycle, "reset_status"),
+        Callable(lifecycle, "abort_reset"))
+    server.set_replay_handlers(Callable(lifecycle, "record_replay"), Callable())
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41464,
+        "RpcEnabled": true,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    if not startup.ok:
+        return
+    server.session.simulation_time_seconds = 6.0
+    server._api_control["Drone1"] = true
+    server._armed["Drone1"] = true
+    var client := StreamPeerTCP.new()
+    autofree(client)
+    assert_eq(client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41464), OK)
+    for _attempt in 20:
+        server.poll()
+        client.poll()
+        if client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+            break
+        await get_tree().process_frame
+    assert_eq(client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
+    if client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+        server.stop()
+        return
+    assert_eq(client.put_data(MsgpackCodec.encode([0, 707, "reset", []])), OK)
+    server.poll()
+    lifecycle.state = "committed"
+    server._pending_reset_waiters[0]["deadline_ms"] = 0
+    server.poll()
+    client.poll()
+    var response := MsgpackCodec.decode(client.get_data(client.get_available_bytes())[1])
+    assert_eq(response.value, [1, 707, null, null])
+    assert_eq(lifecycle.aborts, 0)
+    assert_eq(lifecycle.replay_operations, [4])
+    assert_eq(server.session.simulation_time_seconds, 0.0)
+    assert_false(server._api_control["Drone1"])
+    assert_false(server._armed["Drone1"])
+    server.stop()
+
+
+func test_deferred_reset_requires_a_valid_request_frame() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var lifecycle := ResetLifecycleHarness.new()
+    server.set_reset_lifecycle_handlers(
+        Callable(lifecycle, "start_reset"),
+        Callable(lifecycle, "reset_status"),
+        Callable(lifecycle, "abort_reset"))
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41465,
+        "RpcEnabled": true,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    if not startup.ok:
+        return
+    var client := StreamPeerTCP.new()
+    autofree(client)
+    assert_eq(client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41465), OK)
+    for _attempt in 20:
+        server.poll()
+        client.poll()
+        if client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+            break
+        await get_tree().process_frame
+    assert_eq(client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
+    if client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+        server.stop()
+        return
+    assert_eq(client.put_data(MsgpackCodec.encode([1, 708, "reset", []])), OK)
+    server.poll()
+    client.poll()
+    var non_request := MsgpackCodec.decode(client.get_data(client.get_available_bytes())[1])
+    assert_string_contains(non_request.value[2], "unsupported RPC request type")
+    assert_eq(lifecycle.starts, 0)
+    server.stop()
+
+
+func test_loopback_reset_disconnect_removes_only_its_waiter_and_drains_generation() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var lifecycle := ResetLifecycleHarness.new()
+    server.set_reset_lifecycle_handlers(
+        Callable(lifecycle, "start_reset"),
+        Callable(lifecycle, "reset_status"),
+        Callable(lifecycle, "abort_reset"))
+    server.set_replay_handlers(Callable(lifecycle, "record_replay"), Callable())
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41463,
+        "RpcEnabled": true,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    if not startup.ok:
+        return
+    server.session.simulation_time_seconds = 5.0
+    var disconnected_client := StreamPeerTCP.new()
+    var waiting_client := StreamPeerTCP.new()
+    autofree(disconnected_client)
+    autofree(waiting_client)
+    assert_eq(disconnected_client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41463), OK)
+    assert_eq(waiting_client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41463), OK)
+    for _attempt in 20:
+        server.poll()
+        disconnected_client.poll()
+        waiting_client.poll()
+        if disconnected_client.get_status() == StreamPeerTCP.STATUS_CONNECTED and waiting_client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+            break
+        await get_tree().process_frame
+    assert_eq(disconnected_client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
+    assert_eq(waiting_client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
+    if disconnected_client.get_status() != StreamPeerTCP.STATUS_CONNECTED or waiting_client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+        server.stop()
+        return
+    assert_eq(disconnected_client.put_data(MsgpackCodec.encode([0, 705, "reset", []])), OK)
+    assert_eq(waiting_client.put_data(MsgpackCodec.encode([0, 706, "reset", []])), OK)
+    for _attempt in 3:
+        server.poll()
+        await get_tree().process_frame
+    assert_eq(lifecycle.starts, 1)
+    assert_eq(server._pending_reset_waiters.size(), 2)
+    var generation := server._active_reset_generation
+    disconnected_client.disconnect_from_host()
+    for _attempt in 20:
+        server.poll()
+        if server._pending_reset_waiters.size() == 1:
+            break
+        await get_tree().process_frame
+    assert_eq(server._pending_reset_waiters.size(), 1)
+    assert_eq(server._pending_reset_waiters[0]["message_id"], 706)
+    assert_eq(server._active_reset_generation, generation)
+
+    lifecycle.state = "committed"
+    server.poll()
+    waiting_client.poll()
+    var response := MsgpackCodec.decode(waiting_client.get_data(waiting_client.get_available_bytes())[1])
+    assert_eq(response.value, [1, 706, null, null])
+    assert_eq(server._active_reset_generation, 0)
+    assert_eq(lifecycle.replay_operations, [4])
+    assert_eq(server.session.simulation_time_seconds, 0.0)
     server.stop()
 
 

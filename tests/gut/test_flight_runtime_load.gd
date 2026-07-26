@@ -7,8 +7,12 @@ const RatesProfile = preload("res://common/flight/rates_profile.gd")
 const LanguageProfile = preload("res://common/flight/language_profile.gd")
 const Localization = preload("res://common/flight/localization.gd")
 const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const AirSimCameraSurface = preload("res://common/rpc/airsim_camera_surface.gd")
+const EnvironmentState = preload("res://common/rpc/environment_state.gd")
 const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
+const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
+const TimeTrial = preload("res://common/flight/time_trial.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
@@ -39,6 +43,78 @@ class FakeNative:
 
     func hardware_power_diagnostics() -> Dictionary:
         return {"hover_throttle": 0.30}
+
+
+class ResetRecordingNative extends FakeNative:
+    var reset_operation_count := 0
+    var environment_record_count := 0
+    var reset_flight_count := 0
+    var disarm_count := 0
+    var replay_event_order: Array[String] = []
+    var replay_timestamps: Array[int] = []
+
+    func reset_flight() -> void:
+        reset_flight_count += 1
+        super.reset_flight()
+
+    func disarm_flight_control() -> void:
+        disarm_count += 1
+        super.disarm_flight_control()
+
+    func record_replay_simulation_operation(timestamp_us: int, operation: int, _value: float) -> Dictionary:
+        replay_event_order.append("reset" if operation == 4 else "operation_%d" % operation)
+        replay_timestamps.append(timestamp_us)
+        if operation == 5:
+            reset_operation_count += 1
+        return {"ok": true}
+
+    func configure_wind(_config: Dictionary) -> void:
+        pass
+
+    func record_replay_environment(timestamp_us: int, _state_json: String) -> Dictionary:
+        replay_event_order.append("environment")
+        replay_timestamps.append(timestamp_us)
+        environment_record_count += 1
+        return {"ok": true}
+
+
+class ArmRejectingNative extends FakeNative:
+    var arm_attempt_count := 0
+
+    func arm_flight_control(_timestamp: float) -> bool:
+        arm_attempt_count += 1
+        return false
+
+    func flight_control_arm_reject_code() -> String:
+        return "test_arm_rejected"
+
+
+class ArmPreservingResetNative extends ResetRecordingNative:
+    var arm_attempt_count := 0
+
+    func reset_flight() -> void:
+        # Match AeroSimNative: reset clears flight state but retains arming.
+        reset_flight_count += 1
+
+    func arm_flight_control(_timestamp: float) -> bool:
+        arm_attempt_count += 1
+        armed = true
+        return true
+
+    func disarm_flight_control() -> void:
+        disarm_count += 1
+        disarmed = true
+        armed = false
+
+
+class PreArmedRejectingNative extends ArmRejectingNative:
+    func reset_flight() -> void:
+        # Match AeroSimNative reset semantics so commit owns the disarm.
+        pass
+
+    func disarm_flight_control() -> void:
+        disarmed = true
+        armed = false
 
 
 class FailingStepNative:
@@ -170,6 +246,7 @@ class FakeBodyDragPanel extends Node:
 class FakeTakeoffBody extends RefCounted:
     var global_position := Vector3.ZERO
     var linear_velocity := Vector3.ZERO
+    var angular_velocity := Vector3.ZERO
     var freeze := true
     var sleeping := true
 
@@ -179,6 +256,59 @@ class FakeTakeoffBody extends RefCounted:
     func apply_native_state(position: Vector3, _orientation: Quaternion, velocity: Vector3, _angular: Vector3) -> void:
         global_position = position
         linear_velocity = velocity
+
+
+class UnacknowledgedResetBody extends RefCounted:
+    var global_position := Vector3.ZERO
+    var global_transform := Transform3D.IDENTITY
+    var linear_velocity := Vector3.ZERO
+    var angular_velocity := Vector3.ZERO
+    var freeze := true
+    var sleeping := true
+
+    func reset_contact() -> void:
+        pass
+
+    func queue_reset_state(_position: Vector3, _orientation: Quaternion, token: int) -> int:
+        return token
+
+    func reset_acknowledged(_token: int) -> bool:
+        return false
+
+
+class QuickFlyRuntime extends FlightRuntime:
+    var reset_to_spawn_calls := 0
+
+    func _ready() -> void:
+        pass
+
+    func reset_to_spawn(rpc_owned_reset: bool = false) -> bool:
+        reset_to_spawn_calls += 1
+        return super.reset_to_spawn(rpc_owned_reset)
+
+
+class ResetPublicationRuntime extends FlightRuntime:
+    var kinematic_reset_count := 0
+
+    func _reset_secondary_kinematic_contexts() -> void:
+        kinematic_reset_count += 1
+        super._reset_secondary_kinematic_contexts()
+
+
+class ArmOrderingRuntime extends FlightRuntime:
+    var pause_values: Array[bool] = []
+
+    func set_paused(value: bool, sync_session: bool = true) -> void:
+        pause_values.append(value)
+        super.set_paused(value, sync_session)
+
+
+class CountingTimeTrial extends TimeTrial:
+    var reset_count := 0
+
+    func reset() -> void:
+        reset_count += 1
+        super.reset()
 
 
 class FakeDeviceState:
@@ -485,6 +615,282 @@ func test_production_flight_runtime_script_loads_with_airsim_rpc_dependencies() 
     assert_not_null(runtime_script)
 
 
+func test_environment_reset_restores_map_authored_fog() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var map := Node3D.new()
+    autofree(map)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    var world_environment := WorldEnvironment.new()
+    world_environment.name = "AeroSimEnvironment"
+    world_environment.environment = Environment.new()
+    world_environment.environment.fog_enabled = true
+    world_environment.environment.fog_density = 0.0025
+    map.add_child(world_environment)
+
+    runtime._apply_environment_visuals({"weather_enabled": false, "fog": 0.0, "time_of_day_enabled": false, "move_sun": true})
+
+    assert_true(world_environment.environment.fog_enabled)
+    assert_almost_eq(world_environment.environment.fog_density, 0.0025, 0.000001)
+
+
+func test_terrain_range_missing_authored_environment_does_not_receive_a_blank_fallback() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var map := Node3D.new()
+    autofree(map)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.loaded_map_id = "terrain3d_range"
+
+    runtime._apply_environment_visuals({"weather_enabled": false, "fog": 0.0, "time_of_day_enabled": false, "move_sun": true})
+
+    assert_null(map.get_node_or_null("AeroSimEnvironment"))
+    assert_string_contains(runtime.last_error_message, "required AeroSimEnvironment")
+
+
+func test_load_map_rejects_terrain_range_without_an_authored_environment() -> void:
+    var runtime := _runtime_with_terrain_range_scene("res://tests/fixtures/maps/terrain_range_missing_environment.tscn")
+
+    assert_false(runtime.load_map("terrain3d_range"))
+    assert_null(runtime.loaded_map)
+    assert_string_contains(runtime.last_error_message, "required AeroSimEnvironment")
+
+
+func test_load_map_rejects_terrain_range_with_an_unresourced_environment() -> void:
+    var runtime := _runtime_with_terrain_range_scene("res://tests/fixtures/maps/terrain_range_unresourced_environment.tscn")
+
+    assert_false(runtime.load_map("terrain3d_range"))
+    assert_null(runtime.loaded_map)
+    assert_string_contains(runtime.last_error_message, "required AeroSimEnvironment")
+
+
+func test_second_quick_fly_reuses_the_loaded_terrain_range_and_resets_spawn() -> void:
+    var runtime := _quick_fly_runtime()
+
+    runtime.quick_fly()
+    await _await_reset_commit()
+    var first_loaded_map := runtime.loaded_map
+    var spawn := first_loaded_map.get_node("SpawnNorth") as Marker3D if first_loaded_map != null else null
+    runtime.drone_body.global_position = Vector3(99.0, 99.0, 99.0)
+    runtime.environment_state.apply({"rain": 0.75, "wind_preset": "severe"})
+    runtime.quick_fly()
+    runtime.accept_fallback()
+    await _await_reset_commit()
+
+    assert_not_null(first_loaded_map)
+    assert_same(runtime.loaded_map, first_loaded_map)
+    if runtime.loaded_map == first_loaded_map:
+        assert_not_null(spawn)
+        assert_eq(runtime.drone_body.global_position, spawn.global_position)
+    assert_eq(runtime.loaded_map_wind_preset, "calm")
+    assert_eq(float(runtime.environment_state.snapshot().rain), 0.0)
+    assert_eq(String(runtime.environment_state.snapshot().wind_preset), "calm")
+
+
+func test_second_quick_fly_with_an_active_profile_reuses_the_map_and_resets_once() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.gamepad_device_state = FakeDeviceState.new(true)
+    runtime.session_gamepad_device_id = 7
+    runtime.session_gamepad_profile = InputProfiles.GamepadProfile.xbox_default(7, runtime.gamepad_device_state)
+
+    runtime.quick_fly()
+    await _await_reset_commit()
+    var first_loaded_map := runtime.loaded_map
+    var spawn := first_loaded_map.get_node("SpawnNorth") as Marker3D if first_loaded_map != null else null
+    var reset_calls_before: int = runtime.reset_to_spawn_calls
+    runtime.drone_body.global_position = Vector3(99.0, 99.0, 99.0)
+    runtime.environment_state.apply({"rain": 0.75, "wind_preset": "severe"})
+    runtime.third_person_view = false
+    runtime.quick_fly()
+    await _await_reset_commit()
+
+    assert_not_null(first_loaded_map)
+    assert_same(runtime.loaded_map, first_loaded_map)
+    assert_eq(runtime.reset_to_spawn_calls - reset_calls_before, 1)
+    if spawn != null:
+        assert_eq(runtime.drone_body.global_position, spawn.global_position)
+    assert_eq(float(runtime.environment_state.snapshot().rain), 0.0)
+    assert_eq(String(runtime.environment_state.snapshot().wind_preset), "calm")
+    assert_true(runtime.third_person_view)
+
+    assert_true(runtime.third_person_camera.current)
+    assert_false(runtime.chase_camera.current)
+    assert_same(runtime._airsim_camera_source(), runtime.chase_camera)
+
+
+func test_cancelled_fallback_retains_the_preloaded_terrain_range_for_the_next_quick_fly() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quick_fly()
+    await _await_reset_commit()
+    var retained_map := runtime.loaded_map
+    var native := FakeNative.new()
+    runtime.native = native
+    native.armed = true
+    runtime.takeoff_requested = true
+    runtime.drone_body.freeze = false
+    runtime._cancel_controller_route()
+
+    assert_eq(runtime.screen, "main_menu")
+    assert_same(runtime.loaded_map, retained_map)
+    assert_eq(runtime.loaded_map_id, "terrain3d_range")
+    assert_false(runtime.takeoff_requested)
+    assert_true(runtime.paused)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(native.disarmed)
+
+    runtime.native = null
+    runtime.quick_fly()
+    await _await_reset_commit()
+
+    assert_eq(runtime.screen, "fallback_prompt")
+    assert_same(runtime.loaded_map, retained_map)
+
+
+func test_cancelled_controller_confirmation_retains_the_preloaded_terrain_range() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.gamepad_device_state = FakeDeviceState.new(true)
+    runtime._build_flight_hud()
+
+    runtime.quick_fly()
+    var retained_map := runtime.loaded_map
+    var native := FakeNative.new()
+    runtime.native = native
+    native.armed = true
+    runtime._cancel_controller_route()
+
+    assert_eq(runtime.screen, "main_menu")
+    assert_same(runtime.loaded_map, retained_map)
+    assert_eq(runtime.loaded_map_id, "terrain3d_range")
+    assert_true(runtime.paused)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(native.disarmed)
+
+
+func test_switching_to_industrial_yard_unloads_the_retained_terrain_range() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quick_fly()
+    var terrain_range := runtime.loaded_map
+    runtime._cancel_controller_route()
+
+    assert_true(runtime.load_map("industrial_yard"))
+
+    assert_eq(runtime.loaded_map_id, "industrial_yard")
+    assert_not_same(runtime.loaded_map, terrain_range)
+    assert_not_null(runtime.loaded_map)
+
+    await get_tree().process_frame
+
+    assert_false(is_instance_valid(terrain_range))
+
+
+func test_license_invalid_after_cancel_unloads_the_retained_terrain_range() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quick_fly()
+    var retained_map := runtime.loaded_map
+    runtime._cancel_controller_route()
+    (runtime.license_provider as FakeLicenseProvider).snapshot = {
+        "ok": false,
+        "status": "revoked",
+        "last_online_result": "revoked",
+    }
+
+    runtime.quick_fly()
+
+    assert_eq(runtime.screen, "license_blocked")
+    assert_null(runtime.loaded_map)
+    assert_eq(runtime.loaded_map_id, "")
+
+    await get_tree().process_frame
+
+    assert_false(is_instance_valid(retained_map))
+
+
+func test_exit_after_cancel_disarms_freezes_and_unloads_the_retained_terrain_range() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quit_on_exit = false
+    runtime.quick_fly()
+    var retained_map := runtime.loaded_map
+    runtime._cancel_controller_route()
+    var native := FakeNative.new()
+    native.armed = true
+    runtime.native = native
+    runtime.takeoff_requested = true
+    runtime.drone_body.freeze = false
+
+    runtime.request_exit()
+
+    assert_true(runtime.exit_requested)
+    assert_eq(runtime.screen, "main_menu")
+    assert_false(runtime.takeoff_requested)
+    assert_true(runtime.paused)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(native.disarmed)
+    assert_false(native.armed)
+    assert_null(runtime.loaded_map)
+    assert_eq(runtime.loaded_map_id, "")
+
+    await get_tree().process_frame
+
+    assert_false(is_instance_valid(retained_map))
+
+
+func test_other_maps_keep_the_runtime_weather_environment_fallback() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var map := Node3D.new()
+    autofree(map)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.loaded_map_id = "industrial_yard"
+
+    runtime._apply_environment_visuals({"weather_enabled": false, "fog": 0.0, "time_of_day_enabled": false, "move_sun": true})
+
+    assert_not_null(map.get_node_or_null("AeroSimEnvironment"))
+
+
+func _runtime_with_terrain_range_scene(scene_path: String) -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime._map_scene_paths = FlightRuntime.MAP_SCENE_PATHS.duplicate()
+    runtime._map_scene_paths["terrain3d_range"] = scene_path
+    return runtime
+
+
+func _quick_fly_runtime() -> FlightRuntime:
+    var runtime := SmokeScene.instantiate() as FlightRuntime
+    runtime.set_script(QuickFlyRuntime)
+    runtime.development_license_bypass = false
+    runtime.license_provider = FakeLicenseProvider.new("online_valid")
+    runtime.add_child(runtime.license_provider)
+    runtime.gamepad_device_state = FakeDeviceState.new(false)
+    runtime.environment_state = preload("res://common/rpc/environment_state.gd").new()
+    runtime._map_scene_paths = FlightRuntime.MAP_SCENE_PATHS.duplicate()
+    runtime._map_scene_paths["terrain3d_range"] = "res://tests/fixtures/maps/terrain_range_valid_minimal.tscn"
+    get_tree().root.add_child(runtime)
+    autofree(runtime)
+    return runtime
+
+
+func _await_reset_commit() -> void:
+    await get_tree().physics_frame
+    await get_tree().process_frame
+    await get_tree().physics_frame
+    await get_tree().process_frame
+
+
+func _await_runtime_reset_commit(runtime: FlightRuntime) -> void:
+    if runtime._reset_pending_token == 0:
+        return
+    for _frame in 2:
+        await get_tree().physics_frame
+        await get_tree().process_frame
+        runtime._advance_reset_pending()
+        if runtime._reset_pending_token == 0:
+            return
+
+
 func test_quick_fly_fails_loudly_when_license_provider_configuration_fails() -> void:
     var runtime := _runtime_with_missing_license_config()
     assert_eq(runtime.screen, "license_blocked")
@@ -536,6 +942,38 @@ func test_quick_fly_reapplies_default_setup_after_a_prior_setup_choice() -> void
     runtime.quick_fly()
     assert_eq(runtime.flight_setup, runtime.default_flight_setup())
     assert_eq(runtime.selected_wind_preset, "calm")
+
+
+func test_quick_fly_defaults_the_player_view_to_third_person_before_controller_routing() -> void:
+    var runtime := _licensed_runtime()
+    runtime.third_person_view = false
+
+    runtime.quick_fly()
+
+    assert_true(runtime.third_person_view)
+
+
+func test_controller_confirmation_keeps_the_selected_third_person_player_view() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := Node3D.new()
+    var chase := Camera3D.new()
+    var third_person := Camera3D.new()
+    var map := Node3D.new()
+    for node in [body, chase, third_person, map]:
+        get_tree().root.add_child(node)
+        autofree(node)
+    runtime.drone_body = body
+    runtime.chase_camera = chase
+    runtime.third_person_camera = third_person
+    runtime.loaded_map = map
+    runtime.screen = "controller_confirmation"
+    runtime.third_person_view = true
+
+    runtime._update_chase_camera()
+
+    assert_true(third_person.current)
+    assert_false(chase.current)
 
 
 func test_controller_confirmation_from_menu_returns_to_menu() -> void:
@@ -884,6 +1322,7 @@ func test_request_takeoff_does_not_inject_jump_velocity() -> void:
     runtime.drone_body = body
     runtime.session_gamepad_device_id = 7
     runtime.session_gamepad_profile = InputProfiles.GamepadProfile.new()
+    runtime.reset_hold_frames = 1
 
     runtime.request_takeoff()
 
@@ -893,6 +1332,7 @@ func test_request_takeoff_does_not_inject_jump_velocity() -> void:
     assert_true(runtime.assisted_throttle_waiting_for_neutral)
     assert_eq(runtime.takeoff_assist_commanded_altitude_m, 0.0)
     assert_eq(runtime.assisted_hover_throttle, 0.3)
+    assert_eq(runtime.reset_hold_frames, 0)
     assert_false(body.freeze)
     assert_eq(body.global_position, spawn.global_position)
     assert_eq(body.linear_velocity, Vector3.ZERO)
@@ -1618,11 +2058,12 @@ func test_status_diagram_from_pause_exposes_user_return_button() -> void:
     runtime.free()
 
 
-func test_respawn_preserves_armed_state_and_resets_without_disarm() -> void:
+func test_respawn_rearms_only_after_the_reset_commit() -> void:
     var runtime := FlightRuntime.new()
     var map := Node3D.new()
     var spawn := Marker3D.new()
     spawn.name = "SpawnNorth"
+    spawn.position = Vector3(3.0, 2.0, -5.0)
     map.add_child(spawn)
     get_tree().root.add_child(map)
     runtime.loaded_map = map
@@ -1630,15 +2071,39 @@ func test_respawn_preserves_armed_state_and_resets_without_disarm() -> void:
     get_tree().root.add_child(runtime.drone_body)
     runtime.native = FakeNative.new()
     runtime.native.armed = true
+    runtime.airsim_session = AirSimSession.new(Engine.physics_ticks_per_second)
+    runtime.airsim_sensor_suite = AirSimSensorSuite.new()
+    runtime.airsim_rpc_server = AirSimRpcServer.new()
+    runtime.airsim_rpc_server.settings = {"Vehicles": {}}
+    assert_true(runtime.airsim_sensor_suite.configure(runtime.airsim_rpc_server.settings, [""]).ok)
+    runtime._advance_airsim_sensors()
     runtime.screen = "flight"
     runtime.takeoff_requested = true
 
     runtime.respawn()
+    await _await_runtime_reset_commit(runtime)
 
     assert_true(runtime.native.armed)
-    assert_false(runtime.native.disarmed)
+    assert_true(runtime.native.disarmed)
     assert_true(runtime.takeoff_requested)
     assert_false(runtime.paused)
+    assert_eq(runtime.reset_hold_frames, maxi(1, Engine.physics_ticks_per_second / 4))
+    assert_true(runtime.drone_body.freeze)
+    assert_true(runtime.drone_body.sleeping)
+    assert_eq(runtime.drone_body.global_position, spawn.global_position)
+    assert_eq(runtime.drone_body.linear_velocity, Vector3.ZERO)
+    assert_eq(runtime.drone_body.angular_velocity, Vector3.ZERO)
+    var state: Dictionary = runtime._airsim_state("")
+    var kinematics: Dictionary = state.state.kinematics_estimated
+    assert_eq(kinematics.position, {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0})
+    assert_eq(kinematics.linear_velocity, {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0})
+    assert_eq(runtime.airsim_sensor_suite.stats("", AirSimSensorSuite.SENSOR_LIDAR, "").sample_count, 1)
+    for _frame in runtime.reset_hold_frames:
+        runtime._physics_process(0.0)
+    assert_eq(runtime.reset_hold_frames, 0)
+    assert_false(runtime.drone_body.freeze)
+    assert_false(runtime.drone_body.sleeping)
+    runtime.airsim_rpc_server.free()
     runtime.drone_body.free()
     runtime.free()
     map.queue_free()
@@ -1664,11 +2129,13 @@ func test_change_spawn_cycles_formal_markers_and_preserves_arm_state() -> void:
     runtime.screen = "flight"
 
     runtime.change_spawn()
+    await _await_runtime_reset_commit(runtime)
     assert_eq(runtime.current_spawn_index, 1)
     assert_eq(runtime.drone_body.global_position, south.global_position)
     assert_true(runtime.native.armed)
 
     runtime.change_spawn()
+    await _await_runtime_reset_commit(runtime)
     assert_eq(runtime.current_spawn_index, 0)
     assert_eq(runtime.drone_body.global_position, north.global_position)
     assert_true(runtime.native.armed)
@@ -1703,6 +2170,7 @@ func test_fixed_xbox_reset_and_start_x_chord_use_distinct_actions() -> void:
     x.button_index = JOY_BUTTON_X
     x.pressed = true
     runtime._unhandled_input(x)
+    await _await_runtime_reset_commit(runtime)
     assert_eq(runtime.current_spawn_index, 0)
     assert_eq(runtime.drone_body.global_position, north.global_position)
 
@@ -1712,12 +2180,14 @@ func test_fixed_xbox_reset_and_start_x_chord_use_distinct_actions() -> void:
     start.pressed = true
     runtime._unhandled_input(start)
     runtime._unhandled_input(x)
+    await _await_runtime_reset_commit(runtime)
     assert_eq(runtime.current_spawn_index, 1)
     assert_eq(runtime.drone_body.global_position, south.global_position)
 
     start.pressed = false
     runtime._unhandled_input(start)
     runtime._unhandled_input(x)
+    await _await_runtime_reset_commit(runtime)
     assert_eq(runtime.current_spawn_index, 1)
     assert_eq(runtime.drone_body.global_position, south.global_position)
 
@@ -1728,7 +2198,7 @@ func test_fixed_xbox_reset_and_start_x_chord_use_distinct_actions() -> void:
     map.queue_free()
 
 
-func test_respawn_preserves_armed_px4_transport_without_restart() -> void:
+func test_respawn_disarms_px4_until_a_post_commit_heartbeat_rearms_it() -> void:
     var runtime := FlightRuntime.new()
     var map := Node3D.new()
     var spawn := Marker3D.new()
@@ -1737,6 +2207,7 @@ func test_respawn_preserves_armed_px4_transport_without_restart() -> void:
     get_tree().root.add_child(map)
     runtime.loaded_map = map
     runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
     var bridge := Px4SitlBridge.new()
     assert_true(bridge.configure({
         "VehicleType": "PX4Multirotor",
@@ -1759,10 +2230,458 @@ func test_respawn_preserves_armed_px4_transport_without_restart() -> void:
 
     assert_eq(bridge.state, "armed")
     runtime.respawn()
+    await _await_runtime_reset_commit(runtime)
 
-    assert_eq(bridge.state, "armed")
-    assert_true(bridge.is_authority_active())
+    assert_eq(bridge.state, "connected")
+    assert_false(bridge.is_authority_active())
     assert_true(bridge.arm_disarm(true).ok)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_reset_pending_blocks_control_until_the_physics_ack_is_committed() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    spawn.position = Vector3(3.0, 2.0, -5.0)
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = FakeNative.new()
+    runtime.native.armed = true
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.screen = "flight"
+
+    assert_true(runtime.reset_to_spawn())
+    assert_eq(runtime.screen, "reset_pending")
+    assert_true(runtime.paused)
+    assert_false(runtime.airsim_session.is_paused())
+    assert_false(runtime.native.disarmed)
+    assert_eq(runtime.drone_body.global_position, Vector3.ZERO)
+    assert_eq(runtime._airsim_enable_api_control(true, "").get("error"), "reset_pending")
+    assert_eq(runtime._airsim_arm_disarm(true, "").get("error"), "reset_pending")
+    assert_eq(runtime._airsim_command("takeoff", [1.0, ""], "").get("error"), "reset_pending")
+    runtime.request_takeoff()
+    assert_eq(runtime.last_error_message, "Arm blocked: reset_pending")
+
+    await _await_runtime_reset_commit(runtime)
+
+    assert_eq(runtime.screen, "preflight")
+    assert_true(runtime.native.disarmed)
+    assert_false(runtime.paused)
+    assert_false(runtime.airsim_session.is_paused())
+    assert_eq(runtime.drone_body.global_position, spawn.global_position)
+    assert_eq(runtime.drone_body.linear_velocity, Vector3.ZERO)
+    assert_eq(runtime.drone_body.angular_velocity, Vector3.ZERO)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_reset_commits_primary_and_secondary_bodies_before_preflight_ready() -> void:
+    var runtime := ResetPublicationRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    spawn.position = Vector3(6.0, 1.5, -4.0)
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    runtime.secondary_drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    get_tree().root.add_child(runtime.secondary_drone_body)
+    runtime.native = ResetRecordingNative.new()
+    runtime._airsim_secondary_native = ResetRecordingNative.new()
+    runtime.screen = "flight"
+
+    assert_true(runtime.reset_to_spawn())
+    assert_eq(runtime.screen, "reset_pending")
+    assert_eq(runtime.drone_body.global_position, Vector3.ZERO)
+    assert_eq(runtime.secondary_drone_body.global_position, Vector3.ZERO)
+
+    await _await_runtime_reset_commit(runtime)
+
+    assert_eq(runtime.screen, "preflight")
+    assert_eq(runtime.drone_body.global_position, spawn.global_position)
+    assert_eq(runtime.secondary_drone_body.global_position, spawn.global_position + Vector3(1.0, 0.0, 0.0))
+    assert_eq(runtime.drone_body.linear_velocity, Vector3.ZERO)
+    assert_eq(runtime.secondary_drone_body.linear_velocity, Vector3.ZERO)
+    assert_true(runtime.native.disarmed)
+    assert_true(runtime._airsim_secondary_native.disarmed)
+    assert_eq(runtime.native.reset_flight_count, 1)
+    assert_eq(runtime.native.disarm_count, 1)
+    assert_eq(runtime._airsim_secondary_native.reset_flight_count, 1)
+    assert_eq(runtime._airsim_secondary_native.disarm_count, 1)
+    assert_eq(runtime.kinematic_reset_count, 1)
+    runtime.drone_body.free()
+    runtime.secondary_drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_reset_pending_does_not_publish_or_mutate_native_airsim_or_trial_state() -> void:
+    var runtime := ResetPublicationRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    spawn.position = Vector3(8.0, 2.0, -6.0)
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = UnacknowledgedResetBody.new()
+    runtime.native = ResetRecordingNative.new()
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.environment_state = EnvironmentState.new()
+    assert_true(runtime.environment_state.apply({"rain": 0.75, "weather_enabled": true}).ok)
+    runtime.time_trial = TimeTrial.new()
+    runtime.time_trial.configure([Vector3(1.0, 0.0, 0.0)], Vector3(2.0, 0.0, 0.0))
+    runtime.time_trial.start()
+    runtime.time_trial.elapsed_seconds = 4.0
+    runtime._replay_recording_active = true
+    runtime.screen = "flight"
+    var camera_world := Node3D.new()
+    runtime.chase_camera = Camera3D.new()
+    camera_world.add_child(runtime.chase_camera)
+    var camera_surface := AirSimCameraSurface.new()
+    camera_world.add_child(camera_surface)
+    get_tree().root.add_child(camera_world)
+    camera_surface.configure(
+        camera_world,
+        Callable(runtime, "_airsim_camera_source"),
+        Callable(runtime, "_airsim_camera_vehicle"),
+        runtime.airsim_session,
+        {},
+        Callable(runtime, "_airsim_camera_origin"))
+
+    assert_true(runtime.reset_to_spawn())
+
+    assert_eq(runtime.native.reset_operation_count, 0)
+    assert_eq(runtime.native.reset_flight_count, 0)
+    assert_eq(runtime.native.disarm_count, 0)
+    assert_eq(runtime.kinematic_reset_count, 0)
+    assert_eq(float(runtime.environment_state.snapshot().rain), 0.75)
+    assert_true(runtime.time_trial.active)
+    assert_eq(runtime.time_trial.elapsed_seconds, 4.0)
+    assert_eq(runtime._airsim_state("" ).get("error"), "reset_pending")
+    assert_eq(runtime._airsim_sensor(2, "imu", "").get("error"), "reset_pending")
+    assert_null(runtime._airsim_camera_source())
+    var image_result := camera_surface.capture([{
+        "camera_name": "front_center",
+        "image_type": 0,
+        "pixels_as_float": false,
+        "compress": false,
+    }], "")
+    assert_eq(image_result.get("error"), "camera source is unavailable")
+    runtime.free()
+    map.queue_free()
+    camera_world.queue_free()
+
+
+func test_reset_ack_timeout_discards_all_native_and_airsim_publication() -> void:
+    var runtime := ResetPublicationRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = UnacknowledgedResetBody.new()
+    runtime.native = ResetRecordingNative.new()
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.environment_state = EnvironmentState.new()
+    assert_true(runtime.environment_state.apply({"rain": 0.4, "weather_enabled": true}).ok)
+    runtime.time_trial = TimeTrial.new()
+    runtime.time_trial.configure([Vector3(1.0, 0.0, 0.0)], Vector3(2.0, 0.0, 0.0))
+    runtime.time_trial.start()
+    runtime.time_trial.elapsed_seconds = 3.0
+    runtime._replay_recording_active = true
+    runtime.screen = "flight"
+
+    assert_true(runtime.reset_to_spawn())
+    for _frame in 9:
+        runtime._advance_reset_pending()
+
+    assert_eq(runtime.screen, "error")
+    assert_true(runtime.paused)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(runtime.drone_body.sleeping)
+    assert_eq(runtime.native.reset_operation_count, 0)
+    assert_eq(runtime.native.environment_record_count, 0)
+    assert_eq(runtime.native.reset_flight_count, 0)
+    assert_eq(runtime.native.disarm_count, 0)
+    assert_eq(runtime.kinematic_reset_count, 0)
+    assert_eq(float(runtime.environment_state.snapshot().rain), 0.4)
+    assert_true(runtime.time_trial.active)
+    assert_eq(runtime.time_trial.elapsed_seconds, 3.0)
+    assert_eq(runtime._airsim_state("").get("error"), "reset_failed")
+    assert_eq(runtime._airsim_sensor(2, "imu", "").get("error"), "reset_failed")
+    runtime.free()
+    map.queue_free()
+
+
+func test_post_commit_arm_failure_never_resumes_or_resets_the_trial_twice() -> void:
+    var runtime := ArmOrderingRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = ArmRejectingNative.new()
+    runtime.keyboard_fallback_explicitly_selected = true
+    runtime.screen = "preflight"
+    runtime.time_trial = CountingTimeTrial.new()
+    runtime.time_trial.configure([Vector3(1.0, 0.0, 0.0)], Vector3(2.0, 0.0, 0.0))
+    runtime.time_trial.reset_count = 0
+
+    runtime.arm_and_takeoff()
+    await _await_runtime_reset_commit(runtime)
+
+    assert_eq(runtime.screen, "error")
+    assert_true(runtime.paused)
+    assert_false(runtime.takeoff_requested)
+    assert_false(runtime.time_trial.active)
+    assert_eq(runtime.time_trial.reset_count, 1)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(runtime.drone_body.sleeping)
+    assert_true(runtime.native.disarmed)
+    assert_eq(runtime.native.arm_attempt_count, 1)
+    assert_false(runtime.pause_values.has(false))
+    assert_eq(runtime.last_error_message, "Quick Fly cannot arm: test_arm_rejected")
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_prearmed_request_takeoff_rearms_once_after_the_reset_commit() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = ArmPreservingResetNative.new()
+    runtime.native.armed = true
+    runtime.screen = "preflight"
+
+    runtime.request_takeoff()
+    await _await_runtime_reset_commit(runtime)
+
+    assert_eq(runtime.screen, "flight")
+    assert_true(runtime.takeoff_requested)
+    assert_false(runtime.paused)
+    assert_true(runtime._flight_control_armed())
+    assert_eq(runtime.native.arm_attempt_count, 1)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_prearmed_request_takeoff_arm_failure_stays_terminal_after_commit() -> void:
+    var runtime := ArmOrderingRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = PreArmedRejectingNative.new()
+    runtime.native.armed = true
+    runtime.screen = "preflight"
+
+    runtime.request_takeoff()
+    await _await_runtime_reset_commit(runtime)
+
+    assert_eq(runtime.screen, "error")
+    assert_true(runtime.paused)
+    assert_false(runtime.takeoff_requested)
+    assert_false(runtime._reset_arm_after_commit)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(runtime.drone_body.sleeping)
+    assert_eq(runtime.native.arm_attempt_count, 1)
+    assert_false(runtime.pause_values.has(false))
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_successful_deferred_takeoff_resets_the_time_trial_once() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.native = FakeNative.new()
+    runtime.native.armed = true
+    runtime.time_trial = CountingTimeTrial.new()
+    runtime.time_trial.configure([Vector3(1.0, 0.0, 0.0)], Vector3(2.0, 0.0, 0.0))
+    runtime.time_trial.reset_count = 0
+
+    runtime.request_takeoff()
+    await _await_runtime_reset_commit(runtime)
+
+    assert_eq(runtime.time_trial.reset_count, 1)
+    assert_true(runtime.time_trial.active)
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_rpc_reset_timeout_preserves_public_session_and_control_state() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = UnacknowledgedResetBody.new()
+    runtime.native = ResetRecordingNative.new()
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.airsim_session.simulation_time_seconds = 3.0
+    runtime.airsim_session.set_paused(true)
+    runtime.airsim_rpc_server = preload("res://common/rpc/airsim_rpc_server.gd").new()
+    runtime.airsim_rpc_server.set_session(runtime.airsim_session)
+    runtime.airsim_rpc_server.set_publication_error_handler(Callable(runtime, "_reset_publication_error"))
+    runtime.airsim_rpc_server.set_reset_lifecycle_handlers(
+        Callable(runtime, "_begin_rpc_reset"),
+        Callable(runtime, "_rpc_reset_status"),
+        Callable(runtime, "_abort_rpc_reset"))
+    runtime.airsim_rpc_server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41459,
+        "RpcEnabled": false,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    runtime.airsim_rpc_server._api_control["Drone1"] = true
+    runtime.airsim_rpc_server._armed["Drone1"] = true
+
+    var pending: Dictionary = runtime._begin_rpc_reset()
+
+    assert_true(pending.ok)
+    assert_eq(runtime.airsim_session.simulation_time_seconds, 3.0)
+    assert_true(runtime.airsim_session.is_paused())
+    assert_true(runtime.airsim_rpc_server._api_control["Drone1"])
+    assert_true(runtime.airsim_rpc_server._armed["Drone1"])
+    assert_string_contains(runtime.airsim_rpc_server.dispatch([0, 902, "isApiControlEnabled", [""]])[2], "reset_pending")
+    assert_string_contains(runtime.airsim_rpc_server.dispatch([0, 903, "simGetImages", [[], "", false]])[2], "reset_pending")
+    for _frame in 9:
+        runtime._advance_reset_pending()
+
+    var failed: Dictionary = runtime._rpc_reset_status(int(pending.generation))
+    assert_eq(failed.state, "failed")
+    assert_eq(runtime.airsim_session.simulation_time_seconds, 3.0)
+    assert_true(runtime.airsim_session.is_paused())
+    assert_true(runtime.airsim_rpc_server._api_control["Drone1"])
+    assert_true(runtime.airsim_rpc_server._armed["Drone1"])
+    runtime.airsim_rpc_server.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_rpc_reset_replay_starts_a_new_timestamp_epoch_after_its_environment_baseline() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.native = ResetRecordingNative.new()
+    runtime.environment_state = EnvironmentState.new()
+    assert_true(runtime.environment_state.apply({"rain": 0.6, "weather_enabled": true}).ok)
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.airsim_session.simulation_time_seconds = 3.0
+    runtime._replay_recording_active = true
+    runtime.airsim_rpc_server = preload("res://common/rpc/airsim_rpc_server.gd").new()
+    runtime.airsim_rpc_server.set_session(runtime.airsim_session)
+    runtime.airsim_rpc_server.set_replay_handlers(
+        Callable(runtime, "_record_replay_simulation_operation"),
+        Callable(),
+        Callable(runtime, "_record_replay_reset_environment"))
+    runtime.airsim_rpc_server.set_reset_lifecycle_handlers(
+        Callable(runtime, "_begin_rpc_reset"),
+        Callable(runtime, "_rpc_reset_status"),
+        Callable(runtime, "_abort_rpc_reset"))
+
+    var result: Dictionary = runtime._begin_rpc_reset()
+    assert_true(result.ok)
+    assert_eq(runtime._rpc_reset_status(int(result.generation)).state, "committed")
+    runtime.airsim_rpc_server._active_reset_generation = int(result.generation)
+    runtime.airsim_rpc_server._flush_pending_reset_waiters()
+    runtime.airsim_session.advance_frame()
+    runtime._record_replay_simulation_operation(2, 1.0)
+    runtime.airsim_session.advance_frame()
+    runtime._record_replay_simulation_operation(2, 1.0)
+
+    assert_eq(runtime.native.replay_event_order, ["reset", "environment", "operation_2", "operation_2"])
+    assert_gt(runtime.native.replay_timestamps[1], runtime.native.replay_timestamps[0])
+    assert_gt(runtime.native.replay_timestamps[2], runtime.native.replay_timestamps[1])
+    assert_gt(runtime.native.replay_timestamps[3], runtime.native.replay_timestamps[2])
+    assert_eq(runtime.native.environment_record_count, 1)
+    assert_eq(float(runtime.environment_state.snapshot().rain), 0.0)
+    runtime.airsim_rpc_server.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_rpc_reset_seeds_lidar_in_the_zero_time_epoch() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    spawn.position = Vector3(7.0, 2.0, -5.0)
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.drone_body.global_position = Vector3(-3.0, 1.0, 4.0)
+    runtime.native = FakeNative.new()
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.airsim_session.simulation_time_seconds = 3.0
+    runtime._airsim_vehicle_name = "Drone1"
+    runtime._airsim_vehicle_names = ["Drone1"]
+    runtime.airsim_sensor_suite = AirSimSensorSuite.new()
+    runtime.airsim_rpc_server = AirSimRpcServer.new()
+    runtime.airsim_rpc_server.settings = {"Vehicles": {"Drone1": {"VehicleType": "SimpleFlight", "Sensors": {}}}}
+    runtime.airsim_rpc_server.set_session(runtime.airsim_session)
+    runtime.airsim_rpc_server.set_reset_lifecycle_handlers(
+        Callable(runtime, "_begin_rpc_reset"),
+        Callable(runtime, "_rpc_reset_status"),
+        Callable(runtime, "_abort_rpc_reset"))
+    assert_true(runtime.airsim_sensor_suite.configure(runtime.airsim_rpc_server.settings, ["Drone1"]).ok)
+    runtime._advance_airsim_sensors()
+    assert_gt(runtime.airsim_sensor_suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_LIDAR, "").time_stamp, 0)
+
+    var pending: Dictionary = runtime._begin_rpc_reset()
+    assert_true(pending.ok)
+    await _await_runtime_reset_commit(runtime)
+    runtime.airsim_rpc_server._active_reset_generation = int(pending.generation)
+    runtime.airsim_rpc_server._flush_pending_reset_waiters()
+    runtime._physics_process(1.0 / 240.0)
+
+    var lidar: Dictionary = runtime.airsim_sensor_suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_LIDAR, "")
+    assert_eq(lidar.time_stamp, 0)
+    assert_eq(lidar.pose.position, runtime._airsim_state("Drone1").state.kinematics_estimated.position)
+    runtime.airsim_rpc_server.free()
     runtime.drone_body.free()
     runtime.free()
     map.queue_free()
@@ -1834,12 +2753,15 @@ func test_direct_spawn_reset_clears_primary_acceleration_sampling_state() -> voi
     get_tree().root.add_child(map)
     runtime.loaded_map = map
     runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
     runtime._airsim_last_velocity = Vector3(4.0, 5.0, 6.0)
     runtime._airsim_linear_acceleration = Vector3(7.0, 8.0, 9.0)
     runtime._airsim_last_body_angular_velocity = Vector3(1.0, 2.0, 3.0)
     runtime._airsim_angular_acceleration = Vector3(4.0, 5.0, 6.0)
 
     assert_true(runtime.reset_to_spawn())
+
+    await _await_runtime_reset_commit(runtime)
 
     assert_eq(runtime._airsim_last_velocity, Vector3.ZERO)
     assert_eq(runtime._airsim_linear_acceleration, Vector3.ZERO)

@@ -64,6 +64,7 @@ class GymPyBulletDronesNoticeTest(unittest.TestCase):
                 "--manifest",
                 str(manifest),
                 "--allow-missing-terrain3d-attribution",
+                "--allow-missing-ambientcg-attribution",
             ]
             if notice_out:
                 command.extend(["--notice-out", str(notice_out)])
