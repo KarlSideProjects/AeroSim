@@ -2226,7 +2226,7 @@ func test_reset_pending_blocks_control_until_the_physics_ack_is_committed() -> v
     assert_true(runtime.reset_to_spawn())
     assert_eq(runtime.screen, "reset_pending")
     assert_true(runtime.paused)
-    assert_true(runtime.airsim_session.is_paused())
+    assert_false(runtime.airsim_session.is_paused())
     assert_false(runtime.native.disarmed)
     assert_eq(runtime.drone_body.global_position, Vector3.ZERO)
     assert_eq(runtime._airsim_enable_api_control(true, "").get("error"), "reset_pending")
@@ -2522,9 +2522,14 @@ func test_rpc_reset_timeout_preserves_public_session_and_control_state() -> void
     runtime.native = ResetRecordingNative.new()
     runtime.airsim_session = AirSimSession.new(240)
     runtime.airsim_session.simulation_time_seconds = 3.0
+    runtime.airsim_session.set_paused(true)
     runtime.airsim_rpc_server = preload("res://common/rpc/airsim_rpc_server.gd").new()
-    runtime.airsim_rpc_server.set_session(runtime.airsim_session, Callable(runtime, "request_rpc_reset"))
+    runtime.airsim_rpc_server.set_session(runtime.airsim_session)
     runtime.airsim_rpc_server.set_publication_error_handler(Callable(runtime, "_reset_publication_error"))
+    runtime.airsim_rpc_server.set_reset_lifecycle_handlers(
+        Callable(runtime, "_begin_rpc_reset"),
+        Callable(runtime, "_rpc_reset_status"),
+        Callable(runtime, "_abort_rpc_reset"))
     runtime.airsim_rpc_server.start_with_settings({
         "SettingsVersion": 1.2,
         "SimMode": "Multirotor",
@@ -2535,10 +2540,11 @@ func test_rpc_reset_timeout_preserves_public_session_and_control_state() -> void
     runtime.airsim_rpc_server._api_control["Drone1"] = true
     runtime.airsim_rpc_server._armed["Drone1"] = true
 
-    var pending: Array = runtime.airsim_rpc_server.dispatch([0, 901, "reset", []])
+    var pending: Dictionary = runtime._begin_rpc_reset()
 
-    assert_string_contains(pending[2], "reset_pending")
+    assert_true(pending.ok)
     assert_eq(runtime.airsim_session.simulation_time_seconds, 3.0)
+    assert_true(runtime.airsim_session.is_paused())
     assert_true(runtime.airsim_rpc_server._api_control["Drone1"])
     assert_true(runtime.airsim_rpc_server._armed["Drone1"])
     assert_string_contains(runtime.airsim_rpc_server.dispatch([0, 902, "isApiControlEnabled", [""]])[2], "reset_pending")
@@ -2546,9 +2552,10 @@ func test_rpc_reset_timeout_preserves_public_session_and_control_state() -> void
     for _frame in 9:
         runtime._advance_reset_pending()
 
-    var failed: Array = runtime.airsim_rpc_server.dispatch([0, 904, "reset", []])
-    assert_string_contains(failed[2], "reset_failed")
+    var failed: Dictionary = runtime._rpc_reset_status(int(pending.generation))
+    assert_eq(failed.state, "failed")
     assert_eq(runtime.airsim_session.simulation_time_seconds, 3.0)
+    assert_true(runtime.airsim_session.is_paused())
     assert_true(runtime.airsim_rpc_server._api_control["Drone1"])
     assert_true(runtime.airsim_rpc_server._armed["Drone1"])
     runtime.airsim_rpc_server.free()

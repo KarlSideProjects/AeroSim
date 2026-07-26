@@ -104,8 +104,9 @@ var _reset_commit_in_progress := false
 var _reset_publication_blocked := false
 var _reset_after_commit_takeoff := false
 var _reset_arm_after_commit := false
-var _rpc_reset_waiting_for_commit := false
-var _rpc_reset_completion_ready := false
+var _rpc_reset_owned_generation := 0
+var _reset_last_committed_generation := 0
+var _reset_last_failed_generation := 0
 var _quick_fly_route_pending := false
 var last_profile_status := ""
 var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]
@@ -276,7 +277,7 @@ func _ready() -> void:
     environment_state = EnvironmentState.new()
     add_child(scene_object_catalog)
     add_child(airsim_camera_surface)
-    airsim_rpc_server.set_session(airsim_session, Callable(self, "request_rpc_reset"))
+    airsim_rpc_server.set_session(airsim_session)
     add_child(airsim_rpc_server)
     airsim_stop_file = _cold_start_arg("--airsim-stop-file")
     var configured_vehicles = startup_settings.get("Vehicles", {})
@@ -301,6 +302,10 @@ func _ready() -> void:
     airsim_rpc_server.set_scene_environment_backend(Callable(self, "_airsim_scene_object"), Callable(self, "_airsim_environment"))
     airsim_rpc_server.set_replay_handlers(Callable(self, "_record_replay_simulation_operation"), Callable(self, "_record_replay_async"))
     airsim_rpc_server.set_publication_error_handler(Callable(self, "_reset_publication_error"))
+    airsim_rpc_server.set_reset_lifecycle_handlers(
+        Callable(self, "_begin_rpc_reset"),
+        Callable(self, "_rpc_reset_status"),
+        Callable(self, "_abort_rpc_reset"))
     _load_scene_object_catalog()
     var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
     if not rpc_result.ok:
@@ -1327,7 +1332,7 @@ func _process(_delta: float) -> void:
     if not airsim_stop_file.is_empty() and FileAccess.file_exists(airsim_stop_file):
         get_tree().quit()
         return
-    if airsim_session != null and paused != airsim_session.is_paused():
+    if _reset_pending_token == 0 and airsim_session != null and paused != airsim_session.is_paused():
         if not airsim_session.is_paused() and _airsim_lifecycle_stopped() and not airsim_session.is_explicit_step_active():
             airsim_session.set_paused(true)
         else:
@@ -2331,22 +2336,38 @@ func _set_environment_scalar(value: float, key: String) -> void:
         update["move_sun"] = true
     _apply_environment_result(environment_state.apply(update))
 
-func request_rpc_reset() -> Dictionary:
+func _begin_rpc_reset() -> Dictionary:
     if _reset_publication_blocked:
         return {"ok": false, "error": "reset_failed"}
-    if _rpc_reset_completion_ready:
-        _rpc_reset_completion_ready = false
-        return {"ok": true}
     if _reset_pending_token != 0:
+        if _rpc_reset_owned_generation == _reset_pending_token:
+            return {"ok": true, "generation": _reset_pending_token}
         return {"ok": false, "error": "reset_pending"}
-    _rpc_reset_waiting_for_commit = true
-    if not respawn():
-        _rpc_reset_waiting_for_commit = false
+    # AirSim reset is a disarming lifecycle reset, not the local Quick Fly
+    # respawn action (which can preserve an armed takeoff intent).
+    _reset_after_commit_takeoff = false
+    _reset_arm_after_commit = false
+    if not reset_to_spawn():
         return {"ok": false, "error": last_error_message if not last_error_message.is_empty() else "reset rejected"}
-    if _reset_pending_token != 0:
-        return {"ok": false, "error": "reset_pending"}
-    _rpc_reset_waiting_for_commit = false
-    return {"ok": true}
+    _rpc_reset_owned_generation = _reset_pending_token
+    if _rpc_reset_owned_generation <= 0:
+        return {"ok": false, "error": "reset did not create a pending generation"}
+    return {"ok": true, "generation": _rpc_reset_owned_generation}
+
+
+func _rpc_reset_status(generation: int) -> Dictionary:
+    if generation == _reset_last_committed_generation:
+        return {"state": "committed"}
+    if generation == _reset_last_failed_generation:
+        return {"state": "failed", "error": last_error_message if not last_error_message.is_empty() else "reset_failed"}
+    if generation == _reset_pending_token and generation == _rpc_reset_owned_generation:
+        return {"state": "pending"}
+    return {"state": "failed", "error": "reset generation is no longer active"}
+
+
+func _abort_rpc_reset(generation: int, reason: String) -> void:
+    if generation == _reset_pending_token and generation == _rpc_reset_owned_generation:
+        _fail_reset_pending(reason)
 
 
 func respawn() -> bool:
@@ -2446,7 +2467,9 @@ func reset_to_spawn() -> bool:
     takeoff_requested = false
     takeoff_assist_active = false
     assisted_throttle_waiting_for_neutral = false
-    set_paused(true)
+    # Quiesce private simulation/body state while retaining the public AirSim
+    # session until the ACKed reset publication commits.
+    set_paused(true, false)
     _reset_environment_snapshot = environment_state.snapshot() if environment_state != null else {}
     if drone_body != null:
         if drone_body is RigidBody3D:
@@ -2481,7 +2504,11 @@ func _commit_reset_publication() -> Dictionary:
         native.call("reset_flight")
     if _airsim_secondary_native != null:
         _airsim_secondary_native.call("reset_flight")
-    _reset_airsim_flight_state(false, false)
+    var rpc_owned_reset := _rpc_reset_owned_generation == _reset_pending_token
+    # The deferred RPC server publishes its control latches with the public
+    # session/replay reset immediately before replying.  Do not expose those
+    # latches early from this private physics commit.
+    _reset_airsim_flight_state(false, false, not rpc_owned_reset)
     if drone_body != null:
         drone_body.reset_contact()
     if secondary_drone_body != null:
@@ -2513,7 +2540,8 @@ func _commit_reset_publication() -> Dictionary:
         scene_object_catalog.reset()
     if _airsim_secondary_native != null and secondary_drone_body != null:
         _set_secondary_collision_enabled(_airsim_vehicle_names.size() > 1)
-    _record_replay_simulation_operation(5, 0.0)
+    if not rpc_owned_reset:
+        _record_replay_simulation_operation(5, 0.0)
     if environment_state != null:
         _record_replay_environment(_environment_rpc_snapshot(environment_state.snapshot()))
     _reset_environment_snapshot.clear()
@@ -2551,6 +2579,8 @@ func _advance_reset_pending() -> void:
         if not publication_result.ok:
             _fail_reset_pending(String(publication_result.error))
             return
+        var committed_generation := _reset_pending_token
+        var rpc_owned_reset := _rpc_reset_owned_generation == committed_generation
         _reset_pending_token = 0
         _reset_pending_frames = 0
         if _reset_after_commit_takeoff:
@@ -2562,11 +2592,11 @@ func _advance_reset_pending() -> void:
             set_paused(false)
             _route_quick_fly_after_reset()
         else:
-            set_paused(false)
+            set_paused(false, not rpc_owned_reset)
             screen = "preflight"
-        if _rpc_reset_waiting_for_commit:
-            _rpc_reset_waiting_for_commit = false
-            _rpc_reset_completion_ready = true
+        _reset_last_committed_generation = committed_generation
+        if _rpc_reset_owned_generation == committed_generation:
+            _rpc_reset_owned_generation = 0
         _update_chase_camera()
         _refresh_flight_hud()
         return
@@ -2575,18 +2605,23 @@ func _advance_reset_pending() -> void:
 
 
 func _fail_reset_pending(message: String) -> void:
+    var failed_generation := _reset_pending_token
+    if failed_generation == 0 and _rpc_reset_owned_generation != 0:
+        failed_generation = _rpc_reset_owned_generation
+    var rpc_owned_reset := _rpc_reset_owned_generation == failed_generation
     _reset_pending_token = 0
     _reset_after_commit_takeoff = false
     _reset_arm_after_commit = false
-    _rpc_reset_waiting_for_commit = false
-    _rpc_reset_completion_ready = false
+    _reset_last_failed_generation = failed_generation
+    if _rpc_reset_owned_generation == failed_generation:
+        _rpc_reset_owned_generation = 0
     _quick_fly_route_pending = false
     takeoff_requested = false
     takeoff_assist_active = false
     assisted_throttle_waiting_for_neutral = false
     last_error_message = message
     screen = "error"
-    set_paused(true)
+    set_paused(true, not rpc_owned_reset)
     _reset_publication_blocked = true
     if drone_body is RigidBody3D:
         drone_body.gravity_scale = _reset_primary_gravity_scale
@@ -2928,7 +2963,7 @@ func _set_map_error(message: String) -> bool:
     push_warning(message)
     return false
 
-func _reset_airsim_flight_state(preserve_armed: bool = false, stop_px4: bool = true) -> void:
+func _reset_airsim_flight_state(preserve_armed: bool = false, stop_px4: bool = true, reset_rpc_controls: bool = true) -> void:
     _airsim_api_control = false
     _airsim_disarm_requested = not preserve_armed
     _airsim_command_state.clear()
@@ -2942,7 +2977,7 @@ func _reset_airsim_flight_state(preserve_armed: bool = false, stop_px4: bool = t
     _airsim_last_body_angular_velocity = Vector3.ZERO
     _airsim_linear_acceleration = Vector3.ZERO
     _airsim_angular_acceleration = Vector3.ZERO
-    if airsim_rpc_server != null:
+    if reset_rpc_controls and airsim_rpc_server != null:
         airsim_rpc_server.reset_vehicle_control_state()
     if px4_sitl_bridge != null and not preserve_armed:
         px4_sitl_bridge.arm_disarm(false)
