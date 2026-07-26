@@ -90,6 +90,18 @@ var takeoff_assist_commanded_altitude_m := 0.0
 var assisted_throttle_waiting_for_neutral := false
 var assisted_hover_throttle := 0.0
 var reset_count := 0
+var _reset_generation := 0
+var _reset_pending_token := 0
+var _reset_pending_frames := 0
+var _reset_pending_spawn := Vector3.ZERO
+var _reset_pending_secondary_spawn := Vector3.ZERO
+var _reset_pending_primary_ack_required := false
+var _reset_pending_secondary_ack_required := false
+var _reset_primary_gravity_scale := 1.0
+var _reset_secondary_gravity_scale := 1.0
+var _reset_after_commit_takeoff := false
+var _reset_arm_after_commit := false
+var _quick_fly_route_pending := false
 var last_profile_status := ""
 var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]
 var screen := "main_menu"
@@ -1320,6 +1332,9 @@ func _process(_delta: float) -> void:
     _refresh_flight_hud()
 
 func _physics_process(delta: float) -> void:
+    if _reset_pending_token != 0:
+        _advance_reset_pending()
+        return
     if reset_hold_frames > 0:
         reset_hold_frames -= 1
         if reset_hold_frames == 0 and drone_body != null and not paused:
@@ -1883,6 +1898,19 @@ func _publish_px4_lockstep_sensor_if_needed() -> void:
     px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), simulation_time)
 
 func request_takeoff() -> void:
+    if _reset_pending_token != 0:
+        last_error_message = "Arm blocked: reset_pending"
+        _refresh_flight_hud()
+        return
+    _reset_after_commit_takeoff = true
+    if not reset_to_spawn():
+        _reset_after_commit_takeoff = false
+        screen = "error"
+        _refresh_flight_hud()
+    return
+
+
+func _complete_takeoff_after_reset() -> void:
     screen = "flight"
     set_dashboard_layout_mode("compact")
     flight_mode = "ANGLE"
@@ -1895,8 +1923,6 @@ func request_takeoff() -> void:
     assisted_hover_throttle = _configured_hover_throttle()
     takeoff_assist_active = _has_active_gamepad_profile() and assisted_hover_throttle > 0.0
     if drone_body != null:
-        if not reset_to_spawn():
-            return
         drone_body.freeze = false
         drone_body.sleeping = false
         if takeoff_assist_active:
@@ -1904,9 +1930,24 @@ func request_takeoff() -> void:
             assisted_throttle_waiting_for_neutral = true
     if time_trial != null:
         time_trial.start()
+    if _reset_arm_after_commit:
+        _reset_arm_after_commit = false
+        if px4_sitl_bridge != null:
+            var px4_arm_result := px4_sitl_bridge.arm_disarm(true)
+            if not px4_arm_result.ok:
+                _fail_reset_pending("PX4 arm failed: %s" % px4_arm_result.error)
+                return
+        elif native != null and not native.call("arm_flight_control", 0.0):
+            _fail_reset_pending("Quick Fly cannot arm: %s" % native.call("flight_control_arm_reject_code"))
+            return
+        _airsim_disarm_requested = false
     _refresh_flight_hud()
 
 func arm_and_takeoff() -> void:
+    if _reset_pending_token != 0:
+        last_error_message = "Arm blocked: reset_pending"
+        _refresh_flight_hud()
+        return
     if controller_safety_latched:
         last_error_message = "Arm blocked: controller_resume_required"
         _refresh_flight_hud()
@@ -1924,19 +1965,7 @@ func arm_and_takeoff() -> void:
         last_error_message = "Arm blocked: throttle_not_low"
         _refresh_flight_hud()
         return
-    if px4_sitl_bridge != null:
-        var px4_arm_result := px4_sitl_bridge.arm_disarm(true)
-        if not px4_arm_result.ok:
-            last_error_message = "PX4 arm failed: %s" % px4_arm_result.error
-            _refresh_flight_hud()
-            return
-        request_takeoff()
-        return
-    if not native.call("flight_control_armed") and not native.call("arm_flight_control", 0.0):
-        last_error_message = "Quick Fly cannot arm: %s" % native.call("flight_control_arm_reject_code")
-        screen = "error"
-        _refresh_flight_hud()
-        return
+    _reset_arm_after_commit = true
     request_takeoff()
 
 func request_exit() -> void:
@@ -2045,11 +2074,19 @@ func quick_fly() -> void:
         _refresh_flight_hud()
         return
     third_person_view = true
-    var map_id := String(flight_setup.get("map_id", DEFAULT_FREE_FLIGHT_MAP_ID))
-    if drone_body != null and drone_body.is_inside_tree() and (loaded_map_id != map_id or loaded_map == null):
+    _quick_fly_route_pending = true
+    if drone_body != null and drone_body.is_inside_tree():
         enter_preflight()
         if screen == "error":
+            _quick_fly_route_pending = false
             return
+        if _reset_pending_token != 0:
+            return
+    _route_quick_fly_after_reset()
+
+
+func _route_quick_fly_after_reset() -> void:
+    _quick_fly_route_pending = false
     controller_return_screen = "preflight"
     var device_id := _first_connected_device()
     var current_profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)
@@ -2065,12 +2102,15 @@ func quick_fly() -> void:
         if persisted_gamepad_profile != null:
             session_gamepad_profile = InputProfiles.GamepadProfile.from_persisted_dict(persisted_gamepad_profile.to_persisted_dict())
             session_gamepad_device_id = device_id
-            enter_preflight()
+            screen = "preflight"
+            _refresh_flight_hud()
             return
         controller_return_screen = "preflight"
         begin_controller_confirmation(device_id)
         return
-    enter_preflight()
+    if _reset_pending_token == 0:
+        screen = "preflight"
+    _refresh_flight_hud()
 
 func begin_controller_confirmation(device_id: int = _first_connected_device()) -> void:
     var profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)
@@ -2104,7 +2144,11 @@ func _complete_controller_route() -> void:
         if not can_start_quick_fly():
             _show_license_blocked("Quick Fly unavailable: license %s" % String(get_license_snapshot().get("status", "invalid_token")))
             return
-        enter_preflight()
+        if loaded_map != null and loaded_map_id == String(flight_setup.get("map_id", DEFAULT_FREE_FLIGHT_MAP_ID)) and _reset_pending_token == 0:
+            screen = "preflight"
+            _refresh_flight_hud()
+        else:
+            enter_preflight()
     elif target == "controller_settings":
         show_controller_settings()
     else:
@@ -2185,16 +2229,19 @@ func enter_preflight() -> void:
             screen = "error"
             _refresh_flight_hud()
             return
-    elif not load_map(map_id):
-        screen = "error"
-        _refresh_flight_hud()
-        return
-    screen = "preflight"
+    else:
+        if not load_map(map_id) or not reset_to_spawn():
+            screen = "error"
+            _refresh_flight_hud()
+            return
+    if _reset_pending_token == 0:
+        screen = "preflight"
     set_dashboard_layout_mode("compact")
     exit_requested = false
     flight_mode = "ANGLE"
     takeoff_requested = false
-    set_paused(false)
+    if _reset_pending_token == 0:
+        set_paused(false)
     update_fallback_status()
     _refresh_flight_hud()
 
@@ -2274,36 +2321,16 @@ func respawn() -> void:
         last_error_message = "Respawn blocked: controller_resume_required"
         _refresh_flight_hud()
         return
+    if _reset_pending_token != 0:
+        return
     var was_armed := _flight_control_armed()
     reset_count += 1
-    _reset_airsim_flight_state(true)
-    _airsim_disarm_requested = false
-    takeoff_assist_active = false
-    takeoff_assist_commanded_altitude_m = 0.0
-    assisted_throttle_waiting_for_neutral = false
-    screen = "flight"
-    flight_mode = "ANGLE"
-    takeoff_requested = true
-    set_paused(false)
-    if px4_sitl_bridge != null:
-        if not was_armed:
-            px4_sitl_bridge.stop()
-            px4_sitl_bridge.start()
-            _px4_lockstep_sensor_pending = false
-    update_fallback_status()
+    _reset_after_commit_takeoff = true
+    _reset_arm_after_commit = was_armed
     if not reset_to_spawn():
+        _reset_after_commit_takeoff = false
+        _reset_arm_after_commit = false
         return
-    if was_armed:
-        if px4_sitl_bridge != null:
-            px4_sitl_bridge.arm_disarm(true)
-        elif native != null and native.has_method("arm_flight_control"):
-            native.call("arm_flight_control", 0.0)
-    if time_trial != null:
-        time_trial.start()
-    if drone_body != null:
-        # Keep the reset pose stable for one quarter second at the configured physics rate.
-        reset_hold_frames = maxi(1, Engine.physics_ticks_per_second / 4)
-    _refresh_flight_hud()
 
 func retry_time_trial() -> void:
     if loaded_map == null:
@@ -2363,7 +2390,7 @@ func load_map(map_id: String) -> bool:
         if _airsim_secondary_native != null:
             _airsim_secondary_native.call("configure_wind", wind_config)
     _configure_time_trial(map_root)
-    return reset_to_spawn()
+    return true
 
 func reset_to_spawn() -> bool:
     if loaded_map == null:
@@ -2371,6 +2398,23 @@ func reset_to_spawn() -> bool:
     var spawn := _current_spawn_marker()
     if spawn == null:
         return _set_map_error("Cannot reset Free Flight map %s: configured spawn is missing" % loaded_map_id)
+    if _reset_pending_token != 0:
+        return true
+    _reset_generation += 1
+    _reset_pending_token = _reset_generation
+    _reset_pending_frames = 0
+    _reset_pending_spawn = spawn.global_position
+    _reset_pending_secondary_spawn = spawn.global_position + Vector3(1.0, 0.0, 0.0)
+    _reset_pending_primary_ack_required = drone_body != null and drone_body.has_method("queue_reset_state")
+    _reset_pending_secondary_ack_required = _airsim_secondary_native != null and secondary_drone_body != null and secondary_drone_body.has_method("queue_reset_state")
+    screen = "reset_pending"
+    takeoff_requested = false
+    takeoff_assist_active = false
+    assisted_throttle_waiting_for_neutral = false
+    set_paused(true)
+    # A reset must disarm PX4, but keeping its transport alive lets a previously
+    # armed vehicle be re-armed only after the physics commit is acknowledged.
+    _reset_airsim_flight_state(false, false)
     _record_replay_simulation_operation(5, 0.0)
     _airsim_last_velocity = Vector3.ZERO
     _airsim_linear_acceleration = Vector3.ZERO
@@ -2380,13 +2424,27 @@ func reset_to_spawn() -> bool:
         native.call("reset_flight")
     if drone_body != null:
         drone_body.reset_contact()
-        drone_body.apply_native_state(spawn.global_position, spawn.global_transform.basis.get_rotation_quaternion(), Vector3.ZERO, Vector3.ZERO)
-        drone_body.freeze = true
+        if drone_body is RigidBody3D:
+            _reset_primary_gravity_scale = drone_body.gravity_scale
+            drone_body.gravity_scale = 0.0
+        drone_body.freeze = false
+        drone_body.sleeping = false
+        if _reset_pending_primary_ack_required:
+            drone_body.call("queue_reset_state", _reset_pending_spawn, spawn.global_transform.basis.get_rotation_quaternion(), _reset_pending_token)
+        else:
+            drone_body.apply_native_state(_reset_pending_spawn, spawn.global_transform.basis.get_rotation_quaternion(), Vector3.ZERO, Vector3.ZERO)
     if _airsim_secondary_native != null and secondary_drone_body != null:
         _airsim_secondary_native.call("reset_flight")
         secondary_drone_body.reset_contact()
-        secondary_drone_body.apply_native_state(spawn.global_position + Vector3(1.0, 0.0, 0.0), spawn.global_transform.basis.get_rotation_quaternion(), Vector3.ZERO, Vector3.ZERO)
-        secondary_drone_body.freeze = true
+        if secondary_drone_body is RigidBody3D:
+            _reset_secondary_gravity_scale = secondary_drone_body.gravity_scale
+            secondary_drone_body.gravity_scale = 0.0
+        secondary_drone_body.freeze = false
+        secondary_drone_body.sleeping = false
+        if _reset_pending_secondary_ack_required:
+            secondary_drone_body.call("queue_reset_state", _reset_pending_secondary_spawn, spawn.global_transform.basis.get_rotation_quaternion(), _reset_pending_token)
+        else:
+            secondary_drone_body.apply_native_state(_reset_pending_secondary_spawn, spawn.global_transform.basis.get_rotation_quaternion(), Vector3.ZERO, Vector3.ZERO)
         _set_secondary_collision_enabled(_airsim_vehicle_names.size() > 1 and _airsim_secondary_native != null)
     _reset_secondary_kinematic_contexts()
     if time_trial != null:
@@ -2396,15 +2454,82 @@ func reset_to_spawn() -> bool:
     if environment_state != null:
         var reset_environment := _apply_environment_result(environment_state.reset())
         if not reset_environment.ok:
-            return _set_map_error(String(reset_environment.error))
+            _fail_reset_pending(String(reset_environment.error))
+            return false
         var baseline_preset := selected_wind_preset if not selected_wind_preset.is_empty() else loaded_map_wind_preset
         var baseline_environment := _apply_environment_result(environment_state.apply({
             "wind_preset": baseline_preset,
             "steady_wind": scene_steady_wind_mps,
         }))
         if not baseline_environment.ok:
-            return _set_map_error(String(baseline_environment.error))
+            _fail_reset_pending(String(baseline_environment.error))
+            return false
+    if not _reset_pending_primary_ack_required and not _reset_pending_secondary_ack_required:
+        _advance_reset_pending()
     return true
+
+
+func _reset_body_committed(body, target: Vector3, token: int, requires_ack: bool) -> bool:
+    if body == null:
+        return not requires_ack
+    if requires_ack and not bool(body.call("reset_acknowledged", token)):
+        return false
+    return body.global_position.distance_to(target) <= 0.000001 and body.linear_velocity.length_squared() <= 0.000000000001 and body.angular_velocity.length_squared() <= 0.000000000001
+
+
+func _advance_reset_pending() -> void:
+    if _reset_pending_token == 0:
+        return
+    _reset_pending_frames += 1
+    var primary_committed := _reset_body_committed(drone_body, _reset_pending_spawn, _reset_pending_token, _reset_pending_primary_ack_required)
+    var secondary_required := _airsim_secondary_native != null and secondary_drone_body != null
+    var secondary_committed := not secondary_required or _reset_body_committed(secondary_drone_body, _reset_pending_secondary_spawn, _reset_pending_token, _reset_pending_secondary_ack_required)
+    if primary_committed and secondary_committed:
+        if drone_body != null:
+            drone_body.freeze = true
+            drone_body.sleeping = true
+            if drone_body is RigidBody3D:
+                drone_body.gravity_scale = _reset_primary_gravity_scale
+        if secondary_drone_body != null:
+            secondary_drone_body.freeze = true
+            secondary_drone_body.sleeping = true
+            if secondary_drone_body is RigidBody3D:
+                secondary_drone_body.gravity_scale = _reset_secondary_gravity_scale
+        _reset_pending_token = 0
+        _reset_pending_frames = 0
+        set_paused(false)
+        if drone_body != null:
+            drone_body.freeze = true
+            drone_body.sleeping = true
+        if secondary_drone_body != null:
+            secondary_drone_body.freeze = true
+            secondary_drone_body.sleeping = true
+        if _reset_after_commit_takeoff:
+            _reset_after_commit_takeoff = false
+            _complete_takeoff_after_reset()
+        elif _quick_fly_route_pending:
+            _route_quick_fly_after_reset()
+        else:
+            screen = "preflight"
+        _update_chase_camera()
+        _refresh_flight_hud()
+        return
+    if _reset_pending_frames > 8:
+        _fail_reset_pending("Reset commit acknowledgement timed out")
+
+
+func _fail_reset_pending(message: String) -> void:
+    _reset_pending_token = 0
+    _reset_after_commit_takeoff = false
+    last_error_message = message
+    screen = "error"
+    set_paused(true)
+    if drone_body is RigidBody3D:
+        drone_body.gravity_scale = _reset_primary_gravity_scale
+    if secondary_drone_body is RigidBody3D:
+        secondary_drone_body.gravity_scale = _reset_secondary_gravity_scale
+    _reset_airsim_flight_state()
+    _refresh_flight_hud()
 
 func _reset_secondary_kinematic_contexts() -> void:
     for name in _airsim_vehicle_contexts:
@@ -2717,7 +2842,7 @@ func _set_map_error(message: String) -> bool:
     push_warning(message)
     return false
 
-func _reset_airsim_flight_state(preserve_armed: bool = false) -> void:
+func _reset_airsim_flight_state(preserve_armed: bool = false, stop_px4: bool = true) -> void:
     _airsim_api_control = false
     _airsim_disarm_requested = not preserve_armed
     _airsim_command_state.clear()
@@ -2735,7 +2860,8 @@ func _reset_airsim_flight_state(preserve_armed: bool = false) -> void:
         airsim_rpc_server.reset_vehicle_control_state()
     if px4_sitl_bridge != null and not preserve_armed:
         px4_sitl_bridge.arm_disarm(false)
-        px4_sitl_bridge.stop()
+        if stop_px4:
+            px4_sitl_bridge.stop()
         _px4_lockstep_sensor_pending = false
     if not preserve_armed and native != null and native.has_method("disarm_flight_control"):
         native.call("disarm_flight_control")
@@ -4913,7 +5039,7 @@ func _profile_input_status() -> String:
 func _update_chase_camera() -> void:
     if chase_camera == null or drone_body == null:
         return
-    var player_map_view := loaded_map != null and screen in ["preflight", "flight", "finish", "controller_confirmation", "fallback_prompt"]
+    var player_map_view := _reset_pending_token == 0 and loaded_map != null and screen in ["preflight", "flight", "finish", "controller_confirmation", "fallback_prompt"]
     if player_map_view:
         chase_camera.global_position = drone_body.global_position + drone_body.global_basis * Vector3(0.0, 0.03, 0.0)
         chase_camera.global_basis = drone_body.global_basis * Basis(Vector3.RIGHT, deg_to_rad(float(camera_profile.camera_angle_deg)))
@@ -4941,7 +5067,7 @@ func _update_chase_camera() -> void:
 
 
 func toggle_player_view() -> void:
-    if loaded_map == null or not screen in ["preflight", "flight", "finish"]:
+    if _reset_pending_token != 0 or loaded_map == null or not screen in ["preflight", "flight", "finish"]:
         return
     third_person_view = not third_person_view
     _update_chase_camera()
@@ -5136,6 +5262,8 @@ func _airsim_lifecycle_stopped() -> bool:
 
 
 func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
+    if _reset_pending_token != 0 and enabled:
+        return {"ok": false, "error": "reset_pending"}
     if controller_safety_latched and enabled:
         return {"ok": false, "error": "controller_resume_required"}
     if _airsim_lifecycle_stopped():
@@ -5169,6 +5297,8 @@ func _airsim_enable_api_control(enabled: bool, name: String) -> Dictionary:
 
 
 func _airsim_arm_disarm(armed: bool, name: String) -> Dictionary:
+    if _reset_pending_token != 0 and armed:
+        return {"ok": false, "error": "reset_pending"}
     if controller_safety_latched and armed:
         return {"ok": false, "error": "controller_resume_required"}
     if _airsim_lifecycle_stopped():
@@ -5314,6 +5444,8 @@ func _airsim_task_complete(name: String) -> bool:
 
 
 func _airsim_command(method: String, params: Array, name: String) -> Dictionary:
+    if _reset_pending_token != 0:
+        return {"ok": false, "error": "reset_pending"}
     if controller_safety_latched:
         return {"ok": false, "error": "controller_resume_required"}
     if _airsim_lifecycle_stopped() or (screen == "main_menu" and method != "takeoff"):
