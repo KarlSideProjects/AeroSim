@@ -23,8 +23,9 @@ func configure(positions: Array, finish: Vector3, radius: float = 2.5) -> void:
 	reset()
 
 
-func start() -> void:
-	reset()
+func start(reset_trial: bool = true) -> void:
+	if reset_trial:
+		reset()
 	active = true
 
 

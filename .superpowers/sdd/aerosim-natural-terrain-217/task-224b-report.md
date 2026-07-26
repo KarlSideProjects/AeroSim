@@ -144,3 +144,32 @@
   Range ground-color capture, and fresh-map reset pose/velocity. This is
   outside the reset transaction changes; no headed or Jolt assertion was
   weakened.
+
+## Atomic RPC and committed-state recovery handoff
+
+- Direct pre-armed `request_takeoff()` now carries explicit arm intent through
+  reset publication and rearms exactly once after the body ACK. Arm rejection
+  remains terminal and clears that intent.
+- Public AirSim `reset` now waits for the runtime transaction to complete: the
+  initiating request returns `reset_pending` without resetting the session
+  clock, replay reset record, or RPC API/arm latches. A later completion query
+  succeeds only after the same body ACK; a timeout returns `reset_failed` and
+  preserves those pre-reset public states. `isApiControlEnabled` and
+  `simGetImages` use the same `reset_pending`/`reset_failed` publication gate.
+- A committed reset already resets the Time Trial, so its following takeoff
+  start now activates it without a duplicate reset. The headed harness now
+  waits for the actual token/ACK/map/screen/paused committed state and emits
+  structured diagnostics instead of relying on fixed post-reset frame counts.
+
+## Recovery verification evidence
+
+- `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64
+  scripts/run_gut_tests.sh` completed: 265 tests, 0 failures, 0 errors.
+- Headed acceptance was launched with the same Godot binary using
+  `scripts/run_headed_acceptance.sh --xvfb --out-dir build/headed-recovery`.
+  It is **not green**: Godot emitted
+  `ERROR: /root: The caller thread can't call the function
+  propagate_notification() on this node. Use call_deferred() or
+  call_deferred_thread_group() instead.` and then crashed with `signal 11`
+  (`SIGSEGV`). No `report.json` was produced. The partial artifacts and exact
+  engine log are retained in `build/headed-recovery/`.

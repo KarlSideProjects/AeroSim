@@ -133,7 +133,7 @@ func _run() -> void:
 	var no_controller_quick_fly: Button = runtime.get_node_or_null("MainMenu/Entries/QuickFly")
 	if no_controller_quick_fly != null:
 		_click(no_controller_quick_fly)
-	await _settle(8)
+	await _await_reset_commit(runtime, "fallback_prompt", false, "terrain3d_range", "initial keyboard fallback Quick Fly")
 	await _snapshot("00_keyboard_fallback_preconfirm")
 	var fallback_third_person_camera := runtime.get_node_or_null("ThirdPersonCamera") as Camera3D
 	_expect(runtime.screen == "fallback_prompt" and runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null and fallback_third_person_camera != null and root.get_camera_3d() == fallback_third_person_camera and runtime.third_person_view and runtime._airsim_camera_source() == runtime.chase_camera, "no-controller Quick Fly shows Terrain Range through the default third-person player camera while AirSim remains FPV before keyboard fallback confirmation")
@@ -340,7 +340,7 @@ func _run() -> void:
 	await _settle(2)
 	_expect(root.get_camera_3d() == runtime.chase_camera and runtime.chase_camera.current and runtime._airsim_camera_source() == runtime.chase_camera and player_view != null and player_view.text == "VIEW: FPV", "V switches the default player view to FPV with the matching HUD label while preserving the AirSim source")
 	runtime.quick_fly()
-	await _settle(4)
+	await _await_reset_commit(runtime, "preflight", false, "terrain3d_range", "second Quick Fly preflight")
 	_expect(runtime.screen == "preflight" and root.get_camera_3d() == third_person_camera and runtime.third_person_view and runtime._airsim_camera_source() == runtime.chase_camera and player_view != null and player_view.text == "VIEW: THIRD PERSON", "each Quick Fly session resets the player view to third-person while AirSim remains FPV")
 	_inject_joy_button(known_device_id, JOY_BUTTON_BACK, true)
 	await _settle(4)
@@ -372,6 +372,7 @@ func _run() -> void:
 	await _settle(30)
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
+	await _await_reset_commit(runtime, "flight", false, "terrain3d_range", "Xbox physical input takeoff")
 	var xbox_frd_axis_cases := [
 		{"role": "roll", "axis": JOY_AXIS_RIGHT_X, "value": -0.5, "component": 0},
 		{"role": "pitch", "axis": JOY_AXIS_RIGHT_Y, "value": 0.5, "component": 1},
@@ -530,7 +531,7 @@ func _run() -> void:
 	_expect(finish_retry != null and finish_retry.text == "RETRY", "finish panel exposes Retry")
 	if finish_retry != null:
 		_click(finish_retry)
-	await _settle(4)
+	await _await_reset_commit(runtime, "flight", false, "terrain3d_range", "finish Retry")
 	_expect(runtime.screen == "flight" and not runtime.paused and runtime.time_trial.active and runtime.time_trial.next_checkpoint_index == 0, "Retry respawns at the start and restarts the trial")
 	_tap(KEY_P)
 	await _settle(2)
@@ -550,7 +551,7 @@ func _run() -> void:
 	var north_spawn_before_change := runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
 	if change_spawn_button != null:
 		_click(change_spawn_button)
-	await _settle(4)
+	await _await_reset_commit(runtime, "flight", false, "terrain3d_range", "Change Spawn")
 	var south_spawn_after_change := runtime.loaded_map.get_node_or_null("SpawnSouth") as Marker3D
 	var south_platform_after_change := runtime.loaded_map.get_node_or_null("SpawnSouthPlatform") as StaticBody3D if runtime.loaded_map != null else null
 	var south_platform_collision := south_platform_after_change.get_node_or_null("CollisionShape3D") as CollisionShape3D if south_platform_after_change != null else null
@@ -561,17 +562,19 @@ func _run() -> void:
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
+	await _await_reset_commit(runtime, "flight", false, "terrain3d_range", "finish Change Map takeoff")
 	_complete_time_trial(runtime)
 	await _settle(2)
 	var finish_change_map: Button = runtime.get_node_or_null("FlightHud/FinishPanel/Rows/ChangeMap")
 	_expect(finish_change_map != null and finish_change_map.is_visible_in_tree(), "finish panel exposes Change Map")
 	if finish_change_map != null:
 		_click(finish_change_map)
-	await _settle(4)
+	await _await_reset_commit(runtime, "preflight", false, "terrain3d_range", "finish Change Map")
 	_expect(runtime.screen == "preflight" and runtime.loaded_map_id == "terrain3d_range", "finish Change Map returns to Terrain Range preflight")
 	runtime._airsim_disarm_requested = false
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
+	await _await_reset_commit(runtime, "flight", false, "terrain3d_range", "finish Exit takeoff")
 	_complete_time_trial(runtime)
 	await _settle(2)
 	var finish_exit: Button = runtime.get_node_or_null("FlightHud/FinishPanel/Rows/Exit")
@@ -585,7 +588,7 @@ func _run() -> void:
 	await _settle(2)
 	_expect(runtime.screen == "main_menu", "P cannot resume after Exit")
 	runtime.enter_preflight()
-	await _settle(4)
+	await _await_reset_commit(runtime, "preflight", false, "terrain3d_range", "fresh Terrain Range preflight")
 	var terrain_range_frame := await _snapshot("01_terrain_range_preflight")
 	_expect(_max_color_ratio(terrain_range_frame) < 0.99, "Terrain Range preflight capture is not monochrome")
 	var camera_rpc: Array = runtime.airsim_rpc_server.dispatch([0, 142, "simGetImages", [[
@@ -632,7 +635,7 @@ func _run() -> void:
 	await _settle(10)
 	_expect(not device_state.is_joy_known(unknown_device_id) and runtime._first_connected_device() == unknown_device_id, "replacement device is connected and lacks an SDL mapping")
 	runtime.quick_fly()
-	await _settle(10)
+	await _await_reset_commit(runtime, "fallback_prompt", false, "terrain3d_range", "unknown-controller Quick Fly")
 	_expect(runtime.screen == "fallback_prompt", "Quick Fly blocks the replaced unknown controller at KeyboardProfile fallback")
 	_expect(runtime.arm_status_label != null and runtime.arm_status_label.text.contains("Unsupported controller"), "unknown controller fallback is explicit")
 
@@ -645,6 +648,7 @@ func _run() -> void:
 	_expect(runtime.screen == "preflight", "KeyboardProfile fallback enters low-throttle preflight")
 
 	_tap(KEY_T)
+	await _await_reset_commit(runtime, "flight", false, "terrain3d_range", "keyboard takeoff")
 	await _settle(60)
 	_audit_overlay_geometry(runtime, "flight")
 	await _snapshot("03_takeoff")
@@ -672,7 +676,7 @@ func _run() -> void:
 
 	_tap(KEY_P)
 	_tap(KEY_R)
-	await _settle(10)
+	await _await_reset_commit(runtime, "flight", false, "terrain3d_range", "keyboard reset")
 	await _snapshot("05_reset")
 	_expect(runtime.reset_count >= 1, "R resets flight after resume")
 	spawn = runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D if runtime.loaded_map != null else null
@@ -686,7 +690,7 @@ func _run() -> void:
 	var reset_count_before_button: int = runtime.reset_count
 	if pause_reset_button != null:
 		_click(pause_reset_button)
-	await _settle(4)
+	await _await_reset_commit(runtime, "flight", false, "terrain3d_range", "Pause Overlay Reset")
 	_expect(runtime.reset_count > reset_count_before_button and not runtime.paused, "Pause Overlay Reset resumes the flight with reset semantics")
 	_tap(KEY_P)
 	await _settle(2)
@@ -728,6 +732,34 @@ func _install_deterministic_valid_license(runtime: Node) -> void:
 func _settle(frames: int) -> void:
 	for _frame in frames:
 		await process_frame
+
+
+func _await_reset_commit(runtime: Node, expected_screen: String, expected_paused: bool, expected_map_id: String, context: String) -> bool:
+	var token := int(runtime._reset_pending_token)
+	for _frame in 180:
+		var body: Variant = runtime.drone_body
+		var body_ack: bool = token <= 0 or (body != null and body.has_method("reset_acknowledged") and bool(body.call("reset_acknowledged", token)))
+		if int(runtime._reset_pending_token) == 0 and not bool(runtime._reset_publication_blocked) and body_ack and runtime.screen == expected_screen and bool(runtime.paused) == expected_paused and String(runtime.loaded_map_id) == expected_map_id:
+			return true
+		await process_frame
+	var body: Variant = runtime.drone_body
+	var diagnostics := {
+		"context": context,
+		"requested_token": token,
+		"pending_token": int(runtime._reset_pending_token),
+		"screen": String(runtime.screen),
+		"paused": bool(runtime.paused),
+		"map": String(runtime.loaded_map_id),
+		"publication_blocked": bool(runtime._reset_publication_blocked),
+		"body_acknowledged": token <= 0 or (body != null and body.has_method("reset_acknowledged") and bool(body.call("reset_acknowledged", token))),
+		"body_position": body.global_position if body != null else null,
+		"body_frozen": bool(body.freeze) if body != null else null,
+		"body_sleeping": bool(body.sleeping) if body != null else null,
+		"native_armed": runtime.native != null and bool(runtime.native.call("flight_control_armed")),
+		"last_error": String(runtime.last_error_message),
+	}
+	_expect(false, "reset commit did not reach %s: %s" % [context, JSON.stringify(diagnostics)])
+	return false
 
 func _complete_time_trial(runtime: Node) -> void:
 	if runtime.time_trial == null:

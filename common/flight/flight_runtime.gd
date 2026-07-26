@@ -104,6 +104,8 @@ var _reset_commit_in_progress := false
 var _reset_publication_blocked := false
 var _reset_after_commit_takeoff := false
 var _reset_arm_after_commit := false
+var _rpc_reset_waiting_for_commit := false
+var _rpc_reset_completion_ready := false
 var _quick_fly_route_pending := false
 var last_profile_status := ""
 var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]
@@ -274,7 +276,7 @@ func _ready() -> void:
     environment_state = EnvironmentState.new()
     add_child(scene_object_catalog)
     add_child(airsim_camera_surface)
-    airsim_rpc_server.set_session(airsim_session, Callable(self, "respawn"))
+    airsim_rpc_server.set_session(airsim_session, Callable(self, "request_rpc_reset"))
     add_child(airsim_rpc_server)
     airsim_stop_file = _cold_start_arg("--airsim-stop-file")
     var configured_vehicles = startup_settings.get("Vehicles", {})
@@ -298,6 +300,7 @@ func _ready() -> void:
     airsim_rpc_server.set_sensor_backend(Callable(self, "_airsim_sensor"))
     airsim_rpc_server.set_scene_environment_backend(Callable(self, "_airsim_scene_object"), Callable(self, "_airsim_environment"))
     airsim_rpc_server.set_replay_handlers(Callable(self, "_record_replay_simulation_operation"), Callable(self, "_record_replay_async"))
+    airsim_rpc_server.set_publication_error_handler(Callable(self, "_reset_publication_error"))
     _load_scene_object_catalog()
     var rpc_result: Dictionary = airsim_rpc_server.start_with_settings(startup_settings)
     if not rpc_result.ok:
@@ -1905,9 +1908,16 @@ func request_takeoff() -> void:
         last_error_message = "Arm blocked: reset_pending"
         _refresh_flight_hud()
         return
+    # A direct AirSim-style takeoff may arrive after the caller has already
+    # armed native control.  Reset publication deliberately disarms the
+    # runtime, so preserve that pre-transaction intent for the single
+    # post-ACK rearm.  arm_and_takeoff() sets this flag explicitly before
+    # reaching here when native control is not armed yet.
+    _reset_arm_after_commit = _reset_arm_after_commit or _flight_control_armed()
     _reset_after_commit_takeoff = true
     if not reset_to_spawn():
         _reset_after_commit_takeoff = false
+        _reset_arm_after_commit = false
         screen = "error"
         _refresh_flight_hud()
     return
@@ -1943,7 +1953,9 @@ func _complete_takeoff_after_reset() -> void:
             flight_mode = "ASSISTED_HOLD"
             assisted_throttle_waiting_for_neutral = true
     if time_trial != null:
-        time_trial.start()
+        # Reset publication already reset trial state as part of the ACKed
+        # transaction.  Starting it must not publish a second reset.
+        time_trial.start(false)
     _refresh_flight_hud()
 
 func arm_and_takeoff() -> void:
@@ -2319,13 +2331,31 @@ func _set_environment_scalar(value: float, key: String) -> void:
         update["move_sun"] = true
     _apply_environment_result(environment_state.apply(update))
 
-func respawn() -> void:
+func request_rpc_reset() -> Dictionary:
+    if _reset_publication_blocked:
+        return {"ok": false, "error": "reset_failed"}
+    if _rpc_reset_completion_ready:
+        _rpc_reset_completion_ready = false
+        return {"ok": true}
+    if _reset_pending_token != 0:
+        return {"ok": false, "error": "reset_pending"}
+    _rpc_reset_waiting_for_commit = true
+    if not respawn():
+        _rpc_reset_waiting_for_commit = false
+        return {"ok": false, "error": last_error_message if not last_error_message.is_empty() else "reset rejected"}
+    if _reset_pending_token != 0:
+        return {"ok": false, "error": "reset_pending"}
+    _rpc_reset_waiting_for_commit = false
+    return {"ok": true}
+
+
+func respawn() -> bool:
     if controller_safety_latched:
         last_error_message = "Respawn blocked: controller_resume_required"
         _refresh_flight_hud()
-        return
+        return false
     if _reset_pending_token != 0:
-        return
+        return false
     var was_armed := _flight_control_armed()
     reset_count += 1
     _reset_after_commit_takeoff = true
@@ -2333,7 +2363,8 @@ func respawn() -> void:
     if not reset_to_spawn():
         _reset_after_commit_takeoff = false
         _reset_arm_after_commit = false
-        return
+        return false
+    return true
 
 func retry_time_trial() -> void:
     if loaded_map == null:
@@ -2533,6 +2564,9 @@ func _advance_reset_pending() -> void:
         else:
             set_paused(false)
             screen = "preflight"
+        if _rpc_reset_waiting_for_commit:
+            _rpc_reset_waiting_for_commit = false
+            _rpc_reset_completion_ready = true
         _update_chase_camera()
         _refresh_flight_hud()
         return
@@ -2544,6 +2578,8 @@ func _fail_reset_pending(message: String) -> void:
     _reset_pending_token = 0
     _reset_after_commit_takeoff = false
     _reset_arm_after_commit = false
+    _rpc_reset_waiting_for_commit = false
+    _rpc_reset_completion_ready = false
     _quick_fly_route_pending = false
     takeoff_requested = false
     takeoff_assist_active = false

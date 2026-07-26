@@ -40,6 +40,7 @@ var _scene_object_handler: Callable
 var _environment_handler: Callable
 var _replay_simulation_handler: Callable
 var _replay_async_handler: Callable
+var _publication_error_handler: Callable
 
 
 func set_session(owner_session: AirSimSession, owner_reset_handler: Callable = Callable()) -> void:
@@ -80,6 +81,10 @@ func set_scene_environment_backend(scene_object_handler: Callable, environment_h
 func set_replay_handlers(simulation_handler: Callable, async_handler: Callable) -> void:
     _replay_simulation_handler = simulation_handler
     _replay_async_handler = async_handler
+
+
+func set_publication_error_handler(handler: Callable) -> void:
+    _publication_error_handler = handler
 
 
 func cancel_pending_async_tasks(reason: String = "RPC session terminated") -> void:
@@ -435,11 +440,13 @@ func dispatch(request: Array) -> Array:
         "reset":
             if not params.is_empty():
                 return _error_response(message_id, "reset expects no parameters")
+            if reset_handler.is_valid():
+                var reset_result = reset_handler.call()
+                if typeof(reset_result) == TYPE_DICTIONARY and not bool(reset_result.get("ok", false)):
+                    return _error_response(message_id, String(reset_result.get("error", "reset rejected")))
             if _replay_simulation_handler.is_valid():
                 _replay_simulation_handler.call(4, 0.0)
             session.reset()
-            if reset_handler.is_valid():
-                reset_handler.call()
             reset_vehicle_control_state()
             return _success_response(message_id, null)
         "getServerVersion":
@@ -619,6 +626,9 @@ func _dispatch_is_api_control_enabled(message_id, params: Array) -> Array:
     var vehicle := _resolve_vehicle(message_id, params[0])
     if not vehicle.ok:
         return vehicle.response
+    var publication_error := _publication_error()
+    if not publication_error.is_empty():
+        return _error_response(message_id, publication_error)
     return _success_response(message_id, bool(_api_control[vehicle.name]))
 
 
@@ -735,6 +745,9 @@ func _dispatch_images(message_id, params: Array) -> Array:
     var vehicle := _resolve_vehicle(message_id, params[1])
     if not vehicle.ok:
         return vehicle.response
+    var publication_error := _publication_error()
+    if not publication_error.is_empty():
+        return _error_response(message_id, publication_error)
     if not _camera_handler.is_valid():
         return _error_response(message_id, "camera backend is unavailable")
     var result = _camera_handler.call(params[0], String(vehicle.name), false)
@@ -758,6 +771,12 @@ func _state_for_vehicle(name: String) -> Dictionary:
     if typeof(result) != TYPE_DICTIONARY or not bool(result.get("ok", false)):
         return {"ok": false, "error": String(result.get("error", "vehicle state backend rejected the request")) if typeof(result) == TYPE_DICTIONARY else "vehicle state backend returned an invalid snapshot"}
     return {"ok": true, "state": result["state"].duplicate(true)}
+
+
+func _publication_error() -> String:
+    if not _publication_error_handler.is_valid():
+        return ""
+    return String(_publication_error_handler.call())
 
 
 func _dispatch_cancel_last_task(message_id, params: Array) -> Array:
