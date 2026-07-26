@@ -1321,6 +1321,7 @@ func test_request_takeoff_does_not_inject_jump_velocity() -> void:
     runtime.drone_body = body
     runtime.session_gamepad_device_id = 7
     runtime.session_gamepad_profile = InputProfiles.GamepadProfile.new()
+    runtime.reset_hold_frames = 1
 
     runtime.request_takeoff()
 
@@ -1330,6 +1331,7 @@ func test_request_takeoff_does_not_inject_jump_velocity() -> void:
     assert_true(runtime.assisted_throttle_waiting_for_neutral)
     assert_eq(runtime.takeoff_assist_commanded_altitude_m, 0.0)
     assert_eq(runtime.assisted_hover_throttle, 0.3)
+    assert_eq(runtime.reset_hold_frames, 0)
     assert_false(body.freeze)
     assert_eq(body.global_position, spawn.global_position)
     assert_eq(body.linear_velocity, Vector3.ZERO)
@@ -2060,6 +2062,7 @@ func test_respawn_rearms_only_after_the_reset_commit() -> void:
     var map := Node3D.new()
     var spawn := Marker3D.new()
     spawn.name = "SpawnNorth"
+    spawn.position = Vector3(3.0, 2.0, -5.0)
     map.add_child(spawn)
     get_tree().root.add_child(map)
     runtime.loaded_map = map
@@ -2067,6 +2070,7 @@ func test_respawn_rearms_only_after_the_reset_commit() -> void:
     get_tree().root.add_child(runtime.drone_body)
     runtime.native = FakeNative.new()
     runtime.native.armed = true
+    runtime.airsim_session = AirSimSession.new(Engine.physics_ticks_per_second)
     runtime.screen = "flight"
     runtime.takeoff_requested = true
 
@@ -2077,6 +2081,21 @@ func test_respawn_rearms_only_after_the_reset_commit() -> void:
     assert_true(runtime.native.disarmed)
     assert_true(runtime.takeoff_requested)
     assert_false(runtime.paused)
+    assert_eq(runtime.reset_hold_frames, maxi(1, Engine.physics_ticks_per_second / 4))
+    assert_true(runtime.drone_body.freeze)
+    assert_true(runtime.drone_body.sleeping)
+    assert_eq(runtime.drone_body.global_position, spawn.global_position)
+    assert_eq(runtime.drone_body.linear_velocity, Vector3.ZERO)
+    assert_eq(runtime.drone_body.angular_velocity, Vector3.ZERO)
+    var state: Dictionary = runtime._airsim_state("")
+    var kinematics: Dictionary = state.state.kinematics_estimated
+    assert_eq(kinematics.position, {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0})
+    assert_eq(kinematics.linear_velocity, {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0})
+    for _frame in runtime.reset_hold_frames:
+        runtime._physics_process(0.0)
+    assert_eq(runtime.reset_hold_frames, 0)
+    assert_false(runtime.drone_body.freeze)
+    assert_false(runtime.drone_body.sleeping)
     runtime.drone_body.free()
     runtime.free()
     map.queue_free()

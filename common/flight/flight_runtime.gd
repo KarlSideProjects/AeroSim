@@ -1921,6 +1921,7 @@ func request_takeoff() -> void:
         last_error_message = "Arm blocked: reset_pending"
         _refresh_flight_hud()
         return
+    reset_hold_frames = 0
     # A direct AirSim-style takeoff may arrive after the caller has already
     # armed native control.  Reset publication deliberately disarms the
     # runtime, so preserve that pre-transaction intent for the single
@@ -1960,8 +1961,8 @@ func _complete_takeoff_after_reset() -> void:
     assisted_hover_throttle = _configured_hover_throttle()
     takeoff_assist_active = _has_active_gamepad_profile() and assisted_hover_throttle > 0.0
     if drone_body != null:
-        drone_body.freeze = false
-        drone_body.sleeping = false
+        drone_body.freeze = reset_hold_frames > 0
+        drone_body.sleeping = reset_hold_frames > 0
         if takeoff_assist_active:
             flight_mode = "ASSISTED_HOLD"
             assisted_throttle_waiting_for_neutral = true
@@ -2389,9 +2390,13 @@ func respawn() -> bool:
         return false
     var was_armed := _flight_control_armed()
     reset_count += 1
+    # Keep the ACKed spawn pose stable for one quarter second before the
+    # resumed flight loop can unfreeze it.
+    reset_hold_frames = maxi(1, Engine.physics_ticks_per_second / 4)
     _reset_after_commit_takeoff = true
     _reset_arm_after_commit = was_armed
     if not reset_to_spawn():
+        reset_hold_frames = 0
         _reset_after_commit_takeoff = false
         _reset_arm_after_commit = false
         return false
@@ -2622,6 +2627,7 @@ func _fail_reset_pending(message: String) -> void:
         failed_generation = _rpc_reset_owned_generation
     var rpc_owned_reset := _rpc_reset_owned_generation == failed_generation
     _reset_pending_token = 0
+    reset_hold_frames = 0
     _reset_after_commit_takeoff = false
     _reset_arm_after_commit = false
     _reset_last_failed_generation = failed_generation
