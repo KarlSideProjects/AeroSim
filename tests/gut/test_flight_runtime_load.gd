@@ -49,6 +49,7 @@ class ResetRecordingNative extends FakeNative:
     var environment_record_count := 0
     var reset_flight_count := 0
     var disarm_count := 0
+    var replay_event_order: Array[String] = []
 
     func reset_flight() -> void:
         reset_flight_count += 1
@@ -59,6 +60,7 @@ class ResetRecordingNative extends FakeNative:
         super.disarm_flight_control()
 
     func record_replay_simulation_operation(_timestamp_us: int, operation: int, _value: float) -> Dictionary:
+        replay_event_order.append("reset" if operation == 4 else "operation_%d" % operation)
         if operation == 5:
             reset_operation_count += 1
         return {"ok": true}
@@ -67,6 +69,7 @@ class ResetRecordingNative extends FakeNative:
         pass
 
     func record_replay_environment(_timestamp_us: int, _state_json: String) -> Dictionary:
+        replay_event_order.append("environment")
         environment_record_count += 1
         return {"ok": true}
 
@@ -275,9 +278,9 @@ class QuickFlyRuntime extends FlightRuntime:
     func _ready() -> void:
         pass
 
-    func reset_to_spawn() -> bool:
+    func reset_to_spawn(rpc_owned_reset: bool = false) -> bool:
         reset_to_spawn_calls += 1
-        return super.reset_to_spawn()
+        return super.reset_to_spawn(rpc_owned_reset)
 
 
 class ResetPublicationRuntime extends FlightRuntime:
@@ -2558,6 +2561,43 @@ func test_rpc_reset_timeout_preserves_public_session_and_control_state() -> void
     assert_true(runtime.airsim_session.is_paused())
     assert_true(runtime.airsim_rpc_server._api_control["Drone1"])
     assert_true(runtime.airsim_rpc_server._armed["Drone1"])
+    runtime.airsim_rpc_server.free()
+    runtime.free()
+    map.queue_free()
+
+
+func test_rpc_reset_records_replay_reset_before_committed_environment_baseline() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.native = ResetRecordingNative.new()
+    runtime.environment_state = EnvironmentState.new()
+    assert_true(runtime.environment_state.apply({"rain": 0.6, "weather_enabled": true}).ok)
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.airsim_session.simulation_time_seconds = 3.0
+    runtime._replay_recording_active = true
+    runtime.airsim_rpc_server = preload("res://common/rpc/airsim_rpc_server.gd").new()
+    runtime.airsim_rpc_server.set_session(runtime.airsim_session)
+    runtime.airsim_rpc_server.set_replay_handlers(
+        Callable(runtime, "_record_replay_simulation_operation"), Callable())
+    runtime.airsim_rpc_server.set_reset_lifecycle_handlers(
+        Callable(runtime, "_begin_rpc_reset"),
+        Callable(runtime, "_rpc_reset_status"),
+        Callable(runtime, "_abort_rpc_reset"))
+
+    var result: Dictionary = runtime._begin_rpc_reset()
+    assert_true(result.ok)
+    assert_eq(runtime._rpc_reset_status(int(result.generation)).state, "committed")
+    runtime.airsim_rpc_server._active_reset_generation = int(result.generation)
+    runtime.airsim_rpc_server._flush_pending_reset_waiters()
+
+    assert_eq(runtime.native.replay_event_order, ["reset", "environment"])
+    assert_eq(runtime.native.environment_record_count, 1)
+    assert_eq(float(runtime.environment_state.snapshot().rain), 0.0)
     runtime.airsim_rpc_server.free()
     runtime.free()
     map.queue_free()

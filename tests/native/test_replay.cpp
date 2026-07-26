@@ -247,6 +247,34 @@ bool test_checkpoint_round_trip_preserves_atmosphere() {
             loaded.session.checkpoints[0].environment_json == complete_atmosphere(23);
 }
 
+bool test_reset_replay_restores_environment_before_checkpoint() {
+    aerosim::ReplaySessionRecorder recorder(42, "settings-manifest-v1");
+    const std::string pre_reset_environment = complete_atmosphere(23);
+    const std::string reset_environment = complete_atmosphere(47);
+    aerosim::DualAircraftState reset_state;
+    if (!recorder.add_vehicle("DroneA", "drone-a-hash", "{\"mass_kg\":1.0}") ||
+            !recorder.add_vehicle("DroneB", "drone-b-hash", "{\"mass_kg\":1.0}") ||
+            !recorder.record_environment(0, pre_reset_environment) ||
+            !recorder.record_simulation_operation(1000, aerosim::ReplaySimulationOperation::Reset) ||
+            !recorder.record_environment(1000, reset_environment) ||
+            !recorder.record_checkpoint(1000, reset_state) || !recorder.finish(2000, "completed")) {
+        return false;
+    }
+    const aerosim::ReplaySession &session = recorder.session();
+    if (session.events.size() != 3 ||
+            session.events[1].simulation_operation != aerosim::ReplaySimulationOperation::Reset ||
+            session.events[2].environment_json != reset_environment) {
+        return false;
+    }
+    const aerosim::SimulationConfig config = replay_test_config();
+    const aerosim::DualAircraftConfig configs{config, config};
+    const std::array<std::string, 2> hashes = {{"drone-a-hash", "drone-b-hash"}};
+    const aerosim::ReplayRunResult replayed = aerosim::replay_session(
+            session, configs, "settings-manifest-v1", hashes);
+    return replayed.ok && replayed.environment_json == reset_environment && replayed.checkpoints.size() == 1 &&
+            replayed.checkpoints[0].environment_json == reset_environment;
+}
+
 bool test_checkpoint_round_trip_preserves_collision_and_scene_state() {
     aerosim::ReplaySessionRecorder recorder(42, "settings-manifest-v1");
     aerosim::CollisionContact contact;
@@ -1061,6 +1089,9 @@ int main() {
     }
     if (!test_checkpoint_round_trip_preserves_atmosphere()) {
         return fail("replay checkpoints must retain the captured atmosphere through serialization");
+    }
+    if (!test_reset_replay_restores_environment_before_checkpoint()) {
+        return fail("replay Reset must retain its following environment baseline through application and checkpoints");
     }
     if (!test_checkpoint_round_trip_preserves_collision_and_scene_state()) {
         return fail("replay checkpoints must round-trip collision and scene state");

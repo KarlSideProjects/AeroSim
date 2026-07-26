@@ -259,12 +259,16 @@ func test_loopback_reset_defers_matching_responses_until_one_generation_commits(
         return
 
     assert_eq(client.put_data(MsgpackCodec.encode([0, 701, "reset", []])), OK)
+    # A duplicate MessagePack id on the same connection is a retransmission,
+    # not a second waiter or a second response correlation.
+    assert_eq(client.put_data(MsgpackCodec.encode([0, 701, "reset", []])), OK)
     assert_eq(client.put_data(MsgpackCodec.encode([0, 702, "reset", []])), OK)
     for _attempt in 3:
         server.poll()
         client.poll()
         await get_tree().process_frame
     assert_eq(lifecycle.starts, 1)
+    assert_eq(server._pending_reset_waiters.size(), 2)
     assert_eq(client.get_available_bytes(), 0)
     assert_eq(server.session.simulation_time_seconds, 3.0)
     assert_true(server._api_control["Drone1"])
@@ -319,10 +323,11 @@ func test_loopback_reset_timeout_aborts_generation_without_public_reset() -> voi
         if client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
             break
         await get_tree().process_frame
+    assert_eq(client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
     if client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
         server.stop()
         return
-    client.put_data(MsgpackCodec.encode([0, 704, "reset", []]))
+    assert_eq(client.put_data(MsgpackCodec.encode([0, 704, "reset", []])), OK)
     server.poll()
     server._pending_reset_waiters[0]["deadline_ms"] = 0
     server.poll()
@@ -333,6 +338,97 @@ func test_loopback_reset_timeout_aborts_generation_without_public_reset() -> voi
     assert_eq(server.session.simulation_time_seconds, 4.0)
     assert_true(server._api_control["Drone1"])
     assert_true(server._armed["Drone1"])
+    server.stop()
+
+
+func test_loopback_reset_committed_before_poll_wins_over_expired_deadline() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var lifecycle := ResetLifecycleHarness.new()
+    server.set_reset_lifecycle_handlers(
+        Callable(lifecycle, "start_reset"),
+        Callable(lifecycle, "reset_status"),
+        Callable(lifecycle, "abort_reset"))
+    server.set_replay_handlers(Callable(lifecycle, "record_replay"), Callable())
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41464,
+        "RpcEnabled": true,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    if not startup.ok:
+        return
+    server.session.simulation_time_seconds = 6.0
+    server._api_control["Drone1"] = true
+    server._armed["Drone1"] = true
+    var client := StreamPeerTCP.new()
+    autofree(client)
+    assert_eq(client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41464), OK)
+    for _attempt in 20:
+        server.poll()
+        client.poll()
+        if client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+            break
+        await get_tree().process_frame
+    assert_eq(client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
+    if client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+        server.stop()
+        return
+    assert_eq(client.put_data(MsgpackCodec.encode([0, 707, "reset", []])), OK)
+    server.poll()
+    lifecycle.state = "committed"
+    server._pending_reset_waiters[0]["deadline_ms"] = 0
+    server.poll()
+    client.poll()
+    var response := MsgpackCodec.decode(client.get_data(client.get_available_bytes())[1])
+    assert_eq(response.value, [1, 707, null, null])
+    assert_eq(lifecycle.aborts, 0)
+    assert_eq(lifecycle.replay_operations, [4])
+    assert_eq(server.session.simulation_time_seconds, 0.0)
+    assert_false(server._api_control["Drone1"])
+    assert_false(server._armed["Drone1"])
+    server.stop()
+
+
+func test_deferred_reset_requires_a_valid_request_frame() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var lifecycle := ResetLifecycleHarness.new()
+    server.set_reset_lifecycle_handlers(
+        Callable(lifecycle, "start_reset"),
+        Callable(lifecycle, "reset_status"),
+        Callable(lifecycle, "abort_reset"))
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41465,
+        "RpcEnabled": true,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    if not startup.ok:
+        return
+    var client := StreamPeerTCP.new()
+    autofree(client)
+    assert_eq(client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41465), OK)
+    for _attempt in 20:
+        server.poll()
+        client.poll()
+        if client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+            break
+        await get_tree().process_frame
+    assert_eq(client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
+    if client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+        server.stop()
+        return
+    assert_eq(client.put_data(MsgpackCodec.encode([1, 708, "reset", []])), OK)
+    server.poll()
+    client.poll()
+    var non_request := MsgpackCodec.decode(client.get_data(client.get_available_bytes())[1])
+    assert_string_contains(non_request.value[2], "unsupported RPC request type")
+    assert_eq(lifecycle.starts, 0)
     server.stop()
 
 
@@ -356,34 +452,47 @@ func test_loopback_reset_disconnect_removes_only_its_waiter_and_drains_generatio
     if not startup.ok:
         return
     server.session.simulation_time_seconds = 5.0
-    var client := StreamPeerTCP.new()
-    autofree(client)
-    assert_eq(client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41463), OK)
+    var disconnected_client := StreamPeerTCP.new()
+    var waiting_client := StreamPeerTCP.new()
+    autofree(disconnected_client)
+    autofree(waiting_client)
+    assert_eq(disconnected_client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41463), OK)
+    assert_eq(waiting_client.connect_to_host(AirSimRpcServer.DEFAULT_BIND_ADDRESS, 41463), OK)
     for _attempt in 20:
         server.poll()
-        client.poll()
-        if client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+        disconnected_client.poll()
+        waiting_client.poll()
+        if disconnected_client.get_status() == StreamPeerTCP.STATUS_CONNECTED and waiting_client.get_status() == StreamPeerTCP.STATUS_CONNECTED:
             break
         await get_tree().process_frame
-    if client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+    assert_eq(disconnected_client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
+    assert_eq(waiting_client.get_status(), StreamPeerTCP.STATUS_CONNECTED)
+    if disconnected_client.get_status() != StreamPeerTCP.STATUS_CONNECTED or waiting_client.get_status() != StreamPeerTCP.STATUS_CONNECTED:
         server.stop()
         return
-    assert_eq(client.put_data(MsgpackCodec.encode([0, 705, "reset", []])), OK)
-    server.poll()
+    assert_eq(disconnected_client.put_data(MsgpackCodec.encode([0, 705, "reset", []])), OK)
+    assert_eq(waiting_client.put_data(MsgpackCodec.encode([0, 706, "reset", []])), OK)
+    for _attempt in 3:
+        server.poll()
+        await get_tree().process_frame
     assert_eq(lifecycle.starts, 1)
-    assert_eq(server._pending_reset_waiters.size(), 1)
+    assert_eq(server._pending_reset_waiters.size(), 2)
     var generation := server._active_reset_generation
-    client.disconnect_from_host()
+    disconnected_client.disconnect_from_host()
     for _attempt in 20:
         server.poll()
-        if server._pending_reset_waiters.is_empty():
+        if server._pending_reset_waiters.size() == 1:
             break
         await get_tree().process_frame
-    assert_true(server._pending_reset_waiters.is_empty())
+    assert_eq(server._pending_reset_waiters.size(), 1)
+    assert_eq(server._pending_reset_waiters[0]["message_id"], 706)
     assert_eq(server._active_reset_generation, generation)
 
     lifecycle.state = "committed"
     server.poll()
+    waiting_client.poll()
+    var response := MsgpackCodec.decode(waiting_client.get_data(waiting_client.get_available_bytes())[1])
+    assert_eq(response.value, [1, 706, null, null])
     assert_eq(server._active_reset_generation, 0)
     assert_eq(lifecycle.replay_operations, [4])
     assert_eq(server.session.simulation_time_seconds, 0.0)

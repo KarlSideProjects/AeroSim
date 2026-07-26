@@ -53,3 +53,33 @@
   provenance receipt is stale for the current HEAD before it begins tests.
   Recovery-mode validation was used without rebuilding or modifying the native
   artifact.
+
+## Round 1 review fixes
+
+- Deferred status is now read before a waiter deadline. A committed generation
+  wins that race and publishes success; only a generation still reported as
+  pending is aborted for timeout.
+- RPC-owned reset replay now records `Reset` before the committed environment
+  baseline. The private runtime commit defers that environment record for RPC
+  resets; the `Reset` replay callback immediately records the baseline after
+  the native reset event.
+- Deferred transport reset performs the shared request-frame validation before
+  being recognized, and deduplicates pending `(connection epoch, message id)`
+  correlations. Runtime ownership is installed before a no-ACK reset can
+  synchronously commit.
+- Loopback coverage now includes committed-but-expired success, invalid
+  non-request reset frames, duplicate message ids, and two-client disconnect
+  behavior. Runtime coverage proves the no-ACK RPC-owned success records
+  Reset then environment. Native replay coverage proves that exact ordering
+  survives replay application and a checkpoint.
+
+## Round 1 verification evidence
+
+- Focused RPC transport suite: 26 tests / 219 assertions, all passed.
+- Focused runtime suite: 98 tests / 700 assertions, all passed.
+- `scripts/test_native.sh` completed successfully.
+- Recovery GUT completed 271 tests, 258 passed, 13 expected native-dependent
+  pendings, 0 failures, and 0 errors.
+- `scripts/test_replay_integration.sh` with the configured Godot binary remains
+  blocked before execution by stale native-artifact provenance for the current
+  uncommitted round-1 worktree.

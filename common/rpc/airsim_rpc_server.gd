@@ -242,15 +242,18 @@ func _process_client_buffer(client: StreamPeerTCP) -> void:
             buffer = PackedByteArray()
             break
         var response: Array
-        var deferred_reset: bool = typeof(decoded.value) == TYPE_ARRAY and decoded.value.size() == 4 and decoded.value[2] == "reset" and _reset_start_handler.is_valid()
-        if deferred_reset:
-            _queue_reset_waiter(client, decoded.value)
-            buffer = buffer.slice(consumed)
-            continue
-        elif typeof(decoded.value) == TYPE_ARRAY:
-            response = dispatch(decoded.value)
-        else:
+        if typeof(decoded.value) != TYPE_ARRAY:
             response = _error_response(null, "RPC request must be an array")
+        else:
+            var validation := _validate_request(decoded.value)
+            if not bool(validation["ok"]):
+                response = _error_response(validation["message_id"], String(validation["error"]))
+            elif decoded.value[2] == "reset" and _reset_start_handler.is_valid():
+                _queue_reset_waiter(client, decoded.value)
+                buffer = buffer.slice(consumed)
+                continue
+            else:
+                response = dispatch(decoded.value)
         var is_explicit_step: bool = response[2] == null and typeof(decoded.value) == TYPE_ARRAY and decoded.value.size() == 4 and decoded.value[2] in ["simContinueForFrames", "simContinueForTime"]
         var is_async_vehicle_command: bool = response[2] == null and typeof(decoded.value) == TYPE_ARRAY and decoded.value.size() == 4 and _is_async_vehicle_method(decoded.value[2])
         if is_explicit_step:
@@ -349,6 +352,10 @@ func _queue_reset_waiter(client: StreamPeerTCP, request: Array) -> void:
     if typeof(request[3]) != TYPE_ARRAY or not request[3].is_empty():
         _send_or_remove(client, _error_response(message_id, "reset expects no parameters"))
         return
+    var client_epoch := int(_client_epochs.get(client.get_instance_id(), -1))
+    for waiter in _pending_reset_waiters:
+        if int(waiter["client_epoch"]) == client_epoch and waiter["message_id"] == message_id:
+            return
     if _pending_reset_waiters.size() >= MAX_PENDING_RESET_WAITERS:
         _send_or_remove(client, _error_response(message_id, "too many pending reset requests"))
         return
@@ -367,7 +374,7 @@ func _queue_reset_waiter(client: StreamPeerTCP, request: Array) -> void:
     # every retained request receives that generation's final outcome.
     _pending_reset_waiters.append({
         "client": client,
-        "client_epoch": int(_client_epochs.get(client.get_instance_id(), -1)),
+        "client_epoch": client_epoch,
         "message_id": message_id,
         "generation": generation,
         "deadline_ms": Time.get_ticks_msec() + RESET_RESPONSE_TIMEOUT_MS,
@@ -377,6 +384,23 @@ func _queue_reset_waiter(client: StreamPeerTCP, request: Array) -> void:
 func _flush_pending_reset_waiters() -> void:
     var generation := _active_reset_generation
     if generation <= 0:
+        return
+    if not _reset_status_handler.is_valid():
+        return
+    # Completion wins the race with a caller deadline: once runtime has
+    # committed, reset publication and its matching success responses are the
+    # only valid outcome, even if this poll happens after the deadline.
+    var status = _reset_status_handler.call(generation)
+    if typeof(status) != TYPE_DICTIONARY:
+        _complete_reset_waiters(generation, false, "reset status handler returned an invalid result")
+        return
+    var state := String(status.get("state", "pending"))
+    if state == "committed":
+        _publish_reset_commit()
+        _complete_reset_waiters(generation, true)
+        return
+    if state != "pending":
+        _complete_reset_waiters(generation, false, String(status.get("error", "reset failed")))
         return
     var now_ms := Time.get_ticks_msec()
     var timed_out := false
@@ -388,21 +412,6 @@ func _flush_pending_reset_waiters() -> void:
         if _reset_abort_handler.is_valid():
             _reset_abort_handler.call(generation, "RPC reset response timed out")
         _complete_reset_waiters(generation, false, "reset timeout")
-        return
-    if not _reset_status_handler.is_valid():
-        return
-    var status = _reset_status_handler.call(generation)
-    if typeof(status) != TYPE_DICTIONARY:
-        _complete_reset_waiters(generation, false, "reset status handler returned an invalid result")
-        return
-    var state := String(status.get("state", "pending"))
-    if state == "pending":
-        return
-    if state == "committed":
-        _publish_reset_commit()
-        _complete_reset_waiters(generation, true)
-        return
-    _complete_reset_waiters(generation, false, String(status.get("error", "reset failed")))
 
 
 func _publish_reset_commit() -> void:
@@ -527,16 +536,12 @@ func _async_timeout_frames(method: String, params: Array) -> int:
 
 
 func dispatch(request: Array) -> Array:
-    if request.size() != 4:
-        return _error_response(null, "RPC request must contain four fields")
-    if request[0] != 0:
-        return _error_response(request[1], "unsupported RPC request type")
-
+    var validation := _validate_request(request)
+    if not bool(validation["ok"]):
+        return _error_response(validation["message_id"], String(validation["error"]))
     var message_id = request[1]
-    var method = request[2]
-    var params = request[3]
-    if typeof(method) != TYPE_STRING or typeof(params) != TYPE_ARRAY:
-        return _error_response(message_id, "RPC method and params have invalid types")
+    var method: String = request[2]
+    var params: Array = request[3]
     if _is_mutating_method(method):
         var publication_error := _publication_error()
         if not publication_error.is_empty():
@@ -636,6 +641,16 @@ func dispatch(request: Array) -> Array:
             return _dispatch_vehicle_command(message_id, method, params)
         _:
             return _error_response(message_id, "unsupported RPC method: %s" % method)
+
+
+func _validate_request(request: Array) -> Dictionary:
+    if request.size() != 4:
+        return {"ok": false, "message_id": null, "error": "RPC request must contain four fields"}
+    if request[0] != 0:
+        return {"ok": false, "message_id": request[1], "error": "unsupported RPC request type"}
+    if typeof(request[2]) != TYPE_STRING or typeof(request[3]) != TYPE_ARRAY:
+        return {"ok": false, "message_id": request[1], "error": "RPC method and params have invalid types"}
+    return {"ok": true, "message_id": request[1], "error": ""}
 
 
 func _dispatch_scene_object(message_id, method: String, params: Array) -> Array:

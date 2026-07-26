@@ -905,6 +905,10 @@ func _record_replay_simulation_operation(operation: int, value: float) -> void:
         push_error("Complete replay simulation recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
     elif operation == 4 or operation == 5:
         _replay_epoch_pending = true
+        if operation == 4 and environment_state != null:
+            # Replay Reset clears active environment state during application.
+            # Keep the committed reset baseline immediately after it.
+            _record_replay_environment(_environment_rpc_snapshot(environment_state.snapshot()))
 
 
 func _record_replay_async(simulation_time_seconds: float, vehicle_name: String, command_id: String, method: String, lifecycle: int) -> void:
@@ -2347,12 +2351,14 @@ func _begin_rpc_reset() -> Dictionary:
     # respawn action (which can preserve an armed takeoff intent).
     _reset_after_commit_takeoff = false
     _reset_arm_after_commit = false
-    if not reset_to_spawn():
+    var generation := _reset_generation + 1
+    # `reset_to_spawn` can commit synchronously when no body needs a physics
+    # ACK. Pass ownership in before it can run that completion path.
+    if not reset_to_spawn(true):
         return {"ok": false, "error": last_error_message if not last_error_message.is_empty() else "reset rejected"}
-    _rpc_reset_owned_generation = _reset_pending_token
-    if _rpc_reset_owned_generation <= 0:
+    if generation != _reset_last_committed_generation and generation != _rpc_reset_owned_generation:
         return {"ok": false, "error": "reset did not create a pending generation"}
-    return {"ok": true, "generation": _rpc_reset_owned_generation}
+    return {"ok": true, "generation": generation}
 
 
 func _rpc_reset_status(generation: int) -> Dictionary:
@@ -2447,7 +2453,7 @@ func load_map(map_id: String) -> bool:
     _configure_time_trial(map_root)
     return true
 
-func reset_to_spawn() -> bool:
+func reset_to_spawn(rpc_owned_reset: bool = false) -> bool:
     if loaded_map == null:
         return _set_map_error("Cannot reset Free Flight: no map is loaded")
     var spawn := _current_spawn_marker()
@@ -2457,6 +2463,8 @@ func reset_to_spawn() -> bool:
         return true
     _reset_generation += 1
     _reset_pending_token = _reset_generation
+    if rpc_owned_reset:
+        _rpc_reset_owned_generation = _reset_pending_token
     _reset_pending_frames = 0
     _reset_publication_blocked = false
     _reset_pending_spawn = spawn.global_position
@@ -2542,7 +2550,7 @@ func _commit_reset_publication() -> Dictionary:
         _set_secondary_collision_enabled(_airsim_vehicle_names.size() > 1)
     if not rpc_owned_reset:
         _record_replay_simulation_operation(5, 0.0)
-    if environment_state != null:
+    if environment_state != null and not rpc_owned_reset:
         _record_replay_environment(_environment_rpc_snapshot(environment_state.snapshot()))
     _reset_environment_snapshot.clear()
     _reset_publication_blocked = false
