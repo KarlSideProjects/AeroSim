@@ -5,6 +5,9 @@ const ENABLE_ARG := "--aerosim-gsp"
 const NO_OPEN_ARG := "--aerosim-gsp-no-open"
 const PANEL_RESOURCE_PATH := "res://common/gsp/gsp_panel.html"
 const PANEL_DIRECTORY := "gsp"
+const GspServer = preload("res://common/gsp/gsp_server.gd")
+
+var _server: GspServer
 
 
 func _ready() -> void:
@@ -17,7 +20,7 @@ func _ready() -> void:
 
 
 static func parse_user_args(args: Array[String]) -> Dictionary:
-	var enabled := args.has(ENABLE_ARG)
+	var enabled := OS.is_debug_build() and args.has(ENABLE_ARG)
 	return {
 		"enabled": enabled,
 		"open": enabled and not args.has(NO_OPEN_ARG),
@@ -39,6 +42,10 @@ static func file_uri(path: String) -> String:
 	return "file://" + encoded_path
 
 
+static func panel_url(panel_file_url: String, port: int, token: String) -> String:
+	return "%s#port=%d&token=%s" % [panel_file_url, port, token]
+
+
 func launch(options: Dictionary = {}) -> Dictionary:
 	var launch_options := options
 	if launch_options.is_empty():
@@ -52,11 +59,20 @@ func launch(options: Dictionary = {}) -> Dictionary:
 
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, true)
+	_server = GspServer.new()
+	add_child(_server)
+	if get_parent() != null and get_parent().has_method("gsp_identity_snapshot"):
+		_server.set_identity_provider(Callable(get_parent(), "gsp_identity_snapshot"))
+	var server_result := _server.start()
+	if not bool(server_result.get("ok", false)):
+		print("GSP unavailable: %s" % String(server_result.get("error", "listener failed")))
+		return {"ok": true, "enabled": true, "gsp_running": false, "error": server_result.get("error", "listener failed")}
 
 	var installed := install_panel(OS.get_user_data_dir())
 	if not bool(installed.get("ok", false)):
+		_server.stop()
 		return installed
-	var url := file_uri(String(installed.path))
+	var url := panel_url(file_uri(String(installed.path)), int(server_result.port), String(server_result.token))
 	var open_requested := bool(launch_options.get("open", false))
 	var opened := true
 	if open_requested:
@@ -74,10 +90,17 @@ func launch(options: Dictionary = {}) -> Dictionary:
 		"panel_url": url,
 		"opened": opened,
 		"panel_hash": installed.hash,
+		"gsp_running": true,
+		"gsp_port": server_result.port,
 	}
 	if not bool(shell_result.get("ok", false)):
 		result["error"] = shell_result.get("error", "OS.shell_open failed")
 	return result
+
+
+func _exit_tree() -> void:
+	if _server != null:
+		_server.stop()
 
 
 func open_panel(url: String) -> bool:

@@ -24,7 +24,7 @@ code { color: #b9d8ff; overflow-wrap: anywhere; }
 </header>
 <section class="status" aria-live="polite">
 <strong>Launch qualified</strong>
-<p>This dependency-free panel is running as an independent native Wayland client. The live tuning channel is added in the next GSP slice.</p>
+<p>This dependency-free panel is running as an independent native Wayland client.</p>
 <p id="session">No session fragment was supplied.</p>
 </section>
 </main>
@@ -32,8 +32,57 @@ code { color: #b9d8ff; overflow-wrap: anywhere; }
 (function () {
   var session = document.getElementById("session");
   var focusState = document.getElementById("focus-state");
-  var fragment = window.location.hash.slice(1);
-  if (fragment) session.textContent = "Launch fragment: " + fragment;
+  var protocolVersion = 2;
+  var fragment = new URLSearchParams(window.location.hash.slice(1));
+  var port = Number(fragment.get("port"));
+  var token = fragment.get("token") || "";
+  var socket = null;
+  var pingSequence = 1;
+  var pingTimer = null;
+  function setSession(value) {
+    session.textContent = value;
+  }
+  function closeSession() {
+    if (pingTimer !== null) window.clearInterval(pingTimer);
+    pingTimer = null;
+    socket = null;
+  }
+  function sendPing() {
+    if (socket === null || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({
+      v: protocolVersion,
+      t: "ping",
+      seq: pingSequence++,
+      d: { client_timestamp_ms: performance.now(), request: "panel" }
+    }));
+  }
+  if (port < 8765 || port > 8769 || !/^[0-9a-f]{32}$/i.test(token)) {
+    setSession("No valid GSP session fragment was supplied.");
+  } else {
+    socket = new WebSocket("ws://127.0.0.1:" + port);
+    socket.addEventListener("open", function () {
+      setSession("Authenticating GSP session…");
+      socket.send(JSON.stringify({ v: protocolVersion, t: "auth", seq: 0, d: { token: token } }));
+    });
+    socket.addEventListener("message", function (event) {
+      var envelope;
+      try { envelope = JSON.parse(event.data); } catch (_error) { closeSession(); setSession("Invalid GSP response."); return; }
+      if (envelope.v !== protocolVersion || typeof envelope.t !== "string" || !envelope.d) {
+        closeSession();
+        setSession("Invalid GSP protocol response.");
+        return;
+      }
+      if (envelope.t === "hello") {
+        setSession("Authenticated: " + (envelope.d.vehicle_instance || "session"));
+        pingTimer = window.setInterval(sendPing, 250);
+        sendPing();
+      } else if (envelope.t === "pong") {
+        setSession("Connected: pong from " + (envelope.d.peer || "AeroSim"));
+      }
+    });
+    socket.addEventListener("close", function () { closeSession(); setSession("GSP session closed."); });
+    socket.addEventListener("error", function () { closeSession(); setSession("GSP session unavailable."); });
+  }
   function setFocusState(value) {
     focusState.textContent = value;
     document.title = "AeroSim GSP — " + value;

@@ -4770,6 +4770,19 @@ func _on_dashboard_vehicle_selected(vehicle_name: String) -> void:
     if _airsim_name_matches(vehicle_name):
         _dashboard_vehicle_name = vehicle_name
 
+
+func gsp_identity_snapshot() -> Dictionary:
+    var telemetry: Dictionary = native.call("telemetry_snapshot") if native != null and native.has_method("telemetry_snapshot") else {}
+    return {
+        "vehicle_instance": _airsim_vehicle_name,
+        "authority": String(telemetry.get("control_authority", "unavailable")),
+        "registry": {
+            "vehicle_instances": _airsim_vehicle_names.duplicate(),
+            "config_hash": String(telemetry.get("config_hash", "")),
+        },
+        "tick": airsim_session.frame_index if airsim_session != null else 0,
+    }
+
 func _update_status_diagram() -> void:
     if status_diagram == null or native == null or not native.has_method("telemetry_snapshot"):
         return
