@@ -2642,6 +2642,51 @@ func test_rpc_reset_replay_starts_a_new_timestamp_epoch_after_its_environment_ba
     map.queue_free()
 
 
+func test_rpc_reset_seeds_lidar_in_the_zero_time_epoch() -> void:
+    var runtime := FlightRuntime.new()
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    spawn.position = Vector3(7.0, 2.0, -5.0)
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    runtime.loaded_map = map
+    runtime.drone_body = CollisionProbeBody.new()
+    get_tree().root.add_child(runtime.drone_body)
+    runtime.drone_body.global_position = Vector3(-3.0, 1.0, 4.0)
+    runtime.native = FakeNative.new()
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.airsim_session.simulation_time_seconds = 3.0
+    runtime._airsim_vehicle_name = "Drone1"
+    runtime._airsim_vehicle_names = ["Drone1"]
+    runtime.airsim_sensor_suite = AirSimSensorSuite.new()
+    runtime.airsim_rpc_server = AirSimRpcServer.new()
+    runtime.airsim_rpc_server.settings = {"Vehicles": {"Drone1": {"VehicleType": "SimpleFlight", "Sensors": {}}}}
+    runtime.airsim_rpc_server.set_session(runtime.airsim_session)
+    runtime.airsim_rpc_server.set_reset_lifecycle_handlers(
+        Callable(runtime, "_begin_rpc_reset"),
+        Callable(runtime, "_rpc_reset_status"),
+        Callable(runtime, "_abort_rpc_reset"))
+    assert_true(runtime.airsim_sensor_suite.configure(runtime.airsim_rpc_server.settings, ["Drone1"]).ok)
+    runtime._advance_airsim_sensors()
+    assert_gt(runtime.airsim_sensor_suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_LIDAR, "").time_stamp, 0)
+
+    var pending: Dictionary = runtime._begin_rpc_reset()
+    assert_true(pending.ok)
+    await _await_runtime_reset_commit(runtime)
+    runtime.airsim_rpc_server._active_reset_generation = int(pending.generation)
+    runtime.airsim_rpc_server._flush_pending_reset_waiters()
+    runtime._physics_process(1.0 / 240.0)
+
+    var lidar: Dictionary = runtime.airsim_sensor_suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_LIDAR, "")
+    assert_eq(lidar.time_stamp, 0)
+    assert_eq(lidar.pose.position, runtime._airsim_state("Drone1").state.kinematics_estimated.position)
+    runtime.airsim_rpc_server.free()
+    runtime.drone_body.free()
+    runtime.free()
+    map.queue_free()
+
+
 func test_participant_mode_is_independent_and_hides_debug_panel_input() -> void:
     var runtime_script := load("res://common/flight/flight_runtime.gd")
     var panel_script := load("res://addons/debug_api/aerosim_body_drag_panel.gd")

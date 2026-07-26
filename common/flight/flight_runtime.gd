@@ -2609,7 +2609,8 @@ func _advance_reset_pending() -> void:
         var rpc_owned_reset := _rpc_reset_owned_generation == committed_generation
         _reset_pending_token = 0
         _reset_pending_frames = 0
-        _advance_airsim_sensors()
+        if not rpc_owned_reset:
+            _advance_airsim_sensors()
         if _reset_after_commit_takeoff:
             _reset_after_commit_takeoff = false
             _complete_takeoff_after_reset()
