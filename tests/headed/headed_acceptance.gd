@@ -324,6 +324,16 @@ func _run() -> void:
 	if third_person_camera != null:
 		var local_camera_offset: Vector3 = runtime.drone_body.global_basis.inverse() * (third_person_camera.global_position - runtime.drone_body.global_position)
 		_expect(local_camera_offset.y > 0.0 and local_camera_offset.z > 0.0, "third-person camera remains above and behind the drone")
+	var terrain_range_terrain: Node3D = runtime.loaded_map.get_node_or_null("Terrain3D") as Node3D if runtime.loaded_map != null else null
+	var terrain_range_data: Variant = terrain_range_terrain.data if terrain_range_terrain != null else null
+	var terrain_grass_sample: Vector3 = terrain_range_data.get_texture_id(Vector3(80.0, 0.0, -80.0)) if terrain_range_data != null else Vector3(-1.0, -1.0, -1.0)
+	var terrain_soil_sample: Vector3 = terrain_range_data.get_texture_id(Vector3(8.0, 0.0, -36.0)) if terrain_range_data != null else Vector3(-1.0, -1.0, -1.0)
+	var terrain_rock_sample: Vector3 = terrain_range_data.get_texture_id(Vector3(24.0, 0.0, -44.0)) if terrain_range_data != null else Vector3(-1.0, -1.0, -1.0)
+	var north_ridge_rock := runtime.loaded_map.get_node_or_null("NorthRidgeRock") as StaticBody3D if runtime.loaded_map != null else null
+	var east_ridge_rock := runtime.loaded_map.get_node_or_null("EastRidgeRock") as StaticBody3D if runtime.loaded_map != null else null
+	var north_ridge_collision := north_ridge_rock.get_node_or_null("CollisionShape3D") as CollisionShape3D if north_ridge_rock != null else null
+	var east_ridge_collision := east_ridge_rock.get_node_or_null("CollisionShape3D") as CollisionShape3D if east_ridge_rock != null else null
+	_expect(terrain_range_terrain != null and terrain_range_data != null and int(terrain_grass_sample.x) == 1 and int(terrain_soil_sample.y) == 2 and terrain_soil_sample.z >= 0.99 and int(terrain_rock_sample.y) == 0 and terrain_rock_sample.z >= 0.99 and terrain_range_data.get_height(Vector3(30.0, 0.0, -72.0)) >= 3.0 and north_platform != null and north_platform_collision != null and north_platform_collision.shape is BoxShape3D and spawn != null and north_platform.global_position.distance_to(Vector3(spawn.global_position.x, north_platform.global_position.y, spawn.global_position.z)) <= 1e-6 and north_ridge_rock != null and north_ridge_collision != null and north_ridge_collision.shape != null and east_ridge_rock != null and east_ridge_collision != null and east_ridge_collision.shape != null and natural_environment != null and natural_environment.environment != null and natural_environment.environment.background_mode == Environment.BG_SKY and natural_environment.environment.fog_enabled and third_person_camera != null and root.get_camera_3d() == third_person_camera and runtime._airsim_camera_source() == runtime.chase_camera, "canonical Terrain Range preflight combines colored ground, elevated natural landmarks, the SpawnNorth platform, authored sky/fog, and separate third-person player and FPV AirSim cameras")
 	await _snapshot("01_third_person_preflight")
 	_tap(KEY_V)
 	await _settle(2)
