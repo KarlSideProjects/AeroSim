@@ -1311,10 +1311,16 @@ func _run_jolt_collision_trial(native: Object, scenario: String, seed: int, mass
         reason = "energy row=%f limit=%f" % [float(impact_row[17]), energy_before * 1.01]
     if ok:
         _apply_collision_row_to_body(drone, impact_row)
-        var body_energy := _kinetic(drone.linear_velocity, _jolt_angular_velocity_body_y_up(drone), mass_kg, inertia_frd)
-        ok = _body_state_finite(drone) and body_energy <= energy_before * 1.01 + 1e-4
-        if not ok:
-            reason = "body_impact_state body=%f limit=%f finite=%s" % [body_energy, energy_before * 1.01, str(_body_state_finite(drone))]
+        await physics_frame
+        await process_frame
+        if drone.pending_native_state:
+            ok = false
+            reason = "state_not_committed"
+        else:
+            var body_energy := _kinetic(drone.linear_velocity, _jolt_angular_velocity_body_y_up(drone), mass_kg, inertia_frd)
+            ok = _body_state_finite(drone) and body_energy <= energy_before * 1.01 + 1e-4
+            if not ok:
+                reason = "post_commit_energy body=%f limit=%f finite=%s" % [body_energy, energy_before * 1.01, str(_body_state_finite(drone))]
     ok = ok and not (scenario == "wall" and drone.global_position.x > 0.3)
     if not ok and reason == "impact":
         reason = "tunneled"
