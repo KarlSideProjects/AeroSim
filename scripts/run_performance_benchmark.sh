@@ -120,7 +120,20 @@ printf '%s\n' \
     'res://extensions/aerosim_native/aerosim_native.gdextension' \
     'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
 
-timeout 180s "$godot_bin" --path . --resolution 1280x720 --remote-debug local:// \
+# Xvfb's lavapipe Vulkan path crashes Forward+ during the CI smoke workload.
+# This diagnostic run is not a G0.1 performance qualification, so use Godot's
+# software OpenGL renderer while preserving Forward+ for gate/reference runs.
+rendering_args=()
+case "${VK_ICD_FILENAMES:-}" in
+    *lvp_icd.json*|*lavapipe*)
+        if [ "$benchmark_mode" = "smoke" ]; then
+            rendering_args=(--rendering-method gl_compatibility)
+            echo "performance smoke lavapipe diagnostic: using Compatibility renderer" >&2
+        fi
+        ;;
+esac
+
+timeout 180s "$godot_bin" "${rendering_args[@]}" --path . --resolution 1280x720 --remote-debug local:// \
     --script res://tests/performance/physics_benchmark.gd -- \
     --output "$raw_path" \
     --warmup-seconds "$warmup_seconds" \
