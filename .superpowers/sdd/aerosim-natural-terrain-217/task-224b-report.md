@@ -68,3 +68,16 @@
 - New GUT coverage proves pending state/image rejection and deferred
   replay/environment/time-trial publication, timeout rollback, and post-commit
   native-arm failure cleanup.
+
+## Round 1 verification evidence
+
+- Before the round-1 implementation, the new pending-publication test failed:
+  it observed a replay reset record, reset environment/time-trial state, and
+  readable AirSim state before an ACK. The post-change recovery suite passed
+  261 tests with 0 failures/errors and 13 expected native-dependent pendings.
+- After rebuilding the Linux debug GDExtension for this commit, the normal GUT
+  suite completed: 261 tests, 0 failures, 0 errors.
+- `scripts/test_native.sh`, `scripts/test_native_atomic_boundary.sh`,
+  `scripts/test_replay_integration.sh`, and
+  `scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5`
+  all completed successfully.
