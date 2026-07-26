@@ -3,6 +3,7 @@ extends SceneTree
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 const AirSimCoordinateContract = preload("res://common/rpc/airsim_coordinate_contract.gd")
 const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd")
+const CameraProfile = preload("res://common/flight/camera_profile.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 
 class MutableGamepadDeviceState:
@@ -385,7 +386,9 @@ func _run() -> void:
 		runtime.drone_body.apply_native_state(Vector3(100.0, 100.0, 100.0), Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
 		runtime.drone_body.reset_contact()
 		_inject_joy_axis(known_device_id, axis_case.axis, axis_case.value)
-		await _settle(10)
+		await physics_frame
+		await process_frame
+		await _settle_physics(30)
 		for role in ["roll", "pitch", "yaw"]:
 			if role != axis_case.role:
 				_expect(is_zero_approx(runtime._profile_axis(role)), "known Xbox %s FRD gate neutralizes %s input" % [axis_case.role, role])
@@ -591,6 +594,8 @@ func _run() -> void:
 	await _await_reset_commit(runtime, "preflight", false, "terrain3d_range", "fresh Terrain Range preflight")
 	var terrain_range_frame := await _snapshot("01_terrain_range_preflight")
 	_expect(_max_color_ratio(terrain_range_frame) < 0.99, "Terrain Range preflight capture is not monochrome")
+	var canonical_camera_reset: Dictionary = runtime.call("_save_camera_profile", CameraProfile.default_profile())
+	_expect(canonical_camera_reset.ok and absf(runtime.chase_camera.fov - CameraProfile.DEFAULT_FOV_DEG) <= 0.000001, "Terrain Range AirSim ground capture restores the canonical FPV camera profile after settings coverage")
 	var camera_rpc: Array = runtime.airsim_rpc_server.dispatch([0, 142, "simGetImages", [[
 		{"camera_name": "0", "image_type": 0, "pixels_as_float": false, "compress": true},
 		{"camera_name": "0", "image_type": 1, "pixels_as_float": true, "compress": false},
@@ -732,6 +737,11 @@ func _install_deterministic_valid_license(runtime: Node) -> void:
 func _settle(frames: int) -> void:
 	for _frame in frames:
 		await process_frame
+
+
+func _settle_physics(frames: int) -> void:
+	for _frame in frames:
+		await physics_frame
 
 
 func _await_reset_commit(runtime: Node, expected_screen: String, expected_paused: bool, expected_map_id: String, context: String) -> bool:
