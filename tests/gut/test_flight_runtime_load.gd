@@ -568,7 +568,7 @@ func test_second_quick_fly_reuses_the_loaded_terrain_range_and_resets_spawn() ->
     assert_eq(String(runtime.environment_state.snapshot().wind_preset), "calm")
 
 
-func test_second_quick_fly_with_an_active_profile_reuses_the_map_and_resets_once() -> void:
+func test_active_profile_quick_fly_defers_one_frame_and_coalesces_the_same_map_reset() -> void:
     var runtime := _quick_fly_runtime()
     runtime.gamepad_device_state = FakeDeviceState.new(true)
     runtime.session_gamepad_device_id = 7
@@ -576,12 +576,33 @@ func test_second_quick_fly_with_an_active_profile_reuses_the_map_and_resets_once
 
     runtime.quick_fly()
     var first_loaded_map := runtime.loaded_map
+    var spawn := first_loaded_map.get_node("SpawnNorth") as Marker3D if first_loaded_map != null else null
     var reset_calls_before: int = runtime.reset_to_spawn_calls
+    runtime.drone_body.global_position = Vector3(99.0, 99.0, 99.0)
+    runtime.environment_state.apply({"rain": 0.75, "wind_preset": "severe"})
+    runtime.third_person_view = false
+    runtime.quick_fly()
     runtime.quick_fly()
 
     assert_not_null(first_loaded_map)
     assert_same(runtime.loaded_map, first_loaded_map)
+    assert_eq(runtime.reset_to_spawn_calls - reset_calls_before, 0)
+    assert_eq(runtime.screen, "preflight_reset_pending")
+    assert_true(runtime.paused)
+    assert_false(runtime.takeoff_requested)
+
+    await get_tree().process_frame
+
+    assert_same(runtime.loaded_map, first_loaded_map)
     assert_eq(runtime.reset_to_spawn_calls - reset_calls_before, 1)
+    if spawn != null:
+        assert_eq(runtime.drone_body.global_position, spawn.global_position)
+    assert_eq(float(runtime.environment_state.snapshot().rain), 0.0)
+    assert_eq(String(runtime.environment_state.snapshot().wind_preset), "calm")
+    assert_true(runtime.third_person_view)
+    assert_true(runtime.third_person_camera.current)
+    assert_false(runtime.chase_camera.current)
+    assert_same(runtime._airsim_camera_source(), runtime.chase_camera)
 
 
 func test_other_maps_keep_the_runtime_weather_environment_fallback() -> void:
