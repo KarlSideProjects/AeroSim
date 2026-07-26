@@ -568,7 +568,7 @@ func test_second_quick_fly_reuses_the_loaded_terrain_range_and_resets_spawn() ->
     assert_eq(String(runtime.environment_state.snapshot().wind_preset), "calm")
 
 
-func test_active_profile_quick_fly_defers_one_frame_and_coalesces_the_same_map_reset() -> void:
+func test_second_quick_fly_with_an_active_profile_reuses_the_map_and_resets_once() -> void:
     var runtime := _quick_fly_runtime()
     runtime.gamepad_device_state = FakeDeviceState.new(true)
     runtime.session_gamepad_device_id = 7
@@ -582,17 +582,8 @@ func test_active_profile_quick_fly_defers_one_frame_and_coalesces_the_same_map_r
     runtime.environment_state.apply({"rain": 0.75, "wind_preset": "severe"})
     runtime.third_person_view = false
     runtime.quick_fly()
-    runtime.quick_fly()
 
     assert_not_null(first_loaded_map)
-    assert_same(runtime.loaded_map, first_loaded_map)
-    assert_eq(runtime.reset_to_spawn_calls - reset_calls_before, 0)
-    assert_eq(runtime.screen, "preflight_reset_pending")
-    assert_true(runtime.paused)
-    assert_false(runtime.takeoff_requested)
-
-    await get_tree().process_frame
-
     assert_same(runtime.loaded_map, first_loaded_map)
     assert_eq(runtime.reset_to_spawn_calls - reset_calls_before, 1)
     if spawn != null:
@@ -600,9 +591,75 @@ func test_active_profile_quick_fly_defers_one_frame_and_coalesces_the_same_map_r
     assert_eq(float(runtime.environment_state.snapshot().rain), 0.0)
     assert_eq(String(runtime.environment_state.snapshot().wind_preset), "calm")
     assert_true(runtime.third_person_view)
+
+    await get_tree().process_frame
+
     assert_true(runtime.third_person_camera.current)
     assert_false(runtime.chase_camera.current)
     assert_same(runtime._airsim_camera_source(), runtime.chase_camera)
+
+
+func test_cancelled_fallback_retains_the_preloaded_terrain_range_for_the_next_quick_fly() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quick_fly()
+    var retained_map := runtime.loaded_map
+    var native := FakeNative.new()
+    runtime.native = native
+    native.armed = true
+    runtime.takeoff_requested = true
+    runtime.drone_body.freeze = false
+    runtime._cancel_controller_route()
+
+    assert_eq(runtime.screen, "main_menu")
+    assert_same(runtime.loaded_map, retained_map)
+    assert_eq(runtime.loaded_map_id, "terrain3d_range")
+    assert_false(runtime.takeoff_requested)
+    assert_true(runtime.paused)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(native.disarmed)
+
+    runtime.native = null
+    runtime.quick_fly()
+
+    assert_eq(runtime.screen, "fallback_prompt")
+    assert_same(runtime.loaded_map, retained_map)
+
+
+func test_cancelled_controller_confirmation_retains_the_preloaded_terrain_range() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.gamepad_device_state = FakeDeviceState.new(true)
+    runtime._build_flight_hud()
+
+    runtime.quick_fly()
+    var retained_map := runtime.loaded_map
+    var native := FakeNative.new()
+    runtime.native = native
+    native.armed = true
+    runtime._cancel_controller_route()
+
+    assert_eq(runtime.screen, "main_menu")
+    assert_same(runtime.loaded_map, retained_map)
+    assert_eq(runtime.loaded_map_id, "terrain3d_range")
+    assert_true(runtime.paused)
+    assert_true(runtime.drone_body.freeze)
+    assert_true(native.disarmed)
+
+
+func test_switching_to_industrial_yard_unloads_the_retained_terrain_range() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quick_fly()
+    var terrain_range := runtime.loaded_map
+    runtime._cancel_controller_route()
+
+    assert_true(runtime.load_map("industrial_yard"))
+
+    assert_eq(runtime.loaded_map_id, "industrial_yard")
+    assert_not_same(runtime.loaded_map, terrain_range)
+    assert_not_null(runtime.loaded_map)
+
+    await get_tree().process_frame
+
+    assert_false(is_instance_valid(terrain_range))
 
 
 func test_other_maps_keep_the_runtime_weather_environment_fallback() -> void:

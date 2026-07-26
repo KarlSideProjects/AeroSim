@@ -137,6 +137,7 @@ func _run() -> void:
 	await _snapshot("00_keyboard_fallback_preconfirm")
 	var fallback_third_person_camera := runtime.get_node_or_null("ThirdPersonCamera") as Camera3D
 	_expect(runtime.screen == "fallback_prompt" and runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null and fallback_third_person_camera != null and root.get_camera_3d() == fallback_third_person_camera and runtime.third_person_view and runtime._airsim_camera_source() == runtime.chase_camera, "no-controller Quick Fly shows Terrain Range through the default third-person player camera while AirSim remains FPV before keyboard fallback confirmation")
+	var retained_terrain_range: Node3D = runtime.loaded_map
 	if fallback_third_person_camera != null:
 		var fallback_local_camera_offset: Vector3 = runtime.drone_body.global_basis.inverse() * (fallback_third_person_camera.global_position - runtime.drone_body.global_position)
 		_expect(fallback_local_camera_offset.y > 0.0 and fallback_local_camera_offset.z > 0.0, "no-controller Quick Fly keeps the third-person camera above and behind the drone")
@@ -145,7 +146,7 @@ func _run() -> void:
 	_expect(runtime.screen == "fallback_prompt" and not runtime.takeoff_requested and not runtime.native.call("flight_control_armed"), "reset cannot bypass input confirmation")
 	_tap(KEY_ESCAPE)
 	await _settle(2)
-	_expect(runtime.screen == "main_menu" and runtime.loaded_map == null, "canceling no-controller Quick Fly frees the preloaded map")
+	_expect(runtime.screen == "main_menu" and runtime.loaded_map == retained_terrain_range and runtime.loaded_map_id == "terrain3d_range" and runtime.paused and runtime.drone_body.freeze and not runtime.native.call("flight_control_armed") and runtime.player_view_label != null and not runtime.player_view_label.visible, "canceling no-controller Quick Fly retains the frozen, disarmed Terrain Range while hiding flight state")
 	var known_device_id := await _inject_known_gamepad()
 	_expect(known_device_id >= 0, "virtual SDL gamepad registers as a known controller")
 	device_state.replace_snapshot([known_device_id], [known_device_id])
@@ -275,7 +276,7 @@ func _run() -> void:
 	await _settle(10)
 	await _snapshot("01_controller_confirmation")
 	_expect(runtime.screen == "controller_confirmation", "known unconfirmed gamepad enters visible Xbox profile confirmation")
-	_expect(runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null and root.get_camera_3d() == runtime.third_person_camera and runtime.third_person_view and runtime._airsim_camera_source() == runtime.chase_camera, "Quick Fly confirmation shows Terrain Range through the default third-person player camera while AirSim remains FPV")
+	_expect(runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map == retained_terrain_range and root.get_camera_3d() == runtime.third_person_camera and runtime.third_person_view and runtime._airsim_camera_source() == runtime.chase_camera, "Quick Fly confirmation reuses the retained Terrain Range through the default third-person player camera while AirSim remains FPV")
 	_expect(runtime.controller_confirmation_panel != null and runtime.controller_confirmation_panel.is_visible_in_tree(), "Controller confirmation panel is visible")
 	var mapping: Label = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/FixedMapping")
 	var axes: Label = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/LiveAxes")
@@ -302,7 +303,7 @@ func _run() -> void:
 		_click(confirm_button)
 	await _settle(10)
 	_expect(runtime.screen == "preflight", "confirmation enters low-throttle preflight")
-	_expect(runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map != null, "Quick Fly preflight loads Terrain Range")
+	_expect(runtime.loaded_map_id == "terrain3d_range" and runtime.loaded_map == retained_terrain_range, "Quick Fly preflight reuses the retained Terrain Range")
 	var spawn := runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D if runtime.loaded_map != null else null
 	_expect(spawn != null and runtime.drone_body.global_position.distance_to(spawn.global_position) <= 1e-6, "Terrain Range load places the drone at SpawnNorth")
 	var natural_environment := runtime.loaded_map.get_node_or_null("AeroSimEnvironment") as WorldEnvironment if runtime.loaded_map != null else null

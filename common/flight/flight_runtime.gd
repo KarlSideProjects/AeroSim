@@ -172,8 +172,6 @@ var controller_confirmation_profile: InputProfiles.GamepadProfile
 var controller_confirmation_device_id := -1
 var controller_return_screen := "preflight"
 var third_person_view := false
-var _active_profile_quick_fly_reset_pending := false
-var _active_profile_quick_fly_reset_generation := 0
 var confirmation_mapping_label: Label
 var confirmation_axes_label: Label
 var controller_settings_device_label: Label
@@ -1885,8 +1883,6 @@ func _publish_px4_lockstep_sensor_if_needed() -> void:
     px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), simulation_time)
 
 func request_takeoff() -> void:
-    if _active_profile_quick_fly_reset_pending:
-        return
     screen = "flight"
     set_dashboard_layout_mode("compact")
     flight_mode = "ANGLE"
@@ -1911,8 +1907,6 @@ func request_takeoff() -> void:
     _refresh_flight_hud()
 
 func arm_and_takeoff() -> void:
-    if _active_profile_quick_fly_reset_pending:
-        return
     if controller_safety_latched:
         last_error_message = "Arm blocked: controller_resume_required"
         _refresh_flight_hud()
@@ -2076,38 +2070,7 @@ func quick_fly() -> void:
         controller_return_screen = "preflight"
         begin_controller_confirmation(device_id)
         return
-    if loaded_map_id == map_id and loaded_map != null:
-        _defer_active_profile_quick_fly_reset(map_id, device_id)
-        return
     enter_preflight()
-
-
-func _defer_active_profile_quick_fly_reset(map_id: String, device_id: int) -> void:
-    if _active_profile_quick_fly_reset_pending:
-        return
-    _active_profile_quick_fly_reset_pending = true
-    _active_profile_quick_fly_reset_generation += 1
-    var generation := _active_profile_quick_fly_reset_generation
-    screen = "preflight_reset_pending"
-    takeoff_requested = false
-    set_paused(true)
-    _refresh_flight_hud()
-    _complete_deferred_active_profile_quick_fly_reset(generation, map_id, device_id)
-
-
-func _complete_deferred_active_profile_quick_fly_reset(generation: int, map_id: String, device_id: int) -> void:
-    await get_tree().process_frame
-    if generation != _active_profile_quick_fly_reset_generation or not _active_profile_quick_fly_reset_pending:
-        return
-    _active_profile_quick_fly_reset_pending = false
-    if not is_inside_tree() or screen != "preflight_reset_pending":
-        return
-    if loaded_map_id != map_id or loaded_map == null:
-        return
-    if session_gamepad_profile == null or session_gamepad_device_id != device_id:
-        return
-    enter_preflight()
-    _update_chase_camera()
 
 func begin_controller_confirmation(device_id: int = _first_connected_device()) -> void:
     var profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)
@@ -2155,8 +2118,17 @@ func _cancel_controller_route() -> void:
         show_controller_settings()
     else:
         if target == "preflight":
-            unload_map()
+            _deactivate_preloaded_flight_map()
         show_main_menu()
+
+
+func _deactivate_preloaded_flight_map() -> void:
+    takeoff_requested = false
+    reset_hold_frames = 0
+    _reset_airsim_flight_state()
+    if drone_body != null:
+        drone_body.reset_contact()
+    set_paused(true)
 
 func accept_controller_confirmation() -> void:
     var profile := InputProfiles.GamepadProfile.xbox_default(controller_confirmation_device_id, gamepad_device_state)
