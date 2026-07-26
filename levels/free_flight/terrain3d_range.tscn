@@ -1,4 +1,4 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Terrain3DAssets" path="res://assets/third_party/terrain3d_demo/demo/data/assets.tres" id="1"]
 [sub_resource type="Terrain3DMaterial" id="1"]
@@ -16,6 +16,19 @@ size = Vector3(4, 0.3, 4)
 
 [sub_resource type="BoxShape3D" id="7"]
 size = Vector3(4, 0.3, 4)
+
+[sub_resource type="StandardMaterial3D" id="8"]
+albedo_color = Color(0.22, 0.19, 0.13, 1)
+roughness = 0.95
+
+[sub_resource type="CylinderMesh" id="9"]
+top_radius = 1.0
+bottom_radius = 2.0
+height = 4.0
+
+[sub_resource type="CylinderShape3D" id="10"]
+radius = 2.0
+height = 4.0
 
 [node name="Terrain3DRange" type="Node3D"]
 
@@ -76,6 +89,28 @@ surface_material_override/0 = SubResource("5")
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="SpawnSouthPlatform"]
 shape = SubResource("7")
+
+[node name="NorthRidgeRock" type="StaticBody3D" parent="."]
+position = Vector3(30, 7, -72)
+metadata/airsim_segmentation_id = 9
+
+[node name="Mesh" type="MeshInstance3D" parent="NorthRidgeRock"]
+mesh = SubResource("9")
+surface_material_override/0 = SubResource("8")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="NorthRidgeRock"]
+shape = SubResource("10")
+
+[node name="EastRidgeRock" type="StaticBody3D" parent="."]
+position = Vector3(76, 6, -48)
+metadata/airsim_segmentation_id = 10
+
+[node name="Mesh" type="MeshInstance3D" parent="EastRidgeRock"]
+mesh = SubResource("9")
+surface_material_override/0 = SubResource("8")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="EastRidgeRock"]
+shape = SubResource("10")
 
 [node name="TimeTrial" type="Node3D" parent="."]
 

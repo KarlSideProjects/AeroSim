@@ -28,6 +28,7 @@ func _run() -> void:
     for x in range(0, 161):
         for z in range(-160, 1):
             var position := Vector3(x, 0, z)
+            terrain_data.set_height(position, _relief_height(Vector2(x, z)))
             terrain_data.set_control_base_id(position, 1)
             terrain_data.set_control_overlay_id(position, 1)
             terrain_data.set_control_blend(position, 0.0)
@@ -39,9 +40,20 @@ func _run() -> void:
             elif rock_weight > 0.0:
                 terrain_data.set_control_overlay_id(position, 0)
                 terrain_data.set_control_blend(position, rock_weight)
+    terrain_data.update_maps(Terrain3DRegion.TYPE_HEIGHT, true, false)
     terrain_data.update_maps(Terrain3DRegion.TYPE_CONTROL, true, false)
     terrain_data.save_directory(DataDirectory)
     scene.queue_free()
     camera.queue_free()
     await process_frame
     quit(0)
+
+func _relief_height(position: Vector2) -> float:
+    return maxf(
+        _hill_height(position, Vector2(30, -72), 26.0, 5.0),
+        _hill_height(position, Vector2(76, -48), 32.0, 4.0),
+    )
+
+func _hill_height(position: Vector2, center: Vector2, radius: float, peak: float) -> float:
+    var weight := clampf(1.0 - position.distance_to(center) / radius, 0.0, 1.0)
+    return peak * weight * weight * (3.0 - 2.0 * weight)

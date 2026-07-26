@@ -87,6 +87,29 @@ func _run() -> void:
             push_error("Terrain3D range spawn %s must clear the public terrain height" % spawn_name)
             quit(1)
             return
+    for relief_sample in [Vector3(30, 0, -72), Vector3(76, 0, -48)]:
+        if terrain_data.get_height(relief_sample) < 3.0:
+            push_error("Terrain3D range must provide readable terrain relief beyond the launch platform")
+            quit(1)
+            return
+    for safe_marker_name in ["SpawnNorth", "SpawnSouth", "TimeTrial/Checkpoint01", "TimeTrial/Checkpoint02", "TimeTrial/Checkpoint03", "TimeTrial/Finish"]:
+        var safe_marker := scene.get_node(safe_marker_name) as Marker3D
+        if terrain_data.get_height(safe_marker.global_position) >= safe_marker.global_position.y:
+            push_error("Terrain3D range must keep %s above the terrain relief" % safe_marker_name)
+            quit(1)
+            return
+    for landmark_name in ["NorthRidgeRock", "EastRidgeRock"]:
+        var landmark := scene.get_node_or_null(landmark_name) as StaticBody3D
+        var landmark_mesh := landmark.get_node_or_null("Mesh") as MeshInstance3D if landmark != null else null
+        var landmark_collision := landmark.get_node_or_null("CollisionShape3D") as CollisionShape3D if landmark != null else null
+        if landmark == null or landmark_mesh == null or landmark_mesh.mesh == null or not landmark_mesh.is_visible_in_tree() or landmark_collision == null or landmark_collision.shape == null:
+            push_error("Terrain3D range landmark %s must be a visible collision-bearing scene prop" % landmark_name)
+            quit(1)
+            return
+    if not scene.find_children("*", "RigidBody3D", true, false).is_empty():
+        push_error("Terrain3D range landmarks must not introduce rigid bodies")
+        quit(1)
+        return
     scene.queue_free()
     camera.queue_free()
     await process_frame
