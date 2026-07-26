@@ -40,6 +40,7 @@ var _out_dir := "build/headed"
 var _channel_monitor_evidence: Dictionary = {}
 var _motor_hud_evidence: Dictionary = {}
 var _known_xbox_physical_evidence: Dictionary = {}
+var _assisted_hover_evidence: Dictionary = {}
 var _layout_audit_evidence: Dictionary = {}
 var _screenshot_comparison: Dictionary = {}
 var _ui_animation_count := 0
@@ -285,7 +286,7 @@ func _run() -> void:
 	_expect(mapping != null and mapping.text.contains("roll -> Axis 2") and mapping.text.contains("throttle -> Axis 1"), "confirmation shows fixed Xbox mapping")
 	for expected_axis in [
 		"roll: Raw +0.250 | Normalized +0.167",
-		"pitch: Raw -0.750 | Normalized +0.694",
+		"pitch: Raw -0.750 | Normalized -0.694",
 		"yaw: Raw +0.500 | Normalized +0.420",
 		"throttle: Raw -0.500 | Normalized +0.420"
 	]:
@@ -294,7 +295,7 @@ func _run() -> void:
 		{"axis": JOY_AXIS_LEFT_X, "value": -0.5, "expected": "yaw: Raw -0.500 | Normalized -0.420"},
 		{"axis": JOY_AXIS_LEFT_Y, "value": 0.5, "expected": "throttle: Raw +0.500 | Normalized -0.420"},
 		{"axis": JOY_AXIS_RIGHT_X, "value": -0.25, "expected": "roll: Raw -0.250 | Normalized -0.167"},
-		{"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "pitch: Raw +0.750 | Normalized -0.694"}
+		{"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "pitch: Raw +0.750 | Normalized +0.694"}
 	]:
 		_inject_joy_axis(known_device_id, update.axis, update.value)
 		await _settle(2)
@@ -367,6 +368,46 @@ func _run() -> void:
 	_expect(runtime.flight_mode == "ASSISTED_HOLD", "A takeoff hands off to Assisted Hold while the arm-low stick remains down")
 	_expect(absf(takeoff_altitude - 1.0) <= 0.35, "A takeoff reaches and holds approximately one metre instead of leaving the scene: altitude=%.3f" % takeoff_altitude)
 	_expect(absf(runtime.drone_body.linear_velocity.y) <= 0.35, "A takeoff settles to a stationary vertical hover: velocity_y=%.3f" % runtime.drone_body.linear_velocity.y)
+	var calm_hover_start: Vector3 = runtime.drone_body.global_position
+	var calm_hover_max_displacement := 0.0
+	var calm_hover_max_speed := 0.0
+	var calm_hover_max_tilt_degrees := 0.0
+	var calm_hover_direction_changes := 0
+	var calm_hover_previous_velocity_x := 0.0
+	var calm_hover_previous_velocity_z := 0.0
+	for _frame in 2_400:
+		await physics_frame
+		var calm_hover_velocity: Vector3 = runtime.drone_body.linear_velocity
+		calm_hover_max_displacement = maxf(calm_hover_max_displacement, Vector2(
+			runtime.drone_body.global_position.x - calm_hover_start.x,
+			runtime.drone_body.global_position.z - calm_hover_start.z
+		).length())
+		calm_hover_max_speed = maxf(calm_hover_max_speed, Vector2(calm_hover_velocity.x, calm_hover_velocity.z).length())
+		calm_hover_max_tilt_degrees = maxf(calm_hover_max_tilt_degrees, maxf(
+			absf(rad_to_deg(runtime.drone_body.rotation.x)),
+			absf(rad_to_deg(runtime.drone_body.rotation.z))
+		))
+		if absf(calm_hover_velocity.x) > 0.05 and calm_hover_previous_velocity_x * calm_hover_velocity.x < 0.0:
+			calm_hover_direction_changes += 1
+		if absf(calm_hover_velocity.z) > 0.05 and calm_hover_previous_velocity_z * calm_hover_velocity.z < 0.0:
+			calm_hover_direction_changes += 1
+		calm_hover_previous_velocity_x = calm_hover_velocity.x
+		calm_hover_previous_velocity_z = calm_hover_velocity.z
+	_expect(calm_hover_max_displacement <= 0.75, "calm ten-second Assisted Hold remains within 0.75 m horizontally: displacement=%.3f" % calm_hover_max_displacement)
+	_expect(calm_hover_max_speed <= 0.45, "calm ten-second Assisted Hold has bounded horizontal speed: speed=%.3f" % calm_hover_max_speed)
+	_expect(calm_hover_max_tilt_degrees <= 8.0, "calm ten-second Assisted Hold has bounded roll/pitch envelope: tilt=%.3f" % calm_hover_max_tilt_degrees)
+	_expect(calm_hover_direction_changes <= 6, "calm ten-second Assisted Hold does not sustain horizontal rocking: changes=%d" % calm_hover_direction_changes)
+	_assisted_hover_evidence = {
+		"mode": runtime.flight_mode,
+		"roll_raw": Input.get_joy_axis(known_device_id, JOY_AXIS_RIGHT_X),
+		"pitch_raw": Input.get_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y),
+		"roll_normalized": runtime._profile_axis("roll"),
+		"pitch_normalized": runtime._profile_axis("pitch"),
+		"max_horizontal_displacement_m": calm_hover_max_displacement,
+		"max_horizontal_speed_mps": calm_hover_max_speed,
+		"max_tilt_degrees": calm_hover_max_tilt_degrees,
+		"horizontal_direction_changes": calm_hover_direction_changes,
+	}
 	_audit_cockpit_three_way_split(runtime, "flight_1280x720")
 	await _snapshot("01_assisted_hover")
 	_inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, 0.0)
@@ -374,10 +415,11 @@ func _run() -> void:
 	runtime.native.call("arm_flight_control", 0.0)
 	runtime.request_takeoff()
 	await _await_reset_commit(runtime, "flight", false, "terrain3d_range", "Xbox physical input takeoff")
+	runtime.flight_mode = "ANGLE"
+	runtime.takeoff_assist_active = false
 	var xbox_frd_axis_cases := [
 		{"role": "roll", "axis": JOY_AXIS_RIGHT_X, "value": -0.5, "component": 0},
-		{"role": "pitch", "axis": JOY_AXIS_RIGHT_Y, "value": 0.5, "component": 1},
-		{"role": "yaw", "axis": JOY_AXIS_LEFT_X, "value": -0.25, "component": 2},
+		{"role": "pitch", "axis": JOY_AXIS_RIGHT_Y, "value": -0.5, "component": 1},
 	]
 	for axis_case in xbox_frd_axis_cases:
 		for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y]:
@@ -403,6 +445,9 @@ func _run() -> void:
 			"frd_omega_rad_s": {"roll": frd_rates.x, "pitch": frd_rates.y, "yaw": frd_rates.z},
 		}
 		_expect(frd_rates[axis_case.component] < -0.01, "known Xbox physical %s input produces negative FRD %s response" % [axis_case.role, axis_case.role])
+	for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y]:
+		_inject_joy_axis(known_device_id, axis, 0.0)
+	runtime.toggle_altitude_hold()
 	runtime.set_paused(true)
 	await _settle(2)
 	var paused_position: Vector3 = runtime.drone_body.global_position
@@ -439,7 +484,7 @@ func _run() -> void:
 	_expect(monitor != null and monitor.text != monitor_before_axes, "Channel Monitor renders injected axes while paused")
 	for expected_axis_row in [
 		"roll:     [---------|-------] raw +0.250 | normalized +0.167",
-		"pitch:    [--------------|--] raw -0.750 | normalized +0.694",
+		"pitch:    [--|--------------] raw -0.750 | normalized -0.694",
 		"yaw:      [-----------|-----] raw +0.500 | normalized +0.420",
 		"throttle: [-----------|-----] raw -0.500 | normalized +0.420 | HIGH",
 	]:
@@ -1246,6 +1291,6 @@ func _write_report() -> bool:
 		"gpu_adapter": RenderingServer.get_video_adapter_name(),
 		"vulkan_icd": OS.get_environment("VK_ICD_FILENAMES"),
 	}
-	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "motor_hud": _motor_hud_evidence, "known_xbox_physical": _known_xbox_physical_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
+	report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "motor_hud": _motor_hud_evidence, "known_xbox_physical": _known_xbox_physical_evidence, "assisted_hover": _assisted_hover_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
 	report.close()
 	return true

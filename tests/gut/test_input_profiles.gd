@@ -52,7 +52,7 @@ func test_xbox_profile_uses_canonical_mode_two_axes() -> void:
         "yaw": false,
         "throttle": true,
         "roll": false,
-        "pitch": true,
+        "pitch": false,
     })
 
 
@@ -79,6 +79,14 @@ func test_prior_xbox_profile_schema_is_rejected_instead_of_silently_remapped() -
     assert_false(InputProfiles.GamepadProfile.validate_persisted_dict(prior_profile).ok)
 
 
+func test_prior_pitch_polarity_profile_is_rejected_for_reconfirmation() -> void:
+    var prior_profile := InputProfiles.GamepadProfile.xbox_default(7, FakeDeviceState.new([7])).to_persisted_dict()
+    prior_profile["profile_schema_version"] = 2
+    prior_profile["reversed_for_role"]["pitch"] = true
+
+    assert_false(InputProfiles.GamepadProfile.validate_persisted_dict(prior_profile).ok)
+
+
 func test_mode_two_arm_safety_requires_the_left_stick_to_be_physically_down() -> void:
     var profile := InputProfiles.GamepadProfile.xbox_default(7, FakeDeviceState.new([7]))
 
@@ -94,6 +102,13 @@ func test_mode_two_axis_curve_is_symmetric_and_softens_the_center() -> void:
     assert_almost_eq(positive, 0.42038, 0.00001)
     assert_almost_eq(negative, -0.42038, 0.00001)
     runtime.free()
+
+
+func test_assisted_hold_horizontal_intent_has_center_hysteresis() -> void:
+    assert_false(InputProfiles.GamepadProfile.assisted_hold_horizontal_intent_active(false, 0.03, 0.0))
+    assert_true(InputProfiles.GamepadProfile.assisted_hold_horizontal_intent_active(false, 0.05, 0.0))
+    assert_true(InputProfiles.GamepadProfile.assisted_hold_horizontal_intent_active(true, 0.03, 0.0))
+    assert_false(InputProfiles.GamepadProfile.assisted_hold_horizontal_intent_active(true, 0.01, 0.0))
 
 
 func test_unknown_xbox_device_is_rejected() -> void:
