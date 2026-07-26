@@ -69,11 +69,15 @@ func _run() -> void:
         push_error("Terrain3D range must paint grass, soil/sand, and rock layers in the initial player-visible area")
         quit(1)
         return
-    for node_name in ["GroundCollision", "SpawnNorth", "SpawnSouth", "TimeTrial/Finish"]:
+    for node_name in ["SpawnNorth", "SpawnSouth", "TimeTrial/Finish"]:
         if scene.get_node_or_null(node_name) == null:
             push_error("Terrain3D range is missing %s" % node_name)
             quit(1)
             return
+    if scene.get_node_or_null("GroundCollision") != null:
+        push_error("Terrain3D range must not retain an overlapping flat ground collider")
+        quit(1)
+        return
     var launch_platforms := [
         {"name": "SpawnNorthPlatform", "spawn": "SpawnNorth", "segmentation_id": 2},
         {"name": "SpawnSouthPlatform", "spawn": "SpawnSouth", "segmentation_id": 8},
@@ -114,6 +118,15 @@ func _run() -> void:
             push_error("Terrain3D range must provide readable terrain relief beyond the launch platform")
             quit(1)
             return
+    await physics_frame
+    var physical_relief_sample := Vector3(30, 0, -60)
+    var authored_relief_height := terrain_data.get_height(physical_relief_sample)
+    var physical_relief_hit: Dictionary = scene.get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(physical_relief_sample + Vector3.UP * 20.0, physical_relief_sample + Vector3.DOWN * 20.0))
+    var physical_relief_position: Vector3 = physical_relief_hit.get("position", Vector3.ZERO)
+    if physical_relief_hit.is_empty() or absf(physical_relief_position.y - authored_relief_height) > 0.25:
+        push_error("Terrain3D range collision must follow authored terrain relief")
+        quit(1)
+        return
     for safe_marker_name in ["SpawnNorth", "SpawnSouth", "TimeTrial/Checkpoint01", "TimeTrial/Checkpoint02", "TimeTrial/Checkpoint03", "TimeTrial/Finish"]:
         var safe_marker := scene.get_node(safe_marker_name) as Marker3D
         var terrain_height := terrain_data.get_height(safe_marker.global_position)
