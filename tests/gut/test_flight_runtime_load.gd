@@ -10,6 +10,7 @@ const AirSimSession = preload("res://common/rpc/airsim_session.gd")
 const AirSimCameraSurface = preload("res://common/rpc/airsim_camera_surface.gd")
 const EnvironmentState = preload("res://common/rpc/environment_state.gd")
 const AirSimSensorSuite = preload("res://common/rpc/airsim_sensor_suite.gd")
+const AirSimRpcServer = preload("res://common/rpc/airsim_rpc_server.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const TimeTrial = preload("res://common/flight/time_trial.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
@@ -2071,6 +2072,11 @@ func test_respawn_rearms_only_after_the_reset_commit() -> void:
     runtime.native = FakeNative.new()
     runtime.native.armed = true
     runtime.airsim_session = AirSimSession.new(Engine.physics_ticks_per_second)
+    runtime.airsim_sensor_suite = AirSimSensorSuite.new()
+    runtime.airsim_rpc_server = AirSimRpcServer.new()
+    runtime.airsim_rpc_server.settings = {"Vehicles": {}}
+    assert_true(runtime.airsim_sensor_suite.configure(runtime.airsim_rpc_server.settings, [""]).ok)
+    runtime._advance_airsim_sensors()
     runtime.screen = "flight"
     runtime.takeoff_requested = true
 
@@ -2091,11 +2097,13 @@ func test_respawn_rearms_only_after_the_reset_commit() -> void:
     var kinematics: Dictionary = state.state.kinematics_estimated
     assert_eq(kinematics.position, {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0})
     assert_eq(kinematics.linear_velocity, {"x_val": 0.0, "y_val": 0.0, "z_val": 0.0})
+    assert_eq(runtime.airsim_sensor_suite.stats("", AirSimSensorSuite.SENSOR_LIDAR, "").sample_count, 1)
     for _frame in runtime.reset_hold_frames:
         runtime._physics_process(0.0)
     assert_eq(runtime.reset_hold_frames, 0)
     assert_false(runtime.drone_body.freeze)
     assert_false(runtime.drone_body.sleeping)
+    runtime.airsim_rpc_server.free()
     runtime.drone_body.free()
     runtime.free()
     map.queue_free()

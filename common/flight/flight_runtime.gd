@@ -211,6 +211,7 @@ var controller_reconnected := false
 var disconnected_gamepad_device_id := -1
 var _airsim_vehicle_name := ""
 var _airsim_vehicle_names: Array[String] = []
+var _airsim_ready_file_pending := ""
 var _dashboard_vehicle_name := ""
 var _airsim_secondary_native: Object
 var _replay_recording_active := false
@@ -354,8 +355,16 @@ func _ready() -> void:
                 airsim_rpc_server.stop()
             get_tree().quit(1)
             return
+        if not reset_to_spawn():
+            push_error("AirSim default spawn reset failed: %s" % last_error_message)
+            if airsim_rpc_server != null and airsim_rpc_server.is_running():
+                airsim_rpc_server.stop()
+            get_tree().quit(1)
+            return
         screen = "preflight"
-    _write_airsim_ready_marker(ready_file)
+        _airsim_ready_file_pending = ready_file
+    else:
+        _write_airsim_ready_marker(ready_file)
     update_fallback_status()
     _update_chase_camera()
     _refresh_flight_hud()
@@ -2600,6 +2609,7 @@ func _advance_reset_pending() -> void:
         var rpc_owned_reset := _rpc_reset_owned_generation == committed_generation
         _reset_pending_token = 0
         _reset_pending_frames = 0
+        _advance_airsim_sensors()
         if _reset_after_commit_takeoff:
             _reset_after_commit_takeoff = false
             _complete_takeoff_after_reset()
@@ -2614,6 +2624,9 @@ func _advance_reset_pending() -> void:
         _reset_last_committed_generation = committed_generation
         if _rpc_reset_owned_generation == committed_generation:
             _rpc_reset_owned_generation = 0
+        if not _airsim_ready_file_pending.is_empty():
+            _write_airsim_ready_marker(_airsim_ready_file_pending)
+            _airsim_ready_file_pending = ""
         _update_chase_camera()
         _refresh_flight_hud()
         return
