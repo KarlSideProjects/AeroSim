@@ -81,3 +81,66 @@
   `scripts/test_replay_integration.sh`, and
   `scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5`
   all completed successfully.
+
+## Atomicity review follow-up — round 2
+
+- `reset_to_spawn()` now queues only the private body pose transaction while
+  paused. It leaves primary/secondary native flight state, IMU/collision
+  contexts, contact state, AirSim control state, replay/environment state, and
+  Time Trial untouched until every required body has acknowledged its physics
+  commit.
+- After all ACKs, the commit performs exactly one primary/secondary native
+  `reset_flight`, one AirSim context/disarm reset, and contact reset before
+  publishing environment, replay, scene, and trial reset state. A timeout does
+  not run any of those operations. Pending reads receive `reset_pending`; after
+  a failed transaction, state, sensor, camera, scene, and environment access is
+  held behind `reset_failed` rather than exposing mixed old-body/new-native data.
+- Deferred takeoff stays paused and frozen through the native/PX4 arm attempt.
+  A rejected arm is terminal, paused, frozen, and disarmed; it never resumes,
+  enters flight, requests takeoff, starts a trial, or performs a second trial
+  reset.
+- The new GUT counters assert zero native reset/disarm/context activity while
+  pending and after timeout, exactly one reset/disarm/context operation after a
+  successful two-body ACK, and one Time Trial reset with no `set_paused(false)`
+  call on arm failure.
+
+## Round 2 verification evidence
+
+- The added regression tests first failed against the eager-reset code: pending
+  and timeout observed native reset/disarm/context activity, and an arm failure
+  resumed once and reset Time Trial twice. After the change, recovery GUT
+  completed 261 tests with 0 failures/errors and 13 expected native-dependent
+  pendings; normal GUT completed 261 tests with 0 failures/errors.
+- Rebuilt the Linux debug GDExtension for commit `988d739dcefe4f508098733d9cce55e069b21da9` and refreshed the local ignored provenance receipt. `scripts/test_native.sh`,
+  `scripts/test_native_atomic_boundary.sh`, and
+  `scripts/test_replay_integration.sh` completed successfully.
+- Headless smoke was run twice with
+  `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5`.
+  Both runs failed before the required report and trajectory were written at the
+  existing Jolt zero-energy production-contact assertion:
+  `body_impact_state body=35.701164 limit=0.000000 finite=true`.
+  `build/headless/godot.log` exists (6,436 bytes); `build/headless_smoke.json`
+  and `build/headless_trajectory.csv` are absent, so this gate is explicitly
+  not reported as passed. The smoke source, native/config inputs, and Godot
+  binary SHA were unchanged from the prior successful record.
+- Provenance-backed headed acceptance was launched with
+  `scripts/run_headed_acceptance.sh --xvfb --out-dir build/headed-round2` after
+  validating the debug artifact receipt for
+  `988d739dcefe4f508098733d9cce55e069b21da9`. The full headed scenario includes
+  the retained-Terrain-Range/repeated Quick Fly cycle. It produced all expected
+  screenshots plus `godot.log` and `report.json`, but the report has
+  `passed=false` with 18 failures, so the script stopped before augmenting the
+  report with native hashes and is not reported as passed. Artifacts retained in
+  `build/headed-round2/` include `00_cold_start.png`,
+  `00_keyboard_fallback_preconfirm.png`, `01_controller_confirmation.png`,
+  `01_terrain_range_preflight.png`, `01_third_person_preflight.png`,
+  `02_keyboard_fallback.png`, `03_takeoff.png`, `04_paused.png`,
+  `05_reset.png`, `06_exit.png`, and `07_channel_monitor_paused.png` (and the
+  additional finish/locale screenshots).
+- The exact headed failures are recorded in `build/headed-round2/report.json`:
+  three Xbox FRD-axis checks, Y-mode physical/release checks, paused channel
+  monitor rate, controller-monitor/pause/ACRO interactions, retained South
+  spawn and NED-origin checks, finish Change Map/Exit/P-resume checks, Terrain
+  Range ground-color capture, and fresh-map reset pose/velocity. This is
+  outside the reset transaction changes; no headed or Jolt assertion was
+  weakened.
