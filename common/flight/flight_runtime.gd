@@ -2045,10 +2045,10 @@ func quick_fly() -> void:
         _refresh_flight_hud()
         return
     third_person_view = true
-    if drone_body != null and drone_body.is_inside_tree() and not load_map(String(flight_setup.get("map_id", DEFAULT_FREE_FLIGHT_MAP_ID))):
-        screen = "error"
-        _refresh_flight_hud()
-        return
+    if drone_body != null and drone_body.is_inside_tree():
+        enter_preflight()
+        if screen == "error":
+            return
     controller_return_screen = "preflight"
     var device_id := _first_connected_device()
     var current_profile := InputProfiles.GamepadProfile.xbox_default(device_id, gamepad_device_state)

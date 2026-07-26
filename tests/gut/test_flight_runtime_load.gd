@@ -181,6 +181,11 @@ class FakeTakeoffBody extends RefCounted:
         linear_velocity = velocity
 
 
+class QuickFlyRuntime extends FlightRuntime:
+    func _ready() -> void:
+        pass
+
+
 class FakeDeviceState:
     extends GamepadDeviceState.DeviceState
 
@@ -536,6 +541,26 @@ func test_load_map_rejects_terrain_range_with_an_unresourced_environment() -> vo
     assert_string_contains(runtime.last_error_message, "required AeroSimEnvironment")
 
 
+func test_second_quick_fly_reuses_the_loaded_terrain_range_and_resets_spawn() -> void:
+    var runtime := _quick_fly_runtime()
+
+    runtime.quick_fly()
+    var first_loaded_map := runtime.loaded_map
+    var spawn := first_loaded_map.get_node("SpawnNorth") as Marker3D if first_loaded_map != null else null
+    runtime.drone_body.global_position = Vector3(99.0, 99.0, 99.0)
+    runtime.environment_state.apply({"rain": 0.75, "wind_preset": "severe"})
+    runtime.quick_fly()
+
+    assert_not_null(first_loaded_map)
+    assert_same(runtime.loaded_map, first_loaded_map)
+    if runtime.loaded_map == first_loaded_map:
+        assert_not_null(spawn)
+        assert_eq(runtime.drone_body.global_position, spawn.global_position)
+    assert_eq(runtime.loaded_map_wind_preset, "calm")
+    assert_eq(float(runtime.environment_state.snapshot().rain), 0.0)
+    assert_eq(String(runtime.environment_state.snapshot().wind_preset), "calm")
+
+
 func test_other_maps_keep_the_runtime_weather_environment_fallback() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)
@@ -555,6 +580,21 @@ func _runtime_with_terrain_range_scene(scene_path: String) -> FlightRuntime:
     autofree(runtime)
     runtime._map_scene_paths = FlightRuntime.MAP_SCENE_PATHS.duplicate()
     runtime._map_scene_paths["terrain3d_range"] = scene_path
+    return runtime
+
+
+func _quick_fly_runtime() -> FlightRuntime:
+    var runtime := SmokeScene.instantiate() as FlightRuntime
+    runtime.set_script(QuickFlyRuntime)
+    runtime.development_license_bypass = false
+    runtime.license_provider = FakeLicenseProvider.new("online_valid")
+    runtime.add_child(runtime.license_provider)
+    runtime.gamepad_device_state = FakeDeviceState.new(false)
+    runtime.environment_state = preload("res://common/rpc/environment_state.gd").new()
+    runtime._map_scene_paths = FlightRuntime.MAP_SCENE_PATHS.duplicate()
+    runtime._map_scene_paths["terrain3d_range"] = "res://tests/fixtures/maps/terrain_range_valid_minimal.tscn"
+    get_tree().root.add_child(runtime)
+    autofree(runtime)
     return runtime
 
 

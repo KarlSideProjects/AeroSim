@@ -1,0 +1,14 @@
+[gd_scene load_steps=2 format=3]
+
+[sub_resource type="Environment" id="Environment_terrain_range"]
+
+[node name="TerrainRangeValidMinimal" type="Node3D"]
+
+[node name="AeroSimEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_terrain_range")
+
+[node name="SpawnNorth" type="Marker3D" parent="."]
+position = Vector3(1, 2, 3)
+
+[node name="SpawnSouth" type="Marker3D" parent="."]
+position = Vector3(4, 5, 6)
