@@ -80,6 +80,7 @@
 - `scripts/test_native.sh` completed successfully.
 - Recovery GUT completed 271 tests, 258 passed, 13 expected native-dependent
   pendings, 0 failures, and 0 errors.
-- `scripts/test_replay_integration.sh` with the configured Godot binary remains
-  blocked before execution by stale native-artifact provenance for the current
-  uncommitted round-1 worktree.
+- Refreshed the ignored local provenance receipt for committed source-identical
+  native artifacts, then ran the normal GUT wrapper: 271 tests, 0 failures,
+  0 errors. `scripts/test_replay_integration.sh` completed with
+  `complete-session replay integration: PASS`.
