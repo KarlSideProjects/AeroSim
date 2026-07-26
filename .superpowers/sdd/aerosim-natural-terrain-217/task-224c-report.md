@@ -84,3 +84,22 @@
   native artifacts, then ran the normal GUT wrapper: 271 tests, 0 failures,
   0 errors. `scripts/test_replay_integration.sh` completed with
   `complete-session replay integration: PASS`.
+
+## Round 2 replay epoch ordering
+
+- Deferred RPC reset publication now records the native Replay `Reset`, resets
+  the public AirSim session clock, then records the committed environment
+  baseline. This retains Reset-before-environment replay semantics while the
+  baseline consumes the reset clock epoch rather than the pre-reset clock.
+- A runtime replay regression starts at a nonzero simulation time, completes a
+  synchronous RPC-owned reset, records two post-reset events, and proves the
+  strict timestamp sequence `Reset < Environment < post-reset 1 < post-reset
+  2`.
+
+## Round 2 verification evidence
+
+- Focused runtime suite: 98 tests / 703 assertions, all passed.
+- Focused RPC suite: 26 tests / 219 assertions, all passed.
+- Normal full GUT: 271 tests / 1,619 assertions, 0 failures, 0 errors.
+- `scripts/test_replay_integration.sh` completed with
+  `complete-session replay integration: PASS`.
