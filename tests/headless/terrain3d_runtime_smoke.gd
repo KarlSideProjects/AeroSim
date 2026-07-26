@@ -26,7 +26,16 @@ func _run() -> void:
     scene.add_child(license_provider)
     scene.show_main_menu()
     scene.quick_fly()
-    await process_frame
+    # The reset pose is applied from the RigidBody physics callback and is
+    # published only after its ACK. Match the runtime's bounded ACK window.
+    for _frame in range(9):
+        if scene._reset_pending_token == 0:
+            break
+        await physics_frame
+    if scene._reset_pending_token != 0:
+        push_error("Terrain3D runtime smoke reset did not commit: %s" % scene.last_error_message)
+        quit(1)
+        return
     if scene.loaded_map_id != "terrain3d_range" or scene.loaded_map == null or scene.get_node_or_null("LoadedMap/Terrain3D") == null:
         push_error("Quick Fly must load Terrain Range with Terrain3D")
         quit(1)
