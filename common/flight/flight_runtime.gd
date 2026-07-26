@@ -89,6 +89,7 @@ var takeoff_assist_active := false
 var takeoff_assist_commanded_altitude_m := 0.0
 var assisted_throttle_waiting_for_neutral := false
 var assisted_hover_throttle := 0.0
+var assisted_horizontal_intent_active := false
 var reset_count := 0
 var _reset_generation := 0
 var _reset_pending_token := 0
@@ -1438,7 +1439,12 @@ func _physics_process(delta: float) -> void:
             assisted_vertical_velocity = _profile_axis("throttle") * ASSISTED_MAX_VERTICAL_SPEED_MPS
     if flight_mode == "ASSISTED_HOLD":
         throttle = assisted_hover_throttle
+        var assisted_horizontal_angles := _assisted_hold_horizontal_angles()
+        angle_roll = assisted_horizontal_angles.x
+        angle_pitch = assisted_horizontal_angles.y
         angle_yaw = _profile_axis("yaw") * ASSISTED_MAX_YAW_RATE_DPS if _has_active_gamepad_profile() else 0.0
+    else:
+        assisted_horizontal_intent_active = false
     var acro_roll := _profile_axis("roll") if _has_active_gamepad_profile() else _acro_roll_stick()
     var acro_pitch := _profile_axis("pitch") if _has_active_gamepad_profile() else _acro_pitch_stick()
     var acro_yaw := _profile_axis("yaw") if _has_active_gamepad_profile() else _acro_yaw_stick()
@@ -1966,6 +1972,7 @@ func _complete_takeoff_after_reset() -> void:
     takeoff_assist_active = false
     takeoff_assist_commanded_altitude_m = 0.0
     assisted_throttle_waiting_for_neutral = false
+    assisted_horizontal_intent_active = false
     update_fallback_status()
     assisted_hover_throttle = _configured_hover_throttle()
     takeoff_assist_active = _has_active_gamepad_profile() and assisted_hover_throttle > 0.0
@@ -3132,12 +3139,14 @@ func toggle_altitude_hold() -> void:
         return
     if flight_mode in ["ALTITUDE_HOLD", "ASSISTED_HOLD"]:
         flight_mode = "ANGLE"
+        assisted_horizontal_intent_active = false
     else:
         assisted_hover_throttle = _configured_hover_throttle()
         if assisted_hover_throttle <= 0.0:
             return
         native.call("capture_altitude_hold")
         flight_mode = "ASSISTED_HOLD"
+        assisted_horizontal_intent_active = false
     update_fallback_status()
 
 
@@ -5178,6 +5187,21 @@ func _angle_roll_degrees() -> float:
 
 func _angle_pitch_degrees() -> float:
     return _profile_axis("pitch") * ANGLE_MAX_TILT_DEGREES
+
+func _assisted_hold_horizontal_angles() -> Vector2:
+    if not _has_active_gamepad_profile():
+        assisted_horizontal_intent_active = false
+        return Vector2.ZERO
+    var roll := _profile_axis("roll")
+    var pitch := _profile_axis("pitch")
+    assisted_horizontal_intent_active = InputProfiles.GamepadProfile.assisted_hold_horizontal_intent_active(
+        assisted_horizontal_intent_active,
+        roll,
+        pitch
+    )
+    if not assisted_horizontal_intent_active:
+        return Vector2.ZERO
+    return Vector2(roll, pitch) * ANGLE_MAX_TILT_DEGREES
 
 func _angle_yaw_rate_degrees_per_second() -> float:
     return _profile_axis("yaw") * ANGLE_MAX_YAW_RATE_DPS

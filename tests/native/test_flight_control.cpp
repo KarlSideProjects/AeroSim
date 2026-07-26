@@ -481,6 +481,57 @@ int main() {
         return fail("Assisted position hold must capture a horizontal target when the right stick returns to center");
     }
 
+    aerosim::RigidBodyState zero_input_hold_state;
+    zero_input_hold_state.position.y = hold_altitude_m;
+    aerosim::SimulationClock zero_input_hold_clock;
+    aerosim::FlightController zero_input_hold_controller;
+    if (!zero_input_hold_controller.arm(0.0)) {
+        return fail("Assisted zero-input hold setup should arm from low throttle");
+    }
+    aerosim::FlightCommand zero_input_hold = hover;
+    zero_input_hold.position_hold_enabled = true;
+    zero_input_hold.heading_hold_enabled = true;
+    zero_input_hold_controller.capture_altitude_hold(hold_altitude_m);
+    zero_input_hold_controller.step_altitude_hold_mode(
+            zero_input_hold_state,
+            zero_input_hold_clock,
+            config,
+            zero_input_hold,
+            hold_altitude_m,
+            zero_input_hold_state.orientation);
+    zero_input_hold_state.position.x = 0.5;
+    zero_input_hold_state.position.z = -0.25;
+    zero_input_hold_state.velocity.x = 0.2;
+    zero_input_hold_state.velocity.z = -0.1;
+    double max_zero_input_distance_m = 0.0;
+    double max_zero_input_tilt_degrees = 0.0;
+    int horizontal_crossings = 0;
+    double previous_x = zero_input_hold_state.position.x;
+    for (int frame = 0; frame < config.physics_hz * 10; ++frame) {
+        const aerosim::TrajectorySample sample = zero_input_hold_controller.step_altitude_hold_mode(
+                zero_input_hold_state,
+                zero_input_hold_clock,
+                config,
+                zero_input_hold,
+                hold_altitude_m,
+                zero_input_hold_state.orientation);
+        max_zero_input_distance_m = std::max(
+                max_zero_input_distance_m,
+                std::hypot(sample.state.position.x, sample.state.position.z));
+        max_zero_input_tilt_degrees = std::max(
+                max_zero_input_tilt_degrees,
+                std::max(std::abs(roll_degrees(sample.state.orientation)), std::abs(pitch_degrees(sample.state.orientation))));
+        if (std::abs(sample.state.position.x) > 0.02 && previous_x * sample.state.position.x < 0.0) {
+            ++horizontal_crossings;
+        }
+        previous_x = sample.state.position.x;
+    }
+    if (std::hypot(zero_input_hold_state.position.x, zero_input_hold_state.position.z) > 0.10 ||
+            std::hypot(zero_input_hold_state.velocity.x, zero_input_hold_state.velocity.z) > 0.10 ||
+            max_zero_input_distance_m > 0.75 || max_zero_input_tilt_degrees > 12.0 || horizontal_crossings > 2) {
+        return fail("Assisted zero-input position hold must converge without sustained horizontal oscillation");
+    }
+
     aerosim::RigidBodyState hold_state;
     aerosim::SimulationClock hold_clock;
     aerosim::FlightController hold_controller;

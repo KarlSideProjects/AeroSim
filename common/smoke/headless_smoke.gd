@@ -1960,7 +1960,7 @@ func _verify_runtime_actions() -> bool:
             return false
     for expected_axis in [
         "roll: Raw +0.250 | Normalized +0.167",
-        "pitch: Raw -0.750 | Normalized +0.694",
+        "pitch: Raw -0.750 | Normalized -0.694",
         "yaw: Raw +0.500 | Normalized +0.420",
         "throttle: Raw -0.500 | Normalized +0.420"
     ]:
@@ -1972,7 +1972,7 @@ func _verify_runtime_actions() -> bool:
         {"axis": JOY_AXIS_LEFT_X, "value": -0.5, "expected": "yaw: Raw -0.500 | Normalized -0.420"},
         {"axis": JOY_AXIS_LEFT_Y, "value": 0.5, "expected": "throttle: Raw +0.500 | Normalized -0.420"},
         {"axis": JOY_AXIS_RIGHT_X, "value": -0.25, "expected": "roll: Raw -0.250 | Normalized -0.167"},
-        {"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "pitch: Raw +0.750 | Normalized -0.694"}
+        {"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "pitch: Raw +0.750 | Normalized +0.694"}
     ]:
         _inject_joy_axis(known_device_id, update.axis, update.value)
         await process_frame
@@ -2861,7 +2861,7 @@ func _verify_keyboard_profile_actions() -> bool:
 
 func _verify_gamepad_profile_actions() -> bool:
     var profile := InputProfiles.GamepadProfile.new()
-    if profile.profile_schema_version != 2:
+    if profile.profile_schema_version != InputProfiles.GamepadProfile.SCHEMA_VERSION:
         push_error("GamepadProfile must use the fixed Xbox profile schema version")
         return false
     if profile.axis_for_role != {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}:
@@ -2940,7 +2940,7 @@ func _verify_xbox_default_profile() -> bool:
         if not InputProfiles.GamepadProfile.is_supported_device(device_id, production_gamepad_device_state):
             continue
         var profile := InputProfiles.GamepadProfile.xbox_default(device_id, production_gamepad_device_state)
-        if profile == null or profile.profile_schema_version != 2:
+        if profile == null or profile.profile_schema_version != InputProfiles.GamepadProfile.SCHEMA_VERSION:
             push_error("A known SDL device must receive the fixed Xbox profile schema")
             return false
         if profile.axis_for_role != {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}:

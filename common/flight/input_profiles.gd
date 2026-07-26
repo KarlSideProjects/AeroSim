@@ -1,13 +1,15 @@
 class GamepadProfile:
-    const SCHEMA_VERSION := 2
+    const SCHEMA_VERSION := 3
     const RAW_AXIS_DEADZONE := 0.08
     const THROTTLE_LOW_THRESHOLD := RAW_AXIS_DEADZONE
     const CENTER_RESPONSE_SOFTNESS := 0.10
+    const ASSISTED_HOLD_INTENT_ENTER_THRESHOLD := 0.04
+    const ASSISTED_HOLD_INTENT_EXIT_THRESHOLD := 0.02
     const ACRO_BUTTON := JOY_BUTTON_RIGHT_SHOULDER
 
     var deadzone := RAW_AXIS_DEADZONE
     var axis_for_role := {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}
-    var reversed_for_role := {"yaw": false, "throttle": true, "roll": false, "pitch": true}
+    var reversed_for_role := {"yaw": false, "throttle": true, "roll": false, "pitch": false}
     var arm_button := JOY_BUTTON_A
     var mode_button := JOY_BUTTON_Y
     var profile_schema_version := SCHEMA_VERSION
@@ -25,7 +27,7 @@ class GamepadProfile:
             return null
         var gamepad := GamepadProfile.new()
         gamepad.axis_for_role = {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}
-        gamepad.reversed_for_role = {"yaw": false, "throttle": true, "roll": false, "pitch": true}
+        gamepad.reversed_for_role = {"yaw": false, "throttle": true, "roll": false, "pitch": false}
         gamepad.arm_button = JOY_BUTTON_A
         gamepad.mode_button = JOY_BUTTON_Y
         return gamepad
@@ -39,6 +41,10 @@ class GamepadProfile:
         var magnitude := (absf(raw) - deadzone) / (1.0 - deadzone)
         magnitude *= lerpf(1.0 - CENTER_RESPONSE_SOFTNESS, 1.0, magnitude * magnitude)
         return sign(raw) * magnitude
+
+    static func assisted_hold_horizontal_intent_active(was_active: bool, roll: float, pitch: float) -> bool:
+        var threshold := ASSISTED_HOLD_INTENT_EXIT_THRESHOLD if was_active else ASSISTED_HOLD_INTENT_ENTER_THRESHOLD
+        return Vector2(roll, pitch).length() >= threshold
 
     func to_persisted_dict() -> Dictionary:
         return {
@@ -66,7 +72,7 @@ class GamepadProfile:
         if typeof(source["axis_for_role"]) != TYPE_DICTIONARY or typeof(source["reversed_for_role"]) != TYPE_DICTIONARY:
             return {"ok": false, "error": "confirmed_gamepad mappings must be objects"}
         var expected_axes := {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}
-        var expected_reversed := {"yaw": false, "throttle": true, "roll": false, "pitch": true}
+        var expected_reversed := {"yaw": false, "throttle": true, "roll": false, "pitch": false}
         for role in source["axis_for_role"].keys():
             if not expected_axes.has(role):
                 return {"ok": false, "error": "unknown confirmed_gamepad axis role: %s" % role}

@@ -2828,7 +2828,7 @@ func test_controller_monitor_renders_active_session_channels_and_unavailable_wit
     var monitor: Label = runtime.controller_settings_monitor_label
     assert_string_contains(monitor.text, "CHANNEL MONITOR (30 Hz)")
     assert_string_contains(monitor.text, "roll:     [---------|-------] raw +0.250 | normalized +0.167")
-    assert_string_contains(monitor.text, "pitch:    [--------------|--] raw -0.750 | normalized +0.694")
+    assert_string_contains(monitor.text, "pitch:    [--|--------------] raw -0.750 | normalized -0.694")
     assert_string_contains(monitor.text, "yaw:      [-----------|-----] raw +0.500 | normalized +0.420")
     assert_string_contains(monitor.text, "throttle: [-----------|-----] raw -0.500 | normalized +0.420 | HIGH")
     assert_string_contains(monitor.text, "DEADZONE: 0.080 (fixed)")

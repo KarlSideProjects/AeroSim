@@ -6,6 +6,7 @@ Godot 4.7 + C++ GDExtension 的最小專案骨架。
 
 - [產品功能與特性](docs/product_capabilities.md)：AirSim-class 最低成果、能力邊界、驗收證據與目前實作狀態。
 - [產品需求文件](PRD_AeroSim.md)：v4.1 AirSim-class minimum、既有基礎 gate 與 Ubuntu qualification 計畫。
+- [Player Mode Xbox 操作說明](docs/player_mode_xbox_controls.md)：Mode 2 控制、受控起飛、Assisted Hold 與 Controller Monitor 判讀。
 - [AirSim 參考政策](docs/airsim_reference_policy.md)：鎖定版本、上游 issue 稽核與引用證據要求。
 
 ## 環境需求
