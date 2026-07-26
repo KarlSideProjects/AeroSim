@@ -88,13 +88,15 @@ func _run() -> void:
             quit(1)
             return
     for relief_sample in [Vector3(30, 0, -72), Vector3(76, 0, -48)]:
-        if terrain_data.get_height(relief_sample) < 3.0:
+        var relief_height := terrain_data.get_height(relief_sample)
+        if not is_finite(relief_height) or relief_height < 3.0:
             push_error("Terrain3D range must provide readable terrain relief beyond the launch platform")
             quit(1)
             return
     for safe_marker_name in ["SpawnNorth", "SpawnSouth", "TimeTrial/Checkpoint01", "TimeTrial/Checkpoint02", "TimeTrial/Checkpoint03", "TimeTrial/Finish"]:
         var safe_marker := scene.get_node(safe_marker_name) as Marker3D
-        if terrain_data.get_height(safe_marker.global_position) >= safe_marker.global_position.y:
+        var terrain_height := terrain_data.get_height(safe_marker.global_position)
+        if not is_finite(terrain_height) or terrain_height >= safe_marker.global_position.y:
             push_error("Terrain3D range must keep %s above the terrain relief" % safe_marker_name)
             quit(1)
             return
