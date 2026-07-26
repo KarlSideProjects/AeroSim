@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AeroSim Ground Station Panel</title>
+<style>
+:root { color-scheme: dark; font-family: system-ui, sans-serif; }
+body { margin: 0; min-width: 320px; background: #111820; color: #dce7f5; }
+main { max-width: 720px; margin: 0 auto; padding: 24px; }
+header { display: flex; justify-content: space-between; gap: 16px; align-items: start; }
+h1 { margin: 0; font-size: 1.25rem; }
+p { color: #9fb0c5; line-height: 1.5; }
+.status { border: 1px solid #31445d; border-radius: 8px; padding: 16px; margin-top: 24px; }
+.badge { color: #9ee6b1; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; }
+code { color: #b9d8ff; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<main>
+<header>
+<h1>AeroSim Ground Station Panel</h1>
+<span class="badge" id="focus-state">panel focus</span>
+</header>
+<section class="status" aria-live="polite">
+<strong>Launch qualified</strong>
+<p>This dependency-free panel is running as an independent native Wayland client. The live tuning channel is added in the next GSP slice.</p>
+<p id="session">No session fragment was supplied.</p>
+</section>
+</main>
+<script>
+(function () {
+  var session = document.getElementById("session");
+  var focusState = document.getElementById("focus-state");
+  var fragment = window.location.hash.slice(1);
+  if (fragment) session.textContent = "Launch fragment: " + fragment;
+  function setFocusState(value) {
+    focusState.textContent = value;
+    document.title = "AeroSim GSP — " + value;
+  }
+  window.addEventListener("focus", function () { setFocusState("panel focus"); });
+  window.addEventListener("blur", function () { setFocusState("panel unfocused"); });
+}());
+</script>
+</body>
+</html>
