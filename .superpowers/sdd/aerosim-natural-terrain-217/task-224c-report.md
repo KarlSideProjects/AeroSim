@@ -103,3 +103,17 @@
 - Normal full GUT: 271 tests / 1,619 assertions, 0 failures, 0 errors.
 - `scripts/test_replay_integration.sh` completed with
   `complete-session replay integration: PASS`.
+
+## Round 3 synchronous reset publication
+
+- The supported synchronous/no-ACK `reset` dispatch branch now calls the same
+  single publish helper as deferred completion. It emits Replay Reset, resets
+  the session clock, emits the environment baseline, and resets control state
+  exactly once.
+- Added synchronous RPC coverage for Reset-before-environment ordering and
+  retained the native replay Reset/environment/checkpoint coverage that proves
+  the baseline survives replay application.
+
+## Round 3 verification evidence
+
+- Focused RPC suite: 27 tests / 226 assertions, all passed.

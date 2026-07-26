@@ -12,6 +12,7 @@ class ResetLifecycleHarness extends RefCounted:
     var starts := 0
     var aborts := 0
     var replay_operations: Array[int] = []
+    var replay_events: Array[String] = []
 
     func start_reset() -> Dictionary:
         starts += 1
@@ -34,6 +35,10 @@ class ResetLifecycleHarness extends RefCounted:
 
     func record_replay(operation: int, _value: float) -> void:
         replay_operations.append(operation)
+        replay_events.append("reset" if operation == 4 else "operation_%d" % operation)
+
+    func record_reset_environment() -> void:
+        replay_events.append("environment")
 
 
 func _install_test_backend(server: AirSimRpcServer) -> void:
@@ -106,6 +111,37 @@ func test_reset_vehicle_control_state_clears_api_and_armed_latches() -> void:
 
     server.reset_vehicle_control_state()
 
+    assert_false(server._api_control["Drone1"])
+    assert_false(server._armed["Drone1"])
+
+
+func test_synchronous_no_ack_reset_uses_the_complete_replay_publication_sequence() -> void:
+    var server := AirSimRpcServer.new()
+    autofree(server)
+    var lifecycle := ResetLifecycleHarness.new()
+    server.set_session(server.session, Callable(lifecycle, "start_reset"))
+    server.set_replay_handlers(
+        Callable(lifecycle, "record_replay"),
+        Callable(),
+        Callable(lifecycle, "record_reset_environment"))
+    var startup := server.start_with_settings({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "ApiServerPort": 41466,
+        "RpcEnabled": false,
+        "Vehicles": {"Drone1": {"VehicleType": "SimpleFlight"}},
+    })
+    assert_true(startup.ok)
+    if not startup.ok:
+        return
+    server.session.simulation_time_seconds = 2.0
+    server._api_control["Drone1"] = true
+    server._armed["Drone1"] = true
+
+    assert_eq(server.dispatch([0, 709, "reset", []]), [1, 709, null, null])
+    assert_eq(lifecycle.starts, 1)
+    assert_eq(lifecycle.replay_events, ["reset", "environment"])
+    assert_eq(server.session.simulation_time_seconds, 0.0)
     assert_false(server._api_control["Drone1"])
     assert_false(server._armed["Drone1"])
 

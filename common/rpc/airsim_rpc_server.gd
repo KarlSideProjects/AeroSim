@@ -588,10 +588,7 @@ func dispatch(request: Array) -> Array:
                 var reset_result = reset_handler.call()
                 if typeof(reset_result) == TYPE_DICTIONARY and not bool(reset_result.get("ok", false)):
                     return _error_response(message_id, String(reset_result.get("error", "reset rejected")))
-            if _replay_simulation_handler.is_valid():
-                _replay_simulation_handler.call(4, 0.0)
-            session.reset()
-            reset_vehicle_control_state()
+            _publish_reset_commit()
             return _success_response(message_id, null)
         "getServerVersion":
             if not params.is_empty():
