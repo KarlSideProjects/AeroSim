@@ -4,12 +4,17 @@ set -euo pipefail
 godot_bin="${GODOT_BIN:-godot}"
 out_dir="build/headed"
 use_xvfb=0
+use_lavapipe_diagnostic=0
 display_driver_args=()
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --xvfb)
             use_xvfb=1
+            shift
+            ;;
+        --lavapipe-diagnostic)
+            use_lavapipe_diagnostic=1
             shift
             ;;
         --out-dir)
@@ -38,11 +43,59 @@ validate_native_provenance
 gdextension_sha256="$AEROSIM_NATIVE_PROVENANCE_GDEXTENSION_SHA256"
 native_source_sha256="$AEROSIM_NATIVE_PROVENANCE_NATIVE_SOURCE_SHA256"
 
+select_hardware_vulkan_icd() {
+    if ! command -v vulkaninfo >/dev/null 2>&1; then
+        echo "headed acceptance environment constraint: vulkaninfo is required to select a hardware Vulkan ICD" >&2
+        return 1
+    fi
+
+    local candidates=()
+    if [ -n "${AEROSIM_HEADED_VULKAN_ICD:-}" ]; then
+        candidates=("$AEROSIM_HEADED_VULKAN_ICD")
+    else
+        candidates=(/usr/share/vulkan/icd.d/*.json /etc/vulkan/icd.d/*.json)
+    fi
+
+    local candidate=""
+    local summary=""
+    for candidate in "${candidates[@]}"; do
+        [ -r "$candidate" ] || continue
+        case "$(basename "$candidate")" in
+            *lvp*|*lavapipe*|*swiftshader*|*gfxstream*|*virtio*)
+                continue
+                ;;
+        esac
+        summary="$(VK_ICD_FILENAMES="$candidate" vulkaninfo --summary 2>&1 || true)"
+        if grep -Eq 'deviceType[[:space:]]*=[[:space:]]*PHYSICAL_DEVICE_TYPE_(DISCRETE|INTEGRATED)_GPU' <<<"$summary"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    echo "headed acceptance environment constraint: no usable hardware Vulkan ICD was found; set AEROSIM_HEADED_VULKAN_ICD to a readable hardware ICD or use --lavapipe-diagnostic only for the quarantined renderer reproducer" >&2
+    return 1
+}
+
+if [ "$use_lavapipe_diagnostic" -eq 1 ] && [ "$use_xvfb" -ne 1 ]; then
+    echo "--lavapipe-diagnostic requires --xvfb" >&2
+    exit 2
+fi
+
 if [ "$use_xvfb" -eq 1 ]; then
-    lavapipe_icd="${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}"
-    test -r "$lavapipe_icd"
     command -v xvfb-run >/dev/null
-    export VK_ICD_FILENAMES="$lavapipe_icd"
+    if [ "$use_lavapipe_diagnostic" -eq 1 ]; then
+        lavapipe_icd="${AEROSIM_HEADED_LAVAPIPE_ICD:-/usr/share/vulkan/icd.d/lvp_icd.json}"
+        if [ ! -r "$lavapipe_icd" ]; then
+            echo "lavapipe diagnostic ICD is unavailable: $lavapipe_icd" >&2
+            exit 1
+        fi
+        export VK_ICD_FILENAMES="$lavapipe_icd"
+        echo "headed acceptance lavapipe diagnostic: this run is quarantined from qualification" >&2
+    else
+        hardware_icd="$(select_hardware_vulkan_icd)" || exit 2
+        export VK_ICD_FILENAMES="$hardware_icd"
+        echo "headed acceptance hardware Vulkan ICD: $hardware_icd" >&2
+    fi
     launcher=(xvfb-run -a -e "$out_dir/xvfb.log" --server-args="-screen 0 1920x1080x24")
     display_driver_args=(--display-driver x11)
 else
