@@ -101,6 +101,7 @@ var _reset_primary_gravity_scale := 1.0
 var _reset_secondary_gravity_scale := 1.0
 var _reset_environment_snapshot: Dictionary = {}
 var _reset_commit_in_progress := false
+var _reset_publication_blocked := false
 var _reset_after_commit_takeoff := false
 var _reset_arm_after_commit := false
 var _quick_fly_route_pending := false
@@ -1918,10 +1919,10 @@ func _complete_takeoff_after_reset() -> void:
         if px4_sitl_bridge != null:
             var px4_arm_result := px4_sitl_bridge.arm_disarm(true)
             if not px4_arm_result.ok:
-                _fail_reset_pending("PX4 arm failed: %s" % px4_arm_result.error, true)
+                _fail_reset_pending("PX4 arm failed: %s" % px4_arm_result.error)
                 return
         elif native != null and not native.call("arm_flight_control", 0.0):
-            _fail_reset_pending("Quick Fly cannot arm: %s" % native.call("flight_control_arm_reject_code"), true)
+            _fail_reset_pending("Quick Fly cannot arm: %s" % native.call("flight_control_arm_reject_code"))
             return
         _airsim_disarm_requested = false
     screen = "flight"
@@ -2405,6 +2406,7 @@ func reset_to_spawn() -> bool:
     _reset_generation += 1
     _reset_pending_token = _reset_generation
     _reset_pending_frames = 0
+    _reset_publication_blocked = false
     _reset_pending_spawn = spawn.global_position
     _reset_pending_secondary_spawn = spawn.global_position + Vector3(1.0, 0.0, 0.0)
     _reset_pending_primary_ack_required = drone_body != null and drone_body.has_method("queue_reset_state")
@@ -2414,14 +2416,8 @@ func reset_to_spawn() -> bool:
     takeoff_assist_active = false
     assisted_throttle_waiting_for_neutral = false
     set_paused(true)
-    # A reset must disarm PX4, but keeping its transport alive lets a previously
-    # armed vehicle be re-armed only after the physics commit is acknowledged.
-    _reset_airsim_flight_state(false, false)
     _reset_environment_snapshot = environment_state.snapshot() if environment_state != null else {}
-    if native != null:
-        native.call("reset_flight")
     if drone_body != null:
-        drone_body.reset_contact()
         if drone_body is RigidBody3D:
             _reset_primary_gravity_scale = drone_body.gravity_scale
             drone_body.gravity_scale = 0.0
@@ -2432,8 +2428,6 @@ func reset_to_spawn() -> bool:
         else:
             drone_body.apply_native_state(_reset_pending_spawn, spawn.global_transform.basis.get_rotation_quaternion(), Vector3.ZERO, Vector3.ZERO)
     if _airsim_secondary_native != null and secondary_drone_body != null:
-        _airsim_secondary_native.call("reset_flight")
-        secondary_drone_body.reset_contact()
         if secondary_drone_body is RigidBody3D:
             _reset_secondary_gravity_scale = secondary_drone_body.gravity_scale
             secondary_drone_body.gravity_scale = 0.0
@@ -2449,6 +2443,18 @@ func reset_to_spawn() -> bool:
 
 
 func _commit_reset_publication() -> Dictionary:
+    # Do not reset native/IMU/collision state until every physics body has ACKed
+    # its queued pose.  That makes the pose and all published flight state one
+    # transaction from an AirSim consumer's perspective.
+    if native != null:
+        native.call("reset_flight")
+    if _airsim_secondary_native != null:
+        _airsim_secondary_native.call("reset_flight")
+    _reset_airsim_flight_state(false, false)
+    if drone_body != null:
+        drone_body.reset_contact()
+    if secondary_drone_body != null:
+        secondary_drone_body.reset_contact()
     if environment_state != null:
         _reset_commit_in_progress = true
         var reset_environment := _apply_environment_result(environment_state.reset())
@@ -2470,7 +2476,6 @@ func _commit_reset_publication() -> Dictionary:
     _airsim_linear_acceleration = Vector3.ZERO
     _airsim_last_body_angular_velocity = Vector3.ZERO
     _airsim_angular_acceleration = Vector3.ZERO
-    _reset_secondary_kinematic_contexts()
     if time_trial != null:
         time_trial.reset()
     if scene_object_catalog != null:
@@ -2481,6 +2486,7 @@ func _commit_reset_publication() -> Dictionary:
     if environment_state != null:
         _record_replay_environment(_environment_rpc_snapshot(environment_state.snapshot()))
     _reset_environment_snapshot.clear()
+    _reset_publication_blocked = false
     return {"ok": true}
 
 
@@ -2516,19 +2522,16 @@ func _advance_reset_pending() -> void:
             return
         _reset_pending_token = 0
         _reset_pending_frames = 0
-        set_paused(false)
-        if drone_body != null:
-            drone_body.freeze = true
-            drone_body.sleeping = true
-        if secondary_drone_body != null:
-            secondary_drone_body.freeze = true
-            secondary_drone_body.sleeping = true
         if _reset_after_commit_takeoff:
             _reset_after_commit_takeoff = false
             _complete_takeoff_after_reset()
+            if screen == "error":
+                return
         elif _quick_fly_route_pending:
+            set_paused(false)
             _route_quick_fly_after_reset()
         else:
+            set_paused(false)
             screen = "preflight"
         _update_chase_camera()
         _refresh_flight_hud()
@@ -2537,7 +2540,7 @@ func _advance_reset_pending() -> void:
         _fail_reset_pending("Reset commit acknowledgement timed out")
 
 
-func _fail_reset_pending(message: String, reset_time_trial: bool = false) -> void:
+func _fail_reset_pending(message: String) -> void:
     _reset_pending_token = 0
     _reset_after_commit_takeoff = false
     _reset_arm_after_commit = false
@@ -2548,16 +2551,28 @@ func _fail_reset_pending(message: String, reset_time_trial: bool = false) -> voi
     last_error_message = message
     screen = "error"
     set_paused(true)
+    _reset_publication_blocked = true
     if drone_body is RigidBody3D:
         drone_body.gravity_scale = _reset_primary_gravity_scale
+    if drone_body != null:
+        drone_body.freeze = true
+        drone_body.sleeping = true
     if secondary_drone_body is RigidBody3D:
         secondary_drone_body.gravity_scale = _reset_secondary_gravity_scale
-    if reset_time_trial and time_trial != null:
-        time_trial.reset()
+    if secondary_drone_body != null:
+        secondary_drone_body.freeze = true
+        secondary_drone_body.sleeping = true
     _reset_environment_snapshot.clear()
     _reset_commit_in_progress = false
-    _reset_airsim_flight_state()
     _refresh_flight_hud()
+
+
+func _reset_publication_error() -> String:
+    if _reset_pending_token != 0:
+        return "reset_pending"
+    if _reset_publication_blocked:
+        return "reset_failed"
+    return ""
 
 func _reset_secondary_kinematic_contexts() -> void:
     for name in _airsim_vehicle_contexts:
@@ -2628,8 +2643,9 @@ func _load_scene_object_catalog() -> void:
 
 
 func _airsim_scene_object(method: String, params: Array) -> Dictionary:
-    if _reset_pending_token != 0:
-        return {"ok": false, "error": "reset_pending"}
+    var reset_error := _reset_publication_error()
+    if not reset_error.is_empty():
+        return {"ok": false, "error": reset_error}
     if not _airsim_environment_catalog_loaded or scene_object_catalog == null:
         return {"ok": false, "error": "scene object catalog is unavailable"}
     match method:
@@ -2696,8 +2712,9 @@ func _airsim_scene_object(method: String, params: Array) -> Dictionary:
 
 
 func _airsim_environment(method: String, params: Array) -> Dictionary:
-    if _reset_pending_token != 0:
-        return {"ok": false, "error": "reset_pending"}
+    var reset_error := _reset_publication_error()
+    if not reset_error.is_empty():
+        return {"ok": false, "error": reset_error}
     if environment_state == null:
         return {"ok": false, "error": "environment state is unavailable"}
     match method:
@@ -5113,7 +5130,7 @@ func _apply_camera_profile() -> void:
 
 
 func _airsim_camera_source(vehicle_name: String = "") -> Camera3D:
-    if _reset_pending_token != 0:
+    if not _reset_publication_error().is_empty():
         return null
     if _airsim_vehicle_names.size() > 1 and vehicle_name == String(_airsim_vehicle_names[1]):
         return secondary_chase_camera
@@ -5121,7 +5138,7 @@ func _airsim_camera_source(vehicle_name: String = "") -> Camera3D:
 
 
 func _airsim_camera_vehicle(vehicle_name: String):
-    if _reset_pending_token != 0:
+    if not _reset_publication_error().is_empty():
         return null
     if not _airsim_name_matches(vehicle_name):
         return null
@@ -5395,8 +5412,9 @@ func _airsim_cancel_task(name: String) -> void:
 
 
 func _airsim_sensor(sensor_type: int, sensor_name: String, vehicle_name: String) -> Dictionary:
-    if _reset_pending_token != 0:
-        return {"ok": false, "error": "reset_pending"}
+    var reset_error := _reset_publication_error()
+    if not reset_error.is_empty():
+        return {"ok": false, "error": reset_error}
     if airsim_sensor_suite == null:
         return {"ok": false, "error": "sensor backend is unavailable"}
     return airsim_sensor_suite.sensor_result(vehicle_name, sensor_type, sensor_name)
@@ -5750,8 +5768,9 @@ func _airsim_neutral_controls() -> Dictionary:
 
 
 func _airsim_state(name: String) -> Dictionary:
-    if _reset_pending_token != 0:
-        return {"ok": false, "error": "reset_pending"}
+    var reset_error := _reset_publication_error()
+    if not reset_error.is_empty():
+        return {"ok": false, "error": reset_error}
     if not _airsim_name_matches(name):
         return {"ok": false, "error": "unknown vehicle: %s" % name}
     if not _is_primary_airsim_vehicle(name):
