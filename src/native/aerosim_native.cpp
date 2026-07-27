@@ -354,6 +354,9 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("record_replay_async_command", "timestamp_us", "vehicle_name", "command_id", "method", "lifecycle"),
             &AeroSimNative::record_replay_async_command);
     ClassDB::bind_method(
+            D_METHOD("record_replay_tuning", "timestamp_us", "vehicle_name", "request_seq", "commit_id", "parameter", "requested_value", "committed_value", "clamped"),
+            &AeroSimNative::record_replay_tuning);
+    ClassDB::bind_method(
             D_METHOD("finish_complete_replay_recording", "timestamp_us", "reason"),
             &AeroSimNative::finish_complete_replay_recording);
     ClassDB::bind_method(
@@ -383,6 +386,8 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("wind_configuration"), &AeroSimNative::wind_configuration);
     ClassDB::bind_method(D_METHOD("sample_wind", "time_seconds", "position_x", "position_y", "position_z"), &AeroSimNative::sample_wind);
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
+    ClassDB::bind_method(D_METHOD("set_flight_tuning", "parameter", "value"), &AeroSimNative::set_flight_tuning);
+    ClassDB::bind_method(D_METHOD("flight_tuning_configuration"), &AeroSimNative::flight_tuning_configuration);
     ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_per_motor_diagnostics"), &AeroSimNative::hardware_per_motor_diagnostics);
     ClassDB::bind_method(D_METHOD("telemetry_snapshot"), &AeroSimNative::telemetry_snapshot);
@@ -523,6 +528,7 @@ AeroSimNative::StepSnapshot AeroSimNative::snapshot_step() const {
     return {
             simulation_state_, simulation_clock_, dual_aircraft_state_, dual_aircraft_clock_, flight_controller_, collision_authority_, imu_, last_imu_sample_,
             has_last_imu_sample_, flight_control_used_estimated_attitude_, flight_mode_,
+            tuning_commit_id_,
     };
 }
 
@@ -538,6 +544,7 @@ void AeroSimNative::restore_step(const StepSnapshot &snapshot) {
     has_last_imu_sample_ = snapshot.has_last_imu_sample;
     flight_control_used_estimated_attitude_ = snapshot.flight_control_used_estimated_attitude;
     flight_mode_ = snapshot.flight_mode;
+    tuning_commit_id_ = snapshot.tuning_commit_id;
 }
 
 void AeroSimNative::set_step_error(const char *method, aerosim::StepStatus status, const char *reason) {
@@ -1155,6 +1162,26 @@ Dictionary AeroSimNative::record_replay_async_command(
     return replay_status(ok, &replay_recorder_->diagnostic());
 }
 
+Dictionary AeroSimNative::record_replay_tuning(
+        std::int64_t timestamp_us,
+        const String &vehicle_name,
+        std::int64_t request_seq,
+        std::int64_t commit_id,
+        const String &parameter,
+        double requested_value,
+        double committed_value,
+        bool clamped) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0 || request_seq < 0 || commit_id < 0) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay tuning input is invalid or recording is inactive"};
+        return replay_status(false, &diagnostic);
+    }
+    const bool ok = replay_recorder_->record_tuning(static_cast<std::uint64_t>(timestamp_us),
+            std::string(vehicle_name.utf8().get_data()), static_cast<std::uint64_t>(request_seq),
+            static_cast<std::uint64_t>(commit_id), std::string(parameter.utf8().get_data()),
+            requested_value, committed_value, clamped);
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
 Dictionary AeroSimNative::finish_complete_replay_recording(
         std::int64_t timestamp_us, const String &reason) {
     if (replay_recorder_ == nullptr || timestamp_us < 0) {
@@ -1554,6 +1581,49 @@ Dictionary AeroSimNative::flight_control_diagnostics() const {
     diagnostics["angular_velocity_y_rad_s"] = simulation_state_.angular_velocity.y;
     diagnostics["angular_velocity_z_rad_s"] = simulation_state_.angular_velocity.z;
     return diagnostics;
+}
+
+Dictionary AeroSimNative::set_flight_tuning(const String &parameter, const Variant &value) {
+    Dictionary result;
+    result["ok"] = false;
+    result["parameter"] = parameter;
+    if (parameter != "simpleflight.rate_p") {
+        result["error"] = "unknown_parameter";
+        return result;
+    }
+    if (value.get_type() != Variant::FLOAT && value.get_type() != Variant::INT) {
+        result["error"] = "wrong_type";
+        return result;
+    }
+    const double requested = static_cast<double>(value);
+    if (!std::isfinite(requested)) {
+        result["error"] = "non_finite";
+        return result;
+    }
+    const double committed = std::clamp(requested, 0.0, 2.0);
+    const bool changed = flight_controller_.rate_p() != committed;
+    if (!flight_controller_.set_rate_p(committed)) {
+        result["error"] = "out_of_contract";
+        return result;
+    }
+    if (changed) {
+        ++tuning_commit_id_;
+    }
+    result["ok"] = true;
+    result["requested_value"] = requested;
+    result["committed_value"] = committed;
+    result["clamped"] = committed != requested;
+    result["commit_id"] = static_cast<std::int64_t>(tuning_commit_id_);
+    result["commit_tick"] = static_cast<std::int64_t>(simulation_clock_.total_substeps);
+    return result;
+}
+
+Dictionary AeroSimNative::flight_tuning_configuration() const {
+    Dictionary result;
+    result["simpleflight.rate_p"] = flight_controller_.rate_p();
+    result["commit_id"] = static_cast<std::int64_t>(tuning_commit_id_);
+    result["commit_tick"] = static_cast<std::int64_t>(simulation_clock_.total_substeps);
+    return result;
 }
 
 Dictionary AeroSimNative::hardware_power_diagnostics() const {

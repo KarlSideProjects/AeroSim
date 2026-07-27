@@ -152,6 +152,16 @@ aerosim::SimulationConfig shipped_5_inch_6s_config() {
 } // namespace
 
 int main() {
+    aerosim::FlightController tuning_controller;
+    if (!near(tuning_controller.rate_p(), 0.600, 1e-12) ||
+            !tuning_controller.set_rate_p(1.25) ||
+            !near(tuning_controller.rate_p(), 1.25, 1e-12) ||
+            tuning_controller.set_rate_p(NAN) ||
+            tuning_controller.set_rate_p(-0.01) ||
+            !near(tuning_controller.rate_p(), 1.25, 1e-12)) {
+        return fail("SimpleFlight rate P must validate and read back active controller memory");
+    }
+
     if (std::string(aerosim::step_status_code(aerosim::StepStatus::Ok)) != "Ok" ||
             std::string(aerosim::step_status_code(aerosim::StepStatus::InvalidConfig)) != "InvalidConfig" ||
             std::string(aerosim::step_status_code(aerosim::StepStatus::InvalidState)) != "InvalidState" ||

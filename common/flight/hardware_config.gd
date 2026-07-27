@@ -114,6 +114,18 @@ func validate_config(config: Dictionary) -> String:
         return schema.error
     return _validate(config, schema.value)
 
+func tuning_registry() -> Array:
+    var schema := _read_json(SCHEMA_PATH)
+    if not schema.ok:
+        return []
+    return schema.value.get("tuning_parameters", []).duplicate(true)
+
+func tuning_registry_hash() -> String:
+    var context := HashingContext.new()
+    context.start(HashingContext.HASH_SHA256)
+    context.update(JSON.stringify(tuning_registry()).to_utf8_buffer())
+    return context.finish().hex_encode()
+
 func apply_to_runtime(runtime: Object, path: String) -> bool:
     var preset := load_preset(path)
     var ok := last_ok
@@ -323,6 +335,16 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             last_error = "native runtime rejected telemetry model"
             push_error(last_error)
             return false
+        if runtime.native.has_method("set_flight_tuning"):
+            for descriptor_value in tuning_registry():
+                var descriptor: Dictionary = descriptor_value
+                var tuning_result: Dictionary = runtime.native.call(
+                        "set_flight_tuning", String(descriptor.get("key", "")), float(descriptor.get("default", 0.0)))
+                if not bool(tuning_result.get("ok", false)):
+                    last_ok = false
+                    last_error = "native runtime rejected tuning default"
+                    push_error(last_error)
+                    return false
         if not runtime.native.has_method("set_a3_drag_model"):
             last_ok = false
             last_error = "native runtime missing A3 drag model setter"

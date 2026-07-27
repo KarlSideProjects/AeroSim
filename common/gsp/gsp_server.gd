@@ -36,6 +36,8 @@ var _authenticated_peers: Array[Dictionary] = []
 var _closing_peers: Array[Dictionary] = []
 var _identity_provider: Callable
 var _telemetry_provider: Callable
+var _tuning_request_provider: Callable
+var _tuning_result_provider: Callable
 var _latest_telemetry_payload: Dictionary = {}
 var _last_telemetry_source_seq := -1
 var _telemetry_sample_seq := 0
@@ -160,6 +162,14 @@ func set_telemetry_provider(provider: Callable) -> void:
 	_telemetry_provider = provider
 
 
+func set_tuning_request_provider(provider: Callable) -> void:
+	_tuning_request_provider = provider
+
+
+func set_tuning_result_provider(provider: Callable) -> void:
+	_tuning_result_provider = provider
+
+
 func get_telemetry_processing_diagnostics() -> Dictionary:
 	return {
 		"path": "always_process",
@@ -175,6 +185,7 @@ func poll() -> void:
 	_poll_pending_handshakes()
 	_poll_unauthenticated_peers()
 	_poll_authenticated_peers()
+	_poll_tuning_results()
 	_poll_telemetry()
 	_poll_closing_peers()
 
@@ -250,6 +261,28 @@ static func validate_request_snapshot_message(message: String, previous_sequence
 	if not data.is_empty():
 		return {"ok": false, "error": "snapshot request data must be empty"}
 	return {"ok": true, "envelope": envelope, "sequence": sequence}
+
+
+static func validate_set_tuning_message(message: String, previous_sequence: int) -> Dictionary:
+	var envelope_result := _parse_envelope(message, "set_tuning")
+	if not bool(envelope_result.get("ok", false)):
+		return envelope_result
+	var envelope: Dictionary = envelope_result.envelope
+	var sequence := _integer_value(envelope.seq)
+	if sequence != previous_sequence + 1:
+		return {"ok": false, "error": "invalid tuning sequence"}
+	var data: Dictionary = envelope.d
+	if data.size() != 2 or typeof(data.get("parameter")) != TYPE_STRING or not data.has("value"):
+		return {"ok": false, "error": "malformed tuning data"}
+	if typeof(data.value) != TYPE_INT and typeof(data.value) != TYPE_FLOAT:
+		return {"ok": false, "error": "wrong tuning value type"}
+	return {
+		"ok": true,
+		"envelope": envelope,
+		"sequence": sequence,
+		"parameter": String(data.parameter),
+		"value": data.value,
+	}
 
 
 static func serialize_telemetry_snapshot(snapshot: Dictionary, sample_sequence: int, tick: int, sender_sequence: int = 0) -> Dictionary:
@@ -501,6 +534,20 @@ func _poll_authenticated_peers() -> void:
 				record["telemetry_force_snapshot"] = true
 				record["telemetry_request_seq"] = int(request_result.sequence)
 				record["telemetry_next_due_usec"] = 0
+			elif message_type == "set_tuning":
+				var tuning_result := validate_set_tuning_message(message, int(record.get("client_sequence", -1)))
+				if not bool(tuning_result.get("ok", false)):
+					failed = true
+					break
+				record["client_sequence"] = int(tuning_result.sequence)
+				var response := _submit_tuning_request(
+					int(record.id), int(tuning_result.sequence), String(tuning_result.parameter), tuning_result.value)
+				if bool(response.get("pending", false)):
+					record["tuning_pending"] = int(record.get("tuning_pending", 0)) + 1
+				else:
+					if not _queue_tuning_ack(record, int(tuning_result.sequence), response):
+						failed = true
+						break
 			else:
 				failed = true
 				break
@@ -511,6 +558,40 @@ func _poll_authenticated_peers() -> void:
 		if not _flush_reliable(record):
 			_authenticated_peers.erase(record)
 			_begin_close(record, "reliable send failed")
+
+
+func _submit_tuning_request(peer_id: int, request_seq: int, parameter: String, value: Variant) -> Dictionary:
+	if not _tuning_request_provider.is_valid():
+		return {"ok": false, "error": "tuning_unavailable"}
+	var result = _tuning_request_provider.call(peer_id, request_seq, parameter, value)
+	return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_tuning_response"}
+
+
+func _queue_tuning_ack(record: Dictionary, request_seq: int, result: Dictionary) -> bool:
+	var data := result.duplicate(true)
+	data["request_seq"] = request_seq
+	return _queue_identity_message(record, "tuning_ack", data)
+
+
+func _poll_tuning_results() -> void:
+	if not _tuning_result_provider.is_valid():
+		return
+	var results = _tuning_result_provider.call()
+	if typeof(results) != TYPE_ARRAY:
+		return
+	for result_value in results:
+		if typeof(result_value) != TYPE_DICTIONARY:
+			continue
+		var result: Dictionary = result_value
+		var peer_id := int(result.get("peer_id", -1))
+		for record in _authenticated_peers.duplicate():
+			if int(record.get("id", -1)) != peer_id:
+				continue
+			record["tuning_pending"] = maxi(0, int(record.get("tuning_pending", 0)) - 1)
+			if not _queue_tuning_ack(record, int(result.get("request_seq", -1)), result):
+				_authenticated_peers.erase(record)
+				_begin_close(record, "reliable send failed")
+			break
 
 
 func _queue_identity_message(record: Dictionary, message_type: String, data: Dictionary) -> bool:

@@ -174,6 +174,7 @@ private:
     };
 
     bool armed_ = false;
+    double rate_p_ = 0.600;
     std::string arm_reject_code_ = "";
     int integrator_reset_count_ = 0;
     double motor_thrust_newtons_ = 0.0;
@@ -248,6 +249,8 @@ public:
     void reset_integrators();
     int integrator_reset_count() const;
     double motor_thrust_newtons() const;
+    bool set_rate_p(double value);
+    double rate_p() const;
     void capture_altitude_hold(double target_altitude_m);
     const PidTimingStats &pid_timing_stats() const;
     FlightControlState control_state() const;

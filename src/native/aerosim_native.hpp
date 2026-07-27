@@ -14,6 +14,7 @@
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_float64_array.hpp>
 #include <godot_cpp/variant/quaternion.hpp>
+#include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
 class AeroSimNative : public godot::RefCounted {
@@ -35,6 +36,7 @@ private:
         bool has_last_imu_sample = false;
         bool flight_control_used_estimated_attitude = false;
         godot::String flight_mode;
+        std::uint64_t tuning_commit_id = 0;
     };
     aerosim::RigidBodyState simulation_state_;
     aerosim::SimulationClock simulation_clock_;
@@ -67,6 +69,7 @@ private:
     bool flight_control_used_estimated_attitude_ = false;
     godot::String flight_mode_ = "ANGLE";
     godot::String last_step_error_;
+    std::uint64_t tuning_commit_id_ = 0;
     aerosim::ImuSample sample_imu();
     void apply_downwash_provider(aerosim::SimulationConfig &config) const;
     StepSnapshot snapshot_step() const;
@@ -226,6 +229,15 @@ public:
             const godot::String &command_id,
             const godot::String &method,
             std::int32_t lifecycle);
+    godot::Dictionary record_replay_tuning(
+            std::int64_t timestamp_us,
+            const godot::String &vehicle_name,
+            std::int64_t request_seq,
+            std::int64_t commit_id,
+            const godot::String &parameter,
+            double requested_value,
+            double committed_value,
+            bool clamped);
     godot::Dictionary finish_complete_replay_recording(
             std::int64_t timestamp_us,
             const godot::String &reason);
@@ -284,6 +296,8 @@ public:
     godot::Dictionary wind_configuration() const;
     godot::Vector3 sample_wind(double time_seconds, double position_x, double position_y, double position_z) const;
     godot::Dictionary flight_control_diagnostics() const;
+    godot::Dictionary set_flight_tuning(const godot::String &parameter, const godot::Variant &value);
+    godot::Dictionary flight_tuning_configuration() const;
     godot::Dictionary hardware_power_diagnostics() const;
     godot::Dictionary hardware_per_motor_diagnostics() const;
     godot::Dictionary telemetry_snapshot() const;

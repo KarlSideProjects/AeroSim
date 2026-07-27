@@ -725,6 +725,28 @@ bool test_first_divergence_report() {
             divergence.expected == "0" && divergence.actual == "0.25" && divergence.tolerance == 0.0;
 }
 
+bool test_tuning_replay_contract() {
+    aerosim::ReplaySessionRecorder recorder(31, "manifest");
+    if (!recorder.add_vehicle("DroneA", "hash-a", "{}") ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{}") ||
+            !recorder.record_environment(0, complete_atmosphere(31)) ||
+            !recorder.record_tuning(1000, "DroneA", 7, 3, "simpleflight.rate_p", 3.0, 2.0, true) ||
+            !recorder.finish(2000, "completed")) {
+        return false;
+    }
+    const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(recorder.serialize(), "manifest");
+    if (!loaded.ok || loaded.session.events.size() != 2 || loaded.session.events[1].type != aerosim::ReplayEventType::Tuning ||
+            loaded.session.events[1].tuning_request_seq != 7 || loaded.session.events[1].tuning_commit_id != 3 ||
+            loaded.session.events[1].tuning_parameter != "simpleflight.rate_p" ||
+            loaded.session.events[1].tuning_committed_value != 2.0 || !loaded.session.events[1].tuning_clamped) {
+        return false;
+    }
+    aerosim::ReplaySession changed = loaded.session;
+    changed.events[1].tuning_committed_value = 1.0;
+    const aerosim::ReplayDivergence divergence = aerosim::compare_replay_sessions(loaded.session, changed);
+    return divergence.diverged && divergence.field == "tuning";
+}
+
 bool test_checked_replay_batches() {
     aerosim::SimulationConfig config;
     config.physics_hz = 240;
@@ -1065,6 +1087,9 @@ int main() {
     }
     if (!test_first_divergence_report()) {
         return fail("complete-session replay must report the first field divergence");
+    }
+    if (!test_tuning_replay_contract()) {
+        return fail("complete-session replay must round-trip ordered tuning inputs");
     }
     if (!test_checked_replay_batches()) {
         return fail("replay batches must retain checked status, rows, and failed frame");

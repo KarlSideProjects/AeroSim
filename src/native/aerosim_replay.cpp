@@ -1409,13 +1409,15 @@ const char *event_type_name(ReplayEventType value) {
         return "scene_object";
     case ReplayEventType::Environment:
         return "environment";
+    case ReplayEventType::Tuning:
+        return "tuning";
     }
     return "";
 }
 
 bool parse_event_type(const std::string &value, ReplayEventType &result) {
-    const std::string names[] = {"command", "async_command", "simulation_time", "collision", "scene_object", "environment"};
-    for (int index = 0; index < 6; ++index) {
+    const std::string names[] = {"command", "async_command", "simulation_time", "collision", "scene_object", "environment", "tuning"};
+    for (int index = 0; index < 7; ++index) {
         if (value == names[index]) {
             result = static_cast<ReplayEventType>(index);
             return true;
@@ -1496,7 +1498,8 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
             return invalid(ReplayDiagnosticCode::InvalidSession, "collision must precede replay termination by a simulation frame");
         }
         const bool requires_vehicle = event.type == ReplayEventType::Command ||
-                event.type == ReplayEventType::AsyncCommand || event.type == ReplayEventType::Collision;
+                event.type == ReplayEventType::AsyncCommand || event.type == ReplayEventType::Collision ||
+                event.type == ReplayEventType::Tuning;
         if (requires_vehicle && event.vehicle_name.empty()) {
             return invalid(ReplayDiagnosticCode::InvalidIdentity, "vehicle identity is required for replay event");
         }
@@ -1547,6 +1550,11 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
             if (!parse_environment_config(event.environment_json, wind_config, air_density)) {
                 return invalid(ReplayDiagnosticCode::Corrupt, "replay v3 atmosphere metadata is incomplete");
             }
+        }
+        if (event.type == ReplayEventType::Tuning &&
+                (event.tuning_parameter.empty() || !std::isfinite(event.tuning_requested_value) ||
+                 !std::isfinite(event.tuning_committed_value))) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "invalid replay tuning input");
         }
     }
     std::uint64_t previous_checkpoint_timestamp_us = 0;
@@ -1683,6 +1691,14 @@ std::string event_json(const ReplayEvent &event) {
         break;
     case ReplayEventType::Environment:
         result += ",\"state\":" + event.environment_json;
+        break;
+    case ReplayEventType::Tuning:
+        result += ",\"request_seq\":" + std::to_string(event.tuning_request_seq) +
+                ",\"commit_id\":" + std::to_string(event.tuning_commit_id) +
+                ",\"parameter\":\"" + escape_json_string(event.tuning_parameter) +
+                "\",\"requested_value\":" + compact_number(event.tuning_requested_value) +
+                ",\"committed_value\":" + compact_number(event.tuning_committed_value) +
+                ",\"clamped\":" + std::string(event.tuning_clamped ? "true" : "false");
         break;
     }
     return result + '}';
@@ -1839,6 +1855,19 @@ bool parse_event(const JsonValue &value, ReplayEvent &event) {
         }
         event.environment_json = compact_json(*state);
         return true;
+    }
+    case ReplayEventType::Tuning: {
+        const JsonValue *request_seq = field(value, "request_seq");
+        const JsonValue *commit_id = field(value, "commit_id");
+        const JsonValue *parameter = field(value, "parameter");
+        const JsonValue *requested = field(value, "requested_value");
+        const JsonValue *committed = field(value, "committed_value");
+        const JsonValue *clamped = field(value, "clamped");
+        return request_seq != nullptr && commit_id != nullptr && parameter != nullptr && requested != nullptr &&
+                committed != nullptr && clamped != nullptr && integer_value(*request_seq, event.tuning_request_seq) &&
+                integer_value(*commit_id, event.tuning_commit_id) && string_value(*parameter, event.tuning_parameter) &&
+                number_value(*requested, event.tuning_requested_value) && number_value(*committed, event.tuning_committed_value) &&
+                bool_value(*clamped, event.tuning_clamped);
     }
     }
     return false;
@@ -2219,6 +2248,39 @@ bool ReplaySessionRecorder::record_environment(std::uint64_t timestamp_us, std::
     event.type = ReplayEventType::Environment;
     environment_json_ = compact_json(parsed);
     event.environment_json = environment_json_;
+    session_.events.push_back(std::move(event));
+    diagnostic_ = {};
+    return true;
+}
+
+bool ReplaySessionRecorder::record_tuning(
+        std::uint64_t timestamp_us,
+        const std::string &vehicle_name,
+        std::uint64_t request_seq,
+        std::uint64_t commit_id,
+        const std::string &parameter,
+        double requested_value,
+        double committed_value,
+        bool clamped) {
+    if (finished_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
+    }
+    if (!has_vehicle(vehicle_name)) {
+        return fail(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + vehicle_name);
+    }
+    if (parameter.empty() || !std::isfinite(requested_value) || !std::isfinite(committed_value)) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay tuning input is invalid");
+    }
+    ReplayEvent event;
+    event.timestamp_us = timestamp_us;
+    event.type = ReplayEventType::Tuning;
+    event.vehicle_name = vehicle_name;
+    event.tuning_request_seq = request_seq;
+    event.tuning_commit_id = commit_id;
+    event.tuning_parameter = parameter;
+    event.tuning_requested_value = requested_value;
+    event.tuning_committed_value = committed_value;
+    event.tuning_clamped = clamped;
     session_.events.push_back(std::move(event));
     diagnostic_ = {};
     return true;
@@ -2805,6 +2867,12 @@ ReplayRunResult replay_session(
                 pending_collision_authorities[vehicle] = event.collision.authority;
                 last_collisions[vehicle] = event.collision;
                 has_pending_collision[vehicle] = true;
+            } else if (event.type == ReplayEventType::Tuning) {
+                const int vehicle = vehicle_index(event.vehicle_name);
+                if (vehicle < 0 || event.tuning_parameter != "simpleflight.rate_p" ||
+                        !controllers[vehicle].set_rate_p(event.tuning_committed_value)) {
+                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay tuning input is unsupported"));
+                }
             }
         }
         for (std::size_t index = event_index; index < group_end; ++index) {
@@ -2814,6 +2882,8 @@ ReplayRunResult replay_session(
             break;
         }
         case ReplayEventType::AsyncCommand:
+            break;
+        case ReplayEventType::Tuning:
             break;
         case ReplayEventType::SceneObject: {
             if (event.object_operation == ReplaySceneObjectOperation::Reset) {
@@ -3615,6 +3685,13 @@ ReplayDivergence compare_replay_sessions(
             return result;
         } else if (left.type == ReplayEventType::Environment && left.environment_json != right.environment_json) {
             report(left.timestamp_us, {}, "environment", left.environment_json, right.environment_json, 0.0);
+            return result;
+        } else if (left.type == ReplayEventType::Tuning &&
+                (left.tuning_request_seq != right.tuning_request_seq || left.tuning_commit_id != right.tuning_commit_id ||
+                 left.tuning_parameter != right.tuning_parameter || left.tuning_clamped != right.tuning_clamped ||
+                 !same_or_close(left.tuning_requested_value, right.tuning_requested_value, tolerance) ||
+                 !same_or_close(left.tuning_committed_value, right.tuning_committed_value, tolerance))) {
+            report(left.timestamp_us, left.vehicle_name, "tuning", event_json(left), event_json(right), tolerance);
             return result;
         }
     }

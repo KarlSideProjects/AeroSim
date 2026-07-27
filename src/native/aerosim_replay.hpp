@@ -83,6 +83,7 @@ enum class ReplayEventType {
     Collision,
     SceneObject,
     Environment,
+    Tuning,
 };
 
 struct ReplayEvent {
@@ -107,6 +108,12 @@ struct ReplayEvent {
     Vec3 object_position;
     Quat object_orientation;
     std::string environment_json;
+    std::uint64_t tuning_request_seq = 0;
+    std::uint64_t tuning_commit_id = 0;
+    std::string tuning_parameter;
+    double tuning_requested_value = 0.0;
+    double tuning_committed_value = 0.0;
+    bool tuning_clamped = false;
 };
 
 struct ReplaySceneObjectState {
@@ -253,6 +260,15 @@ public:
             const Vec3 &position,
             const Quat &orientation = {});
     bool record_environment(std::uint64_t timestamp_us, std::string environment_json);
+    bool record_tuning(
+            std::uint64_t timestamp_us,
+            const std::string &vehicle_name,
+            std::uint64_t request_seq,
+            std::uint64_t commit_id,
+            const std::string &parameter,
+            double requested_value,
+            double committed_value,
+            bool clamped);
     bool record_checkpoint(std::uint64_t timestamp_us, const DualAircraftState &state);
     bool record_checkpoint(std::uint64_t timestamp_us, ReplayRunCheckpoint checkpoint);
     bool finish(std::uint64_t timestamp_us, std::string reason);
