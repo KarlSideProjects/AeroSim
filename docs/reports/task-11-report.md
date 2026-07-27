@@ -1,75 +1,114 @@
 # Task 11 — GitHub issue #251 report
 
-## Problems
+## Problems and solutions
 
-- Reliable admission counted native buffered bytes against the application FIFO, so a transient transport sample could reject otherwise bounded application work.
-- Tuning commit broadcast duplicated queue accounting instead of using the shared admission path.
-- Reliable flush did not enforce peer-local native pressure before and after sending; telemetry did not require an empty reliable FIFO or use a reachable suppression threshold.
-- Overflow and packet-count rejection did not expose bounded local failure/acceptance evidence, and the panel had no production timing samples for request-to-commit and commit-to-rendered-ACK.
+- Reliable application admission now bounds application message count, application bytes, and message size independently. Native buffered bytes are sampled only by transport flush policy, so a native queue sample cannot consume application FIFO budget.
+- Reliable flush remains FIFO and peeks the head. It removes and decrements only after `send_text == OK`; send failure leaves the head. Telemetry is latest-wins, depth one, reliable-first, and suppressed below the reachable native hard-close policy.
+- Overflow is persistent and overflow-specific. Earlier accepted reliable messages drain first; the closing pump makes one nonrecursive best-effort overflow-envelope attempt, records attempted/local acceptance separately, never claims delivery, then closes. Ordinary send failure and inbound packet-count overload do not emit overflow.
+- Tuning preflight uses the central admission helper. Hard pressure closes only the affected peer. Existing focused evidence preserves FIFO, peer-local isolation, replacement/reclaim, deterministic flags, replay, and security behavior.
+- Panel timing uses monotonic clock synchronization and authoritative native commit identity. The production DOM update is followed by double-RAF rendered observation. The existing headed Chrome artifact has 100 correlated samples and is vendor-neutral evidence; GPU identity is metadata only.
+- The paired performance runner was replaced with a frozen four-process external-client design. Each authenticated-idle process starts the real `GspServer`, publishes ready `{port, token}` metadata, and is driven by the repository's stdlib WebSocket helper. The external client authenticates, sends only `set_telemetry hz:30`, and continuously drains until process shutdown. Disabled processes start no server or client.
 
-## Solutions
+## TDD and focused tests
 
-- `common/gsp/gsp_server.gd` now keeps application count, application bytes, and serialized message size independently bounded. Native buffered bytes are excluded from admission and sampled only during reliable/telemetry flush.
-- Runtime policy is reachable and GPU-neutral: `MAX_RELIABLE_BYTES=65536`, `MAX_RELIABLE_MESSAGE_BYTES=32768`, `TELEMETRY_SUPPRESSION_THRESHOLD_BYTES=32768`, `HARD_CLOSE_THRESHOLD_BYTES=98304`, and `NATIVE_OUTBOUND_CAPACITY_BYTES=131072`; these satisfy `0 < MAX_RELIABLE_MESSAGE_BYTES <= MAX_RELIABLE_BYTES`, telemetry suppression below the reliable bound, the reliable bound below hard close, and hard-close headroom within native capacity.
-- Reliable flush peeks the FIFO head, checks native pressure, sends, removes/decrements only after `OK`, then resamples and hard-closes only the impaired peer. Telemetry sends only with an empty reliable FIFO and native bytes below suppression.
-- Tuning commits route through `_queue_identity_message` and the central admission helper. Packet-count rejection is an explicit reliable send failure. Overflow preserves earlier FIFO order and performs one nonrecursive best-effort error attempt after earlier messages drain, recording local attempt and local acceptance separately without claiming delivery.
-- `common/gsp/gsp_panel.html` records bounded production timing samples and exposes a read-only test snapshot. No new dependency or architecture was added.
-
-## TDD and tests
-
-Initial RED was established before the implementation with:
+RED:
 
 ```text
-/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_backpressure_contract.gd
+python3 scripts/test_gsp_idle_benchmark_contract.py
 ```
 
-It failed to parse because the new threshold/admission contract symbols were absent. The focused GREEN contract then passed.
+The initial run failed because the old runner had same-process `paired` mode, no ready metadata/external client, and no frozen per-run signed comparison. GREEN passed after replacing that design.
 
-Focused checks passed:
+Focused GREEN evidence:
 
 ```text
-node --check tests/test_gsp_panel_behavior.js
-node tests/test_gsp_panel_behavior.js                         # GSP panel row behavior passed
-node tests/test_gsp_panel_recovery.js                         # GSP panel recovery behavior passed
-Godot gsp_transport_contract.gd                               # PASS
-Godot gsp_backpressure_contract.gd                             # PASS
-Godot gsp_telemetry_integration.gd                            # PASS
-Godot gsp_transport_integration.gd                            # PASS
-Godot gsp_telemetry_contract.gd                               # PASS
-Godot gsp_tuning_integration.gd                               # PASS
-Godot gsp_tuning_stress.gd                                    # PASS
-GODOT_BIN=... python3 scripts/test_gsp_transport.py            # PASS, 1000 samples, p99 0.117 ms
-RUNNER_TEMP=/tmp/aerosim-gsp-251-native scripts/test_native.sh  # PASS
+python3 scripts/test_gsp_idle_benchmark_contract.py                 # 3 tests PASS
+python3 -m py_compile scripts/run_gsp_idle_benchmark.py              # PASS
+python3 scripts/test_gsp_transport.py                                # PASS, 1000 samples, p99 0.119 ms
+Godot gsp_transport_contract.gd                                      # PASS
+Godot gsp_transport_integration.gd                                   # PASS
+Godot gsp_telemetry_contract.gd                                     # PASS
+python3 scripts/test_gsp_transport_boundary.py                       # PASS
+  slow-peer overflow, packet rejection, suppression/isolation,
+  replacement/reclaim, restart-token, FIFO/overflow boundaries
+external authenticated-idle benchmark smoke                         # PASS
+  ready/auth/drain lifecycle, open samples, telemetry received
 ```
 
-The boundary harness passed FIFO/overflow, pending-handshake, replacement, abrupt reclaim, token, and slow-peer cleanup cases. Its real authenticated two-peer pressure attempt reported:
+`gsp_telemetry_integration.gd` was also run and failed its existing paused-restore assertion (`paused restore succeeds without a new source sample`). This issue changes only the performance benchmark and external runner; the telemetry contract and all boundary/transport focused tests passed. The failure is reported, not hidden.
+
+## Frozen qualification design and result
+
+Code-bearing HEAD: `328e9e356647cb75252d8fc50c364671af2f95b8`.
+
+The only fresh qualification was run once from a new output directory with this fixed order:
 
 ```text
-GSP peer isolation: DEFERRED authenticated_slow_peer_native_buffer=0/131072 telemetry_sends=300 suppression_threshold=32768 platform_socket_backpressure_unobservable=true
+D_a, I_a, I_b, D_b
 ```
 
-This is not acceptance evidence for telemetry suppression or hard-close isolation. The platform delivered all 300 telemetry sends without exposing native buffered bytes on the authenticated unread loopback peer, so the required real slow-peer qualification is explicitly deferred rather than forced or claimed.
+Every run was a fresh Godot process with the production `EffectWorkload` on the production SmokeScene, 10 seconds warmup, 60 seconds measurement, and exactly 14,400 retained `PhysicsFrameProfiler._tick` samples. The primary metric was frozen before the run:
+
+```text
+pair_a = (mean(I_a) - mean(D_a)) / mean(D_a)
+pair_b = (mean(I_b) - mean(D_b)) / mean(D_b)
+aggregate = (pair_a + pair_b) / 2
+```
+
+Both individual signed pair percentages and the aggregate must have absolute value `<1%`. Percentiles are diagnostics only; no samples were dropped and no frame-index pairs were treated as independent experiments.
+
+Result: **FAIL**, retained as evidence; no post-result statistic or run count was changed.
+
+```text
+D_a mean 0.1400449306 ms, p50 0.097 ms, p95 0.291 ms, p99 0.312 ms
+I_a mean 0.1496139583 ms, p50 0.108 ms, p95 0.302 ms, p99 0.321 ms
+I_b mean 0.1467845833 ms, p50 0.105 ms, p95 0.297 ms, p99 0.317 ms
+D_b mean 0.1460110417 ms, p50 0.103 ms, p95 0.296 ms, p99 0.316 ms
+
+(I_a-D_a)/D_a = +6.8328269648%
+(I_b-D_b)/D_b = +0.5297829930%
+aggregate       = +3.6813049789%
+```
+
+The concrete blocker is process/runtime interference: the second disabled run itself rose from `0.1400449306 ms` to `0.1460110417 ms`, while both authenticated runs remained fully healthy. This fresh-process design therefore does not establish the required `<1%` performance AC on this host; the result is not a PASS claim.
+
+The authenticated lifecycle evidence was valid in both idle runs: each had `16,800/16,800` open samples, no suppression, no overflow, no hard close, `187–188` server telemetry sends, and `187–189` externally drained telemetry frames. Serialization distributions were retained; observed p99 wire serialization was `94 us` and `119 us`, below `0.5 ms`.
+
+## Pilot evidence deliberately excluded
+
+- `build/gsp-idle-benchmark-final3/`: old independent-process pilot from commit `a85323f`; it passed the superseded all-metrics calculation and is not qualification evidence.
+- `build/gsp-idle-benchmark-final4/`: old independent-process pilot from commit `3870388`; it failed the superseded all-metrics calculation (`mean +1.346645%`, `p99 +2.39617%`) and is not qualification evidence.
+- `build/gsp-idle-qualification/`: same-process AB/BA experiment from `0b4b718`; it showed phase drift and is not qualification evidence.
+
+These artifacts remain useful noise/root-cause evidence only. None was reused or selectively reclassified as the final result.
 
 ## Artifact paths
 
-- Contract: `tests/headless/gsp_backpressure_contract.gd`
-- Boundary harness: `tests/headless/gsp_server_harness.gd`, `scripts/test_gsp_transport_boundary.py`
-- Panel timing contract: `tests/test_gsp_panel_behavior.js`
-- Telemetry distribution assertions: `tests/headless/gsp_telemetry_integration.gd`
-- No raw issue-specific browser performance JSON/SVG artifact was produced; stdout-only transport timings are not browser qualification artifacts.
+- Final raw qualification: `build/gsp-idle-qualification-328e9e3/comparison.json`
+- Final physics raw runs: `build/gsp-idle-qualification-328e9e3/{D_a,I_a,I_b,D_b}.raw.json`
+- Final external-client lifecycle raw runs: `build/gsp-idle-qualification-328e9e3/{D_a,I_a,I_b,D_b}.external.raw.json`
+- Final Godot logs: `build/gsp-idle-qualification-328e9e3/{D_a,I_a,I_b,D_b}.godot.log`
+- Browser production artifact retained from the unrelated panel timing implementation: `build/gsp-browser/performance.raw.json`
+  - Chrome headed CDP, 100 sequential correlated samples
+  - request→native commit p99 `35.585 ms`
+  - native commit→double-RAF rendered p99 `38.946 ms`
+  - monotonic clock sync: 8 samples, best RTT `4.800 ms`, error bound `2.400 ms`
+- Slow-peer boundary artifact: `build/gsp-boundary-251-final.log`
+- Full gate generated evidence: `build/native_debug_artifact.json`, `build/gut/junit.xml`, `build/headless_smoke.json`
 
-The exact committed-HEAD gate was run with:
+## Exact full gate
+
+Command run once after code-bearing commit `328e9e3`:
 
 ```text
 RUNNER_TEMP=/tmp/aerosim-gsp-251 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh
 ```
 
-It passed on final committed HEAD `a35dea0`, including native build, license scan, GUT `277/277`, headed acceptance, replay, and headless smoke. It generated the expected build evidence at `build/gut/junit.xml`, `build/native_debug_artifact.json`, and `build/headless_smoke.json`; generated UID/import/translation files are cleanup-only artifacts.
+The captured output reached the final headless smoke and reported native probe `47`, `5` simulated frames, native/license/build checks, GSP boundary, headed acceptance, replay, GUT `277/277`, and all visible sub-gates passed. The PTY wrapper lost the process before exposing a numeric exit-code record, so this report intentionally does not claim a captured `exit 0`.
 
-## Deferred items
+## Deferred or blocked items
 
-- Authenticated production-browser rendered-ACK benchmark: deferred. Firefox and display variables were present, but no authenticated production-browser benchmark runner was available; the existing headed driver requires unavailable `ydotool` and is a focus-acceptance driver, while the Node test is only deterministic contract evidence.
-- Paired authenticated 60-second idle-vs-disabled measurement: not run. No valid issue-specific runner was available, and the required 60-second duration was not shortened or weakened.
-- GPU performance qualification: not run and not used as evidence. No adapter allowlist was added and the frozen NVIDIA-specific G0.1 qualification was not called.
-
-Codebase-memory MCP was available, the worktree was indexed, and it was used for GSP transport/telemetry/panel discovery. The issue ledger and GitHub were not edited.
+- The paired `<1%` physics-overhead acceptance is **blocked by the recorded FAIL above**, not deferred and not claimed PASS. Completing it requires a new approved measurement design/root-cause correction; this session did not alter the frozen result after observing it.
+- The paused-source-sample telemetry integration failure remains a focused-test blocker unrelated to this benchmark change and is recorded above.
+- No GPU vendor/type/device/driver/renderer allowlist was added. The frozen NVIDIA-specific G0.1 qualification was not used as proof for #251.
+- Codebase-memory MCP was available, the worktree index was ready, and it was used first for transport/telemetry/benchmark discovery. The issue ledger, GitHub, and #252 were not edited.
