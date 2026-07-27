@@ -114,8 +114,14 @@ GSP issue-251 real-time smoke: PASS
 This short smoke does not replace or change the formal #251 result: the frozen
 machine-readable qualification artifact remains the authoritative
 `conditioning_sample_count` FAIL above.
+
+RUNNER_TEMP=/tmp/aerosim-gsp-final-nonpty \
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+scripts/verify_issue_11.sh
+PASS from bd6efe97f02326b705d856024dd377b361229845
+GUT 277/277; native/build/license, GSP transport/backpressure, preset/tuning/
+stress, replay, Quick Adjust, headed acceptance, and headless smoke passed.
 ```
 
-No packages, browser binaries, desktop configuration, or GitHub issue comments
-were changed. Generated Godot `.uid`, `.import`, and `.translation` files were
-not staged.
+No packages, browser binaries, or desktop configuration were changed.
+Generated Godot `.uid`, `.import`, and `.translation` files were not staged.
