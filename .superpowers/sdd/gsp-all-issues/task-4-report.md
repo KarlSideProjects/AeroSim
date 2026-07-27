@@ -70,7 +70,13 @@ Additional results:
 - Godot `gsp_telemetry_contract.gd`: PASS.
 - GSP transport and telemetry integration checks: PASS.
 - `git diff --check`: PASS.
-- The prescribed review gate was run before the final commit while iterating: native, license, Python, GUT (276 tests, 0 failures, 0 errors), and existing stages passed; the first run failed only at the new integration replay harness, then the focused integration rerun passed after the harness fixes.
+- Final committed-HEAD gate: PASS at `9054f0922a76e9ec03d3090585497e811da96d1d`.
+
+  ```text
+  RUNNER_TEMP=/tmp/aerosim-gsp-244-review GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh
+  ```
+
+  This covered native, license, Python, GUT (276 tests, 0 failures, 0 errors), the GSP tuning integration, headed acceptance, and the smoke path. The gate emitted only existing validation/resource warnings; it completed successfully. The earlier iterative run failed only at the new integration replay harness, then the focused integration rerun passed after the harness fixes.
 
 ## Scoped files
 
