@@ -394,6 +394,43 @@ func _run() -> void:
             int(disconnected_observer_commits.back().get("d", {}).get("commit_id", -1)) > alternate_commit_id,
             "connected observer receives a commit after its origin disconnects before the physics boundary")
 
+    var paused_origin_client := WebSocketPeer.new()
+    await _connect_and_auth(paused_origin_client, int(started.port), String(started.token))
+    _expect(not (await _next_message_type(paused_origin_client, "hello", 240)).is_empty(),
+            "paused saturation origin authenticates")
+    _drain_all_messages(panel_client)
+    var paused_saturated_record: Dictionary = {}
+    var paused_healthy_record: Dictionary = {}
+    if _server._authenticated_peers.size() == 2:
+        paused_healthy_record = _server._authenticated_peers[0]
+        paused_saturated_record = _server._authenticated_peers[1]
+    _expect(not paused_saturated_record.is_empty() and not paused_healthy_record.is_empty(),
+            "paused saturation regression resolves origin and observer records")
+    var paused_forced_queue: Array = []
+    for _slot in GspServer.MAX_RELIABLE_MESSAGES:
+        paused_forced_queue.append("{}")
+    if not paused_saturated_record.is_empty():
+        paused_saturated_record["reliable_queue"] = paused_forced_queue
+        paused_saturated_record["reliable_bytes"] = paused_forced_queue.size()
+    var paused_overflow_before := _server.reliable_overflow_count
+    _runtime.paused = true
+    _expect(paused_origin_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 1,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.81}
+    })) == OK, "paused saturated origin sends a synchronous tuning request")
+    _server.poll()
+    var paused_observer_commit := await _next_message_type(panel_client, "tuning_commit", 120)
+    _expect(_server.reliable_overflow_count == paused_overflow_before + 1 and
+            _server.last_reliable_error == "reliable queue overflow" and
+            not _server._authenticated_peers.has(paused_saturated_record) and
+            float(paused_observer_commit.get("d", {}).get("committed_values", {}).get("simpleflight.rate_p", 0.0)) == 1.81,
+            "paused origin ACK failure isolates the origin while the observer receives its committed result")
+    paused_origin_client.close()
+    for _attempt in 30:
+        _server.poll()
+        await process_frame
+    _runtime.paused = false
+
     var capacity_client := WebSocketPeer.new()
     await _connect_and_auth(capacity_client, int(started.port), String(started.token))
     _expect(not (await _next_message_type(capacity_client, "hello", 240)).is_empty(),

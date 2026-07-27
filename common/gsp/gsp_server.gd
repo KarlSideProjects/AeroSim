@@ -579,14 +579,16 @@ func _poll_authenticated_peers() -> void:
                 record["client_sequence"] = int(tuning_result.sequence)
                 var response := _submit_tuning_request(
                         int(record.id), int(record.connection_id), int(tuning_result.sequence), String(tuning_result.parameter), tuning_result.value)
-                if not bool(response.get("pending", false)) and not _queue_tuning_ack(record, int(tuning_result.sequence), response):
+                var response_ack_failed := false
+                if not bool(response.get("pending", false)):
+                    response_ack_failed = not _queue_tuning_ack(record, int(tuning_result.sequence), response)
+                if not bool(response.get("pending", false)) and bool(response.get("ok", false)) and bool(response.get("changed", false)):
+                    if not response_ack_failed and not _flush_reliable(record):
+                        response_ack_failed = true
+                    _broadcast_tuning_commit(response, int(tuning_result.sequence))
+                if response_ack_failed:
                     failed = true
                     break
-                if not bool(response.get("pending", false)) and bool(response.get("ok", false)) and bool(response.get("changed", false)):
-                    if not _flush_reliable(record):
-                        failed = true
-                        break
-                    _broadcast_tuning_commit(response, int(tuning_result.sequence))
             elif message_type == "set_tuning_batch":
                 var tuning_batch_result := validate_set_tuning_batch_message(message, int(record.get("client_sequence", -1)))
                 if not bool(tuning_batch_result.get("ok", false)):
@@ -595,14 +597,16 @@ func _poll_authenticated_peers() -> void:
                 record["client_sequence"] = int(tuning_batch_result.sequence)
                 var batch_response := _submit_tuning_batch_request(
                         int(record.id), int(record.connection_id), int(tuning_batch_result.sequence), tuning_batch_result.changes)
-                if not bool(batch_response.get("pending", false)) and not _queue_tuning_ack(record, int(tuning_batch_result.sequence), batch_response):
+                var batch_ack_failed := false
+                if not bool(batch_response.get("pending", false)):
+                    batch_ack_failed = not _queue_tuning_ack(record, int(tuning_batch_result.sequence), batch_response)
+                if not bool(batch_response.get("pending", false)) and bool(batch_response.get("ok", false)) and bool(batch_response.get("changed", false)):
+                    if not batch_ack_failed and not _flush_reliable(record):
+                        batch_ack_failed = true
+                    _broadcast_tuning_commit(batch_response, int(tuning_batch_result.sequence))
+                if batch_ack_failed:
                     failed = true
                     break
-                if not bool(batch_response.get("pending", false)) and bool(batch_response.get("ok", false)) and bool(batch_response.get("changed", false)):
-                    if not _flush_reliable(record):
-                        failed = true
-                        break
-                    _broadcast_tuning_commit(batch_response, int(tuning_batch_result.sequence))
             else:
                 failed = true
                 break

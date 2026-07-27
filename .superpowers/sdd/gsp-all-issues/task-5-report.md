@@ -269,3 +269,55 @@ The gate emitted existing Terrain3D/importer, renderer leak, and expected
 negative-path native diagnostics; none caused a failure. The report update is
 committed separately after that gate so the gate evidence remains tied to the
 implementation commit.
+
+## Third Sol-high review — synchronous origin ACK failure
+
+The final Sol-high review found that the synchronous paused/immediate
+`set_tuning` and `set_tuning_batch` branches still broke before broadcasting
+when the provider had already committed but the origin ACK queue or flush
+failed. The existing direct broadcast saturation helper did not exercise this
+request path.
+
+The RED regression uses a real authenticated origin and observer. It forces
+the origin server record to `MAX_RELIABLE_MESSAGES`, sends a paused
+non-pending changed `set_tuning` request through the WebSocket, and asserts
+that the origin is isolated with one overflow diagnostic while the observer
+receives the exact native committed value. Before the production change it
+failed with the expected missing observer commit:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+  --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+# paused origin ACK failure isolates the origin while the observer receives
+# its committed result
+```
+
+Both synchronous branches now use the same minimal ordering: attempt the
+origin ACK, flush it when possible, broadcast a changed committed response
+regardless of origin failure, then let the existing failed-peer path finish
+isolation. A healthy origin therefore retains ACK-before-broadcast ordering;
+an unavailable or saturated origin is not double-counted or double-closed,
+and remaining observers still receive the commit.
+
+Third-review GREEN results:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+  --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+# GSP tuning integration: PASS
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+  --headless --path . --script res://tests/headless/gsp_tuning_stress.gd
+# GSP tuning stress: PASS
+
+scripts/test_native.sh
+# passed
+
+python3 scripts/test_gsp_transport.py
+python3 scripts/test_gsp_transport_boundary.py
+# fixed-runner, pending/graceful/forced boundary: PASS
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+  --headless --path . --script res://tests/headless/gsp_transport_integration.gd
+# GSP transport integration: PASS
+```
