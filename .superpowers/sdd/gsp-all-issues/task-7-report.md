@@ -311,3 +311,14 @@ The gate emitted only known non-fatal repository diagnostics: negative-path nati
 ### Post-gate self-review correction
 
 The complete diff self-review found one remaining direct-helper seam: `diff_values` still skipped one-sided keys even though FlightRuntime rejected them before valid comparisons. The helper now emits explicit `missing_value` rows with null percentage/absolute fields, and the panel renders missing endpoints safely. The focused contract, panel, and two-peer integration rerun passed after this correction. This is still #247 trust-boundary hardening; no migration behavior was added.
+
+The exact gate was rerun after that correction:
+
+```text
+RUNNER_TEMP=/tmp/aerosim-gsp-247 \
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+scripts/verify_issue_11.sh
+# exit 0 on committed HEAD 20b0c58
+# license scan: 11 dependencies passed; GUT: 277/277; preset/tuning/Quick Adjust/stress/headed/replay/smoke passed
+# smoke: native_probe=47, physics_ticks_per_second=240, simulated_frames=5
+```
