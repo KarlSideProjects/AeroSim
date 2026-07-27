@@ -54,12 +54,21 @@ STATUSES = {"pass", "fail", "blocked", "unavailable", "not_run"}
 _VALIDATION_TOKEN = object()
 
 
+def _evidence_digest(value: Any) -> bytes | None:
+    try:
+        canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        return hashlib.sha256(canonical.encode("utf-8")).digest()
+    except (TypeError, ValueError, UnicodeError, OverflowError):
+        return None
+
+
 class _ValidatedEvidence(dict):
-    __slots__ = ("_validation_token",)
+    __slots__ = ("_validation_token", "_content_digest")
 
     def __init__(self, payload: dict[str, Any]) -> None:
         super().__init__(payload)
         self._validation_token = _VALIDATION_TOKEN
+        self._content_digest = _evidence_digest(self)
 
 
 def _validated(payload: dict[str, Any]) -> _ValidatedEvidence:
@@ -67,7 +76,12 @@ def _validated(payload: dict[str, Any]) -> _ValidatedEvidence:
 
 
 def _is_validated(value: Any) -> bool:
-    return isinstance(value, _ValidatedEvidence) and getattr(value, "_validation_token", None) is _VALIDATION_TOKEN
+    return (
+        isinstance(value, _ValidatedEvidence)
+        and getattr(value, "_validation_token", None) is _VALIDATION_TOKEN
+        and value._content_digest is not None
+        and _evidence_digest(value) == value._content_digest
+    )
 
 
 def _git_commit(repo_root: Path) -> str | None:

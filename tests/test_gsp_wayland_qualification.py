@@ -221,19 +221,29 @@ class GspWaylandQualificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             suite = load_evidence_manifest(suite_manifest(directory), GSP_SUITE_KIND, REQUIRED_GSP_PHASES, ROOT)
-            platform = load_evidence_manifest(platform_manifest(directory), PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
             performance = load_performance_evidence(performance_manifest(directory), ROOT)
-            base = {"prerequisites": {"gsp_p0_p4_suite": suite, "issue_251_performance": performance}, "platform_checks": platform}
             results = []
             for gpu in (
                 {"vendor": "AMD", "model": "integrated", "type": "iGPU", "device": "x", "driver": "amdgpu", "renderer": "radv"},
                 {"vendor": "NVIDIA", "model": "discrete", "type": "dGPU", "device": "y", "driver": "nvidia", "renderer": "vulkan"},
                 {"vendor": "Other", "model": "software", "type": "cpu", "device": "z", "driver": "llvmpipe", "renderer": "software"},
             ):
-                platform["environment"]["gpu"] = [gpu]
-                results.append(evaluate_qualification(base))
-            platform["environment"].pop("gpu")
-            absent = evaluate_qualification(base)
+                gpu_directory = directory / gpu["vendor"]
+                gpu_directory.mkdir()
+                path = platform_manifest(gpu_directory)
+                body = json.loads(path.read_text())
+                body["environment"]["gpu"] = [gpu]
+                path.write_text(json.dumps(body), encoding="utf-8")
+                platform = load_evidence_manifest(path, PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
+                results.append(evaluate_qualification({"prerequisites": {"gsp_p0_p4_suite": suite, "issue_251_performance": performance}, "platform_checks": platform}))
+            absent_directory = directory / "absent"
+            absent_directory.mkdir()
+            absent_path = platform_manifest(absent_directory)
+            absent_body = json.loads(absent_path.read_text())
+            absent_body["environment"].pop("gpu")
+            absent_path.write_text(json.dumps(absent_body), encoding="utf-8")
+            absent_platform = load_evidence_manifest(absent_path, PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
+            absent = evaluate_qualification({"prerequisites": {"gsp_p0_p4_suite": suite, "issue_251_performance": performance}, "platform_checks": absent_platform})
 
         self.assertTrue(all(result["accepted"] for result in results))
         self.assertEqual({result["accepted"] for result in results}, {True})
@@ -249,6 +259,54 @@ class GspWaylandQualificationTests(unittest.TestCase):
             result = load_evidence_manifest(path, PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
 
         self.assertEqual(result["status"], "blocked")
+
+    def test_mutated_frozen_performance_fail_to_pass_is_rejected(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            manifest = {
+                "prerequisites": {
+                    "gsp_p0_p4_suite": load_evidence_manifest(suite_manifest(directory), GSP_SUITE_KIND, REQUIRED_GSP_PHASES, ROOT),
+                    "issue_251_performance": load_performance_evidence(ROOT / "build/gsp-idle-qualification-7310191/qualification.failure.json", ROOT),
+                },
+                "platform_checks": load_evidence_manifest(platform_manifest(directory), PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT),
+            }
+            manifest["prerequisites"]["issue_251_performance"]["status"] = "pass"
+
+        self.assertFalse(evaluate_qualification(manifest)["accepted"])
+
+    def test_mutated_suite_phase_status_or_artifact_is_rejected(self):
+        for field, value in (("status", "fail"), ("artifact", {"path": "fake", "sha256": "0" * 64})):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                suite = load_evidence_manifest(suite_manifest(directory), GSP_SUITE_KIND, REQUIRED_GSP_PHASES, ROOT)
+                performance = load_performance_evidence(performance_manifest(directory), ROOT)
+                platform = load_evidence_manifest(platform_manifest(directory), PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
+                suite["phases"]["GS-P0"][field] = value
+                result = evaluate_qualification({"prerequisites": {"gsp_p0_p4_suite": suite, "issue_251_performance": performance}, "platform_checks": platform})
+
+            self.assertFalse(result["accepted"])
+
+    def test_mutated_platform_check_status_or_artifact_is_rejected(self):
+        for field, value in (("status", "fail"), ("artifact", {"path": "fake", "sha256": "0" * 64})):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                suite = load_evidence_manifest(suite_manifest(directory), GSP_SUITE_KIND, REQUIRED_GSP_PHASES, ROOT)
+                performance = load_performance_evidence(performance_manifest(directory), ROOT)
+                platform = load_evidence_manifest(platform_manifest(directory), PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
+                platform["checks"]["native_wayland"][field] = value
+                result = evaluate_qualification({"prerequisites": {"gsp_p0_p4_suite": suite, "issue_251_performance": performance}, "platform_checks": platform})
+
+            self.assertFalse(result["accepted"])
+
+    def test_nonserializable_validated_mutation_is_rejected(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            suite = load_evidence_manifest(suite_manifest(directory), GSP_SUITE_KIND, REQUIRED_GSP_PHASES, ROOT)
+            performance = load_performance_evidence(performance_manifest(directory), ROOT)
+            platform = load_evidence_manifest(platform_manifest(directory), PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
+            platform["environment"]["gpu"][0]["model"] = object()
+
+        self.assertFalse(evaluate_qualification({"prerequisites": {"gsp_p0_p4_suite": suite, "issue_251_performance": performance}, "platform_checks": platform})["accepted"])
 
     def test_environment_single_monitor_cannot_pass_cross_monitor_evidence(self):
         with tempfile.TemporaryDirectory() as raw:

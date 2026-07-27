@@ -42,8 +42,9 @@ passed and cannot be bypassed by #252.
 - Suite/platform manifests require schema, kind, current 40-hex commit,
   provenance, exact key sets, and an existing SHA-256-matching artifact for
   every `pass` entry. Relative artifact paths resolve from their manifest
-  directory. Evaluator input must carry the loader's private validation token;
-  raw fabricated status dictionaries cannot pass.
+  directory. Evaluator input must carry the loader's private validation token
+  and matching canonical nested-payload digest; raw fabricated dictionaries
+  and post-load mutations cannot pass.
 - Final acceptance requires all five phase entries, the performance
   prerequisite, all platform checks, and required OS/desktop/kernel/Godot/
   Firefox/Chromium/display/scaling/Wayland/PipeWire metadata. Accepted
@@ -96,11 +97,11 @@ authoritative frozen performance result used above.
 
 ```text
 python3 -m unittest tests.test_gsp_wayland_qualification
-23 tests, 0 failures
+27 tests, 0 failures
 
 python3 -m unittest tests.test_gsp_wayland_qualification \
   tests.test_gsp_issue251_protocol tests.test_gsp_issue251_contract
-57 tests, 0 failures
+61 tests, 0 failures
 
 python3 -m py_compile scripts/qualify_gsp_wayland.py tests/test_gsp_wayland_qualification.py
 git diff --check
