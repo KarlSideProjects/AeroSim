@@ -49,15 +49,24 @@ static func diff_values(left: Dictionary, right: Dictionary) -> Array:
         var after := float(right[key])
         if not is_finite(before) or not is_finite(after) or before == after:
             continue
-        var change := {"parameter": key, "before": before, "after": after, "absolute": after - before}
-        if before == 0.0:
+        var delta := after - before
+        var change := {"parameter": key, "before": before, "after": after}
+        if not is_finite(delta):
+            change["absolute"] = null
+            change["absolute_status"] = "unrepresentable"
+            change["percentage"] = null
+            change["percentage_status"] = "unrepresentable"
+        elif before == 0.0:
+            change["absolute"] = delta
             change["percentage"] = null
             change["percentage_status"] = "zero_baseline"
-        elif before * after < 0.0:
+        elif (before < 0.0 and after > 0.0) or (before > 0.0 and after < 0.0):
+            change["absolute"] = delta
             change["percentage"] = null
             change["percentage_status"] = "sign_change"
         else:
-            var percentage := (after - before) / absf(before) * 100.0
+            change["absolute"] = delta
+            var percentage := delta / absf(before) * 100.0
             if is_finite(percentage):
                 change["percentage"] = percentage
                 change["percentage_status"] = "finite"
@@ -178,7 +187,7 @@ static func _validate_preset(candidate: Variant, expected_name: String = "") -> 
     for field in REQUIRED_FIELDS:
         if not preset.has(field):
             return {"ok": false, "error": "preset missing field: %s" % field}
-    if (typeof(preset.schema_version) != TYPE_INT and typeof(preset.schema_version) != TYPE_FLOAT) or int(preset.schema_version) != SCHEMA_VERSION:
+    if (typeof(preset.schema_version) != TYPE_INT and typeof(preset.schema_version) != TYPE_FLOAT) or float(preset.schema_version) != float(SCHEMA_VERSION):
         return {"ok": false, "error": "unsupported preset schema version"}
     var name_result := validate_name(preset.name)
     if not bool(name_result.get("ok", false)):

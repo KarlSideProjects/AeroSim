@@ -231,3 +231,55 @@ The gate also emitted the repository’s expected negative-path native errors, T
 The separate configured read-only Sol-high recommendation was supplied by the user/controller and verified against the indexed code seams. No additional Sol consultation was needed in this reconciliation. No registry migration (#248), lifecycle recovery (#249), expanded replay/session markers (#250), dependency, Hardware configuration/SettingsStore authority, replay authority, or GPU restriction was added.
 
 GPU qualification remains vendor/type neutral: no vendor, device, adapter, renderer, or GPU allowlist/restriction exists in the #247 changes. Any GPU named in headed-gate output is only the test environment, not a product qualification rule.
+
+## Fix round 1 — independent Sol-high SPEC/QUALITY findings
+
+Fix base: `1f108ac`. This round stayed within #247 and did not edit the progress ledger or GitHub. Agent/thread identity remains `CODEX_THREAD_ID=019fa267-1d99-72d1-8dce-b6423951d468`.
+
+### Findings and solutions
+
+- Diff sign detection now compares signs directly, so `1e-308 -> -1e-308` is `sign_change` even when multiplication would underflow. Delta is calculated before percentage classification; overflowing deltas emit `absolute: null`, `absolute_status: "unrepresentable"`, and `percentage: null`, with no non-finite numeric field.
+- FlightRuntime now requires preset value keys to equal the canonical registry key set exactly before save, load, or compare. Matching-hash truncated and unknown-key documents reject as `registry_values_mismatch` without state or commit mutation; migration remains #248 scope.
+- Schema validation compares the numeric value exactly to schema version 1 rather than truncating with `int()`. JSON-parsed `1.0` is accepted; `1.9` is rejected.
+- Standalone headless tests no longer remove fixed names. Each run generates an ASCII name from process ID, monotonic ticks, and a counter, verifies the path is absent, records only successfully created names, and cleans only those names. Pre-existing user presets are never overwritten or deleted.
+- Real WebSocket integration now authenticates two peers. It saves/retrieves a baseline, mutates through normal tuning, resumes active mode, sends load from the origin, proves no immediate ACK or native mutation, applies one next-boundary commit, and verifies the origin ACK plus identical source-tagged commit identity on both peers and the final native value. The paused direct contract remains covered.
+
+### Fix-round TDD evidence
+
+RED test command:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_preset_contract.gd
+# exit 1: fractional schema, diff edge cases, and matching-hash key-set assertions failed
+# the pre-fix integration path was also exercised but did not fail because its new behavior was regression coverage
+```
+
+GREEN focused commands and results:
+
+```text
+node tests/test_gsp_panel_behavior.js
+# GSP panel row behavior passed
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_preset_contract.gd
+# GSP preset contract: PASS
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_preset_integration.gd
+# GSP preset integration: PASS
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_tuning_integration.gd
+# GSP tuning integration: PASS
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/quick_adjust_integration.gd
+# Quick Adjust integration: PASS
+```
+
+The contract’s deliberate `1e999` non-finite fixture still produces Godot’s expected `Exponent too high` parser warning before rejection. Existing Godot ObjectDB/RID leak warnings remain non-fatal and unrelated.
+
+### Fix-round files and commit
+
+Implementation: `common/gsp/gsp_preset_store.gd`, `common/flight/flight_runtime.gd`. Coverage: `tests/headless/gsp_preset_contract.gd`, `tests/headless/gsp_preset_integration.gd`. The existing GSP server path and panel behavior were preserved and exercised; no GPU vendor/type restriction was introduced.

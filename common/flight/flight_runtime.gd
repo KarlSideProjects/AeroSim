@@ -5285,7 +5285,7 @@ func gsp_list_presets() -> Dictionary:
 
 func gsp_save_preset(name: String, note: String = "") -> Dictionary:
     var values := _gsp_active_tuning_values()
-    if values.is_empty():
+    if not _gsp_preset_values_match_registry(values):
         return {"ok": false, "error": "tuning_unavailable"}
     var sim_version := String(ProjectSettings.get_setting("application/config/version", "")).strip_edges()
     if sim_version.is_empty():
@@ -5312,6 +5312,8 @@ func gsp_compare_presets(left_name: String, right_name: String) -> Dictionary:
         var left_preset: Dictionary = left_result.preset
         if String(left_preset.get("registry_hash", "")) != _gsp_tuning_registry_hash:
             return {"ok": false, "error": "registry_mismatch"}
+        if not _gsp_preset_values_match_registry(left_preset.get("values", {})):
+            return {"ok": false, "error": "registry_values_mismatch"}
         left_values = left_preset.values
     var right_values := _gsp_active_tuning_values() if right_name.is_empty() else {}
     if not right_name.is_empty():
@@ -5321,6 +5323,8 @@ func gsp_compare_presets(left_name: String, right_name: String) -> Dictionary:
         var right_preset: Dictionary = right_result.preset
         if String(right_preset.get("registry_hash", "")) != _gsp_tuning_registry_hash:
             return {"ok": false, "error": "registry_mismatch"}
+        if not _gsp_preset_values_match_registry(right_preset.get("values", {})):
+            return {"ok": false, "error": "registry_values_mismatch"}
         right_values = right_preset.values
     return {
         "ok": true,
@@ -5340,6 +5344,8 @@ func gsp_load_preset(peer_id: int, connection_id: int, request_seq: int, name: S
     var preset: Dictionary = loaded.preset
     if String(preset.get("registry_hash", "")) != _gsp_tuning_registry_hash:
         return {"ok": false, "error": "registry_mismatch", "peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    if not _gsp_preset_values_match_registry(preset.get("values", {})):
+        return {"ok": false, "error": "registry_values_mismatch", "peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
     var changes: Array = []
     for descriptor_value in _gsp_tuning_registry:
         var descriptor: Dictionary = descriptor_value
@@ -5347,6 +5353,22 @@ func gsp_load_preset(peer_id: int, connection_id: int, request_seq: int, name: S
         if preset.values.has(key):
             changes.append({"parameter": key, "value": preset.values[key]})
     return gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset", -1)
+
+
+func _gsp_preset_values_match_registry(values: Variant) -> bool:
+    if typeof(values) != TYPE_DICTIONARY or values.size() != _gsp_tuning_registry.size():
+        return false
+    var registry_keys := {}
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        if key.is_empty() or registry_keys.has(key) or not values.has(key):
+            return false
+        registry_keys[key] = true
+    for key in values.keys():
+        if typeof(key) != TYPE_STRING or not registry_keys.has(String(key)):
+            return false
+    return true
 
 
 func gsp_preset_request(peer_id: int, connection_id: int, request_seq: int, operation: String, data: Dictionary) -> Dictionary:
