@@ -60,6 +60,9 @@ PASS — pending, graceful, and forced-close boundaries
 sed -n '/<script>/,/<\/script>/p' common/gsp/gsp_panel.html | sed '1d;$d' | node --check
 PASS
 
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/replay_integration.gd
+complete-session replay integration: PASS
+
 git diff --check
 PASS
 ```
