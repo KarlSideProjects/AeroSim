@@ -22,6 +22,10 @@ The initial gain is `simpleflight.rate_p`, the body-rate proportional gain used 
 - Sol finding: hardware defaults were reapplied during later flight setup. Defaults now initialize each newly created native controller once, before the first hardware apply; later preset applies do not overwrite tuning.
 - Sol finding: server-side `tuning_pending` was write-only. It was removed.
 - Sol finding: replay applied tuning before all same-timestamp events and the test never called `replay_session()`. Tuning now executes in recorded event order; the native test runs ordered and reversed same-timestamp sessions and proves divergent replay results.
+- Second-review Sol finding: initialization was only indirectly guarded by substeps and nonzero commits. A persistent native `tuning_initialized_` flag now rejects every later initialization attempt, including a different default before any substep or real commit.
+- Second-review Sol finding: the previous bounds clamp made `out_of_contract` unreachable. Native now rejects finite values outside `[0.0, 2.0]` without mutation; the centralized native `0.01` step is exposed in the contract and quantizes schema-step input such as `1.234` to `1.23` with `clamped:true`.
+- Second-review Sol finding: the two authority/disconnect races were not exercised end to end. The real GSP integration now commits a queued request after its authenticated peer disconnects and reconciles the exact request/commit in reconnect metadata, and separately proves native stage-then-authority-loss rejection with unchanged active memory and commit identity.
+- Second-review Sol finding: two #244-added GDScript files still used tabs. `common/gsp/gsp_launcher.gd` and `tests/headless/gsp_tuning_contract.gd` are now four-space indented; the complete first-#244 GDScript file set has no remaining tabs.
 - The first review integration run exposed a stale GDExtension missing `initialize_flight_tuning`; the full gate rebuilt it. The rebuilt integration then exposed an invalid test atmosphere and manifest hash, which were corrected to use canonical replay JSON and the native manifest hash.
 - The full Godot gate generated untracked `.uid`, `.import`, and translation artifacts. Only those known generated artifacts were removed; no unrelated source or user files were removed.
 
@@ -60,23 +64,40 @@ Review-fix GREEN:
 
 Result: `GSP tuning integration: PASS`.
 
+Second-review RED:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+```
+
+Result against the prior extension: failed the persistent one-shot initialization, native step contract, hard-bound rejection, and updated commit-accounting assertions.
+
+Second-review GREEN:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+```
+
+Result: `GSP tuning integration: PASS`.
+
 Additional results:
 
 - `scripts/test_native.sh`: PASS.
+- Second-review native suite: `scripts/test_native.sh` PASS.
 - Native replay ordering test: PASS, including `replay_session()` and reversed same-timestamp order.
 - Godot `gsp_tuning_contract.gd`: PASS.
-- Godot `gsp_tuning_integration.gd`: PASS; active boundary, paused commit, public tick/ID, native readback, no-op, rejection, clamp, external authority, reconnect reconciliation, replay recording, and replay application.
+- Godot `gsp_tuning_integration.gd`: PASS; one-shot initialization, active/disconnected commit races, paused commit, public tick/ID, native readback, no-op, hard-bound rejection, schema-step quantization, external-authority stage/commit race, reconnect reconciliation, replay recording, and replay application.
 - Godot `gsp_transport_contract.gd`: PASS.
 - Godot `gsp_telemetry_contract.gd`: PASS.
 - GSP transport and telemetry integration checks: PASS.
 - `git diff --check`: PASS.
-- Final committed-HEAD gate: PASS at `9054f0922a76e9ec03d3090585497e811da96d1d`.
+- Final committed-HEAD gate for the first review fix: PASS at `9054f0922a76e9ec03d3090585497e811da96d1d`; the second-review final gate is recorded after the implementation commit below.
 
   ```text
   RUNNER_TEMP=/tmp/aerosim-gsp-244-review GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh
   ```
 
-  This covered native, license, Python, GUT (276 tests, 0 failures, 0 errors), the GSP tuning integration, headed acceptance, and the smoke path. The gate emitted only existing validation/resource warnings; it completed successfully. The earlier iterative run failed only at the new integration replay harness, then the focused integration rerun passed after the harness fixes.
+  This covered native, license, Python, GUT (276 tests, 0 failures, 0 errors), the GSP tuning integration, headed acceptance, and the smoke path. The gate emitted only existing validation/resource warnings; it completed successfully.
 
 ## Scoped files
 

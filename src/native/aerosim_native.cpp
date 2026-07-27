@@ -1612,7 +1612,12 @@ Dictionary AeroSimNative::stage_flight_tuning(const String &parameter, const Var
         result["error"] = "non_finite";
         return result;
     }
-    const double committed = std::clamp(requested, aerosim::kSimpleFlightRatePMin, aerosim::kSimpleFlightRatePMax);
+    result["requested_value"] = requested;
+    if (requested < aerosim::kSimpleFlightRatePMin || requested > aerosim::kSimpleFlightRatePMax) {
+        result["error"] = "out_of_contract";
+        return result;
+    }
+    const double committed = std::round(requested / aerosim::kSimpleFlightRatePStep) * aerosim::kSimpleFlightRatePStep;
     staged_tuning_.valid = true;
     staged_tuning_.parameter = parameter;
     staged_tuning_.requested_value = requested;
@@ -1633,6 +1638,7 @@ Dictionary AeroSimNative::commit_flight_tuning(std::int64_t public_physics_tick)
         return result;
     }
     if (external_authority_active_) {
+        staged_tuning_.valid = false;
         Dictionary result;
         result["ok"] = false;
         result["error"] = "external_authority";
@@ -1674,7 +1680,7 @@ Dictionary AeroSimNative::commit_flight_tuning(std::int64_t public_physics_tick)
 }
 
 Dictionary AeroSimNative::initialize_flight_tuning(const String &parameter, const Variant &value) {
-    if (tuning_commit_id_ != 0 || simulation_clock_.total_substeps != 0 || staged_tuning_.valid) {
+    if (tuning_initialized_ || tuning_commit_id_ != 0 || simulation_clock_.total_substeps != 0 || staged_tuning_.valid) {
         Dictionary result;
         result["ok"] = false;
         result["error"] = "tuning_already_initialized";
@@ -1688,6 +1694,7 @@ Dictionary AeroSimNative::initialize_flight_tuning(const String &parameter, cons
     if (static_cast<bool>(committed.get("ok", false))) {
         tuning_commit_id_ = 0;
         tuning_commit_tick_ = 0;
+        tuning_initialized_ = true;
     }
     return committed;
 }
@@ -1706,6 +1713,7 @@ Dictionary AeroSimNative::flight_tuning_contract() const {
     result["default"] = aerosim::kSimpleFlightRatePDefault;
     result["min"] = aerosim::kSimpleFlightRatePMin;
     result["max"] = aerosim::kSimpleFlightRatePMax;
+    result["step"] = aerosim::kSimpleFlightRatePStep;
     return result;
 }
 

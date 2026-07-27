@@ -71,6 +71,7 @@ private:
     godot::String flight_mode_ = "ANGLE";
     godot::String last_step_error_;
     bool external_authority_active_ = false;
+    bool tuning_initialized_ = false;
     std::uint64_t tuning_commit_id_ = 0;
     std::uint64_t tuning_commit_tick_ = 0;
     double tuning_last_requested_value_ = aerosim::kSimpleFlightRatePDefault;

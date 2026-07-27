@@ -33,11 +33,20 @@ func _run() -> void:
             "initialize_flight_tuning", "simpleflight.rate_p", 0.6)
     _expect(bool(initialized.get("ok", false)) and int(initialized.get("commit_id", -1)) == 0,
             "native defaults initialize without a tuning commit")
+    var initialized_state: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var second_initialization: Dictionary = _runtime.native.call(
+            "initialize_flight_tuning", "simpleflight.rate_p", 0.7)
+    var second_initialization_state: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(String(second_initialization.get("error", "")) == "tuning_already_initialized" and
+            second_initialization_state.get("simpleflight.rate_p", 0.0) == initialized_state.get("simpleflight.rate_p", -1.0) and
+            int(second_initialization_state.get("commit_id", -1)) == int(initialized_state.get("commit_id", -2)) and
+            int(second_initialization_state.get("commit_tick", -1)) == int(initialized_state.get("commit_tick", -2)),
+            "native tuning initialization is persistent and one-shot")
     _expect(hardware.apply_to_runtime(_runtime, "res://config/drones/5_inch_6s.json"),
             "integration runtime applies the canonical hardware preset")
     var native_contract: Dictionary = _runtime.native.call("flight_tuning_contract")
     var descriptor: Dictionary = _runtime._gsp_tuning_registry[0]
-    for key in ["key", "type", "default", "min", "max"]:
+    for key in ["key", "type", "default", "min", "max", "step"]:
         _expect(native_contract.get(key) == descriptor.get(key), "schema/native tuning contract agrees on %s" % key)
 
     _server = GspServer.new()
@@ -76,29 +85,58 @@ func _run() -> void:
     _expect(int(active_ack.get("d", {}).get("request_seq", -1)) == 1 and bool(active_ack.get("d", {}).get("changed", false)),
             "active tuning ack preserves request correlation and changed outcome")
 
-    _runtime.paused = true
     _expect(_client.send_text(JSON.stringify({
         "v": 2, "t": "set_tuning", "seq": 2,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.35}
+    })) == OK, "disconnect-race tuning request sends")
+    _server.poll()
+    _client.close()
+    for _attempt in 30:
+        _server.poll()
+        await process_frame
+    _runtime._physics_process(1.0 / 240.0)
+    _server.poll()
+    _expect(_runtime.gsp_tuning_results().is_empty(),
+            "disconnected tuning result is drained without the disconnected peer")
+    _client = WebSocketPeer.new()
+    await _connect_and_auth(_client, int(started.port), String(started.token))
+    var disconnect_reconnect_hello := await _next_message_type(_client, "hello", 240)
+    var disconnect_recent: Array = disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning_recent_results", [])
+    var disconnect_match: Dictionary = {}
+    for recent_value in disconnect_recent:
+        if typeof(recent_value) == TYPE_DICTIONARY and int(recent_value.get("request_seq", -1)) == 2:
+            disconnect_match = recent_value
+            break
+    _expect(int(disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {}).get("commit_id", -1)) == 2 and
+            int(disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {}).get("commit_tick", -1)) == 1 and
+            float(disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {}).get("committed_value", 0.0)) == 1.35 and
+            int(disconnect_match.get("commit_id", -1)) == 2 and int(disconnect_match.get("commit_tick", -1)) == 1 and
+            float(disconnect_match.get("committed_value", 0.0)) == 1.35,
+            "reconnect hello reconciles a disconnected request without reapplying it")
+
+    _runtime.paused = true
+    _expect(_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 1,
         "d": {"parameter": "simpleflight.rate_p", "value": 1.5}
     })) == OK, "paused tuning request sends")
     var paused_ack := await _next_message_type(_client, "tuning_ack", 240)
     var paused_data: Dictionary = paused_ack.get("d", {})
-    _expect(int(paused_data.get("request_seq", -1)) == 2 and int(paused_data.get("commit_id", 0)) == 2 and
-            int(paused_data.get("commit_tick", -1)) == 1,
+    _expect(int(paused_data.get("request_seq", -1)) == 1 and int(paused_data.get("commit_id", 0)) == 3 and
+            int(paused_data.get("commit_tick", -1)) == 2,
             "paused tuning commits immediately through the same native operation")
 
     _expect(_client.send_text(JSON.stringify({
-        "v": 2, "t": "set_tuning", "seq": 3,
+        "v": 2, "t": "set_tuning", "seq": 2,
         "d": {"parameter": "simpleflight.rate_p", "value": 1.5}
     })) == OK, "no-op tuning request sends")
     var noop_ack := await _next_message_type(_client, "tuning_ack", 240)
     var noop_data: Dictionary = noop_ack.get("d", {})
-    _expect(not bool(noop_data.get("changed", true)) and int(noop_data.get("commit_id", 0)) == 2,
+    _expect(not bool(noop_data.get("changed", true)) and int(noop_data.get("commit_id", 0)) == 3,
             "no-op tuning keeps commit ID and reports changed false")
 
     var before_rejection: Dictionary = _runtime.native.call("flight_tuning_configuration")
     _expect(_client.send_text(JSON.stringify({
-        "v": 2, "t": "set_tuning", "seq": 4,
+        "v": 2, "t": "set_tuning", "seq": 3,
         "d": {"parameter": "unknown", "value": 1.0}
     })) == OK, "unknown tuning request sends")
     var rejected_ack := await _next_message_type(_client, "tuning_ack", 240)
@@ -110,26 +148,49 @@ func _run() -> void:
             "rejected tuning does not mutate active memory")
 
     _expect(_client.send_text(JSON.stringify({
-        "v": 2, "t": "set_tuning", "seq": 5,
-        "d": {"parameter": "simpleflight.rate_p", "value": 3.0}
-    })) == OK, "clamped tuning request sends")
+        "v": 2, "t": "set_tuning", "seq": 4,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.234}
+    })) == OK, "schema-step tuning request sends")
     var clamp_ack := await _next_message_type(_client, "tuning_ack", 240)
     var clamp_data: Dictionary = clamp_ack.get("d", {})
-    _expect(bool(clamp_data.get("clamped", false)) and float(clamp_data.get("requested_value", 0.0)) == 3.0 and
-            float(clamp_data.get("committed_value", 0.0)) == 2.0,
-            "clamping reports requested and committed values")
+    _expect(bool(clamp_data.get("clamped", false)) and float(clamp_data.get("requested_value", 0.0)) == 1.234 and
+            float(clamp_data.get("committed_value", 0.0)) == 1.23 and int(clamp_data.get("commit_id", 0)) == 4,
+            "schema-step quantization reports requested and committed values")
+
+    var before_bounds: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var below_contract: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", -0.01)
+    var above_contract: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", 2.01)
+    var after_bounds: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(String(below_contract.get("error", "")) == "out_of_contract" and
+            String(above_contract.get("error", "")) == "out_of_contract" and
+            after_bounds.get("simpleflight.rate_p", 0.0) == before_bounds.get("simpleflight.rate_p", -1.0) and
+            int(after_bounds.get("commit_id", -1)) == int(before_bounds.get("commit_id", -2)),
+            "finite values outside the native contract are rejected without mutation")
 
     var wrong_type: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", "bad")
     var non_finite: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", NAN)
     _expect(String(wrong_type.get("error", "")) == "wrong_type" and String(non_finite.get("error", "")) == "non_finite",
             "native rejects wrong-type and non-finite staging inputs")
 
+    var before_authority_race: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var local_stage: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", 1.75)
+    _expect(bool(local_stage.get("ok", false)), "native stages tuning while local authority is active")
     var bridge := Px4SitlBridge.new()
     bridge._authority_active = true
     bridge.state = "connected"
     _runtime.px4_sitl_bridge = bridge
+    _runtime._sync_native_external_authority()
+    var raced_commit: Dictionary = _runtime.native.call("commit_flight_tuning", 99)
+    var after_authority_race: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var external_stage: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", 1.75)
+    _expect(String(raced_commit.get("error", "")) == "external_authority" and
+            String(external_stage.get("error", "")) == "external_authority" and
+            after_authority_race.get("simpleflight.rate_p", 0.0) == before_authority_race.get("simpleflight.rate_p", -1.0) and
+            int(after_authority_race.get("commit_id", -1)) == int(before_authority_race.get("commit_id", -2)) and
+            int(after_authority_race.get("commit_tick", -1)) == int(before_authority_race.get("commit_tick", -2)),
+            "native authority race invalidates staging and preserves active identity")
     _expect(_client.send_text(JSON.stringify({
-        "v": 2, "t": "set_tuning", "seq": 6,
+        "v": 2, "t": "set_tuning", "seq": 5,
         "d": {"parameter": "simpleflight.rate_p", "value": 1.0}
     })) == OK, "external-authority tuning request sends")
     var authority_ack := await _next_message_type(_client, "tuning_ack", 240)
@@ -146,8 +207,8 @@ func _run() -> void:
     await _connect_and_auth(reconnect_client, int(started.port), String(started.token))
     var reconnect_hello := await _next_message_type(reconnect_client, "hello", 240)
     var reconciled: Dictionary = reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {})
-    _expect(int(reconciled.get("commit_id", -1)) == 3 and int(reconciled.get("commit_tick", -1)) == 1 and
-            float(reconciled.get("committed_value", 0.0)) == 2.0,
+    _expect(int(reconciled.get("commit_id", -1)) == 4 and int(reconciled.get("commit_tick", -1)) == 2 and
+            float(reconciled.get("committed_value", 0.0)) == 1.23,
             "reconnect hello reconciles latest active tuning state")
     _expect(not reconnect_hello.get("d", {}).get("registry", {}).get("tuning_recent_results", []).is_empty(),
             "reconnect hello carries bounded recent tuning results")

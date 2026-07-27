@@ -11,6 +11,7 @@ inline constexpr char kSimpleFlightRatePParameter[] = "simpleflight.rate_p";
 constexpr double kSimpleFlightRatePDefault = 0.600;
 constexpr double kSimpleFlightRatePMin = 0.0;
 constexpr double kSimpleFlightRatePMax = 2.0;
+constexpr double kSimpleFlightRatePStep = 0.01;
 
 struct FlightCommand {
     double throttle = 0.0;
