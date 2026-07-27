@@ -154,6 +154,19 @@ def percentile(values: list[float], fraction: float) -> float:
     return ordered[min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1)]
 
 
+def combine_protocol_results(*results: dict[str, object]) -> dict[str, object]:
+    """Combine evidence without allowing missing data to mask a proven failure."""
+    if any(result.get("status") == "FAIL" for result in results):
+        failure_kind = next(
+            (result.get("failure_kind") for result in results if result.get("status") == "FAIL" and result.get("failure_kind")),
+            "protocol_failure",
+        )
+        return {"status": "FAIL", "failure_kind": failure_kind}
+    if any(result.get("status") == "UNAVAILABLE" for result in results):
+        return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+    return {"status": "PASS", "failure_kind": None}
+
+
 def benchmark_command(output_path: Path, mode: str, commit_sha: str, warmup_seconds: int, seconds: int, ready_path: Path | None = None, benchmark_mode: str | None = None) -> list[str]:
     command = [
         GODOT,
@@ -271,7 +284,7 @@ def parse_cppc_snapshot(feedback_raw: str | None, reference_raw: str | None) -> 
     counters: dict[str, int] = {}
     for field in feedback_raw.split():
         name, separator, value = field.partition(":")
-        if not separator or name not in {"ref", "del"} or not value.isdigit():
+        if not separator or name not in {"ref", "del"} or name in counters or not value.isdigit():
             return None
         counters[name] = int(value)
     if set(counters) != {"ref", "del"}:
@@ -334,12 +347,14 @@ def compare_cpu_configuration(before: dict[str, object], after: dict[str, object
 def _configuration_complete(config: dict[str, object], required: set[str]) -> bool:
     online = parse_cpu_set(config.get("online_cpus"))
     policies = config.get("policies")
+    cppc_cpu_set = config.get("cppc_cpu_set")
     return bool(
         isinstance(policies, dict)
         and policies
         and online is not None
         and config.get("online_cpu_set") == sorted(online)
-        and set(config.get("cppc_cpu_set", [])) == online
+        and isinstance(cppc_cpu_set, list)
+        and set(cppc_cpu_set) == online
         and config.get("boost") is not None
         and all(set(policy) == required and all(value is not None for value in policy.values()) for policy in policies.values())
     )
@@ -421,15 +436,15 @@ def evaluate_environment_protocol(
     post_configuration: dict[str, object],
 ) -> dict[str, object]:
     configuration = compare_cpu_configuration(pre_configuration, post_configuration)
-    if configuration["status"] != "PASS":
-        return configuration
     if conditioning.get("status") != "PASS" or conditioning.get("admitted") is False:
-        return {
-            "status": conditioning.get("status", "UNAVAILABLE"),
-            "failure_kind": conditioning.get("failure_kind", "missing_evidence"),
-        }
+        return combine_protocol_results(
+            configuration,
+            {
+                "status": conditioning.get("status", "UNAVAILABLE"),
+                "failure_kind": conditioning.get("failure_kind", "missing_evidence"),
+            },
+        )
     sources = conditioning.get("sources", {})
-    run_samples = {label: payload.get("samples", []) for label, payload in run_payloads.items()}
     expected_phases = ["conditioning", *RUN_LABELS]
     boundary_payloads = {"conditioning": conditioning, **run_payloads}
     if any(
@@ -437,17 +452,14 @@ def evaluate_environment_protocol(
         or set(boundary_payloads[phase]["boundary_snapshots"]) != {"initial", "final"}
         for phase in expected_phases
     ):
-        return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+        return combine_protocol_results(configuration, {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"})
     all_samples = ordered_cooling_samples(conditioning, run_payloads)
     cooling = evaluate_cooling_sequence(all_samples, sources.get("processor_cooling_devices", []))
     d_drift = evaluate_d_a_d_b_drift(run_payloads)
-    unavailable = cooling["status"] == "UNAVAILABLE" or d_drift["status"] == "UNAVAILABLE"
-    failed = cooling["status"] == "FAIL" or d_drift["status"] == "FAIL"
-    status = "UNAVAILABLE" if unavailable else "FAIL" if failed else "PASS"
-    failure_kind = None if status == "PASS" else "missing_evidence" if status == "UNAVAILABLE" else cooling.get("failure_kind") or d_drift.get("failure_kind")
+    combined = combine_protocol_results(configuration, cooling, d_drift)
     return {
-        "status": status,
-        "failure_kind": failure_kind,
+        "status": combined["status"],
+        "failure_kind": combined["failure_kind"],
         "configuration": configuration,
         "cooling": cooling,
         "boundary_snapshots": {
@@ -455,12 +467,11 @@ def evaluate_environment_protocol(
             **{label: payload.get("boundary_snapshots", {}) for label, payload in run_payloads.items()},
         },
         "D_a_D_b": d_drift,
-        "formula": "P(a,b)=reference_perf*(del_b-del_a)/(ref_b-ref_a)",
         "aggregate_formula": "sum(reference_perf_cpu*delta_del_cpu)/sum(delta_ref_cpu)",
     }
 
 
-def _read_processor_cooling_device(device_path: str, include_raw: bool = True) -> dict[str, object]:
+def _read_processor_cooling_device(device_path: str) -> dict[str, object]:
     paths = {
         "cur_state": f"{device_path}/cur_state",
         "max_state": f"{device_path}/max_state",
@@ -483,8 +494,7 @@ def _read_processor_cooling_device(device_path: str, include_raw: bool = True) -
         if parsed["max_state"] is not None and set(time_in_state) != {str(state) for state in range(parsed["max_state"] + 1)}:
             time_in_state = {}
     parsed["time_in_state_ms"] = time_in_state or None
-    if include_raw:
-        parsed["raw"] = raw
+    parsed["raw"] = raw
     return parsed
 
 
@@ -667,10 +677,20 @@ def evaluate_d_a_d_b_drift(run_payloads: dict[str, dict[str, object]]) -> dict[s
     tctl_b_median = statistics.median(tctl_b) if tctl_b else None
     cppc_delta = abs(cppc_b - cppc_a) / cppc_a * 100.0 if cppc_a and cppc_b else None
     tctl_delta = abs(tctl_b_median - tctl_a_median) if tctl_a_median is not None and tctl_b_median is not None else None
-    status = "UNAVAILABLE" if cppc_delta is None or tctl_delta is None else "FAIL" if cppc_delta > CPPC_DRIFT_MAX_PERCENT or tctl_delta > TCTL_DRIFT_MAX_C else "PASS"
+    combined = combine_protocol_results(
+        {
+            "status": "UNAVAILABLE" if cppc_delta is None else "FAIL" if cppc_delta > CPPC_DRIFT_MAX_PERCENT else "PASS",
+            "failure_kind": "missing_evidence" if cppc_delta is None else "run_environment_drift",
+        },
+        {
+            "status": "UNAVAILABLE" if tctl_delta is None else "FAIL" if tctl_delta > TCTL_DRIFT_MAX_C else "PASS",
+            "failure_kind": "missing_evidence" if tctl_delta is None else "run_environment_drift",
+        },
+    )
+    status = combined["status"]
     return {
         "status": status,
-        "failure_kind": None if status == "PASS" else "missing_evidence" if status == "UNAVAILABLE" else "run_environment_drift",
+        "failure_kind": combined["failure_kind"],
         "cppc_P_D_a": cppc_a,
         "cppc_P_D_b": cppc_b,
         "cppc_drift_percent": cppc_delta,
@@ -693,6 +713,10 @@ def write_qualification_failure(
         "commit_sha": commit_sha,
     }, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def record_environment_evidence_failure(output_dir: Path, commit_sha: str) -> Path:
+    return write_qualification_failure(output_dir, commit_sha, "UNAVAILABLE", "environment_evidence_unavailable")
 
 
 def run_conditioning(output_dir: Path, commit_sha: str, configuration_start: dict[str, object] | None = None) -> dict[str, object]:
@@ -768,25 +792,28 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
     cppc_w2 = cppc_window_performance(samples, 240.0, 300.1)
     cppc_delta_percent = abs(cppc_w2 - cppc_w1) / cppc_w1 * 100.0 if cppc_w1 and cppc_w2 else None
     configuration = compare_cpu_configuration(payload.get("configuration_start", {}), payload.get("configuration_end", {}))
-    source_missing = (
-        sources.get("cppc_protocol") != "available"
-        or sources.get("processor_cooling_protocol") != "available"
-        or not temperatures_a
-        or not temperatures_b
-        or cppc_delta_percent is None
-        or cooling["status"] == "UNAVAILABLE"
-        or configuration["status"] == "UNAVAILABLE"
+    temperature_status = (
+        {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+        if not temperatures_a or not temperatures_b or temperature_delta is None
+        else {"status": "FAIL", "failure_kind": "conditioning_drift"}
+        if temperature_delta > 1.0
+        else {"status": "PASS", "failure_kind": None}
     )
-    failing_gate = (
-        temperature_delta is not None and temperature_delta > 1.0
-        or cppc_delta_percent is not None and cppc_delta_percent > 1.0
-        or cooling["status"] == "FAIL"
-        or configuration["status"] == "FAIL"
+    cppc_status = (
+        {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+        if sources.get("cppc_protocol") != "available" or cppc_delta_percent is None
+        else {"status": "FAIL", "failure_kind": "conditioning_drift"}
+        if cppc_delta_percent > 1.0
+        else {"status": "PASS", "failure_kind": None}
     )
-    status = "UNAVAILABLE" if source_missing else "FAIL" if failing_gate else "PASS"
-    failure_kind = None if status == "PASS" else "missing_evidence" if status == "UNAVAILABLE" else (
-        cooling.get("failure_kind") if cooling["status"] == "FAIL" else configuration.get("failure_kind") if configuration["status"] == "FAIL" else "conditioning_drift"
+    cooling_status = combine_protocol_results(
+        {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+        if sources.get("processor_cooling_protocol") != "available"
+        else cooling,
     )
+    combined = combine_protocol_results(cooling_status, configuration, cppc_status, temperature_status)
+    status = combined["status"]
+    failure_kind = combined["failure_kind"]
     checks = {
         "status": status,
         "failure_kind": failure_kind,
@@ -799,7 +826,6 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
         "cppc_window_stable": cppc_delta_percent is not None and cppc_delta_percent <= 1.0,
         "cooling": cooling,
         "configuration": configuration,
-        "formula": "P(a,b)=reference_perf*(del_b-del_a)/(ref_b-ref_a)",
         "aggregate_formula": "sum(reference_perf_cpu*delta_del_cpu)/sum(delta_ref_cpu)",
     }
     payload["protocol"] = checks
@@ -852,7 +878,29 @@ def validate_raw(output_dir: Path, label: str, mode: str, commit_sha: str) -> di
     return payload
 
 
-def compare_payloads(payloads: dict[str, dict[str, object]], output_dir: Path, commit_sha: str) -> dict[str, object]:
+def read_gpu_metadata(sys_root: Path = Path("/sys")) -> dict[str, object]:
+    devices: list[dict[str, object]] = []
+    for card_device in sorted((sys_root / "class" / "drm").glob("card[0-9]*/device")):
+        resolved = card_device.resolve()
+        device = {
+            "card_name": card_device.parent.name,
+            "path": str(resolved),
+            "vendor": _read_text(str(resolved / "vendor")),
+            "device": _read_text(str(resolved / "device")),
+            "subsystem_vendor": _read_text(str(resolved / "subsystem_vendor")),
+            "subsystem_device": _read_text(str(resolved / "subsystem_device")),
+            "driver": resolved.joinpath("driver").resolve().name if resolved.joinpath("driver").exists() else None,
+        }
+        devices.append(device)
+    return {"status": "available", "devices": devices} if devices else {"status": "unavailable", "devices": []}
+
+
+def compare_payloads(
+    payloads: dict[str, dict[str, object]],
+    output_dir: Path,
+    commit_sha: str,
+    gpu_metadata: dict[str, object] | None = None,
+) -> dict[str, object]:
     means = {label: statistics.fmean(payload["samples_ms"]) for label, payload in payloads.items()}
     pair_a_percent = (means["I_a"] - means["D_a"]) / means["D_a"] * 100.0
     pair_b_percent = (means["I_b"] - means["D_b"]) / means["D_b"] * 100.0
@@ -866,6 +914,7 @@ def compare_payloads(payloads: dict[str, dict[str, object]], output_dir: Path, c
         }
         for label, payload in payloads.items()
     }
+    gpu_metadata = gpu_metadata or read_gpu_metadata()
     return {
         "status": "pass" if abs(aggregate_percent) < 1.0 else "fail",
         "run_order": RUN_ORDER,
@@ -889,7 +938,12 @@ def compare_payloads(payloads: dict[str, dict[str, object]], output_dir: Path, c
         },
         "percentiles_are_diagnostic_only": True,
         "diagnostics": diagnostics,
-        "provenance": {"commit_sha": commit_sha, "gpu_recorded_by_process": True, "gpu_is_gate": False},
+        "provenance": {
+            "commit_sha": commit_sha,
+            "gpu_metadata": gpu_metadata,
+            "gpu_recorded_by_process": gpu_metadata.get("status") == "available",
+            "gpu_is_gate": False,
+        },
         "raw_artifacts": {
             label: {
                 "physics": str(output_dir / f"{label}.raw.json"),
@@ -909,17 +963,25 @@ def main() -> int:
     if len(commit_sha) != 40:
         raise RuntimeError("commit provenance is required")
     pre_configuration = read_cpu_configuration()
-    conditioning = run_conditioning(output_dir, commit_sha, pre_configuration)
+    try:
+        conditioning = run_conditioning(output_dir, commit_sha, pre_configuration)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        record_environment_evidence_failure(output_dir, commit_sha)
+        raise
     for label, mode in zip(RUN_LABELS, RUN_ORDER):
         run_one(output_dir, label, mode, commit_sha)
     payloads = {label: validate_raw(output_dir, label, mode, commit_sha) for label, mode in zip(RUN_LABELS, RUN_ORDER)}
     comparison = compare_payloads(payloads, output_dir, commit_sha)
     post_configuration = read_cpu_configuration()
-    environment_payloads = {
-        label: json.loads((output_dir / f"{label}.environment.raw.json").read_text(encoding="utf-8"))
-        for label in RUN_LABELS
-    }
-    environment_protocol = evaluate_environment_protocol(conditioning, environment_payloads, pre_configuration, post_configuration)
+    try:
+        environment_payloads = {
+            label: json.loads((output_dir / f"{label}.environment.raw.json").read_text(encoding="utf-8"))
+            for label in RUN_LABELS
+        }
+        environment_protocol = evaluate_environment_protocol(conditioning, environment_payloads, pre_configuration, post_configuration)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        record_environment_evidence_failure(output_dir, commit_sha)
+        raise
     comparison["environment_protocol"] = environment_protocol
     comparison["status"] = "pass" if comparison["status"] == "pass" and environment_protocol["status"] == "PASS" else "fail"
     comparison_path = output_dir / "comparison.json"

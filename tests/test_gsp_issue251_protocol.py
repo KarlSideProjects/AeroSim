@@ -1,24 +1,98 @@
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+import run_gsp_idle_benchmark as benchmark  # noqa: E402
 from run_gsp_idle_benchmark import (  # noqa: E402
     cppc_performance,
     cppc_window_performance,
+    compare_payloads,
+    combine_protocol_results,
     evaluate_cooling_sequence,
     evaluate_d_a_d_b_drift,
     evaluate_environment_protocol,
     ordered_cooling_samples,
     parse_cppc_snapshot,
+    read_gpu_metadata,
+    record_environment_evidence_failure,
     validate_conditioning,
     write_qualification_failure,
 )
 
 
 class GspIssue251ProtocolTests(unittest.TestCase):
+    def test_cppc_duplicate_field_is_unavailable(self) -> None:
+        self.assertIsNone(parse_cppc_snapshot("ref:1 ref:2 del:3", "76"))
+
+    def test_failure_precedes_unavailable_and_preserves_failure_kind(self) -> None:
+        result = combine_protocol_results(
+            {"status": "FAIL", "failure_kind": "thermal_throttle"},
+            {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"},
+        )
+        self.assertEqual(result, {"status": "FAIL", "failure_kind": "thermal_throttle"})
+
+    def test_conditioning_failure_precedes_missing_cppc(self) -> None:
+        result = combine_protocol_results(
+            {"status": "FAIL", "failure_kind": "thermal_throttle"},
+            {"status": "FAIL", "failure_kind": "configuration_drift"},
+            {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"},
+        )
+        self.assertEqual(result["status"], "FAIL")
+        self.assertIn(result["failure_kind"], {"thermal_throttle", "configuration_drift"})
+
+    def test_gpu_metadata_records_two_vendors_without_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as root_name:
+            root = Path(root_name)
+            for index, vendor in enumerate(("0x1002", "0x10de")):
+                device = root / "devices" / f"gpu{index}"
+                device.mkdir(parents=True)
+                (device / "vendor").write_text(vendor, encoding="utf-8")
+                (device / "device").write_text(f"0x73{index}", encoding="utf-8")
+                (device / "subsystem_vendor").write_text("0x1", encoding="utf-8")
+                (device / "subsystem_device").write_text("0x2", encoding="utf-8")
+                (device / "driver-amd" if index == 0 else device / "driver-nouveau").mkdir()
+                driver = device / ("driver-amd" if index == 0 else "driver-nouveau")
+                card = root / "class" / "drm" / f"card{index}"
+                (card / "device").parent.mkdir(parents=True)
+                (card / "device").symlink_to(device)
+                (device / "driver").symlink_to(driver)
+            metadata = read_gpu_metadata(root)
+            self.assertEqual(metadata["status"], "available")
+            self.assertEqual({item["vendor"] for item in metadata["devices"]}, {"0x1002", "0x10de"})
+            self.assertTrue(all(item["path"].startswith(str(root / "devices")) for item in metadata["devices"]))
+            empty = read_gpu_metadata(root / "empty")
+            self.assertEqual(empty, {"status": "unavailable", "devices": []})
+
+            payload = {"samples_ms": [1.0, 1.0]}
+            with tempfile.TemporaryDirectory() as output_name:
+                unavailable = compare_payloads({"D_a": payload, "I_a": payload, "I_b": payload, "D_b": payload}, Path(output_name), "a" * 40, empty)
+                available = compare_payloads({"D_a": payload, "I_a": payload, "I_b": payload, "D_b": payload}, Path(output_name), "a" * 40, metadata)
+            self.assertEqual(unavailable["status"], available["status"])
+            self.assertFalse(unavailable["provenance"]["gpu_recorded_by_process"])
+            self.assertTrue(available["provenance"]["gpu_recorded_by_process"])
+
+    def test_environment_exception_failure_is_machine_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as path:
+            failure_path = record_environment_evidence_failure(Path(path), "c" * 40)
+            result = json.loads(failure_path.read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(result["environment_status"], "UNAVAILABLE")
+            self.assertEqual(result["failure_kind"], "environment_evidence_unavailable")
+
+    def test_main_environment_parse_failure_writes_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as path, patch.dict("os.environ", {"AEROSIM_GSP_IDLE_OUTPUT_DIR": path}), patch.object(benchmark, "read_cpu_configuration", return_value={}), patch.object(benchmark, "run_conditioning", side_effect=ValueError("bad environment JSON")):
+            with self.assertRaises(ValueError):
+                benchmark.main()
+            result = json.loads((Path(path) / "qualification.failure.json").read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(result["environment_status"], "UNAVAILABLE")
+
     def test_cppc_formula_uses_feedback_delta_and_reference_perf(self) -> None:
         before = parse_cppc_snapshot("ref:100 del:200", "76")
         after = parse_cppc_snapshot("ref:300 del:500", "76")
@@ -113,6 +187,31 @@ class GspIssue251ProtocolTests(unittest.TestCase):
         result = evaluate_environment_protocol(conditioning, {}, conditioning["configuration_start"], conditioning["configuration_end"])
         self.assertEqual(result["status"], "FAIL")
         self.assertEqual(result["failure_kind"], "configuration_drift")
+
+    def test_environment_failure_is_not_masked_by_missing_drift(self) -> None:
+        device_id = "/sys/devices/virtual/thermal/cooling_device0"
+        device = {"stable_id": device_id, "path": device_id}
+        counter = 0
+
+        def sample(transition: int = 0) -> dict[str, object]:
+            nonlocal counter
+            counter += 1
+            return {"processor_cooling_samples": {device_id: {
+                "cur_state": 0,
+                "max_state": 1,
+                "total_trans": transition,
+                "time_in_state_ms": {"0": counter, "1": 0},
+            }}}
+
+        phases = {}
+        conditioning = {"status": "PASS", "admitted": True, "sources": {"processor_cooling_devices": [device]}, "boundary_snapshots": {"initial": sample(), "final": sample()}}
+        for label in ("D_a", "I_a", "I_b", "D_b"):
+            transition = 1 if label in ("I_a", "I_b", "D_b") else 0
+            phases[label] = {"boundary_snapshots": {"initial": sample(transition), "final": sample(transition)}, "samples": []}
+        configuration = {"online_cpus": "0", "online_cpu_set": [0], "cppc_cpu_set": [0], "boost": "1", "policies": {"policy0": {"scaling_driver": "amd-pstate-epp", "scaling_governor": "powersave", "energy_performance_preference": "balance_performance", "scaling_min_freq": "1", "scaling_max_freq": "2"}}}
+        result = evaluate_environment_protocol(conditioning, phases, configuration, configuration)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertEqual(result["failure_kind"], "thermal_throttle")
 
     def test_missing_configuration_is_unavailable(self) -> None:
         result = evaluate_environment_protocol({"status": "PASS", "admitted": True}, {}, {}, {})
