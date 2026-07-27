@@ -53,12 +53,23 @@ Thread: `019fa20f-e899-7993-9282-c2586d52c23d`
 
 12. Test-harness assumptions retained explicitly: two authenticated WebSocket peers, manual server polling because the server process loop is disabled in tests, monotonically increasing per-client GSP sequences, and JSON integer values being accepted as integral floats at the trust boundary.
 
+13. Sol-high final review found that an aggregate `tuning_commit` copied the first per-request `request_seq`, making it look like a duplicate ACK when `commit_request_seq` was negative. `_broadcast_tuning_commit` now erases the inherited sequence before adding the aggregate sequence only when one exists. A real two-peer emitted regression sends two requests into one physics boundary and verifies exactly one correlated ACK per origin, one commit per peer, no aggregate request sequence, and each change’s winning request sequence. The temporary RED run failed the regression before the erase was restored.
+
+14. The previous GS-045 response check compared two independently configured native fixtures and did not prove the Quick Adjust path. It now stages a real absolute Quick Adjust key input, asserts the native value is unchanged before `_apply_gsp_tuning_requests`, commits at the next boundary, and compares deterministic native response vectors after one response tick. This preserves the hardware configuration path and adds no GPU-specific assumption.
+
+15. Quick Adjust binding is session-level. A malformed serialized `QuickAdjustBinding` carrying `vehicle: "DroneA"` is now rejected both while parsing and during session validation; the native replay regression covers load rejection. The event serializer/API still emit only timestamp and normalized profile metadata, with no vehicle identity parameter or replay vehicle requirement.
+
+16. The inline panel’s eight-slot loop used function-scoped variables, so Save/ACK callbacks could target the final row. Loop controls are now block-local with `let`. `tests/test_gsp_panel_behavior.js` executes the inline script against a minimal DOM/WebSocket harness, clicks one row, delivers its ACK, and verifies only that row changes. Its RED run reproduced the final-row capture; it is included in the exact gate.
+
+17. While adding the emitted two-peer regression, a skipped client sequence (`3` after `1`) correctly caused the server to close that peer; the test was corrected to use each peer’s next sequence and later preserved the existing sequence assertions. The test also had to share the existing authenticated peers because this server seam intentionally caps active peers; it runs before the queue-saturation mutation and does not perturb later commit-ID checks.
+
 ## TDD evidence
 
 - RED: the new native replay contract failed to compile before `QuickAdjustBinding`, v4 fields, and tuning provenance existed.
 - GREEN: focused native replay test passed after the minimum serializer/parser/runner implementation.
 - Focused checks passed:
   - `scripts/test_native.sh`
+  - `node tests/test_gsp_panel_behavior.js`
   - `scripts/test_license_scan.sh`
   - Quick Adjust integration
   - GSP tuning integration

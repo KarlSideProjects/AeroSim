@@ -815,7 +815,12 @@ bool test_quick_adjust_binding_replay_contract() {
     }
     aerosim::ReplaySession invalid = recorder.session();
     invalid.events[1].quick_adjust_profile_json = R"({"schema_version":1,"slots":[null]})";
-    return !aerosim::load_replay_session(aerosim::serialize_replay_session(invalid), "manifest").ok;
+    if (aerosim::load_replay_session(aerosim::serialize_replay_session(invalid), "manifest").ok) {
+        return false;
+    }
+    aerosim::ReplaySession vehicle_bound = recorder.session();
+    vehicle_bound.events[1].vehicle_name = "DroneA";
+    return !aerosim::load_replay_session(aerosim::serialize_replay_session(vehicle_bound), "manifest").ok;
 }
 
 bool test_checked_replay_batches() {

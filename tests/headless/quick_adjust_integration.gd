@@ -117,25 +117,44 @@ func _run() -> void:
         _expect(same_key_results.size() == 2 and int(same_key_change.get("request_seq", -1)) == 51 and
                 float(same_key_change.get("committed_value", 0.0)) == 1.0,
                 "same-key tuning winner is the last request")
-        var low_response_native = ClassDB.instantiate("AeroSimNative")
-        var high_response_native = ClassDB.instantiate("AeroSimNative")
-        low_response_native.call("initialize_flight_tuning", "simpleflight.rate_p", 0.6)
-        high_response_native.call("initialize_flight_tuning", "simpleflight.rate_p", 1.4)
-        var low_response_runtime := FlightRuntime.new()
-        var high_response_runtime := FlightRuntime.new()
-        low_response_runtime.native = low_response_native
-        high_response_runtime.native = high_response_native
-        _expect(hardware.apply_to_runtime(low_response_runtime, "res://config/drones/5_inch_6s.json") and
-                hardware.apply_to_runtime(high_response_runtime, "res://config/drones/5_inch_6s.json"), "native response fixtures use the hardware configuration")
-        low_response_native.call("arm_flight_control", 0.0)
-        high_response_native.call("arm_flight_control", 0.0)
-        var low_response: PackedFloat64Array = low_response_native.call("step_acro_mode", 240, 1000, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 0.0)
-        var high_response: PackedFloat64Array = high_response_native.call("step_acro_mode", 240, 1000, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 0.0)
+        runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", 0.6)
+        runtime.native.call("commit_flight_tuning", 4)
+        var response_profile := profile.duplicate(true)
+        response_profile.slots[0].mode = "absolute"
+        _expect(bool(runtime.configure_quick_adjust(response_profile, false).get("ok", false)),
+                "response regression uses the production Quick Adjust binding")
+        runtime._unhandled_input(_key_event(KEY_E, false))
+        runtime._quick_adjust_next_allowed_usec[0] = 0
+        runtime._unhandled_input(_key_event(KEY_E, true))
+        runtime._apply_quick_adjust_inputs(1.0 / 240.0)
+        var before_boundary: Dictionary = runtime.native.call("flight_tuning_configuration")
+        _expect(is_equal_approx(float(before_boundary.get("simpleflight.rate_p", 0.0)), 0.6),
+                "Quick Adjust has no native effect before the physics boundary")
+        runtime._apply_gsp_tuning_requests(5)
+        var after_boundary: Dictionary = runtime.native.call("flight_tuning_configuration")
+        _expect(is_equal_approx(float(after_boundary.get("simpleflight.rate_p", 0.0)), 1.4),
+                "Quick Adjust commits its staged value at the next physics boundary")
+
+        var baseline_response_native = ClassDB.instantiate("AeroSimNative")
+        var adjusted_response_native = ClassDB.instantiate("AeroSimNative")
+        baseline_response_native.call("initialize_flight_tuning", "simpleflight.rate_p", 0.6)
+        adjusted_response_native.call("initialize_flight_tuning", "simpleflight.rate_p", 1.4)
+        var baseline_response_runtime := FlightRuntime.new()
+        var adjusted_response_runtime := FlightRuntime.new()
+        baseline_response_runtime.native = baseline_response_native
+        adjusted_response_runtime.native = adjusted_response_native
+        _expect(hardware.apply_to_runtime(baseline_response_runtime, "res://config/drones/5_inch_6s.json") and
+                hardware.apply_to_runtime(adjusted_response_runtime, "res://config/drones/5_inch_6s.json"),
+                "native response fixtures use the hardware configuration")
+        baseline_response_native.call("arm_flight_control", 0.0)
+        adjusted_response_native.call("arm_flight_control", 0.0)
+        var baseline_response: PackedFloat64Array = baseline_response_native.call("step_acro_mode", 240, 1000, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 0.0)
+        var adjusted_response: PackedFloat64Array = adjusted_response_native.call("step_acro_mode", 240, 1000, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 0.0)
         var response_difference := false
-        for response_index in low_response.size():
-            response_difference = response_difference or low_response[response_index] != high_response[response_index]
-        _expect(low_response.size() == high_response.size() and low_response.size() > 0 and response_difference,
-                "scripted control step observes a native response change")
+        for response_index in baseline_response.size():
+            response_difference = response_difference or baseline_response[response_index] != adjusted_response[response_index]
+        _expect(baseline_response.size() == adjusted_response.size() and baseline_response.size() > 0 and response_difference,
+                "one native response tick observes the committed Quick Adjust change")
         runtime._unhandled_input(_key_event(KEY_E, false))
 
         var restarted := FlightRuntime.new()

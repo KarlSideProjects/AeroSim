@@ -1579,6 +1579,10 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
             return invalid(ReplayDiagnosticCode::InvalidSession, "invalid replay tuning input");
         }
         if (event.type == ReplayEventType::QuickAdjustBinding &&
+                !event.vehicle_name.empty()) {
+            return invalid(ReplayDiagnosticCode::InvalidIdentity, "Quick Adjust binding must be session-level");
+        }
+        if (event.type == ReplayEventType::QuickAdjustBinding &&
                 !valid_quick_adjust_profile_json(event.quick_adjust_profile_json)) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "invalid Quick Adjust binding profile");
         }
@@ -1793,6 +1797,9 @@ bool parse_event(const JsonValue &value, ReplayEvent &event) {
     }
     const JsonValue *vehicle = field(value, "vehicle");
     if (vehicle != nullptr && !string_value(*vehicle, event.vehicle_name)) {
+        return false;
+    }
+    if (event.type == ReplayEventType::QuickAdjustBinding && vehicle != nullptr) {
         return false;
     }
     switch (event.type) {

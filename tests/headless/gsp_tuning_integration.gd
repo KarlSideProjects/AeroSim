@@ -406,6 +406,49 @@ func _run() -> void:
         paused_saturated_record = _server._authenticated_peers[1]
     _expect(not paused_saturated_record.is_empty() and not paused_healthy_record.is_empty(),
             "paused saturation regression resolves origin and observer records")
+    _drain_all_messages(paused_origin_client)
+    _drain_all_messages(panel_client)
+    _expect(paused_origin_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 1,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.72}
+    })) == OK and panel_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 3,
+        "d": {"parameter": "simpleflight.angle_p", "value": 1.8}
+    })) == OK, "two peers send mixed tuning requests before one boundary")
+    _server.poll()
+    _runtime._physics_process(1.0 / 240.0)
+    var mixed_peer_events: Array = [[], []]
+    for _attempt in 120:
+        _server.poll()
+        paused_origin_client.poll()
+        panel_client.poll()
+        mixed_peer_events[0].append_array(_drain_all_messages(paused_origin_client))
+        mixed_peer_events[1].append_array(_drain_all_messages(panel_client))
+        if mixed_peer_events[0].size() >= 2 and mixed_peer_events[1].size() >= 2:
+            break
+        await process_frame
+    var mixed_peer_ok := true
+    for peer_index in 2:
+        var peer_events: Array = mixed_peer_events[peer_index]
+        var expected_request_seq := 1 if peer_index == 0 else 3
+        var ack_count := 0
+        var commit_count := 0
+        var commit: Dictionary = {}
+        for event_value in peer_events:
+            var event: Dictionary = event_value
+            if String(event.get("t", "")) == "tuning_ack" and int(event.get("d", {}).get("request_seq", -1)) == expected_request_seq:
+                ack_count += 1
+            elif String(event.get("t", "")) == "tuning_commit":
+                commit_count += 1
+                commit = event.get("d", {})
+        var change_sequences := {}
+        for change_value in commit.get("changes", []):
+            var change: Dictionary = change_value
+            change_sequences[String(change.get("parameter", ""))] = int(change.get("request_seq", -1))
+        mixed_peer_ok = mixed_peer_ok and (ack_count == 1 and commit_count == 1 and not commit.has("request_seq") and
+                String(commit.get("source", "")) == "panel" and change_sequences.get("simpleflight.rate_p", -1) == 1 and
+                change_sequences.get("simpleflight.angle_p", -1) == 3)
+    _expect(mixed_peer_ok, "two-peer mixed tuning emits one ACK per request and one aggregate commit without fake request_seq")
     var paused_forced_queue: Array = []
     for _slot in GspServer.MAX_RELIABLE_MESSAGES:
         paused_forced_queue.append("{}")
@@ -415,7 +458,7 @@ func _run() -> void:
     var paused_overflow_before := _server.reliable_overflow_count
     _runtime.paused = true
     _expect(paused_origin_client.send_text(JSON.stringify({
-        "v": 2, "t": "set_tuning", "seq": 1,
+        "v": 2, "t": "set_tuning", "seq": 2,
         "d": {"parameter": "simpleflight.rate_p", "value": 1.81}
     })) == OK, "paused saturated origin sends a synchronous tuning request")
     _server.poll()

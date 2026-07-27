@@ -182,25 +182,25 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     quickAdjustControls = [];
     var parameters = (registry && Array.isArray(registry.parameters) ? registry.parameters : []).filter(function (item) { return item.quick_adjust_eligible; });
     var slots = profile && Array.isArray(profile.slots) ? profile.slots : [];
-    for (var index = 0; index < 8; index += 1) {
-      var row = document.createElement("div"); row.className = "quick-adjust-row";
-      var parameter = document.createElement("select");
+    for (let index = 0; index < 8; index += 1) {
+      let row = document.createElement("div"); row.className = "quick-adjust-row";
+      let parameter = document.createElement("select");
       parameter.appendChild(new Option("Slot " + (index + 1) + " — off", ""));
       parameters.forEach(function (item) { parameter.appendChild(new Option(item.key, item.key)); });
-      var type = document.createElement("select"); ["axis", "key_pair"].forEach(function (item) { type.appendChild(new Option(item, item)); });
-      var mode = document.createElement("select"); ["absolute", "relative"].forEach(function (item) { mode.appendChild(new Option(item, item)); });
-      var subsetMin = document.createElement("input"); subsetMin.type = "number"; subsetMin.title = "subset min";
-      var subsetMax = document.createElement("input"); subsetMax.type = "number"; subsetMax.title = "subset max";
-      var deadzone = document.createElement("input"); deadzone.type = "number"; deadzone.step = "0.01"; deadzone.value = "0.05"; deadzone.title = "deadzone";
-      var step = document.createElement("input"); step.type = "number"; step.step = "any"; step.title = "step";
-      var rate = document.createElement("input"); rate.type = "number"; rate.step = "any"; rate.value = "30"; rate.title = "rate limit";
-      var device = document.createElement("input"); device.type = "number"; device.value = "0"; device.title = "device";
-      var axis = document.createElement("input"); axis.type = "number"; axis.value = "4"; axis.title = "axis";
-      var negative = document.createElement("input"); negative.type = "number"; negative.placeholder = "negative key";
-      var positive = document.createElement("input"); positive.type = "number"; positive.placeholder = "positive key";
-      var apply = document.createElement("button"); apply.textContent = "Save";
-      var status = document.createElement("span"); status.className = "muted";
-      var controls = { parameter: parameter, type: type, mode: mode, subsetMin: subsetMin, subsetMax: subsetMax, deadzone: deadzone, step: step, rate: rate, device: device, axis: axis, negative: negative, positive: positive, status: status };
+      let type = document.createElement("select"); ["axis", "key_pair"].forEach(function (item) { type.appendChild(new Option(item, item)); });
+      let mode = document.createElement("select"); ["absolute", "relative"].forEach(function (item) { mode.appendChild(new Option(item, item)); });
+      let subsetMin = document.createElement("input"); subsetMin.type = "number"; subsetMin.title = "subset min";
+      let subsetMax = document.createElement("input"); subsetMax.type = "number"; subsetMax.title = "subset max";
+      let deadzone = document.createElement("input"); deadzone.type = "number"; deadzone.step = "0.01"; deadzone.value = "0.05"; deadzone.title = "deadzone";
+      let step = document.createElement("input"); step.type = "number"; step.step = "any"; step.title = "step";
+      let rate = document.createElement("input"); rate.type = "number"; rate.step = "any"; rate.value = "30"; rate.title = "rate limit";
+      let device = document.createElement("input"); device.type = "number"; device.value = "0"; device.title = "device";
+      let axis = document.createElement("input"); axis.type = "number"; axis.value = "4"; axis.title = "axis";
+      let negative = document.createElement("input"); negative.type = "number"; negative.placeholder = "negative key";
+      let positive = document.createElement("input"); positive.type = "number"; positive.placeholder = "positive key";
+      let apply = document.createElement("button"); apply.textContent = "Save";
+      let status = document.createElement("span"); status.className = "muted";
+      let controls = { parameter: parameter, type: type, mode: mode, subsetMin: subsetMin, subsetMax: subsetMax, deadzone: deadzone, step: step, rate: rate, device: device, axis: axis, negative: negative, positive: positive, apply: apply, status: status };
       quickAdjustControls.push(controls);
       function descriptorFor() { return parameters.find(function (item) { return item.key === parameter.value; }) || {}; }
       function refreshBounds() {
@@ -339,6 +339,10 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   });
   window.addEventListener("focus", function () { $("focus-state").textContent = "panel focus"; });
   window.addEventListener("blur", function () { $("focus-state").textContent = "panel unfocused"; });
+  if (window.__AEROSIM_PANEL_TEST__) {
+    window.__AEROSIM_PANEL_TEST__.renderQuickAdjust = renderQuickAdjust;
+    window.__AEROSIM_PANEL_TEST__.quickAdjustControls = function () { return quickAdjustControls; };
+  }
   connect(); drawSparkline();
 }());
 </script>

@@ -699,6 +699,7 @@ func _broadcast_tuning_commit(result: Dictionary, request_seq: int = -1) -> void
         data.erase("commit_changes")
     var commit_request_seq := int(result.get("commit_request_seq", request_seq))
     data.erase("commit_request_seq")
+    data.erase("request_seq")
     if commit_request_seq >= 0:
         data["request_seq"] = commit_request_seq
     for record in _authenticated_peers.duplicate():
