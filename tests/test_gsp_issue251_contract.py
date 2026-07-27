@@ -61,6 +61,7 @@ class GspIssue251ContractTests(unittest.TestCase):
         self.assertIn("cppc_cpu_set", implementation)
         self.assertIn("parse_cpu_set", implementation)
         self.assertIn("scaling_cur_freq", implementation)
+        self.assertNotIn("frequency_delta_percent > 1.0", implementation)
         self.assertIn("measurement_elapsed_monotonic_seconds", implementation)
         self.assertIn("telemetry_frame_times", implementation)
         self.assertIn("PhysicsFrameProfiler", benchmark)
