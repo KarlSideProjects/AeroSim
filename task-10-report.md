@@ -14,9 +14,12 @@ The canonical simulation wire message is exactly `t="sim_cmd"` with `d.cmd` and 
 
 Quick Adjust binding recording still precedes persistence, but any active-session settings load/save failure now makes the replay unrecoverable, so an unpersisted binding cannot be certified. The former production `replay_recording_event_count` method was removed: the authenticated WebSocket test proves rejected marker, simulation, and tuning requests add no events by comparing the complete final literal event sequence with the accepted expected sequence.
 
+At the native recorder boundary, a physics-tick regression now latches the same sticky append-failure state as order exhaustion; later appends and finish fail even if a native caller ignores the original tick result. The genuine v4 fixture now contains same-timestamp scene-object spawn and move events with distinct checkpoint positions, proving legacy per-event checkpoint sequencing rather than merely matching identical snapshots. The test-only `AEROSIM_REPLAY_TESTING` define is supplied on both GCC/Clang and MSVC test compiler branches and remains absent from production builds.
+
 ## Tests
 
 - Native TDD coverage: schema v5 round-trip, same-tick ordering, first-order-zero and overflow-safe v5 rejection, v4 compatibility without false precision, recorder tick/order guards, sticky append/order failure, side-effect ordering after successful append, finish refusal after append failure, marker bounds/round-trip, derived JSONL provenance, preset source validation, and a genuine schema-v4 same-timestamp mixed-event fixture with per-event checkpoint parity.
+- RED/GREEN evidence: removing the tick-regression latch made `scripts/test_native.sh` fail at the regression/order-exhaustion test; restoring it made the native suite pass. The v4 test now checks loaded and replayed spawn/move checkpoint positions `[1,2,3]` then `[4,5,6]` at one timestamp.
 - Headless contract coverage: exact `sim_cmd`/reliable ACK validation, whitespace and multibyte marker byte boundaries, and monotonic replay tick across `AirSimSession.reset()`.
 - Real authenticated WebSocket replay integration: registers real tuning, Quick Adjust, preset, marker, and simulation providers; authenticates; records transient/final panel commits, persisted Quick Adjust binding/commit, confirmed preset migration, pause, and marker; exercises malformed/rejected marker/simulation/tuning requests; reloads the persisted Quick Adjust profile; compares the exact accepted ordered event sequence and all relevant input/provenance values after load/replay; and compares derived JSONL rows only after replay succeeds.
 - Focused commands passed:
@@ -35,7 +38,7 @@ Quick Adjust binding recording still precedes persistence, but any active-sessio
 
   `RUNNER_TEMP=/tmp/aerosim-gsp-250 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh`
 
-  Result: exit 0. Native, license, GSP contract/integration/stress, rebuilt native extension, headed acceptance, replay integration, GUT (277 tests, 0 failures, 0 errors), smoke, and terrain checks passed.
+  Result: final rerun exit 0. Native, license, GSP contract/integration/stress, rebuilt native extension, headed acceptance, replay integration, GUT (277 tests, 0 failures, 0 errors), smoke, and terrain checks passed. One earlier gate attempt had one transient collision-probe GUT failure (276/277); the focused GUT rerun passed 277/277 before this final gate rerun.
 
 Codebase-memory transport was available and used for repository discovery; no direct-search fallback was needed for code discovery. No ledger or GitHub changes were made.
 
@@ -48,3 +51,4 @@ Codebase-memory transport was available and used for repository discovery; no di
 - `0038239 Fix issue 250 replay review findings`
 - `02c36f0 Preserve replay pause override contract`
 - `afd921b Fix issue 250 replay failure handling`
+- `90446f1 Harden issue 250 legacy replay checks`
