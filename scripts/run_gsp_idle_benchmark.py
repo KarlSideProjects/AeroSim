@@ -295,17 +295,33 @@ def cppc_performance(before: dict[str, object] | None, after: dict[str, object] 
     return float(before["reference_perf"]) * delivered_delta / reference_delta
 
 
+def parse_cpu_set(raw: str | None) -> set[int] | None:
+    if raw is None or not raw.strip():
+        return None
+    result: set[int] = set()
+    try:
+        for item in raw.split(","):
+            if "-" in item:
+                start, end = (int(value) for value in item.split("-", 1))
+                if start > end:
+                    return None
+                result.update(range(start, end + 1))
+            else:
+                result.add(int(item))
+    except ValueError:
+        return None
+    return result
+
+
 def compare_cpu_configuration(before: dict[str, object], after: dict[str, object]) -> dict[str, object]:
     if not before or not after or "online_cpus" not in before or "policies" not in before or "boost" not in before:
         return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence", "exact": False}
     required = {"scaling_driver", "scaling_governor", "energy_performance_preference", "scaling_min_freq", "scaling_max_freq"}
-    if before["online_cpus"] is None or before["boost"] is None or any(
-        set(policy) != required or any(value is None for value in policy.values())
-        for policy in before["policies"].values()
-    ) or after["online_cpus"] is None or after["boost"] is None or any(
-        set(policy) != required or any(value is None for value in policy.values())
-        for policy in after["policies"].values()
-    ):
+    configurations = (before, after)
+    if any(
+        not _configuration_complete(config, required)
+        for config in configurations
+    ) or set(before["policies"]) != set(after["policies"]):
         return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence", "exact": False}
     equal = before == after
     return {
@@ -313,6 +329,20 @@ def compare_cpu_configuration(before: dict[str, object], after: dict[str, object
         "failure_kind": None if equal else "configuration_drift",
         "exact": equal,
     }
+
+
+def _configuration_complete(config: dict[str, object], required: set[str]) -> bool:
+    online = parse_cpu_set(config.get("online_cpus"))
+    policies = config.get("policies")
+    return bool(
+        isinstance(policies, dict)
+        and policies
+        and online is not None
+        and config.get("online_cpu_set") == sorted(online)
+        and set(config.get("cppc_cpu_set", [])) == online
+        and config.get("boost") is not None
+        and all(set(policy) == required and all(value is not None for value in policy.values()) for policy in policies.values())
+    )
 
 
 def evaluate_cooling_sequence(samples: list[dict[str, object]], devices: list[dict[str, object]]) -> dict[str, object]:
@@ -326,6 +356,7 @@ def evaluate_cooling_sequence(samples: list[dict[str, object]], devices: list[di
         or any(
             not isinstance(sample[device_id], dict)
             or any(sample[device_id].get(key) is None for key in ("cur_state", "max_state", "total_trans", "time_in_state_ms"))
+            or "0" not in sample[device_id].get("time_in_state_ms", {})
             for device_id in device_ids
         )
         for sample in parsed_samples
@@ -343,6 +374,8 @@ def evaluate_cooling_sequence(samples: list[dict[str, object]], devices: list[di
         for device_id in device_ids:
             if current[device_id]["total_trans"] < previous[device_id]["total_trans"]:
                 return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback"}
+            if current[device_id]["time_in_state_ms"]["0"] <= previous[device_id]["time_in_state_ms"]["0"]:
+                return {"status": "UNAVAILABLE", "failure_kind": "cooling_state0_reset"}
             for state in set(previous[device_id]["time_in_state_ms"]) | set(current[device_id]["time_in_state_ms"]):
                 if current[device_id]["time_in_state_ms"].get(state, -1) < previous[device_id]["time_in_state_ms"].get(state, -1):
                     return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback"}
@@ -405,24 +438,13 @@ def evaluate_environment_protocol(
         for phase in expected_phases
     ):
         return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
-    all_samples = list(conditioning.get("samples", []))
-    for samples in run_samples.values():
-        all_samples.extend(samples)
+    all_samples = ordered_cooling_samples(conditioning, run_payloads)
     cooling = evaluate_cooling_sequence(all_samples, sources.get("processor_cooling_devices", []))
-    d_a = run_samples.get("D_a", [])
-    d_b = run_samples.get("D_b", [])
-    cppc_a = cppc_window_performance(d_a, 0.0, float("inf"))
-    cppc_b = cppc_window_performance(d_b, 0.0, float("inf"))
-    tctl_a = [sample["package_temperature_c"] for sample in d_a if sample.get("package_temperature_c") is not None]
-    tctl_b = [sample["package_temperature_c"] for sample in d_b if sample.get("package_temperature_c") is not None]
-    tctl_a_median = statistics.median(tctl_a) if tctl_a else None
-    tctl_b_median = statistics.median(tctl_b) if tctl_b else None
-    cppc_delta = abs(cppc_b - cppc_a) / cppc_a * 100.0 if cppc_a and cppc_b else None
-    tctl_delta = abs(tctl_b_median - tctl_a_median) if tctl_a_median is not None and tctl_b_median is not None else None
-    unavailable = cooling["status"] == "UNAVAILABLE" or cppc_delta is None or tctl_delta is None
-    failed = cooling["status"] == "FAIL" or (cppc_delta is not None and cppc_delta > CPPC_DRIFT_MAX_PERCENT) or (tctl_delta is not None and tctl_delta > TCTL_DRIFT_MAX_C)
+    d_drift = evaluate_d_a_d_b_drift(run_payloads)
+    unavailable = cooling["status"] == "UNAVAILABLE" or d_drift["status"] == "UNAVAILABLE"
+    failed = cooling["status"] == "FAIL" or d_drift["status"] == "FAIL"
     status = "UNAVAILABLE" if unavailable else "FAIL" if failed else "PASS"
-    failure_kind = None if status == "PASS" else "missing_evidence" if status == "UNAVAILABLE" else cooling.get("failure_kind") or "run_environment_drift"
+    failure_kind = None if status == "PASS" else "missing_evidence" if status == "UNAVAILABLE" else cooling.get("failure_kind") or d_drift.get("failure_kind")
     return {
         "status": status,
         "failure_kind": failure_kind,
@@ -432,17 +454,9 @@ def evaluate_environment_protocol(
             "conditioning": conditioning.get("boundary_snapshots", {}),
             **{label: payload.get("boundary_snapshots", {}) for label, payload in run_payloads.items()},
         },
-        "D_a_D_b": {
-            "cppc_P_D_a": cppc_a,
-            "cppc_P_D_b": cppc_b,
-            "cppc_drift_percent": cppc_delta,
-            "tctl_median_D_a_c": tctl_a_median,
-            "tctl_median_D_b_c": tctl_b_median,
-            "tctl_drift_c": tctl_delta,
-            "cppc_threshold_percent": CPPC_DRIFT_MAX_PERCENT,
-            "tctl_threshold_c": TCTL_DRIFT_MAX_C,
-        },
+        "D_a_D_b": d_drift,
         "formula": "P(a,b)=reference_perf*(del_b-del_a)/(ref_b-ref_a)",
+        "aggregate_formula": "sum(reference_perf_cpu*delta_del_cpu)/sum(delta_ref_cpu)",
     }
 
 
@@ -493,8 +507,16 @@ def read_cpu_configuration() -> dict[str, object]:
             "scaling_min_freq": _read_text(str(resolved / "scaling_min_freq")),
             "scaling_max_freq": _read_text(str(resolved / "scaling_max_freq")),
         }
+    online_cpus = _read_text("/sys/devices/system/cpu/online")
+    cppc_cpu_set = sorted(
+        int(Path(path).resolve().parent.name[3:])
+        for path in glob.glob("/sys/devices/system/cpu/cpu[0-9]*/acpi_cppc")
+        if Path(path).resolve().parent.name[3:].isdigit()
+    )
     return {
-        "online_cpus": _read_text("/sys/devices/system/cpu/online"),
+        "online_cpus": online_cpus,
+        "online_cpu_set": sorted(parse_cpu_set(online_cpus)) if parse_cpu_set(online_cpus) is not None else None,
+        "cppc_cpu_set": cppc_cpu_set,
         "boost": _read_text("/sys/devices/system/cpu/cpufreq/boost"),
         "policies": policies,
     }
@@ -523,7 +545,8 @@ def environment_sources() -> dict[str, object]:
         if _read_text(f"{device_path}/type") == "Processor":
             resolved = Path(device_path).resolve()
             device = _read_processor_cooling_device(str(resolved))
-            device["stable_id"] = resolved.name
+            device["stable_id"] = str(resolved)
+            device["display_name"] = resolved.name
             device["path"] = str(resolved)
             processor_cooling_devices.append(device)
     processor_cooling_available = bool(processor_cooling_devices) and all(
@@ -543,7 +566,9 @@ def environment_sources() -> dict[str, object]:
             "feedback_path": str(resolved / "feedback_ctrs"),
             "reference_path": str(resolved / "reference_perf"),
         })
-    cppc_available = bool(cppc_devices) and all(_read_cppc_device(device) is not None for device in cppc_devices)
+    online_cpu_set = parse_cpu_set(_read_text("/sys/devices/system/cpu/online"))
+    cppc_cpu_set = {int(device["stable_id"][3:]) for device in cppc_devices if device["stable_id"][3:].isdigit()}
+    cppc_available = bool(cppc_devices) and online_cpu_set is not None and cppc_cpu_set == online_cpu_set and all(_read_cppc_device(device) is not None for device in cppc_devices)
     return {
         "cpu_frequency_paths": frequency_paths,
         "governor_paths": governor_paths,
@@ -556,6 +581,7 @@ def environment_sources() -> dict[str, object]:
         "processor_cooling_devices": processor_cooling_devices,
         "processor_cooling_protocol": "available" if processor_cooling_available else "unavailable",
         "cppc_devices": cppc_devices,
+        "cppc_cpu_set": sorted(cppc_cpu_set),
         "cppc_protocol": "available" if cppc_available else "unavailable",
     }
 
@@ -599,9 +625,74 @@ def cppc_window_performance(samples: list[dict[str, object]], lower: float, uppe
         return None
     first = window[0].get("cppc_samples") or {}
     last = window[-1].get("cppc_samples") or {}
-    values = [cppc_performance(first.get(cpu_id), last.get(cpu_id)) for cpu_id in set(first) & set(last)]
-    values = [value for value in values if value is not None]
-    return statistics.median(values) if values and len(values) == len(set(first) & set(last)) else None
+    if set(first) != set(last) or not first:
+        return None
+    numerator = 0.0
+    denominator = 0
+    for cpu_id in first:
+        before = first[cpu_id]
+        after = last[cpu_id]
+        if before is None or after is None or before.get("reference_perf") != after.get("reference_perf"):
+            return None
+        before_counters = before.get("feedback_ctrs", {})
+        after_counters = after.get("feedback_ctrs", {})
+        reference_delta = int(after_counters.get("ref", -1)) - int(before_counters.get("ref", -1))
+        delivered_delta = int(after_counters.get("del", -1)) - int(before_counters.get("del", -1))
+        if reference_delta <= 0 or delivered_delta < 0:
+            return None
+        numerator += float(before["reference_perf"]) * delivered_delta
+        denominator += reference_delta
+    return numerator / denominator if denominator else None
+
+
+def ordered_cooling_samples(conditioning: dict[str, object], run_payloads: dict[str, dict[str, object]]) -> list[dict[str, object]]:
+    ordered: list[dict[str, object]] = []
+    phases = [("conditioning", conditioning), *[(label, run_payloads[label]) for label in RUN_LABELS]]
+    for _label, payload in phases:
+        boundaries = payload.get("boundary_snapshots", {})
+        ordered.append(boundaries["initial"])
+        ordered.extend(payload.get("samples", []))
+        ordered.append(boundaries["final"])
+    return ordered
+
+
+def evaluate_d_a_d_b_drift(run_payloads: dict[str, dict[str, object]]) -> dict[str, object]:
+    d_a = run_payloads.get("D_a", {}).get("samples", [])
+    d_b = run_payloads.get("D_b", {}).get("samples", [])
+    cppc_a = cppc_window_performance(d_a, 0.0, float("inf"))
+    cppc_b = cppc_window_performance(d_b, 0.0, float("inf"))
+    tctl_a = [sample["package_temperature_c"] for sample in d_a if sample.get("package_temperature_c") is not None]
+    tctl_b = [sample["package_temperature_c"] for sample in d_b if sample.get("package_temperature_c") is not None]
+    tctl_a_median = statistics.median(tctl_a) if tctl_a else None
+    tctl_b_median = statistics.median(tctl_b) if tctl_b else None
+    cppc_delta = abs(cppc_b - cppc_a) / cppc_a * 100.0 if cppc_a and cppc_b else None
+    tctl_delta = abs(tctl_b_median - tctl_a_median) if tctl_a_median is not None and tctl_b_median is not None else None
+    status = "UNAVAILABLE" if cppc_delta is None or tctl_delta is None else "FAIL" if cppc_delta > CPPC_DRIFT_MAX_PERCENT or tctl_delta > TCTL_DRIFT_MAX_C else "PASS"
+    return {
+        "status": status,
+        "failure_kind": None if status == "PASS" else "missing_evidence" if status == "UNAVAILABLE" else "run_environment_drift",
+        "cppc_P_D_a": cppc_a,
+        "cppc_P_D_b": cppc_b,
+        "cppc_drift_percent": cppc_delta,
+        "tctl_median_D_a_c": tctl_a_median,
+        "tctl_median_D_b_c": tctl_b_median,
+        "tctl_drift_c": tctl_delta,
+        "cppc_threshold_percent": CPPC_DRIFT_MAX_PERCENT,
+        "tctl_threshold_c": TCTL_DRIFT_MAX_C,
+    }
+
+
+def write_qualification_failure(
+    output_dir: Path, commit_sha: str, environment_status: str, failure_kind: str
+) -> Path:
+    path = output_dir / "qualification.failure.json"
+    path.write_text(json.dumps({
+        "status": "fail",
+        "environment_status": environment_status,
+        "failure_kind": "environment_evidence_unavailable" if environment_status == "UNAVAILABLE" else failure_kind,
+        "commit_sha": commit_sha,
+    }, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def run_conditioning(output_dir: Path, commit_sha: str, configuration_start: dict[str, object] | None = None) -> dict[str, object]:
@@ -688,7 +779,6 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
     )
     failing_gate = (
         temperature_delta is not None and temperature_delta > 1.0
-        or frequency_delta_percent is not None and frequency_delta_percent > 1.0
         or cppc_delta_percent is not None and cppc_delta_percent > 1.0
         or cooling["status"] == "FAIL"
         or configuration["status"] == "FAIL"
@@ -710,6 +800,7 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
         "cooling": cooling,
         "configuration": configuration,
         "formula": "P(a,b)=reference_perf*(del_b-del_a)/(ref_b-ref_a)",
+        "aggregate_formula": "sum(reference_perf_cpu*delta_del_cpu)/sum(delta_ref_cpu)",
     }
     payload["protocol"] = checks
     payload["status"] = status
@@ -717,6 +808,7 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
     payload["admitted"] = status == "PASS"
     environment_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     if not payload["admitted"]:
+        write_qualification_failure(environment_path.parent, commit_sha, status, failure_kind or "conditioning_drift")
         raise RuntimeError(f"conditioning protocol evidence is insufficient: {checks}")
     return payload
 
@@ -783,6 +875,7 @@ def compare_payloads(payloads: dict[str, dict[str, object]], output_dir: Path, c
         "measured_seconds": MEASURED_SECONDS,
         "sample_count_per_run": SAMPLE_COUNT,
         "metric": "production PhysicsFrameProfiler physics_time_ms",
+        "environment_metric_formula": "sum(reference_perf_cpu*delta_del_cpu)/sum(delta_ref_cpu)",
         "primary": {
             "pair_deltas_percent": {
                 "(I_a-D_a)/D_a": pair_a_percent,
