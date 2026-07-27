@@ -1,0 +1,16 @@
+# SDD ledger — plan: .superpowers/sdd/gsp-all-issues.md
+
+Baseline: c66aa543a42b310c260c09d6087508ea0d41014d
+Baseline verification: `scripts/test_native.sh` exited 0 on 2026-07-27.
+Task 1: code/review complete — issue #241; commits `bb52abd..e8363cd`; scoped Sol-high re-review clean after one fix round. Actual >=2x compositor/external-focus qualification remains environment-deferred and is not claimed.
+Task 2: code/review complete — issue #242; Luna-high session `019fa0b0-4ddb-7510-b762-bb3f64530b8d`; commits `75234af..255bb03`; final independent Sol-high review: Spec PASS / Code Quality PASS. Headed/browser qualification remains environment-deferred and is not claimed.
+Task 3: code/review complete — issue #243; Luna-high session `019fa11e-ea73-76f3-97fe-16e3766f90b8`; commits `67d5f2a`, `ba82ccd`, `7db4d92`, `2c9b216`, `5adf045`; final Sol-high review PASS. Generic headed gate passed, but standalone Firefox/Chromium panel qualification remains environment-deferred and is not claimed.
+Task 4: code/review complete — issue #244; Luna-high session `019fa170-8312-7533-95c3-8651efa0dea7`; commits `825ba11`, `9054f09`, `a3a4cc4`, `1b26ebd`, `a78c103`; final Sol-high review PASS after two fix rounds. Full committed-HEAD gate passed at `1b26ebd`; GUT 276/276 and real GSP tuning integration passed. GitHub problem/solution comment: https://github.com/jhihweijhan/AeroSim/issues/244#issuecomment-5087098338.
+Task 5: code/review complete — issue #245; Luna-high session `019fa1b9-029a-7950-a0bb-54370b0bb2a1`; commits `3da9299`, `0924c4e`, `b1ff744`, `6598e88`, `c5f5832`, `9913163`, `9ecd419`, `0ad4c82`; final Sol-high review: SPEC PASS / QUALITY PASS after three fix rounds. Full committed-HEAD gate passed at `9913163`; GUT 276/276, real multi-panel tuning integration, 7,200-frame stress, headed acceptance, replay, and smoke passed. GitHub problem/solution comment: https://github.com/jhihweijhan/AeroSim/issues/245#issuecomment-5087617554.
+Task 6: code/review complete — issue #246; Luna-high session `019fa20f-e899-7993-9282-c2586d52c23d`; commits `4cda136`, `7f323b6`, `6142799`; final independent Sol-high review: SPEC PASS / QUALITY PASS after two fix rounds. Full committed-HEAD gate passed at `6142799`; GUT 277/277, Quick Adjust/GSP/replay integration, headed acceptance, and smoke passed. Implementation and validation are GPU vendor/type-neutral.
+Task 7: pending — issue #247; unblocked.
+Task 8: pending — issue #248; blocked by Task 7.
+Task 9: pending — issue #249; unblocked.
+Task 10: pending — issue #250; blocked by Tasks 6 and 8.
+Task 11: pending — issue #251; blocked by Tasks 3, 5, and 9.
+Task 12: pending — issue #252; blocked by Tasks 10 and 11.
