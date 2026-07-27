@@ -228,7 +228,10 @@ private:
 public:
     ReplaySessionRecorder(std::uint64_t seed, std::string settings_manifest_hash);
 
-    void set_physics_tick(std::uint64_t physics_tick);
+    bool set_physics_tick(std::uint64_t physics_tick);
+
+    // Narrow test access exercises uint64_t exhaustion without allocating UINT64_MAX events.
+    bool set_next_event_order_for_test(std::uint64_t next_event_order);
 
     bool add_vehicle(
             std::string vehicle_name,

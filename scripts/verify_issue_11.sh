@@ -67,6 +67,7 @@ scripts/test_native_atomic_boundary.sh
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_preset_contract.gd
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_preset_integration.gd
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_replay_integration.gd
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/quick_adjust_integration.gd
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_tuning_stress.gd
 scripts/run_headed_acceptance.sh --xvfb

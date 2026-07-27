@@ -357,7 +357,7 @@ static func validate_mark_message(message: String, previous_sequence: int) -> Di
     if (data.size() != 1 and data.size() != 2) or typeof(data.get("label")) != TYPE_STRING:
         return {"ok": false, "error": "malformed marker data"}
     var label := String(data.label)
-    if label.is_empty() or label.to_utf8_buffer().size() > MAX_MARKER_LABEL_BYTES:
+    if label.is_empty() or label.strip_edges().is_empty() or label.to_utf8_buffer().size() > MAX_MARKER_LABEL_BYTES:
         return {"ok": false, "error": "marker label is invalid"}
     var note := ""
     if data.has("note"):
@@ -367,7 +367,7 @@ static func validate_mark_message(message: String, previous_sequence: int) -> Di
     return {"ok": true, "envelope": envelope, "sequence": sequence, "label": label, "note": note}
 
 
-static func validate_simulation_message(message: String, previous_sequence: int, expected_type: String = "simulation") -> Dictionary:
+static func validate_simulation_message(message: String, previous_sequence: int, expected_type: String = "sim_cmd") -> Dictionary:
     var envelope_result := _parse_envelope(message, expected_type)
     if not bool(envelope_result.get("ok", false)):
         return envelope_result
@@ -735,9 +735,9 @@ func _poll_authenticated_peers() -> void:
                 if not _queue_identity_message(record, "mark_ack", marker_data):
                     failed = true
                     break
-            elif message_type in ["simulation", "simulation_command"]:
+            elif message_type == "sim_cmd":
                 var simulation_result := validate_simulation_message(
-                        message, int(record.get("client_sequence", -1)), message_type)
+                        message, int(record.get("client_sequence", -1)), "sim_cmd")
                 if not bool(simulation_result.get("ok", false)):
                     failed = true
                     break
@@ -749,7 +749,7 @@ func _poll_authenticated_peers() -> void:
                 simulation_data.erase("peer_id")
                 simulation_data.erase("connection_id")
                 simulation_data["request_seq"] = int(simulation_result.sequence)
-                if not _queue_identity_message(record, "simulation_ack", simulation_data):
+                if not _queue_identity_message(record, "sim_cmd_ack", simulation_data):
                     failed = true
                     break
             elif message_type == "set_tuning":

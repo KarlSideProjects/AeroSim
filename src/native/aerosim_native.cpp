@@ -1207,8 +1207,8 @@ Dictionary AeroSimNative::set_replay_physics_tick(std::int64_t physics_tick) {
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay physics tick is invalid or recording is inactive"};
         return replay_status(false, &diagnostic);
     }
-    replay_recorder_->set_physics_tick(static_cast<std::uint64_t>(physics_tick));
-    return replay_status(true);
+    const bool ok = replay_recorder_->set_physics_tick(static_cast<std::uint64_t>(physics_tick));
+    return replay_status(ok, &replay_recorder_->diagnostic());
 }
 
 Dictionary AeroSimNative::record_replay_marker(

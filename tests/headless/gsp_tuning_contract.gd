@@ -64,13 +64,27 @@ func _init() -> void:
     _expect(not bool(GspServer.validate_mark_message(JSON.stringify({
         "v": 2, "t": "mark", "seq": 1, "d": {"label": ""}
     }), 0).get("ok", false)), "empty marker label is rejected")
+    _expect(not bool(GspServer.validate_mark_message(JSON.stringify({
+        "v": 2, "t": "mark", "seq": 1, "d": {"label": " \t\n"}
+    }), 0).get("ok", false)), "whitespace-only marker label is rejected")
+    _expect(bool(GspServer.validate_mark_message(JSON.stringify({
+        "v": 2, "t": "mark", "seq": 1,
+        "d": {"label": "中".repeat(85) + "a", "note": "中".repeat(682) + "aa"}
+    }), 0).get("ok", false)), "multibyte marker byte boundaries accept the exact limits")
+    _expect(not bool(GspServer.validate_mark_message(JSON.stringify({
+        "v": 2, "t": "mark", "seq": 1, "d": {"label": "中".repeat(86)}
+    }), 0).get("ok", false)), "multibyte marker labels reject byte overflow")
     var simulation_pause := GspServer.validate_simulation_message(JSON.stringify({
-        "v": 2, "t": "simulation", "seq": 1, "d": {"operation": "pause"}
+        "v": 2, "t": "sim_cmd", "seq": 1, "d": {"operation": "pause"}
     }), 0)
     var simulation_shell := GspServer.validate_simulation_message(JSON.stringify({
-        "v": 2, "t": "simulation", "seq": 1, "d": {"operation": "shell"}
+        "v": 2, "t": "sim_cmd", "seq": 1, "d": {"operation": "shell"}
     }), 0)
-    _expect(bool(simulation_pause.get("ok", false)) and not bool(simulation_shell.get("ok", false)),
+    var simulation_alias := GspServer.validate_simulation_message(JSON.stringify({
+        "v": 2, "t": "simulation", "seq": 1, "d": {"operation": "pause"}
+    }), 0)
+    _expect(bool(simulation_pause.get("ok", false)) and not bool(simulation_shell.get("ok", false)) and
+            not bool(simulation_alias.get("ok", false)),
             "simulation validation keeps the allowlist narrow")
     var replay_runtime := FlightRuntime.new()
     replay_runtime.airsim_session = AirSimSession.new(240)

@@ -1107,6 +1107,66 @@ bool test_authoritative_tuning_session_order_and_markers() {
             aerosim::derive_replay_session_jsonl("not-json", "manifest").empty();
 }
 
+bool test_replay_recorder_rejects_tick_regression_and_order_exhaustion() {
+    aerosim::ReplaySessionRecorder recorder(252, "manifest");
+    if (!recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !recorder.record_environment(0, complete_atmosphere(252)) ||
+            !recorder.set_physics_tick(9) || recorder.set_physics_tick(8) ||
+            recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidSession ||
+            !recorder.record_marker(100, "after-regression")) {
+        return false;
+    }
+    const aerosim::ReplaySession &session = recorder.session();
+    if (session.events.back().physics_tick != 9 || session.events.back().event_order != 0) {
+        return false;
+    }
+    if (!recorder.set_next_event_order_for_test(std::numeric_limits<std::uint64_t>::max()) ||
+            recorder.record_marker(101, "overflow") ||
+            recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidSession ||
+            recorder.session().events.size() != 2) {
+        return false;
+    }
+    return recorder.finish(200, "completed");
+}
+
+bool test_replay_v5_order_validation_and_marker_byte_boundaries() {
+    aerosim::ReplaySessionRecorder recorder(253, "manifest");
+    std::string multibyte_85;
+    std::string multibyte_86;
+    for (int index = 0; index < 85; ++index) {
+        multibyte_85 += "中";
+    }
+    for (int index = 0; index < 86; ++index) {
+        multibyte_86 += "中";
+    }
+    if (!recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !recorder.record_environment(0, complete_atmosphere(253)) ||
+            !recorder.set_physics_tick(3) ||
+            !recorder.record_marker(100, std::string(256, 'a')) ||
+            recorder.record_marker(101, std::string(257, 'a')) ||
+            !recorder.record_marker(102, multibyte_85 + "a") ||
+            recorder.record_marker(103, multibyte_86) ||
+            !recorder.record_marker(104, "note-boundary", std::string(2048, 'n')) ||
+            recorder.record_marker(105, "note-overflow", std::string(2049, 'n')) ||
+            recorder.record_marker(106, "   ") || recorder.record_marker(107, "\t\n") ||
+            !recorder.finish(200, "completed")) {
+        return false;
+    }
+    const std::string serialized = recorder.serialize();
+    const std::string first_nonzero = replace_once(serialized, "\"event_order\":0", "\"event_order\":1");
+    const aerosim::ReplayLoadResult bad_first = aerosim::load_replay_session(first_nonzero, "manifest");
+    if (bad_first.ok || bad_first.diagnostic.code != aerosim::ReplayDiagnosticCode::InvalidSession) {
+        return false;
+    }
+    const std::string same_tick_overflow = replace_once(
+            replace_once(serialized, "\"event_order\":1", "\"event_order\":18446744073709551615"),
+            "\"event_order\":2", "\"event_order\":0");
+    const aerosim::ReplayLoadResult bad_contiguous = aerosim::load_replay_session(same_tick_overflow, "manifest");
+    return !bad_contiguous.ok && bad_contiguous.diagnostic.code == aerosim::ReplayDiagnosticCode::InvalidSession;
+}
+
 } // namespace
 
 int main() {
@@ -1293,6 +1353,12 @@ int main() {
     }
     if (!test_authoritative_tuning_session_order_and_markers()) {
         return fail("replay tuning sessions must preserve authoritative order and marker metadata");
+    }
+    if (!test_replay_recorder_rejects_tick_regression_and_order_exhaustion()) {
+        return fail("replay recorder must reject tick regressions and event-order exhaustion");
+    }
+    if (!test_replay_v5_order_validation_and_marker_byte_boundaries()) {
+        return fail("v5 replay order validation and marker byte boundaries must be strict");
     }
 
     return EXIT_SUCCESS;

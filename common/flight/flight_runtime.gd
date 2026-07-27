@@ -693,10 +693,14 @@ func _replay_timestamp_us() -> int:
     return _replay_timestamp_for_simulation_us(simulation_timestamp_us)
 
 
-func _set_replay_physics_tick(physics_tick: int = -1) -> void:
+func _set_replay_physics_tick(physics_tick: int = -1) -> bool:
     if not _replay_recording_active or native == null or not native.has_method("set_replay_physics_tick"):
-        return
-    native.call("set_replay_physics_tick", _replay_authoritative_physics_tick if physics_tick < 0 else physics_tick)
+        return false
+    var result: Dictionary = native.call("set_replay_physics_tick", _replay_authoritative_physics_tick if physics_tick < 0 else physics_tick)
+    if not bool(result.get("ok", false)):
+        push_error("Complete replay physics tick update failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        return false
+    return true
 
 
 func _replay_frame_timestamp_us() -> int:

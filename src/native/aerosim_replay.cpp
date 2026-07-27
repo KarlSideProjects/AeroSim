@@ -669,6 +669,12 @@ bool valid_identity(const std::string &value) {
     return value.size() <= 64;
 }
 
+bool whitespace_only(const std::string &value) {
+    return std::all_of(value.begin(), value.end(), [](char character) {
+        return std::isspace(static_cast<unsigned char>(character)) != 0;
+    });
+}
+
 bool valid_replay_command(const FlightCommand &command) {
     return valid_flight_command(command);
 }
@@ -1524,11 +1530,15 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
         has_ordered_events = has_ordered_events || event.has_authoritative_order;
         has_unordered_events = has_unordered_events || !event.has_authoritative_order;
         if (event.has_authoritative_order) {
+            if (!has_previous_order && event.event_order != 0) {
+                return invalid(ReplayDiagnosticCode::InvalidSession, "replay event order must start at zero");
+            }
             if (has_previous_order && event.physics_tick < previous_physics_tick) {
                 return invalid(ReplayDiagnosticCode::InvalidSession, "replay physics ticks must be monotonic");
             }
             if (has_previous_order && event.physics_tick == previous_physics_tick &&
-                    event.event_order != previous_event_order + 1) {
+                    (previous_event_order == std::numeric_limits<std::uint64_t>::max() ||
+                     event.event_order != previous_event_order + 1)) {
                 return invalid(ReplayDiagnosticCode::InvalidSession, "replay event order must be contiguous within a physics tick");
             }
             if (has_previous_order && event.physics_tick > previous_physics_tick && event.event_order != 0) {
@@ -1619,7 +1629,8 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
             return invalid(ReplayDiagnosticCode::UnsupportedSchema, "markers require replay schema v5");
         }
         if (event.type == ReplayEventType::Marker &&
-                (event.marker_label.empty() || event.marker_label.size() > kMaxReplayMarkerLabelBytes ||
+                (event.marker_label.empty() || whitespace_only(event.marker_label) ||
+                 event.marker_label.size() > kMaxReplayMarkerLabelBytes ||
                  event.marker_note.size() > kMaxReplayMarkerNoteBytes)) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "invalid replay marker");
         }
@@ -1993,6 +2004,7 @@ bool parse_event(const JsonValue &value, ReplayEvent &event) {
         const JsonValue *label = field(value, "label");
         const JsonValue *note = field(value, "note");
         if (label == nullptr || !string_value(*label, event.marker_label) || event.marker_label.empty() ||
+                whitespace_only(event.marker_label) ||
                 (note != nullptr && !string_value(*note, event.marker_note))) {
             return false;
         }
@@ -2090,16 +2102,34 @@ ReplaySessionRecorder::ReplaySessionRecorder(std::uint64_t seed, std::string set
     session_.settings_manifest_hash = std::move(settings_manifest_hash);
 }
 
-void ReplaySessionRecorder::set_physics_tick(std::uint64_t physics_tick) {
+bool ReplaySessionRecorder::set_physics_tick(std::uint64_t physics_tick) {
+    if (physics_tick < physics_tick_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay physics tick cannot regress");
+    }
     if (physics_tick_ != physics_tick) {
         physics_tick_ = physics_tick;
         next_event_order_ = 0;
     }
+    diagnostic_ = {};
+    return true;
+}
+
+bool ReplaySessionRecorder::set_next_event_order_for_test(std::uint64_t next_event_order) {
+    if (finished_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
+    }
+    next_event_order_ = next_event_order;
+    diagnostic_ = {};
+    return true;
 }
 
 bool ReplaySessionRecorder::append_event(ReplayEvent event) {
+    if (next_event_order_ == std::numeric_limits<std::uint64_t>::max()) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay event order is exhausted");
+    }
     event.physics_tick = physics_tick_;
-    event.event_order = next_event_order_++;
+    event.event_order = next_event_order_;
+    ++next_event_order_;
     event.has_authoritative_order = true;
     session_.events.push_back(std::move(event));
     return true;
@@ -2156,7 +2186,9 @@ bool ReplaySessionRecorder::record_command(
     event.vehicle_name = vehicle_name;
     event.controller_authority = controller_authority;
     event.command = command;
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     diagnostic_ = {};
     return true;
 }
@@ -2192,7 +2224,9 @@ bool ReplaySessionRecorder::record_mode_command(
     event.command = command;
     event.acro_command = acro_command;
     event.measured_altitude_m = measured_altitude_m;
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     diagnostic_ = {};
     return true;
 }
@@ -2220,7 +2254,9 @@ bool ReplaySessionRecorder::record_actuator_command(
     event.controller_authority = controller_authority;
     event.command_mode = ReplayCommandMode::Actuator;
     event.actuator_commands = commands.normalized;
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     diagnostic_ = {};
     return true;
 }
@@ -2270,7 +2306,9 @@ bool ReplaySessionRecorder::record_async_command(
     event.command_id = command_id;
     event.command_method = method;
     event.command_lifecycle = lifecycle;
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     diagnostic_ = {};
     return true;
 }
@@ -2292,7 +2330,9 @@ bool ReplaySessionRecorder::record_simulation_operation(
     event.type = ReplayEventType::SimulationTime;
     event.simulation_operation = operation;
     event.simulation_value = value;
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     if (operation == ReplaySimulationOperation::Reset || operation == ReplaySimulationOperation::Respawn) {
         checkpoint_collisions_ = {};
         checkpoint_scene_objects_.clear();
@@ -2324,7 +2364,9 @@ bool ReplaySessionRecorder::record_collision(
         return entry.name == vehicle_name;
     });
     checkpoint_collisions_[static_cast<std::size_t>(std::distance(session_.vehicles.begin(), vehicle))] = event.collision;
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     diagnostic_ = {};
     return true;
 }
@@ -2369,7 +2411,9 @@ bool ReplaySessionRecorder::record_scene_object(
             existing->orientation = event.object_orientation;
         }
     }
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     diagnostic_ = {};
     return true;
 }
@@ -2393,7 +2437,9 @@ bool ReplaySessionRecorder::record_environment(std::uint64_t timestamp_us, std::
     event.type = ReplayEventType::Environment;
     environment_json_ = compact_json(parsed);
     event.environment_json = environment_json_;
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     diagnostic_ = {};
     return true;
 }
@@ -2413,7 +2459,9 @@ bool ReplaySessionRecorder::record_quick_adjust_binding(
     event.timestamp_us = timestamp_us;
     event.type = ReplayEventType::QuickAdjustBinding;
     event.quick_adjust_profile_json = compact_json(parsed);
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     diagnostic_ = {};
     return true;
 }
@@ -2452,7 +2500,9 @@ bool ReplaySessionRecorder::record_tuning(
     event.tuning_clamped = clamped;
     event.tuning_source = source;
     event.tuning_quick_adjust_slot = quick_adjust_slot;
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     diagnostic_ = {};
     return true;
 }
@@ -2464,7 +2514,8 @@ bool ReplaySessionRecorder::record_marker(
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
     }
-    if (label.empty() || label.size() > kMaxReplayMarkerLabelBytes || note.size() > kMaxReplayMarkerNoteBytes) {
+    if (label.empty() || whitespace_only(label) || label.size() > kMaxReplayMarkerLabelBytes ||
+            note.size() > kMaxReplayMarkerNoteBytes) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay marker label or note is invalid");
     }
     ReplayEvent event;
@@ -2472,7 +2523,9 @@ bool ReplaySessionRecorder::record_marker(
     event.type = ReplayEventType::Marker;
     event.marker_label = std::move(label);
     event.marker_note = std::move(note);
-    append_event(std::move(event));
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     diagnostic_ = {};
     return true;
 }
@@ -3056,75 +3109,75 @@ ReplayRunResult replay_session(
         }
         previous_timestamp_us = timestamp_us;
         if (!authoritative_ordering) {
+            for (std::size_t index = event_index; index < group_end; ++index) {
+                const ReplayEvent &event = session.events[index];
+                if (event.type == ReplayEventType::Command) {
+                    const int vehicle = vehicle_index(event.vehicle_name);
+                    if (vehicle < 0) {
+                        return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
+                    }
+                    if (event.controller_authority != session.vehicles[vehicle].controller_authority) {
+                        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority does not match vehicle authority"));
+                    }
+                    commands[vehicle] = event.command;
+                    command_modes[vehicle] = event.command_mode;
+                    acro_commands[vehicle] = event.acro_command;
+                    actuator_commands[vehicle].normalized = event.actuator_commands;
+                    measured_altitudes[vehicle] = event.measured_altitude_m;
+                    vehicle_active[vehicle] = true;
+                    if (event.controller_authority != ReplayControllerAuthority::FlightCore &&
+                            !(event.controller_authority == ReplayControllerAuthority::Px4External &&
+                              event.command_mode == ReplayCommandMode::Actuator)) {
+                        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority requires matching command data"));
+                    }
+                } else if (event.type == ReplayEventType::Collision) {
+                    const int vehicle = vehicle_index(event.vehicle_name);
+                    if (vehicle < 0) {
+                        return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
+                    }
+                    if (has_pending_collision[vehicle]) {
+                        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "multiple replay collisions share one simulation frame"));
+                    }
+                    pending_collisions[vehicle] = event.collision.contact;
+                    pending_collision_authorities[vehicle] = event.collision.authority;
+                    last_collisions[vehicle] = event.collision;
+                    has_pending_collision[vehicle] = true;
+                }
+            }
+        }
         for (std::size_t index = event_index; index < group_end; ++index) {
             const ReplayEvent &event = session.events[index];
-            if (event.type == ReplayEventType::Command) {
-                const int vehicle = vehicle_index(event.vehicle_name);
-                if (vehicle < 0) {
-                    return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
+            switch (event.type) {
+            case ReplayEventType::Command: {
+                if (authoritative_ordering) {
+                    const int vehicle = vehicle_index(event.vehicle_name);
+                    if (vehicle < 0) {
+                        return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
+                    }
+                    if (event.controller_authority != session.vehicles[vehicle].controller_authority) {
+                        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority does not match vehicle authority"));
+                    }
+                    commands[vehicle] = event.command;
+                    command_modes[vehicle] = event.command_mode;
+                    acro_commands[vehicle] = event.acro_command;
+                    actuator_commands[vehicle].normalized = event.actuator_commands;
+                    measured_altitudes[vehicle] = event.measured_altitude_m;
+                    vehicle_active[vehicle] = true;
+                    if (event.controller_authority != ReplayControllerAuthority::FlightCore &&
+                            !(event.controller_authority == ReplayControllerAuthority::Px4External &&
+                              event.command_mode == ReplayCommandMode::Actuator)) {
+                        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority requires matching command data"));
+                    }
                 }
-                if (event.controller_authority != session.vehicles[vehicle].controller_authority) {
-                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority does not match vehicle authority"));
-                }
-                commands[vehicle] = event.command;
-                command_modes[vehicle] = event.command_mode;
-                acro_commands[vehicle] = event.acro_command;
-                actuator_commands[vehicle].normalized = event.actuator_commands;
-                measured_altitudes[vehicle] = event.measured_altitude_m;
-                vehicle_active[vehicle] = true;
-                if (event.controller_authority != ReplayControllerAuthority::FlightCore &&
-                        !(event.controller_authority == ReplayControllerAuthority::Px4External &&
-                          event.command_mode == ReplayCommandMode::Actuator)) {
-                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority requires matching command data"));
-                }
-            } else if (event.type == ReplayEventType::Collision) {
-                const int vehicle = vehicle_index(event.vehicle_name);
-                if (vehicle < 0) {
-                    return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
-                }
-                if (has_pending_collision[vehicle]) {
-                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "multiple replay collisions share one simulation frame"));
-                }
-                pending_collisions[vehicle] = event.collision.contact;
-                pending_collision_authorities[vehicle] = event.collision.authority;
-                last_collisions[vehicle] = event.collision;
-                has_pending_collision[vehicle] = true;
+                break;
             }
-        }
-        }
-        for (std::size_t index = event_index; index < group_end; ++index) {
-        const ReplayEvent &event = session.events[index];
-        switch (event.type) {
-        case ReplayEventType::Command: {
-            if (authoritative_ordering) {
-                const int vehicle = vehicle_index(event.vehicle_name);
-                if (vehicle < 0) {
-                    return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
-                }
-                if (event.controller_authority != session.vehicles[vehicle].controller_authority) {
-                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority does not match vehicle authority"));
-                }
-                commands[vehicle] = event.command;
-                command_modes[vehicle] = event.command_mode;
-                acro_commands[vehicle] = event.acro_command;
-                actuator_commands[vehicle].normalized = event.actuator_commands;
-                measured_altitudes[vehicle] = event.measured_altitude_m;
-                vehicle_active[vehicle] = true;
-                if (event.controller_authority != ReplayControllerAuthority::FlightCore &&
-                        !(event.controller_authority == ReplayControllerAuthority::Px4External &&
-                          event.command_mode == ReplayCommandMode::Actuator)) {
-                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay command authority requires matching command data"));
-                }
-            }
-            break;
-        }
-        case ReplayEventType::AsyncCommand:
-            break;
-        case ReplayEventType::QuickAdjustBinding:
-            break;
-        case ReplayEventType::Marker:
-            break;
-        case ReplayEventType::Tuning: {
+            case ReplayEventType::AsyncCommand:
+                break;
+            case ReplayEventType::QuickAdjustBinding:
+                break;
+            case ReplayEventType::Marker:
+                break;
+            case ReplayEventType::Tuning: {
             const int vehicle = vehicle_index(event.vehicle_name);
             bool applied = false;
             if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightRatePParameter) {
