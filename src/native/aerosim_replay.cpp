@@ -1411,13 +1411,15 @@ const char *event_type_name(ReplayEventType value) {
         return "environment";
     case ReplayEventType::Tuning:
         return "tuning";
+    case ReplayEventType::QuickAdjustBinding:
+        return "quick_adjust_binding";
     }
     return "";
 }
 
 bool parse_event_type(const std::string &value, ReplayEventType &result) {
-    const std::string names[] = {"command", "async_command", "simulation_time", "collision", "scene_object", "environment", "tuning"};
-    for (int index = 0; index < 7; ++index) {
+    const std::string names[] = {"command", "async_command", "simulation_time", "collision", "scene_object", "environment", "tuning", "quick_adjust_binding"};
+    for (int index = 0; index < 8; ++index) {
         if (value == names[index]) {
             result = static_cast<ReplayEventType>(index);
             return true;
@@ -1446,6 +1448,24 @@ bool signed_integer_value(const JsonValue &value, std::int64_t &result) {
 
 ReplayDiagnostic invalid(ReplayDiagnosticCode code, const std::string &message) {
     return {code, message};
+}
+
+bool valid_quick_adjust_profile_json(const std::string &profile_json) {
+    JsonValue profile;
+    JsonParser parser(profile_json);
+    if (!parser.parse(profile) || profile.type != JsonValue::Type::Object) {
+        return false;
+    }
+    const JsonValue *schema_version = field(profile, "schema_version");
+    std::int64_t version = 0;
+    const JsonValue *slots = field(profile, "slots");
+    if (schema_version == nullptr || slots == nullptr || !signed_integer_value(*schema_version, version) ||
+            version != 1 || slots->type != JsonValue::Type::Array || slots->array.size() != 8) {
+        return false;
+    }
+    return std::all_of(slots->array.begin(), slots->array.end(), [](const JsonValue &slot) {
+        return slot.type == JsonValue::Type::Null || slot.type == JsonValue::Type::Object;
+    });
 }
 
 ReplayRunResult failed_run(const ReplayDiagnostic &diagnostic) {
@@ -1548,13 +1568,19 @@ ReplayDiagnostic validate_session(const ReplaySession &session, bool require_ter
             WindConfig wind_config;
             double air_density = 0.0;
             if (!parse_environment_config(event.environment_json, wind_config, air_density)) {
-                return invalid(ReplayDiagnosticCode::Corrupt, "replay v3 atmosphere metadata is incomplete");
+                return invalid(ReplayDiagnosticCode::Corrupt, "replay v4 atmosphere metadata is incomplete");
             }
         }
         if (event.type == ReplayEventType::Tuning &&
                 (event.tuning_parameter.empty() || !std::isfinite(event.tuning_requested_value) ||
-                 !std::isfinite(event.tuning_committed_value))) {
+                 !std::isfinite(event.tuning_committed_value) ||
+                 (event.tuning_source != "panel" && event.tuning_source != "quick_adjust" && event.tuning_source != "mixed") ||
+                 event.tuning_quick_adjust_slot < -1 || event.tuning_quick_adjust_slot >= 8)) {
             return invalid(ReplayDiagnosticCode::InvalidSession, "invalid replay tuning input");
+        }
+        if (event.type == ReplayEventType::QuickAdjustBinding &&
+                !valid_quick_adjust_profile_json(event.quick_adjust_profile_json)) {
+            return invalid(ReplayDiagnosticCode::InvalidSession, "invalid Quick Adjust binding profile");
         }
     }
     std::uint64_t previous_checkpoint_timestamp_us = 0;
@@ -1698,7 +1724,14 @@ std::string event_json(const ReplayEvent &event) {
                 ",\"parameter\":\"" + escape_json_string(event.tuning_parameter) +
                 "\",\"requested_value\":" + compact_number(event.tuning_requested_value) +
                 ",\"committed_value\":" + compact_number(event.tuning_committed_value) +
-                ",\"clamped\":" + std::string(event.tuning_clamped ? "true" : "false");
+                ",\"clamped\":" + std::string(event.tuning_clamped ? "true" : "false") +
+                ",\"source\":\"" + escape_json_string(event.tuning_source) + "\"";
+        if (event.tuning_quick_adjust_slot >= 0) {
+            result += ",\"quick_adjust_slot\":" + std::to_string(event.tuning_quick_adjust_slot);
+        }
+        break;
+    case ReplayEventType::QuickAdjustBinding:
+        result += ",\"profile\":" + event.quick_adjust_profile_json;
         break;
     }
     return result + '}';
@@ -1863,11 +1896,25 @@ bool parse_event(const JsonValue &value, ReplayEvent &event) {
         const JsonValue *requested = field(value, "requested_value");
         const JsonValue *committed = field(value, "committed_value");
         const JsonValue *clamped = field(value, "clamped");
+        const JsonValue *source = field(value, "source");
+        const JsonValue *quick_adjust_slot = field(value, "quick_adjust_slot");
+        std::int64_t parsed_slot = -1;
         return request_seq != nullptr && commit_id != nullptr && parameter != nullptr && requested != nullptr &&
-                committed != nullptr && clamped != nullptr && integer_value(*request_seq, event.tuning_request_seq) &&
+                committed != nullptr && clamped != nullptr && source != nullptr && integer_value(*request_seq, event.tuning_request_seq) &&
                 integer_value(*commit_id, event.tuning_commit_id) && string_value(*parameter, event.tuning_parameter) &&
                 number_value(*requested, event.tuning_requested_value) && number_value(*committed, event.tuning_committed_value) &&
-                bool_value(*clamped, event.tuning_clamped);
+                bool_value(*clamped, event.tuning_clamped) &&
+                string_value(*source, event.tuning_source) &&
+                (quick_adjust_slot == nullptr || signed_integer_value(*quick_adjust_slot, parsed_slot)) &&
+                (event.tuning_quick_adjust_slot = quick_adjust_slot == nullptr ? -1 : static_cast<std::int32_t>(parsed_slot), true);
+    }
+    case ReplayEventType::QuickAdjustBinding: {
+        const JsonValue *profile = field(value, "profile");
+        if (profile == nullptr || profile->type != JsonValue::Type::Object) {
+            return false;
+        }
+        event.quick_adjust_profile_json = compact_json(*profile);
+        return valid_quick_adjust_profile_json(event.quick_adjust_profile_json);
     }
     }
     return false;
@@ -2253,6 +2300,26 @@ bool ReplaySessionRecorder::record_environment(std::uint64_t timestamp_us, std::
     return true;
 }
 
+bool ReplaySessionRecorder::record_quick_adjust_binding(
+        std::uint64_t timestamp_us,
+        std::string profile_json) {
+    if (finished_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
+    }
+    JsonValue parsed;
+    JsonParser parser(profile_json);
+    if (!parser.parse(parsed) || !valid_quick_adjust_profile_json(profile_json)) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "invalid Quick Adjust binding profile");
+    }
+    ReplayEvent event;
+    event.timestamp_us = timestamp_us;
+    event.type = ReplayEventType::QuickAdjustBinding;
+    event.quick_adjust_profile_json = compact_json(parsed);
+    session_.events.push_back(std::move(event));
+    diagnostic_ = {};
+    return true;
+}
+
 bool ReplaySessionRecorder::record_tuning(
         std::uint64_t timestamp_us,
         const std::string &vehicle_name,
@@ -2261,14 +2328,18 @@ bool ReplaySessionRecorder::record_tuning(
         const std::string &parameter,
         double requested_value,
         double committed_value,
-        bool clamped) {
+        bool clamped,
+        const std::string &source,
+        std::int32_t quick_adjust_slot) {
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
     }
     if (!has_vehicle(vehicle_name)) {
         return fail(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + vehicle_name);
     }
-    if (parameter.empty() || !std::isfinite(requested_value) || !std::isfinite(committed_value)) {
+    if (parameter.empty() || !std::isfinite(requested_value) || !std::isfinite(committed_value) ||
+            (source != "panel" && source != "quick_adjust" && source != "mixed") ||
+            quick_adjust_slot < -1 || quick_adjust_slot >= 8) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay tuning input is invalid");
     }
     ReplayEvent event;
@@ -2281,6 +2352,8 @@ bool ReplaySessionRecorder::record_tuning(
     event.tuning_requested_value = requested_value;
     event.tuning_committed_value = committed_value;
     event.tuning_clamped = clamped;
+    event.tuning_source = source;
+    event.tuning_quick_adjust_slot = quick_adjust_slot;
     session_.events.push_back(std::move(event));
     diagnostic_ = {};
     return true;
@@ -2876,6 +2949,8 @@ ReplayRunResult replay_session(
             break;
         }
         case ReplayEventType::AsyncCommand:
+            break;
+        case ReplayEventType::QuickAdjustBinding:
             break;
         case ReplayEventType::Tuning: {
             const int vehicle = vehicle_index(event.vehicle_name);
@@ -3583,6 +3658,11 @@ ReplayDivergence compare_replay_sessions(
                 report(left.timestamp_us, left.vehicle_name, "async.lifecycle", lifecycle_name(left.command_lifecycle), lifecycle_name(right.command_lifecycle), 0.0);
                 return result;
             }
+        } else if (left.type == ReplayEventType::QuickAdjustBinding &&
+                left.quick_adjust_profile_json != right.quick_adjust_profile_json) {
+            report(left.timestamp_us, {}, "quick_adjust_binding", left.quick_adjust_profile_json,
+                    right.quick_adjust_profile_json, 0.0);
+            return result;
         } else if (left.type == ReplayEventType::SimulationTime) {
             if (left.simulation_operation != right.simulation_operation) {
                 report(left.timestamp_us, {}, "simulation.operation", simulation_operation_name(left.simulation_operation), simulation_operation_name(right.simulation_operation), 0.0);
@@ -3698,6 +3778,7 @@ ReplayDivergence compare_replay_sessions(
         } else if (left.type == ReplayEventType::Tuning &&
                 (left.tuning_request_seq != right.tuning_request_seq || left.tuning_commit_id != right.tuning_commit_id ||
                  left.tuning_parameter != right.tuning_parameter || left.tuning_clamped != right.tuning_clamped ||
+                 left.tuning_source != right.tuning_source || left.tuning_quick_adjust_slot != right.tuning_quick_adjust_slot ||
                  !same_or_close(left.tuning_requested_value, right.tuning_requested_value, tolerance) ||
                  !same_or_close(left.tuning_committed_value, right.tuning_committed_value, tolerance))) {
             report(left.timestamp_us, left.vehicle_name, "tuning", event_json(left), event_json(right), tolerance);

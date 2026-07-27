@@ -170,6 +170,7 @@ var license_retry_button: Button
 var license_diagnostics_button: Button
 var license_exit_button: Button
 var acro_mode_button: Button
+var quick_adjust_status_label: Label
 var time_trial_status_label: Label
 var pause_panel: Control
 var status_diagram_back_button: Button
@@ -233,6 +234,13 @@ var _gsp_tuning_registry_hash := "unavailable"
 var _gsp_tuning_pending: Array[Dictionary] = []
 var _gsp_tuning_completed: Array[Dictionary] = []
 var _gsp_tuning_recent_results: Array[Dictionary] = []
+var _quick_adjust_profile: Dictionary = InputProfiles.QuickAdjustProfile.default_profile()
+var _quick_adjust_next_allowed_usec: Array[int] = []
+var _quick_adjust_request_seq := 0
+var _quick_adjust_active_slot := -1
+var _quick_adjust_last_value := 0.0
+var _quick_adjust_pressed_keys: Dictionary = {}
+var _quick_adjust_axis_values: Dictionary = {}
 var _airsim_secondary_a5_configuration: Dictionary = {}
 var _secondary_collision_state_captured := false
 var _secondary_collision_layer := 1
@@ -345,6 +353,11 @@ func _ready() -> void:
     var hardware_config := HardwareConfig.new()
     _gsp_tuning_registry = hardware_config.tuning_registry()
     _gsp_tuning_registry_hash = hardware_config.tuning_registry_hash()
+    var quick_adjust_validation := validate_quick_adjust_profile(_quick_adjust_profile)
+    if not bool(quick_adjust_validation.get("ok", false)):
+        _quick_adjust_profile = InputProfiles.QuickAdjustProfile.default_profile()
+        last_error_message = "Quick Adjust settings rejected: %s" % String(quick_adjust_validation.get("error", "invalid binding"))
+    _reset_quick_adjust_rate_limits()
     if not hardware_config.initialize_tuning(self):
         last_error_message = hardware_config.last_error
         push_error("Default tuning initialization failed: %s" % hardware_config.last_error)
@@ -1147,6 +1160,11 @@ func _load_player_settings() -> void:
         var osd_result: Dictionary = OsdProfile.validate_profile(saved_osd)
         if osd_result.ok:
             osd_profile = osd_result.profile
+    var saved_quick_adjust = result.document.get("quick_adjust")
+    if saved_quick_adjust != null:
+        var quick_adjust_result: Dictionary = InputProfiles.QuickAdjustProfile.validate_profile(saved_quick_adjust)
+        if quick_adjust_result.ok:
+            _quick_adjust_profile = quick_adjust_result.profile
     if not result.ok and result.recovered:
         last_error_message = "Settings recovered to factory defaults: %s" % result.error
 
@@ -1336,6 +1354,12 @@ func _write_airsim_ready_marker(path: String) -> void:
     marker.close()
 
 func _unhandled_input(event: InputEvent) -> void:
+    if event is InputEventKey:
+        var key_event := event as InputEventKey
+        _quick_adjust_pressed_keys[int(key_event.keycode)] = key_event.pressed
+    elif event is InputEventJoypadMotion:
+        var axis_event := event as InputEventJoypadMotion
+        _quick_adjust_axis_values["%d:%d" % [axis_event.device, axis_event.axis]] = axis_event.axis_value
     if event is InputEventJoypadButton and _handle_gamepad_button(event):
         return
     if event.is_action_pressed("flight_takeoff") and screen in ["preflight", "flight"]:
@@ -1387,6 +1411,7 @@ func _physics_process(delta: float) -> void:
             drone_body.sleeping = false
         return
     _sync_native_external_authority()
+    _apply_quick_adjust_inputs(delta)
     _apply_gsp_tuning_requests(_gsp_public_physics_tick())
     if paused:
         if airsim_session != null and not airsim_session.is_paused():
@@ -4196,6 +4221,10 @@ func _build_flight_hud() -> void:
     acro_mode_button.name = "AcroMode"
     acro_mode_button.pressed.connect(toggle_acro_mode)
     rows.add_child(acro_mode_button)
+    quick_adjust_status_label = Label.new()
+    quick_adjust_status_label.name = "QuickAdjustStatus"
+    quick_adjust_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(quick_adjust_status_label)
     _build_pause_panel()
     _build_camera_panel()
     _build_osd_panel()
@@ -4789,13 +4818,159 @@ func _on_dashboard_vehicle_selected(vehicle_name: String) -> void:
         _dashboard_vehicle_name = vehicle_name
 
 
-func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, parameter: Variant, value: Variant = null) -> Dictionary:
+func validate_quick_adjust_profile(candidate: Variant) -> Dictionary:
+    var profile_result := InputProfiles.QuickAdjustProfile.validate_profile(candidate)
+    if not bool(profile_result.get("ok", false)):
+        return profile_result
+    if _gsp_external_authority_active():
+        return {"ok": false, "error": "external_authority", "authority": "px4"}
+    var profile: Dictionary = profile_result.profile
+    for slot_index in profile.slots.size():
+        var slot_value = profile.slots[slot_index]
+        if slot_value == null:
+            continue
+        var slot: Dictionary = slot_value
+        var parameter := String(slot.parameter)
+        var descriptor: Dictionary = {}
+        for descriptor_value in _gsp_tuning_registry:
+            var candidate_descriptor: Dictionary = descriptor_value
+            if String(candidate_descriptor.get("key", "")) == parameter:
+                descriptor = candidate_descriptor
+                break
+        if descriptor.is_empty():
+            return {"ok": false, "error": "unknown_parameter", "slot": slot_index}
+        if not bool(descriptor.get("quick_adjust_eligible", false)):
+            return {"ok": false, "error": "quick_adjust_ineligible", "slot": slot_index, "parameter": parameter}
+        var timing := String(descriptor.get("apply_timing", "unknown"))
+        if timing in ["reset_required", "restart_required"]:
+            return {"ok": false, "error": timing, "slot": slot_index, "parameter": parameter}
+        var descriptor_min := float(descriptor.get("min", NAN))
+        var descriptor_max := float(descriptor.get("max", NAN))
+        if not is_finite(descriptor_min) or not is_finite(descriptor_max) or \
+                float(slot.subset_min) < descriptor_min or float(slot.subset_max) > descriptor_max:
+            return {"ok": false, "error": "quick_adjust_subset_out_of_descriptor", "slot": slot_index}
+        if float(slot.rate_limit) > 120.0:
+            return {"ok": false, "error": "quick_adjust_rate_limit_too_high", "slot": slot_index}
+        if String(slot.binding_type) == "key_pair":
+            for key_value in [int(slot.negative_key), int(slot.positive_key)]:
+                for action_name in InputMap.get_actions():
+                    if not String(action_name).begins_with("flight_"):
+                        continue
+                    for event_value in InputMap.action_get_events(action_name):
+                        if event_value is InputEventKey:
+                            var event := event_value as InputEventKey
+                            if int(event.keycode) == key_value or int(event.physical_keycode) == key_value:
+                                return {"ok": false, "error": "quick_adjust_binding_conflict", "slot": slot_index, "action": String(action_name)}
+        else:
+            if int(slot.axis) in [0, 1, 2, 3]:
+                return {"ok": false, "error": "quick_adjust_binding_conflict", "slot": slot_index, "axis": int(slot.axis)}
+            if _has_active_gamepad_profile() and int(slot.device) == session_gamepad_device_id and int(slot.axis) in session_gamepad_profile.axis_for_role.values():
+                return {"ok": false, "error": "quick_adjust_binding_conflict", "slot": slot_index}
+    return {"ok": true, "error": "", "profile": profile.duplicate(true)}
+
+
+func configure_quick_adjust(candidate: Variant, persist: bool = true) -> Dictionary:
+    var validation := validate_quick_adjust_profile(candidate)
+    if not bool(validation.get("ok", false)):
+        return validation
+    var profile: Dictionary = validation.profile
+    if persist:
+        if settings_store == null:
+            return {"ok": false, "error": "settings_unavailable"}
+        var loaded: Dictionary = settings_store.load_document()
+        if not bool(loaded.get("ok", false)):
+            return {"ok": false, "error": "settings_unavailable", "detail": loaded.get("error", "")}
+        loaded.document["quick_adjust"] = profile.duplicate(true)
+        var saved: Dictionary = settings_store.save_document(loaded.document)
+        if not bool(saved.get("ok", false)):
+            return {"ok": false, "error": "settings_save_failed", "detail": saved.get("error", "")}
+    _quick_adjust_profile = profile.duplicate(true)
+    _reset_quick_adjust_rate_limits()
+    if _replay_recording_active and native != null and native.has_method("record_replay_quick_adjust_binding"):
+        var replay_result: Dictionary = native.call(
+                "record_replay_quick_adjust_binding", _replay_timestamp_us(), _replay_canonical_json(profile))
+        if not bool(replay_result.get("ok", false)):
+            push_error("Complete replay Quick Adjust binding recording failed: %s" % String(replay_result.get("diagnostic_message", "unknown error")))
+    return {"ok": true, "profile": _quick_adjust_profile.duplicate(true)}
+
+
+func gsp_quick_adjust_request(peer_id: int, connection_id: int, request_seq: int, profile: Variant) -> Dictionary:
+    var result := configure_quick_adjust(profile)
+    result["peer_id"] = peer_id
+    result["connection_id"] = connection_id
+    result["request_seq"] = request_seq
+    return result
+
+
+func gsp_quick_adjust_profile() -> Dictionary:
+    return _quick_adjust_profile.duplicate(true)
+
+
+func _reset_quick_adjust_rate_limits() -> void:
+    _quick_adjust_next_allowed_usec.clear()
+    for _index in InputProfiles.QuickAdjustProfile.SLOT_COUNT:
+        _quick_adjust_next_allowed_usec.append(0)
+
+
+func _quick_adjust_input(slot: Dictionary) -> float:
+    var input_value := 0.0
+    if String(slot.binding_type) == "axis":
+        var axis_key := "%d:%d" % [int(slot.device), int(slot.axis)]
+        input_value = float(_quick_adjust_axis_values.get(axis_key, Input.get_joy_axis(int(slot.device), int(slot.axis))))
+    else:
+        if bool(_quick_adjust_pressed_keys.get(int(slot.positive_key), false)) or Input.is_key_pressed(int(slot.positive_key)):
+            input_value += 1.0
+        if bool(_quick_adjust_pressed_keys.get(int(slot.negative_key), false)) or Input.is_key_pressed(int(slot.negative_key)):
+            input_value -= 1.0
+    var deadzone := float(slot.deadzone)
+    if absf(input_value) <= deadzone:
+        return 0.0
+    return sign(input_value) * ((absf(input_value) - deadzone) / (1.0 - deadzone))
+
+
+func _quick_adjust_value(slot: Dictionary, current: float, input_value: float) -> float:
+    if String(slot.mode) == "absolute":
+        return lerpf(float(slot.subset_min), float(slot.subset_max), (input_value + 1.0) * 0.5)
+    return current + input_value * float(slot.step)
+
+
+func _apply_quick_adjust_inputs(_delta: float) -> void:
+    if native == null or screen != "flight" or paused or _gsp_external_authority_active():
+        return
+    var active_values: Dictionary = native.call("flight_tuning_configuration") if native.has_method("flight_tuning_configuration") else {}
+    var now_usec := Time.get_ticks_usec()
+    for slot_index in _quick_adjust_profile.slots.size():
+        var slot_value = _quick_adjust_profile.slots[slot_index]
+        if slot_value == null:
+            continue
+        var slot: Dictionary = slot_value
+        var input_value := _quick_adjust_input(slot)
+        if is_zero_approx(input_value) or now_usec < int(_quick_adjust_next_allowed_usec[slot_index]):
+            continue
+        var parameter := String(slot.parameter)
+        if not active_values.has(parameter):
+            continue
+        var current := float(active_values[parameter])
+        var target := _quick_adjust_value(slot, current, input_value)
+        target = clampf(target, float(slot.subset_min), float(slot.subset_max))
+        target = clampf(snappedf(target - float(slot.subset_min), float(slot.step)) + float(slot.subset_min), float(slot.subset_min), float(slot.subset_max))
+        if is_equal_approx(target, current):
+            continue
+        _quick_adjust_request_seq += 1
+        var result := gsp_tuning_request(-1, -1, _quick_adjust_request_seq, parameter, target, "quick_adjust", slot_index)
+        if bool(result.get("ok", false)):
+            _quick_adjust_next_allowed_usec[slot_index] = now_usec + int(1_000_000.0 / float(slot.rate_limit))
+            _quick_adjust_active_slot = slot_index
+            _quick_adjust_last_value = target
+
+
+func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, parameter: Variant, value: Variant = null, source: String = "panel", quick_adjust_slot: int = -1) -> Dictionary:
     if typeof(parameter) == TYPE_ARRAY:
-        return gsp_tuning_batch_request(peer_id, connection_id, request_seq, parameter)
-    return gsp_tuning_batch_request(peer_id, connection_id, request_seq, [{"parameter": parameter, "value": value}])
+        return gsp_tuning_batch_request(peer_id, connection_id, request_seq, parameter, source, quick_adjust_slot)
+    return gsp_tuning_batch_request(peer_id, connection_id, request_seq, [{"parameter": parameter, "value": value}], source, quick_adjust_slot)
 
 
-func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array) -> Dictionary:
+func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array, source: String = "panel", quick_adjust_slot: int = -1) -> Dictionary:
     _sync_native_external_authority()
     if _gsp_external_authority_active():
         var result := {
@@ -4832,12 +5007,23 @@ func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int
         _remember_gsp_tuning_result(deferred_result)
         return deferred_result
     if apply_timing == "immediate" or paused:
-        return _commit_gsp_tuning_batch(peer_id, connection_id, request_seq, changes, _gsp_public_physics_tick())
+        var provenance: Dictionary = {}
+        for change_value in changes:
+            if typeof(change_value) == TYPE_DICTIONARY:
+                provenance[String(change_value.get("parameter", ""))] = {
+                    "source": source,
+                    "request_seq": request_seq,
+                    "quick_adjust_slot": quick_adjust_slot,
+                    "request_id": 0,
+                }
+        return _commit_gsp_tuning_batch(peer_id, connection_id, request_seq, changes, _gsp_public_physics_tick(), true, source, quick_adjust_slot, provenance)
     _gsp_tuning_pending.append({
         "peer_id": peer_id,
         "connection_id": connection_id,
         "request_seq": request_seq,
         "changes": changes.duplicate(true),
+        "source": source,
+        "quick_adjust_slot": quick_adjust_slot,
     })
     return {"ok": true, "pending": true, "apply_timing": apply_timing}
 
@@ -4854,21 +5040,30 @@ func _apply_gsp_tuning_requests(public_physics_tick: int) -> void:
     var pending := _gsp_tuning_pending
     _gsp_tuning_pending = []
     var coalesced: Dictionary = {}
+    var provenance: Dictionary = {}
     var ordered_keys: Array[String] = []
-    for request in pending:
+    for request_index in pending.size():
+        var request: Dictionary = pending[request_index]
         for change_value in request.get("changes", []):
             var change: Dictionary = change_value
             var key := String(change.get("parameter", ""))
             if not coalesced.has(key):
                 ordered_keys.append(key)
-            coalesced[key] = change.duplicate(true)
+            coalesced[key] = {"parameter": key, "value": change.get("value", null)}
+            provenance[key] = {
+                "source": String(request.get("source", "panel")),
+                "request_seq": int(request.get("request_seq", -1)),
+                "quick_adjust_slot": int(request.get("quick_adjust_slot", -1)),
+                "request_id": request_index,
+            }
     var changes: Array = []
     for key in ordered_keys:
         changes.append(coalesced[key])
-    var first: Dictionary = pending[0]
-    var commit := _commit_gsp_tuning_batch(int(first.get("peer_id", -1)), int(first.get("connection_id", -1)), int(first.get("request_seq", -1)), changes, public_physics_tick, false)
+    var commit := _commit_gsp_tuning_batch(
+            -1, -1, -1, changes, public_physics_tick, false, "mixed", -1, provenance)
     for request in pending:
         var acknowledged := _gsp_tuning_request_ack(commit, request)
+        acknowledged["commit_request_seq"] = int(commit.get("request_seq", -1))
         acknowledged["peer_id"] = int(request.get("peer_id", -1))
         acknowledged["connection_id"] = int(request.get("connection_id", -1))
         acknowledged["request_seq"] = int(request.get("request_seq", -1))
@@ -4877,7 +5072,7 @@ func _apply_gsp_tuning_requests(public_physics_tick: int) -> void:
         _gsp_tuning_completed.append(acknowledged)
 
 
-func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int, changes: Array, public_physics_tick: int, remember_result: bool = true) -> Dictionary:
+func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int, changes: Array, public_physics_tick: int, remember_result: bool = true, source: String = "panel", quick_adjust_slot: int = -1, provenance: Dictionary = {}) -> Dictionary:
     var result: Dictionary = {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
     _sync_native_external_authority()
     if _gsp_external_authority_active():
@@ -4920,21 +5115,71 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
         result[key] = native_result[key]
     if bool(native_result.get("ok", false)):
         result["apply_timing"] = _gsp_tuning_timings(changes).get("apply_timing", "unknown")
+        var winners: Array = []
+        var enriched_changes: Array = []
+        for change_value in native_result.get("changes", []):
+            var change: Dictionary = change_value.duplicate(true)
+            var parameter := String(change.get("parameter", ""))
+            var winner: Dictionary = provenance.get(parameter, {
+                "source": source,
+                "request_seq": request_seq,
+                "quick_adjust_slot": quick_adjust_slot,
+                "request_id": 0,
+            })
+            change["source"] = String(winner.get("source", source))
+            change["request_seq"] = int(winner.get("request_seq", request_seq))
+            var winner_slot := int(winner.get("quick_adjust_slot", -1))
+            if winner_slot >= 0:
+                change["quick_adjust_slot"] = winner_slot
+            enriched_changes.append(change)
+            winners.append(winner)
+        var winner_sources: Array[String] = []
+        var common_slot := -1
+        var all_winners_have_one_slot := not winners.is_empty()
+        var winner_requests: Array[String] = []
+        for winner in winners:
+            var winner_source := String(winner.get("source", source))
+            if winner_source not in winner_sources:
+                winner_sources.append(winner_source)
+            var winner_slot := int(winner.get("quick_adjust_slot", -1))
+            if winner_slot < 0:
+                all_winners_have_one_slot = false
+            elif common_slot < 0:
+                common_slot = winner_slot
+            elif common_slot != winner_slot:
+                all_winners_have_one_slot = false
+            var winner_request_id := str(int(winner.get("request_id", 0)))
+            if winner_request_id not in winner_requests:
+                winner_requests.append(winner_request_id)
+        result["changes"] = enriched_changes
+        result["source"] = winner_sources[0] if winner_sources.size() == 1 else "mixed"
+        if all_winners_have_one_slot and common_slot >= 0:
+            result["quick_adjust_slot"] = common_slot
+        if winner_requests.size() == 1 and winners.size() > 0:
+            result["request_seq"] = int(winners[0].get("request_seq", request_seq))
+        else:
+            result.erase("request_seq")
         if bool(native_result.get("changed", false)) and _replay_recording_active and native.has_method("record_replay_tuning"):
-            for change_value in native_result.get("changes", []):
+            for change_value in enriched_changes:
                 var change: Dictionary = change_value
+                var replay_timestamp_us := _replay_timestamp_us()
                 var replay_result: Dictionary = native.call(
                         "record_replay_tuning",
-                        _replay_timestamp_us(),
+                        replay_timestamp_us,
                         _airsim_vehicle_name,
-                        request_seq,
+                        int(change.get("request_seq", request_seq)),
                         int(native_result.get("commit_id", 0)),
                         String(change.get("parameter", "")),
                         float(change.get("requested_value", 0.0)),
                         float(change.get("committed_value", 0.0)),
-                        bool(change.get("clamped", false)))
+                        bool(change.get("clamped", false)),
+                        String(change.get("source", source)),
+                        int(change.get("quick_adjust_slot", -1)))
                 if not bool(replay_result.get("ok", false)):
                     push_error("Complete replay tuning recording failed: %s" % String(replay_result.get("diagnostic_message", "unknown error")))
+        if source == "quick_adjust" and bool(native_result.get("changed", false)):
+            _quick_adjust_active_slot = quick_adjust_slot
+            _quick_adjust_last_value = float(native_result.get("committed_value", _quick_adjust_last_value))
     var acknowledged := _gsp_tuning_request_ack(result, {"changes": changes})
     if remember_result:
         _remember_gsp_tuning_result(acknowledged)
@@ -5079,6 +5324,7 @@ func gsp_identity_snapshot() -> Dictionary:
             "parameters": registry_parameters,
             "tuning": active_tuning,
             "tuning_recent_results": _gsp_tuning_recent_results.duplicate(true),
+            "quick_adjust": _quick_adjust_profile.duplicate(true),
         },
         "registry_hash": _gsp_tuning_registry_hash,
         "tick": airsim_session.frame_index if airsim_session != null else 0,
@@ -5227,6 +5473,7 @@ func _refresh_flight_hud() -> void:
     if player_view_label != null:
         player_view_label.visible = loaded_map != null and screen in ["preflight", "flight", "finish"]
         player_view_label.text = _t("ui.view.third_person" if third_person_view else "ui.view.fpv")
+    _refresh_quick_adjust_hud()
     _refresh_rates_panel()
     _refresh_graphics_panel()
     arm_takeoff_button.disabled = screen in ["main_menu", "license_blocked"] or (controller_safety_latched and screen != "fallback_prompt")
@@ -5289,6 +5536,17 @@ func _refresh_motor_hud() -> void:
         motor_hud = status_diagram.call("get_motor_hud_state", paused, last_error_message if screen == "error" else "", motor_hud_spin_directions)
     if motor_hud_rotor_panel != null and motor_hud_rotor_panel.has_method("set_motor_hud"):
         motor_hud_rotor_panel.call("set_motor_hud", motor_hud)
+
+
+func _refresh_quick_adjust_hud() -> void:
+    if quick_adjust_status_label == null:
+        return
+    quick_adjust_status_label.visible = screen == "flight"
+    if _quick_adjust_active_slot >= 0 and _quick_adjust_active_slot < _quick_adjust_profile.slots.size() and _quick_adjust_profile.slots[_quick_adjust_active_slot] != null:
+        var quick_slot: Dictionary = _quick_adjust_profile.slots[_quick_adjust_active_slot]
+        quick_adjust_status_label.text = "Quick Adjust %d: %s = %.3f" % [_quick_adjust_active_slot + 1, String(quick_slot.parameter), _quick_adjust_last_value]
+    else:
+        quick_adjust_status_label.text = "Quick Adjust: none"
 
 func _refresh_gamepad_hud() -> void:
     if gamepad_hud_panel == null or gamepad_hud_display == null:

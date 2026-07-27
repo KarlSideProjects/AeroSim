@@ -38,6 +38,7 @@ var _identity_provider: Callable
 var _telemetry_provider: Callable
 var _tuning_request_provider: Callable
 var _tuning_result_provider: Callable
+var _quick_adjust_request_provider: Callable
 var _latest_telemetry_payload: Dictionary = {}
 var _last_telemetry_source_seq := -1
 var _telemetry_sample_seq := 0
@@ -170,6 +171,10 @@ func set_tuning_request_provider(provider: Callable) -> void:
 
 func set_tuning_result_provider(provider: Callable) -> void:
     _tuning_result_provider = provider
+
+
+func set_quick_adjust_request_provider(provider: Callable) -> void:
+    _quick_adjust_request_provider = provider
 
 
 func get_telemetry_processing_diagnostics() -> Dictionary:
@@ -306,6 +311,20 @@ static func validate_set_tuning_batch_message(message: String, previous_sequence
             return {"ok": false, "error": "wrong tuning value type"}
         changes.append({"parameter": String(item.parameter), "value": item.value})
     return {"ok": true, "envelope": envelope, "sequence": sequence, "changes": changes}
+
+
+static func validate_set_quick_adjust_message(message: String, previous_sequence: int) -> Dictionary:
+    var envelope_result := _parse_envelope(message, "set_quick_adjust")
+    if not bool(envelope_result.get("ok", false)):
+        return envelope_result
+    var envelope: Dictionary = envelope_result.envelope
+    var sequence := _integer_value(envelope.seq)
+    if sequence != previous_sequence + 1:
+        return {"ok": false, "error": "invalid quick_adjust sequence"}
+    var data: Dictionary = envelope.d
+    if data.size() != 1 or typeof(data.get("profile")) != TYPE_DICTIONARY:
+        return {"ok": false, "error": "malformed quick_adjust data"}
+    return {"ok": true, "envelope": envelope, "sequence": sequence, "profile": data.profile.duplicate(true)}
 
 
 static func apply_timing_contract(timing: String, paused: bool, at_physics_boundary: bool) -> Dictionary:
@@ -607,6 +626,21 @@ func _poll_authenticated_peers() -> void:
                 if batch_ack_failed:
                     failed = true
                     break
+            elif message_type == "set_quick_adjust":
+                var quick_adjust_result := validate_set_quick_adjust_message(message, int(record.get("client_sequence", -1)))
+                if not bool(quick_adjust_result.get("ok", false)):
+                    failed = true
+                    break
+                record["client_sequence"] = int(quick_adjust_result.sequence)
+                var quick_response := _submit_quick_adjust_request(
+                        int(record.id), int(record.connection_id), int(quick_adjust_result.sequence), quick_adjust_result.profile)
+                var quick_data := quick_response.duplicate(true)
+                quick_data.erase("peer_id")
+                quick_data.erase("connection_id")
+                quick_data["request_seq"] = int(quick_adjust_result.sequence)
+                if not _queue_identity_message(record, "quick_adjust_ack", quick_data):
+                    failed = true
+                    break
             else:
                 failed = true
                 break
@@ -633,15 +667,23 @@ func _submit_tuning_batch_request(peer_id: int, connection_id: int, request_seq:
     return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_tuning_response"}
 
 
+func _submit_quick_adjust_request(peer_id: int, connection_id: int, request_seq: int, profile: Dictionary) -> Dictionary:
+    if not _quick_adjust_request_provider.is_valid():
+        return {"ok": false, "error": "quick_adjust_unavailable"}
+    var result = _quick_adjust_request_provider.call(peer_id, connection_id, request_seq, profile)
+    return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_quick_adjust_response"}
+
+
 func _queue_tuning_ack(record: Dictionary, request_seq: int, result: Dictionary) -> bool:
     var data := result.duplicate(true)
     data.erase("peer_id")
     data.erase("connection_id")
+    data.erase("commit_request_seq")
     data["request_seq"] = request_seq
     return _queue_identity_message(record, "tuning_ack", data)
 
 
-func _broadcast_tuning_commit(result: Dictionary, request_seq: int) -> void:
+func _broadcast_tuning_commit(result: Dictionary, request_seq: int = -1) -> void:
     var commit_id := int(result.get("commit_id", 0))
     if commit_id <= 0 or commit_id <= _last_broadcast_tuning_commit_id:
         return
@@ -655,7 +697,10 @@ func _broadcast_tuning_commit(result: Dictionary, request_seq: int) -> void:
     if data.has("commit_changes"):
         data["changes"] = data.commit_changes
         data.erase("commit_changes")
-    data["request_seq"] = request_seq
+    var commit_request_seq := int(result.get("commit_request_seq", request_seq))
+    data.erase("commit_request_seq")
+    if commit_request_seq >= 0:
+        data["request_seq"] = commit_request_seq
     for record in _authenticated_peers.duplicate():
         var queue: Array = record.get("reliable_queue", [])
         var queued_bytes := int(record.get("reliable_bytes", 0))
@@ -698,7 +743,7 @@ func _poll_tuning_results() -> void:
                 changed_results[commit_id] = result
     for commit_id in changed_results:
         var commit_result: Dictionary = changed_results[commit_id]
-        _broadcast_tuning_commit(commit_result, int(commit_result.get("request_seq", -1)))
+        _broadcast_tuning_commit(commit_result, int(commit_result.get("commit_request_seq", -1)))
 
 
 func _queue_identity_message(record: Dictionary, message_type: String, data: Dictionary) -> bool:

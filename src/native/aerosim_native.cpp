@@ -354,8 +354,11 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("record_replay_async_command", "timestamp_us", "vehicle_name", "command_id", "method", "lifecycle"),
             &AeroSimNative::record_replay_async_command);
     ClassDB::bind_method(
-            D_METHOD("record_replay_tuning", "timestamp_us", "vehicle_name", "request_seq", "commit_id", "parameter", "requested_value", "committed_value", "clamped"),
-            &AeroSimNative::record_replay_tuning);
+            D_METHOD("record_replay_quick_adjust_binding", "timestamp_us", "profile_json"),
+            &AeroSimNative::record_replay_quick_adjust_binding);
+    ClassDB::bind_method(
+            D_METHOD("record_replay_tuning", "timestamp_us", "vehicle_name", "request_seq", "commit_id", "parameter", "requested_value", "committed_value", "clamped", "source", "quick_adjust_slot"),
+            &AeroSimNative::record_replay_tuning, DEFVAL(String("panel")), DEFVAL(-1));
     ClassDB::bind_method(
             D_METHOD("finish_complete_replay_recording", "timestamp_us", "reason"),
             &AeroSimNative::finish_complete_replay_recording);
@@ -1177,7 +1180,9 @@ Dictionary AeroSimNative::record_replay_tuning(
         const String &parameter,
         double requested_value,
         double committed_value,
-        bool clamped) {
+        bool clamped,
+        const String &source,
+        std::int32_t quick_adjust_slot) {
     if (replay_recorder_ == nullptr || timestamp_us < 0 || request_seq < 0 || commit_id < 0) {
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay tuning input is invalid or recording is inactive"};
         return replay_status(false, &diagnostic);
@@ -1185,7 +1190,19 @@ Dictionary AeroSimNative::record_replay_tuning(
     const bool ok = replay_recorder_->record_tuning(static_cast<std::uint64_t>(timestamp_us),
             std::string(vehicle_name.utf8().get_data()), static_cast<std::uint64_t>(request_seq),
             static_cast<std::uint64_t>(commit_id), std::string(parameter.utf8().get_data()),
-            requested_value, committed_value, clamped);
+            requested_value, committed_value, clamped, std::string(source.utf8().get_data()), quick_adjust_slot);
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::record_replay_quick_adjust_binding(
+        std::int64_t timestamp_us,
+        const String &profile_json) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
+        return replay_status(false, &diagnostic);
+    }
+    const bool ok = replay_recorder_->record_quick_adjust_binding(static_cast<std::uint64_t>(timestamp_us),
+            std::string(profile_json.utf8().get_data()));
     return replay_status(ok, &replay_recorder_->diagnostic());
 }
 

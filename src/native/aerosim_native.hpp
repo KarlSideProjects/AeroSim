@@ -252,6 +252,9 @@ public:
             const godot::String &command_id,
             const godot::String &method,
             std::int32_t lifecycle);
+    godot::Dictionary record_replay_quick_adjust_binding(
+            std::int64_t timestamp_us,
+            const godot::String &profile_json);
     godot::Dictionary record_replay_tuning(
             std::int64_t timestamp_us,
             const godot::String &vehicle_name,
@@ -260,7 +263,9 @@ public:
             const godot::String &parameter,
             double requested_value,
             double committed_value,
-            bool clamped);
+            bool clamped,
+            const godot::String &source = "panel",
+            std::int32_t quick_adjust_slot = -1);
     godot::Dictionary finish_complete_replay_recording(
             std::int64_t timestamp_us,
             const godot::String &reason);

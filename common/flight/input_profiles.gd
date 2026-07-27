@@ -59,7 +59,7 @@ class GamepadProfile:
     static func validate_persisted_dict(candidate: Variant) -> Dictionary:
         if typeof(candidate) != TYPE_DICTIONARY:
             return {"ok": false, "error": "confirmed_gamepad must be an object"}
-        var source: Dictionary = candidate
+        var source: Dictionary = candidate.duplicate(true)
         var fields := ["profile_schema_version", "axis_for_role", "reversed_for_role", "arm_button", "mode_button", "deadzone"]
         for key in source.keys():
             if not fields.has(key):
@@ -98,7 +98,7 @@ class GamepadProfile:
         var result := validate_persisted_dict(candidate)
         if not result.ok:
             return null
-        var source: Dictionary = candidate
+        var source: Dictionary = candidate.duplicate(true)
         var profile := GamepadProfile.new()
         profile.profile_schema_version = int(source["profile_schema_version"])
         profile.axis_for_role = source["axis_for_role"].duplicate(true)
@@ -217,6 +217,99 @@ class ActionContract:
 
     static func glyph(bindings: Dictionary, action: String) -> String:
         return String(bindings.get(action, "UNBOUND"))
+
+
+class QuickAdjustProfile:
+    const SCHEMA_VERSION := 1
+    const SLOT_COUNT := 8
+    const BINDING_TYPES := ["axis", "key_pair"]
+    const MODES := ["absolute", "relative"]
+
+    static func default_document() -> Dictionary:
+        var slots: Array = []
+        for _index in SLOT_COUNT:
+            slots.append(null)
+        return {"schema_version": SCHEMA_VERSION, "slots": slots}
+
+    static func default_profile() -> Dictionary:
+        return default_document()
+
+    static func validate_profile(candidate: Variant) -> Dictionary:
+        if typeof(candidate) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "quick_adjust must be an object"}
+        var source: Dictionary = candidate.duplicate(true)
+        for key in source.keys():
+            if key not in ["schema_version", "slots"]:
+                return {"ok": false, "error": "unknown quick_adjust field: %s" % key}
+        if typeof(source.get("schema_version")) not in [TYPE_INT, TYPE_FLOAT] or not is_equal_approx(float(source.schema_version), float(SCHEMA_VERSION)):
+            return {"ok": false, "error": "unsupported quick_adjust schema"}
+        if typeof(source.get("slots")) != TYPE_ARRAY or source.slots.size() != SLOT_COUNT:
+            return {"ok": false, "error": "quick_adjust must contain exactly eight slots"}
+        var normalized := {"schema_version": SCHEMA_VERSION, "slots": []}
+        for slot_value in source.slots:
+            if slot_value == null:
+                normalized.slots.append(null)
+                continue
+            var slot_result := validate_slot(slot_value)
+            if not slot_result.ok:
+                return slot_result
+            normalized.slots.append(slot_result.binding)
+        return {"ok": true, "error": "", "profile": normalized}
+
+    static func validate_slot(candidate: Variant) -> Dictionary:
+        if typeof(candidate) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "quick_adjust slot must be an object"}
+        var source: Dictionary = candidate.duplicate(true)
+        var fields := [
+            "parameter", "binding_type", "device", "axis", "negative_key", "positive_key",
+            "mode", "subset_min", "subset_max", "min", "max", "deadzone", "step", "rate_limit"
+        ]
+        for key in source.keys():
+            if key not in fields:
+                return {"ok": false, "error": "unknown quick_adjust slot field: %s" % key}
+        if not source.has("subset_min") and source.has("min"):
+            source["subset_min"] = source.min
+        if not source.has("subset_max") and source.has("max"):
+            source["subset_max"] = source.max
+        for key in ["parameter", "binding_type", "mode", "subset_min", "subset_max", "deadzone", "step", "rate_limit"]:
+            if not source.has(key):
+                return {"ok": false, "error": "missing quick_adjust slot field: %s" % key}
+        if typeof(source.parameter) != TYPE_STRING or String(source.parameter).is_empty():
+            return {"ok": false, "error": "quick_adjust parameter must be a string"}
+        if typeof(source.binding_type) != TYPE_STRING or String(source.binding_type) not in BINDING_TYPES:
+            return {"ok": false, "error": "invalid quick_adjust binding type"}
+        if typeof(source.mode) != TYPE_STRING or String(source.mode) not in MODES:
+            return {"ok": false, "error": "invalid quick_adjust mode"}
+        for key in ["subset_min", "subset_max", "deadzone", "step", "rate_limit"]:
+            if typeof(source[key]) not in [TYPE_INT, TYPE_FLOAT] or not is_finite(float(source[key])):
+                return {"ok": false, "error": "quick_adjust %s must be finite" % key}
+        if float(source.subset_min) > float(source.subset_max):
+            return {"ok": false, "error": "quick_adjust subset range is inverted"}
+        if float(source.deadzone) < 0.0 or float(source.deadzone) >= 1.0:
+            return {"ok": false, "error": "quick_adjust deadzone is outside [0, 1)"}
+        if float(source.step) <= 0.0 or float(source.rate_limit) <= 0.0:
+            return {"ok": false, "error": "quick_adjust step and rate_limit must be positive"}
+        var binding_type := String(source.binding_type)
+        if binding_type == "axis":
+            for key in ["device", "axis"]:
+                if typeof(source.get(key)) not in [TYPE_INT, TYPE_FLOAT] or not is_equal_approx(float(source[key]), float(int(source[key]))) or int(source[key]) < 0:
+                    return {"ok": false, "error": "quick_adjust axis binding requires non-negative integers"}
+            if int(source.axis) > 31:
+                return {"ok": false, "error": "quick_adjust axis is outside the supported range"}
+        else:
+            for key in ["negative_key", "positive_key"]:
+                if typeof(source.get(key)) not in [TYPE_INT, TYPE_FLOAT] or not is_equal_approx(float(source[key]), float(int(source[key]))) or int(source[key]) <= 0:
+                    return {"ok": false, "error": "quick_adjust key pair requires positive keycodes"}
+            if int(source.negative_key) == int(source.positive_key):
+                return {"ok": false, "error": "quick_adjust key pair must contain two keys"}
+        var normalized := source.duplicate(true)
+        normalized.erase("min")
+        normalized.erase("max")
+        normalized["device"] = int(source.get("device", 0))
+        normalized["axis"] = int(source.get("axis", 0))
+        normalized["negative_key"] = int(source.get("negative_key", 0))
+        normalized["positive_key"] = int(source.get("positive_key", 0))
+        return {"ok": true, "error": "", "binding": normalized}
 
 static func fallback_status(connected_joypads: Array) -> String:
     if connected_joypads.is_empty():

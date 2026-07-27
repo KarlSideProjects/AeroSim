@@ -62,6 +62,7 @@ scripts/test_terrain3d_dependency.sh
 scripts/run_gut_tests.sh
 scripts/test_native_atomic_boundary.sh
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/quick_adjust_integration.gd
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_tuning_stress.gd
 scripts/run_headed_acceptance.sh --xvfb
 scripts/test_replay_integration.sh

@@ -23,7 +23,7 @@ struct ReplayDelta {
     double position_meters = 0.0;
 };
 
-constexpr std::int32_t kCompleteReplaySchemaVersion = 3;
+constexpr std::int32_t kCompleteReplaySchemaVersion = 4;
 constexpr std::size_t kMaxBatchTrajectoryFrames = 1'000'000;
 constexpr std::size_t kNoFailedReplayFrame = std::numeric_limits<std::size_t>::max();
 
@@ -84,6 +84,7 @@ enum class ReplayEventType {
     SceneObject,
     Environment,
     Tuning,
+    QuickAdjustBinding,
 };
 
 struct ReplayEvent {
@@ -114,6 +115,9 @@ struct ReplayEvent {
     double tuning_requested_value = 0.0;
     double tuning_committed_value = 0.0;
     bool tuning_clamped = false;
+    std::string tuning_source = "panel";
+    std::int32_t tuning_quick_adjust_slot = -1;
+    std::string quick_adjust_profile_json;
 };
 
 struct ReplaySceneObjectState {
@@ -260,6 +264,9 @@ public:
             const Vec3 &position,
             const Quat &orientation = {});
     bool record_environment(std::uint64_t timestamp_us, std::string environment_json);
+    bool record_quick_adjust_binding(
+            std::uint64_t timestamp_us,
+            std::string profile_json);
     bool record_tuning(
             std::uint64_t timestamp_us,
             const std::string &vehicle_name,
@@ -268,7 +275,9 @@ public:
             const std::string &parameter,
             double requested_value,
             double committed_value,
-            bool clamped);
+            bool clamped,
+            const std::string &source = "panel",
+            std::int32_t quick_adjust_slot = -1);
     bool record_checkpoint(std::uint64_t timestamp_us, const DualAircraftState &state);
     bool record_checkpoint(std::uint64_t timestamp_us, ReplayRunCheckpoint checkpoint);
     bool finish(std::uint64_t timestamp_us, std::string reason);

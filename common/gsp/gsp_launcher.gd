@@ -69,6 +69,8 @@ func launch(options: Dictionary = {}) -> Dictionary:
         _server.set_tuning_request_provider(Callable(get_parent(), "gsp_tuning_request"))
     if get_parent() != null and get_parent().has_method("gsp_tuning_results"):
         _server.set_tuning_result_provider(Callable(get_parent(), "gsp_tuning_results"))
+    if get_parent() != null and get_parent().has_method("gsp_quick_adjust_request"):
+        _server.set_quick_adjust_request_provider(Callable(get_parent(), "gsp_quick_adjust_request"))
     var server_result := _server.start()
     if not bool(server_result.get("ok", false)):
         print("GSP unavailable: %s" % String(server_result.get("error", "listener failed")))

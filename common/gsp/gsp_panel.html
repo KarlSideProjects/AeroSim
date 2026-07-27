@@ -29,6 +29,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 .tuning-row input[type="range"] { width: 100%; accent-color: #67d5ff; }
 .tuning-row input { width: 8rem; box-sizing: border-box; background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
 .tuning-row button { background: #244d67; color: #dce7f5; border: 0; border-radius: 4px; padding: 6px 10px; }
+.quick-adjust-row { display: grid; grid-template-columns: repeat(5, minmax(7rem, 1fr)); gap: 6px; align-items: center; margin-top: 8px; }
+.quick-adjust-row input, .quick-adjust-row select { box-sizing: border-box; width: 100%; background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
 </style>
 </head>
 <body>
@@ -50,6 +52,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 <section class="card"><strong>Position / velocity (NED, SI)</strong><p id="position" class="muted">—</p><p id="velocity" class="muted">—</p><strong>Attitude / rates (FRD, SI)</strong><p id="attitude" class="muted">—</p><p id="rates" class="muted">—</p></section>
 <section class="card"><strong>Motor order: rear_right, front_right, rear_left, front_left</strong><p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas></section>
 <section class="card"><strong>Quick Adjust</strong><div id="tuning-rows" class="muted">Waiting for registry.</div></section>
+<section class="card"><strong>In-flight Quick Adjust</strong><div id="quick-adjust-rows" class="muted">Waiting for registry.</div></section>
 </div>
 </main>
 <script>
@@ -75,6 +78,9 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   var context = canvas.getContext("2d");
   var pendingTuning = {};
   var tuningControls = {};
+  var quickAdjustRows = $("quick-adjust-rows");
+  var pendingQuickAdjust = {};
+  var quickAdjustControls = [];
 
   function text(id, value) { $(id).textContent = value; }
   function vector(value, unit) {
@@ -171,6 +177,64 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     });
     if (!parameters.length) tuningRows.textContent = "No tunable parameters.";
   }
+  function renderQuickAdjust(profile, registry) {
+    quickAdjustRows.textContent = "";
+    quickAdjustControls = [];
+    var parameters = (registry && Array.isArray(registry.parameters) ? registry.parameters : []).filter(function (item) { return item.quick_adjust_eligible; });
+    var slots = profile && Array.isArray(profile.slots) ? profile.slots : [];
+    for (var index = 0; index < 8; index += 1) {
+      var row = document.createElement("div"); row.className = "quick-adjust-row";
+      var parameter = document.createElement("select");
+      parameter.appendChild(new Option("Slot " + (index + 1) + " — off", ""));
+      parameters.forEach(function (item) { parameter.appendChild(new Option(item.key, item.key)); });
+      var type = document.createElement("select"); ["axis", "key_pair"].forEach(function (item) { type.appendChild(new Option(item, item)); });
+      var mode = document.createElement("select"); ["absolute", "relative"].forEach(function (item) { mode.appendChild(new Option(item, item)); });
+      var subsetMin = document.createElement("input"); subsetMin.type = "number"; subsetMin.title = "subset min";
+      var subsetMax = document.createElement("input"); subsetMax.type = "number"; subsetMax.title = "subset max";
+      var deadzone = document.createElement("input"); deadzone.type = "number"; deadzone.step = "0.01"; deadzone.value = "0.05"; deadzone.title = "deadzone";
+      var step = document.createElement("input"); step.type = "number"; step.step = "any"; step.title = "step";
+      var rate = document.createElement("input"); rate.type = "number"; rate.step = "any"; rate.value = "30"; rate.title = "rate limit";
+      var device = document.createElement("input"); device.type = "number"; device.value = "0"; device.title = "device";
+      var axis = document.createElement("input"); axis.type = "number"; axis.value = "4"; axis.title = "axis";
+      var negative = document.createElement("input"); negative.type = "number"; negative.placeholder = "negative key";
+      var positive = document.createElement("input"); positive.type = "number"; positive.placeholder = "positive key";
+      var apply = document.createElement("button"); apply.textContent = "Save";
+      var status = document.createElement("span"); status.className = "muted";
+      var controls = { parameter: parameter, type: type, mode: mode, subsetMin: subsetMin, subsetMax: subsetMax, deadzone: deadzone, step: step, rate: rate, device: device, axis: axis, negative: negative, positive: positive, status: status };
+      quickAdjustControls.push(controls);
+      function descriptorFor() { return parameters.find(function (item) { return item.key === parameter.value; }) || {}; }
+      function refreshBounds() {
+        var descriptor = descriptorFor();
+        if (subsetMin.value === "") subsetMin.value = descriptor.min == null ? "" : descriptor.min;
+        if (subsetMax.value === "") subsetMax.value = descriptor.max == null ? "" : descriptor.max;
+        if (step.value === "") step.value = descriptor.step == null ? "" : descriptor.step;
+      }
+      parameter.addEventListener("change", refreshBounds);
+      apply.addEventListener("click", function () {
+        var slotsToSend = quickAdjustControls.map(function (item) {
+          if (!item.parameter.value) return null;
+          var result = { parameter: item.parameter.value, binding_type: item.type.value, mode: item.mode.value, subset_min: Number(item.subsetMin.value), subset_max: Number(item.subsetMax.value), deadzone: Number(item.deadzone.value), step: Number(item.step.value), rate_limit: Number(item.rate.value) };
+          if (item.type.value === "axis") { result.device = Number(item.device.value); result.axis = Number(item.axis.value); }
+          else { result.negative_key = Number(item.negative.value); result.positive_key = Number(item.positive.value); }
+          return result;
+        });
+        var sequence = send("set_quick_adjust", { profile: { schema_version: 1, slots: slotsToSend } });
+        if (sequence == null) { status.textContent = "Disconnected"; return; }
+        status.textContent = "Waiting for acknowledgement…";
+        pendingQuickAdjust[sequence] = status;
+      });
+      var slot = slots[index];
+      if (slot) {
+        parameter.value = slot.parameter || ""; type.value = slot.binding_type || "axis"; mode.value = slot.mode || "relative";
+        subsetMin.value = slot.subset_min; subsetMax.value = slot.subset_max; deadzone.value = slot.deadzone; step.value = slot.step; rate.value = slot.rate_limit;
+        device.value = slot.device == null ? 0 : slot.device; axis.value = slot.axis == null ? 4 : slot.axis;
+        negative.value = slot.negative_key == null ? "" : slot.negative_key; positive.value = slot.positive_key == null ? "" : slot.positive_key;
+      }
+      refreshBounds();
+      [parameter, type, mode, subsetMin, subsetMax, deadzone, step, rate, device, axis, negative, positive, apply, status].forEach(function (item) { row.appendChild(item); });
+      quickAdjustRows.appendChild(row);
+    }
+  }
   function disconnect(message) {
     if (socket) socket.close();
     socket = null;
@@ -237,6 +301,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
       if (message.t === "hello") {
         connection.textContent = "Connected";
         renderTuning(message.d.registry || {});
+        renderQuickAdjust((message.d.registry || {}).quick_adjust || {}, message.d.registry || {});
         rateStartedAt = performance.now(); rateSamples = 0;
         sendTelemetryRate(30); requestFreshSnapshot();
         sendPing();
@@ -258,6 +323,11 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
           tuningControls[key].slider.value = values[key]; tuningControls[key].number.value = values[key];
           tuningControls[key].status.textContent = "Committed by session";
         });
+      } else if (message.t === "quick_adjust_ack") {
+        var quickStatus = pendingQuickAdjust[Number(message.d.request_seq)];
+        if (!quickStatus) return;
+        delete pendingQuickAdjust[Number(message.d.request_seq)];
+        quickStatus.textContent = message.d.ok ? "Saved" : String(message.d.error || "Rejected");
       }
     });
     socket.addEventListener("close", function () { disconnect("GSP session closed"); });
