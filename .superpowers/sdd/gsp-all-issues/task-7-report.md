@@ -307,3 +307,7 @@ Observed results:
 - headless smoke passed with `native_probe=47`, `physics_ticks_per_second=240`, and `simulated_frames=5`.
 
 The gate emitted only known non-fatal repository diagnostics: negative-path native errors, Terrain3D mipmap warnings, editor/import warnings, existing GUT orphans/leaks, and the deliberate non-finite preset fixture’s `Exponent too high` parser warning. GPU behavior remains vendor/type neutral; the NVIDIA device appears only as the test environment.
+
+### Post-gate self-review correction
+
+The complete diff self-review found one remaining direct-helper seam: `diff_values` still skipped one-sided keys even though FlightRuntime rejected them before valid comparisons. The helper now emits explicit `missing_value` rows with null percentage/absolute fields, and the panel renders missing endpoints safely. The focused contract, panel, and two-peer integration rerun passed after this correction. This is still #247 trust-boundary hardening; no migration behavior was added.

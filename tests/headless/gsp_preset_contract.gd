@@ -135,6 +135,10 @@ func _init() -> void:
             by_key.get("delta_overflow", {}).get("absolute", 0.0) == null and by_key.get("delta_overflow", {}).get("absolute_status", "") == "unrepresentable" and
             by_key.get("delta_overflow", {}).get("percentage", 0.0) == null and by_key.get("delta_overflow", {}).get("percentage_status", "") == "unrepresentable",
             "zero, sign-changing, tiny-opposite-sign, target-zero, and overflow cases stay explicit and finite")
+    var one_sided_changes := GspPresetStore.diff_values({"only_left": 1.0}, {"only_right": 2.0})
+    _expect(one_sided_changes.size() == 2 and one_sided_changes[0].percentage_status == "missing_value" and
+            one_sided_changes[1].percentage_status == "missing_value",
+            "one-sided diff keys remain explicit instead of becoming a false empty diff")
 
     var runtime := FlightRuntime.new()
     runtime.native = ClassDB.instantiate("AeroSimNative")

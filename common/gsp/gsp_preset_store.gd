@@ -44,6 +44,17 @@ static func diff_values(left: Dictionary, right: Dictionary) -> Array:
     var changes: Array = []
     for key in keys:
         if not left.has(key) or not right.has(key):
+            var has_before := left.has(key) and is_finite(float(left[key]))
+            var has_after := right.has(key) and is_finite(float(right[key]))
+            changes.append({
+                "parameter": key,
+                "before": float(left[key]) if has_before else null,
+                "after": float(right[key]) if has_after else null,
+                "absolute": null,
+                "absolute_status": "missing_value",
+                "percentage": null,
+                "percentage_status": "missing_value",
+            })
             continue
         var before := float(left[key])
         var after := float(right[key])
