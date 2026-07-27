@@ -137,3 +137,55 @@ scripts/verify_issue_11.sh
 - headless smoke：`completed: True`、`native_probe: 47`、`simulated_frames: 5`。
 
 Gate 輸出的既有 Terrain3D mipmap、Godot deprecation、ObjectDB/RID leak、輸入法與預期錯誤注入訊息仍存在，但沒有造成 gate failure，也不是本 Round 1 引入的 #248 failure。codebase-memory MCP 本輪在 `index_status` 後回報 worktree 未索引，兩次 `index_repository` 均因 transport closed；因此本輪使用既有工作樹、已通過的 public seams 與 focused tests 完成驗證。
+
+## Round 2 修正（controller rejected native escape hatch）
+
+### 問題
+
+Round 1 雖然能讓 `99` 完成 migration，但做法把 `allow_out_of_contract` 加到公開 C++ `stage_flight_tuning_batch` API。這破壞原本 native staging contract，也讓 migration 把不安全的原始值送進 native。另有一個普通 tuning ACK 回歸：coalesced commit 的 native requested value 被錯誤套用到每一個原始 request。
+
+### 解法
+
+- 移除 `allow_out_of_contract` 的 header、binding、implementation 與 runtime call；native 恢復對所有 public staging input 做 finite/range validation，超出範圍仍回傳 `out_of_contract`。
+- `GspPresetStore.classify_migration` 在 runtime/registry 邊界完成完整修正：先做 registry range clamp，再做與 native 相同的 `round(value / step) * step` quantization，最後保持在 min/max 內。每個 key 保存 immutable `requested_value`、safe `staged_value`/`corrected_value` 與 `clamp_reason`（`registry_range`、`registry_step` 或兩者）。
+- migration capability 只保存 safe values 與 trusted correction metadata，並綁定 name、單次讀取內容的 SHA-256、current registry hash。apply 重新讀取並重新分類相同 preset，要求 exact key set、metadata/value equality、finite/range-safe effective values；不接受 WebSocket client 提供的 correction metadata。失敗會消耗 capability，避免再用。
+- migration 仍在既有 pending list 與 `_commit_gsp_tuning_batch` 內通過 physics boundary atomic barrier：先 flush barrier 前普通 group，migration 獨立 commit，再延後與 previewed key 衝突的普通 request。migration 不會變成 mixed commit，ordinary tuning 的原有 coalescing 保持不變。
+- native commit 成功後才 enrich preset provenance：保留 native `committed_value`、`commit_id`、`commit_tick`、`native_requested_value`、`native_clamped`/reason；把 preset original 放到 `requested_value`，safe value 放到 `staged_value`/`corrected_value`，以完整 correction chain 設 `clamped`/`clamp_reason`。ACK helper 只保留 migration-enriched requested value；ordinary request 仍回傳各自原始 requested value。
+
+### Round 2 tests
+
+Focused commands（均 PASS）：
+
+```text
+scripts/test_native.sh
+node tests/test_gsp_panel_behavior.js
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_preset_contract.gd
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_preset_integration.gd
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+```
+
+新增/加強 assertions：step quantization preview（`1.234 -> 1.2`, `registry_step`）、preview 不改 pending/native staged/active、panel cancel 不送 apply、real WS wrong/stale/reused business errors 保持 peer 可用、same-tick two-peer ordinary/migration 分離 commit，以及 origin/observer ACK/commit 的 `99 -> 2` provenance。普通 tuning coalescing regression 也已重跑並通過。
+
+### Committed full gate
+
+修正提交後，以 committed HEAD `8ff3ee7` 執行 brief 指定的 exact command：
+
+```text
+RUNNER_TEMP=/tmp/aerosim-gsp-248 \
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+scripts/verify_issue_11.sh
+```
+
+結果：PASS（exit code 0）。證據：
+
+- native tests、license scan、panel behavior、SCons GDExtension build：PASS。
+- GUT：`277/277`，`0 failures, 0 errors`。
+- native atomic boundary：PASS。
+- preset contract/integration、ordinary tuning integration、Quick Adjust、tuning stress：PASS。
+- headed acceptance：PASS。
+- complete-session replay integration：PASS；既有 replay tuning seam 維持 requested original、committed effective、clamped/source preset 參數。
+- headless smoke：`completed: true`、`native_probe: 47`、`simulated_frames: 5`。
+
+Gate 中的 Terrain3D mipmap、Godot deprecation、ObjectDB/RID orphan、輸入法與測試故意注入的 native error 訊息是既有警告/negative-path output，沒有造成 failure。測試環境顯示 NVIDIA Vulkan ICD，但 #248 code 沒有任何 GPU vendor/type allowlist 或 GPU-specific branch。
+
+Round 2 implementation commits：`6b7b23c`、`8ff3ee7`。本節報告另以獨立 commit 提交。
