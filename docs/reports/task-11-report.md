@@ -10,7 +10,7 @@ Issue #251 code and review were complete before the formal performance run. Sol-
 - observed conditioning samples: `43479`
 - measurement elapsed: `299.997691 s` (within the required `299.5–300.5 s` interval)
 - runner exit code: `1`
-- D-I-D was not started; no comparison was produced
+- D-I-I-D was not started; no comparison was produced
 - no qualification rerun was performed
 
 The required `<1%` performance AC therefore remains not passed. This result is a protocol failure, not a GPU qualification result.
@@ -19,7 +19,7 @@ The required `<1%` performance AC therefore remains not passed. This result is a
 
 The final code path is GPU vendor/type/device/driver/renderer neutral and preserves the issue-251 transport and telemetry guarantees: bounded application reliable admission, reliable FIFO, send-failure head retention, depth-one latest-wins telemetry, peer-local hard pressure, overflow-specific closing behavior, authoritative commit, replay, security, and deterministic flags.
 
-The benchmark protocol uses real-time fresh Godot processes, production physics workload, external authenticated idle clients, CPPC package aggregate performance, cooling-state evidence, configuration provenance, monotonic timing, and fixed D-I-D ordering. GPU metadata is recorded only. The latest code closure commit is `d1554c2` (`Fix #251 conditioning failure evidence`), which writes `qualification.failure.json` before re-raising the sample-count error; it does not convert the error to `UNAVAILABLE` or catch unrelated runtime errors.
+The benchmark protocol uses real-time fresh Godot processes, production physics workload, external authenticated idle clients, CPPC package aggregate performance, cooling-state evidence, configuration provenance, monotonic timing, and fixed D-I-I-D ordering. GPU metadata is recorded only. The latest code closure commit is `d1554c2` (`Fix #251 conditioning failure evidence`), which writes `qualification.failure.json` before re-raising the sample-count error; it does not convert the error to `UNAVAILABLE` or catch unrelated runtime errors.
 
 The frozen primary qualification metric was:
 
@@ -29,7 +29,7 @@ pair_b = (mean(I_b) - mean(D_b)) / mean(D_b)
 aggregate = (pair_a + pair_b) / 2
 ```
 
-No D-I-D pair exists for the formal run, so no performance comparison or `<1%` PASS is claimed.
+No D-I-I-D pair exists for the formal run, so no performance comparison or `<1%` PASS is claimed.
 
 ## Formal artifacts and immutable hashes
 
@@ -39,7 +39,7 @@ The original artifacts were retained unchanged:
 - environment: `build/gsp-idle-qualification-7310191/conditioning.environment.raw.json` — SHA256 `aff8f6a1ca8fb32ecf91859ca339c81070365a9793003d3c4db59938972ab45f`
 - log: `build/gsp-idle-qualification-7310191/conditioning.godot.log` — SHA256 `a550f99a4dd71541e54c99276e839876cae14f59fd6704c91070f4c64274db43`
 
-The closure artifact is derived from that existing raw only:
+The closure artifact is derived from the immutable conditioning raw artifacts and the captured runner exit/error record:
 
 - `build/gsp-idle-qualification-7310191/qualification.failure.json`
   - `artifact_origin`: `posthoc-derived-from-existing-raw`
@@ -78,4 +78,4 @@ All completed successfully. The exact full committed-HEAD gate at `7310191` retu
 
 GPU provenance recorded the actual `card0` AMD and `card1` NVIDIA devices. No GPU value gates the result, no vendor/type allowlist exists, and the frozen NVIDIA-specific G0.1 qualification was not invoked as proof for issue #251.
 
-The issue ledger and GitHub were not edited; issue #252 was not touched.
+The ledger has been updated with the formal FAIL; GitHub has not been edited; issue #252 was not touched.

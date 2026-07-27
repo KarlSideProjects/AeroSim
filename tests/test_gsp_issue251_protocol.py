@@ -376,6 +376,59 @@ class GspIssue251ProtocolTests(unittest.TestCase):
                 "artifact_origin": "runner",
             })
 
+    def test_run_conditioning_sample_count_mismatch_writes_before_raise(self) -> None:
+        class CompletedProcess:
+            returncode = 0
+
+            def poll(self) -> int:
+                return 0
+
+            def wait(self, timeout: float | None = None) -> None:
+                return None
+
+        with tempfile.TemporaryDirectory() as path:
+            output_dir = Path(path)
+            raw_path = output_dir / "conditioning.raw.json"
+            commit_sha = "d" * 40
+            raw_path_payload = {
+                "commit_sha": commit_sha,
+                "sample_count": 43479,
+                "samples_ms": [1.0] * 43479,
+                "monotonic_timing": {
+                    "measurement_elapsed_monotonic_seconds": 299.997691,
+                },
+            }
+
+            def fake_popen(*_args: object, **_kwargs: object) -> CompletedProcess:
+                raw_path.write_text(json.dumps(raw_path_payload), encoding="utf-8")
+                return CompletedProcess()
+
+            with (
+                patch.object(benchmark, "environment_sources", return_value={"governor_paths": [], "boost_path": None}),
+                patch.object(benchmark, "read_cpu_configuration", return_value={"fixture": "stable"}),
+                patch.object(benchmark, "benchmark_command", return_value=["fake"]),
+                patch.object(benchmark, "sample_environment", return_value={}),
+                patch.object(benchmark.subprocess, "Popen", side_effect=fake_popen),
+                patch.object(benchmark.time, "monotonic", side_effect=[100.0, 100.25]),
+                patch.object(benchmark.time, "sleep"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "exactly 72000 physics samples"):
+                    benchmark.run_conditioning(
+                        output_dir, commit_sha, configuration_start={"fixture": "stable"}, provenance={}
+                    )
+
+            failure = json.loads((output_dir / "qualification.failure.json").read_text(encoding="utf-8"))
+            self.assertEqual(failure, {
+                "status": "fail",
+                "environment_status": "FAIL",
+                "failure_kind": "conditioning_sample_count",
+                "commit_sha": commit_sha,
+                "required_sample_count": 72000,
+                "observed_sample_count": 43479,
+                "measurement_elapsed_monotonic_seconds": 299.997691,
+                "artifact_origin": "runner",
+            })
+
     def test_validate_conditioning_raise_leaves_failure_artifact(self) -> None:
         import json
         import tempfile
