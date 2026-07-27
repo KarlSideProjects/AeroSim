@@ -5360,7 +5360,7 @@ func _gsp_tuning_request_ack(commit: Dictionary, request: Dictionary) -> Diction
                 break
         if committed_change.is_empty():
             committed_change = {"parameter": key, "committed_value": committed_values[key], "changed": true}
-        if requested_values.has(key) and not committed_change.has("requested_value"):
+        if requested_values.has(key) and (not committed_change.has("staged_value") or not committed_change.has("requested_value")):
             committed_change["requested_value"] = requested_values[key]
         request_changes.append(committed_change)
     var request_values: Dictionary = {}
