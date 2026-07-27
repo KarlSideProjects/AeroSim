@@ -118,6 +118,22 @@ assets/maps/terrain3d_range/data/              作業層輸出，場景 data_dir
 
 依 AGENTS.md，CAP-006 前不請求人工視覺審查；本次產生的是 provisional evidence。
 
+## 實作與設計的差異
+
+實作過程中量測出五件設計時未知的事，各自改變了做法。
+
+1. **起降坪鋪面改為岩石，另闢泥土滑行道。** 設計原本讓起降坪用 SoilSand。實作時發現 `addons/terrain_3d/extras/particle_example/particles.gdshader` 會剔除手繪岩石（id 0）上的地被，但不剔除 SoilSand，草會直接長穿起降坪。改為起降坪畫岩石硬鋪面（草被剔除），並在兩坪之間畫一條 SoilSand 泥土滑行道承載該貼圖層。三種地表的驗證意圖不變。
+
+2. **作業筆刷必須清除 auto bit。** `auto_shader` 開啟時，shader 與 `Terrain3DData.get_texture_id()` 都依坡度推導地表、忽略手繪 id。所有作業像素都要先 `set_control_auto(position, false)`，手繪才會生效。
+
+3. **Kenney 建物改引用 `.glb` 而非 `.scn`。** 專案內既有的 `Models/GLB/*.scn` 是預烘焙 PackedScene，其材質的 `albedo_texture` 為 null，渲染為白模。`.glb` 匯入版本才正確帶有 `Textures/colormap.png`。**`levels/free_flight/industrial_yard.tscn` 仍引用 `.scn`，因此該地圖的建物目前也是白模；本次未修改，留待決定。**
+
+4. **地被需要專案自有的參數。** 上游範例的葉片高度約 1.8 m，會淹沒停在坪上的無人機。新增 `assets/maps/terrain3d_range/grass_process_material.tres` 沿用上游 shader 但降到腳踝高度並放慢風速，於場景中覆蓋 `process_material` 與 `mesh`，不修改 addon。
+
+5. **`mesh_lods` 7 / `mesh_size` 48。** 原本的 4 / 16 是為 161 m 灰盒設定的，在 3 km 山谷會把遠景裁掉。改用 Terrain3D 預設值以撐出完整視距。
+
+另外，`tests/headless/terrain3d_range_smoke.gd` 有兩處射線起點寫死在 y=50 與 y=0，在 79.7 m 的地形上會從地底往下射而全部落空。已改為由 marker 高度與作業高度推導起點，斷言本身不變。
+
 ## 明確排除
 
 - 不引入真實世界 DEM 匯入管線。
