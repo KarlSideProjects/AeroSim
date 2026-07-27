@@ -45,7 +45,7 @@ RUNNER_TEMP=/tmp/aerosim-gsp-251-native scripts/test_native.sh  # PASS
 The boundary harness passed FIFO/overflow, pending-handshake, replacement, abrupt reclaim, token, and slow-peer cleanup cases. Its real authenticated two-peer pressure attempt reported:
 
 ```text
-GSP peer isolation: DEFERRED authenticated_slow_peer_native_buffer=0/98304 telemetry_sends=300 suppression_threshold=32768 platform_socket_backpressure_unobservable=true
+GSP peer isolation: DEFERRED authenticated_slow_peer_native_buffer=0/131072 telemetry_sends=300 suppression_threshold=32768 platform_socket_backpressure_unobservable=true
 ```
 
 This is not acceptance evidence for telemetry suppression or hard-close isolation. The platform delivered all 300 telemetry sends without exposing native buffered bytes on the authenticated unread loopback peer, so the required real slow-peer qualification is explicitly deferred rather than forced or claimed.
