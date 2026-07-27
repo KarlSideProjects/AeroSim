@@ -3272,7 +3272,11 @@ func _refresh_native_imu_sample(step_native) -> bool:
         return not _handle_native_step_failure(step_native)
     return true
 
-func set_paused(value: bool, sync_session: bool = true) -> bool:
+func set_paused(value: bool, sync_session: bool = true) -> void:
+    _set_paused_checked(value, sync_session)
+
+
+func _set_paused_checked(value: bool, sync_session: bool = true) -> bool:
     if not value and _airsim_lifecycle_stopped() and (airsim_session == null or not airsim_session.is_explicit_step_active()):
         return false
     if paused != value and sync_session and _replay_recording_active and native != null:
@@ -4978,7 +4982,7 @@ func gsp_simulation_request(peer_id: int, connection_id: int, request_seq: int, 
         result["error"] = "unsupported_simulation_command"
         return result
     var was_paused := paused
-    if not set_paused(command == "pause"):
+    if not _set_paused_checked(command == "pause"):
         result["ok"] = false
         result["error"] = "replay_recording_failed"
         return result
