@@ -256,6 +256,32 @@ def _read_text(path: str) -> str | None:
         return None
 
 
+def _read_processor_cooling_device(device_path: str, include_raw: bool = True) -> dict[str, object]:
+    paths = {
+        "cur_state": f"{device_path}/cur_state",
+        "max_state": f"{device_path}/max_state",
+        "total_trans": f"{device_path}/stats/total_trans",
+        "time_in_state_ms": f"{device_path}/stats/time_in_state_ms",
+    }
+    raw = {name: _read_text(path) for name, path in paths.items()}
+    parsed: dict[str, object] = {"path": device_path, "type": _read_text(f"{device_path}/type")}
+    parsed["cur_state"] = int(raw["cur_state"]) if raw["cur_state"] is not None and raw["cur_state"].lstrip("-").isdigit() else None
+    parsed["max_state"] = int(raw["max_state"]) if raw["max_state"] is not None and raw["max_state"].lstrip("-").isdigit() else None
+    parsed["total_trans"] = int(raw["total_trans"]) if raw["total_trans"] is not None and raw["total_trans"].lstrip("-").isdigit() else None
+    time_in_state: dict[str, int] = {}
+    if raw["time_in_state_ms"] is not None:
+        for line in raw["time_in_state_ms"].splitlines():
+            fields = line.split()
+            if len(fields) != 2 or not fields[0].startswith("state") or not fields[0][5:].isdigit() or not fields[1].isdigit():
+                time_in_state = {}
+                break
+            time_in_state[fields[0][5:]] = int(fields[1])
+    parsed["time_in_state_ms"] = time_in_state or None
+    if include_raw:
+        parsed["raw"] = raw
+    return parsed
+
+
 def environment_sources() -> dict[str, object]:
     frequency_paths = sorted(glob.glob("/sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq"))
     governor_paths = sorted(glob.glob("/sys/devices/system/cpu/cpufreq/policy*/scaling_governor"))
@@ -274,6 +300,17 @@ def environment_sources() -> dict[str, object]:
     temperature_candidates.sort()
     temperature_path = temperature_candidates[0][1] if temperature_candidates else None
     throttle_paths = sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/thermal_throttle/*_count"))
+    processor_cooling_devices = []
+    for device_path in sorted(glob.glob("/sys/class/thermal/cooling_device*")):
+        if _read_text(f"{device_path}/type") == "Processor":
+            processor_cooling_devices.append(_read_processor_cooling_device(device_path))
+    processor_cooling_available = bool(processor_cooling_devices) and all(
+        device["cur_state"] is not None
+        and device["max_state"] is not None
+        and device["total_trans"] is not None
+        and device["time_in_state_ms"] is not None
+        for device in processor_cooling_devices
+    )
     return {
         "cpu_frequency_paths": frequency_paths,
         "governor_paths": governor_paths,
@@ -283,6 +320,8 @@ def environment_sources() -> dict[str, object]:
         "thermal_throttle_paths": throttle_paths,
         "package_temperature_status": "available" if temperature_path else "unavailable",
         "thermal_throttle_status": "available" if throttle_paths else "unavailable",
+        "processor_cooling_devices": processor_cooling_devices,
+        "processor_cooling_protocol": "available" if processor_cooling_available else "unavailable",
     }
 
 
@@ -299,11 +338,16 @@ def sample_environment(sources: dict[str, object], started: float) -> dict[str, 
         for path in sources["thermal_throttle_paths"]
         if (value := _read_text(path)) is not None and value.isdigit()
     }
+    processor_cooling_samples = {
+        device["path"]: _read_processor_cooling_device(device["path"])
+        for device in sources["processor_cooling_devices"]
+    }
     return {
         "elapsed_seconds": time.monotonic() - started,
         "cpu_frequency_khz": statistics.median(frequencies) if frequencies else None,
         "package_temperature_c": float(temperature_raw) / 1000.0 if temperature_raw and temperature_raw.lstrip("-").isdigit() else None,
         "thermal_throttle_counters": throttles if throttles else None,
+        "processor_cooling_samples": processor_cooling_samples if processor_cooling_samples else None,
     }
 
 
@@ -369,11 +413,46 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
         abs(statistics.median(frequencies_b) - statistics.median(frequencies_a)) / statistics.median(frequencies_a) * 100.0
         if frequencies_a and frequencies_b and statistics.median(frequencies_a) else None
     )
-    throttle_values = [sample["thermal_throttle_counters"] for sample in samples]
-    throttle_available = sources.get("thermal_throttle_status") == "available" and all(value is not None for value in throttle_values)
-    throttle_increment = None
-    if throttle_available:
-        throttle_increment = sum(throttle_values[-1].get(path, 0) - throttle_values[0].get(path, 0) for path in sources["thermal_throttle_paths"])
+    cooling_samples = [sample["processor_cooling_samples"] for sample in samples]
+    cooling_source_available = sources.get("processor_cooling_protocol") == "available"
+    cooling_paths = [device["path"] for device in sources["processor_cooling_devices"]]
+    cooling_samples_available = cooling_source_available and all(
+        set(sample or {}) == set(cooling_paths)
+        and
+        all(
+            device.get("cur_state") is not None
+            and device.get("max_state") is not None
+            and device.get("total_trans") is not None
+            and device.get("time_in_state_ms") is not None
+            for device in (sample or {}).values()
+        )
+        for sample in cooling_samples
+    )
+    cooling_cur_states_zero = cooling_samples_available and all(
+        device.get("cur_state") == 0
+        for sample in cooling_samples
+        for device in sample.values()
+    )
+    transition_increments: dict[str, int] = {}
+    nonzero_time_in_state_increments: dict[str, dict[str, int]] = {}
+    if cooling_samples_available:
+        for device in sources["processor_cooling_devices"]:
+            path = device["path"]
+            first = cooling_samples[0][path]
+            last = cooling_samples[-1][path]
+            transition_increments[path] = last["total_trans"] - first["total_trans"]
+            state_deltas = {
+                state: last["time_in_state_ms"][state] - first["time_in_state_ms"][state]
+                for state in set(first["time_in_state_ms"]) | set(last["time_in_state_ms"])
+                if state != "0"
+            }
+            nonzero_time_in_state_increments[path] = state_deltas
+    transition_stable = cooling_samples_available and all(value == 0 for value in transition_increments.values())
+    time_in_state_stable = cooling_samples_available and all(
+        value == 0
+        for device_deltas in nonzero_time_in_state_increments.values()
+        for value in device_deltas.values()
+    )
     checks = {
         "package_temperature_source": sources.get("package_temperature_status") == "available" and bool(temperatures_a and temperatures_b),
         "package_temperature_delta_c": temperature_delta,
@@ -381,12 +460,21 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
         "cpu_frequency_source": bool(frequencies_a and frequencies_b),
         "cpu_frequency_delta_percent": frequency_delta_percent,
         "cpu_frequency_stable": frequency_delta_percent is not None and frequency_delta_percent <= 1.0,
-        "thermal_throttle_source": throttle_available,
-        "thermal_throttle_increment": throttle_increment,
-        "thermal_throttle_stable": throttle_increment is not None and throttle_increment == 0,
+        "thermal_throttle_source": cooling_source_available,
+        "thermal_throttle_increment": transition_increments if cooling_samples_available else None,
+        "thermal_throttle_stable": transition_stable,
+        "processor_cooling_protocol": {
+            "source_available": cooling_source_available,
+            "samples_parseable": cooling_samples_available,
+            "all_cur_state_zero": cooling_cur_states_zero,
+            "total_trans_increments": transition_increments,
+            "total_trans_stable": transition_stable,
+            "nonzero_time_in_state_ms_increments": nonzero_time_in_state_increments,
+            "nonzero_time_in_state_stable": time_in_state_stable,
+        },
     }
     payload["protocol"] = checks
-    payload["admitted"] = all(value is True for key, value in checks.items() if key.endswith("_source") or key.endswith("_stable"))
+    payload["admitted"] = all(value is True for key, value in checks.items() if key.endswith("_source") or key.endswith("_stable")) and cooling_cur_states_zero and time_in_state_stable
     environment_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     if not payload["admitted"]:
         raise RuntimeError(f"conditioning protocol evidence is insufficient: {checks}")
