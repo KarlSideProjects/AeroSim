@@ -21,7 +21,7 @@ for test_source in tests/native/test_*.cpp; do
             "${test_source}" "${native_sources[@]}" \
             /Fe:"$output"
     else
-        ${CXX:-g++} ${CXXFLAGS:-} -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native \
+        ${CXX:-g++} ${CXXFLAGS:-} -DAEROSIM_REPLAY_TESTING -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native \
             "${test_source}" "${native_sources[@]}" \
             -o "$output"
     fi

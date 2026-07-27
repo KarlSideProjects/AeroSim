@@ -218,6 +218,8 @@ var _airsim_ready_file_pending := ""
 var _dashboard_vehicle_name := ""
 var _airsim_secondary_native: Object
 var _replay_recording_active := false
+var _replay_recording_failed := false
+var _replay_recording_failure := ""
 var _replay_authoritative_physics_tick := 0
 var _replay_settings_manifest_hash := ""
 var _replay_upper_config_manifest_hash := ""
@@ -694,13 +696,24 @@ func _replay_timestamp_us() -> int:
 
 
 func _set_replay_physics_tick(physics_tick: int = -1) -> bool:
-    if not _replay_recording_active or native == null or not native.has_method("set_replay_physics_tick"):
+    if _replay_recording_failed or not _replay_recording_active:
+        return false
+    if native == null or not native.has_method("set_replay_physics_tick"):
+        _fail_replay_recording("replay physics tick hook is unavailable")
         return false
     var result: Dictionary = native.call("set_replay_physics_tick", _replay_authoritative_physics_tick if physics_tick < 0 else physics_tick)
     if not bool(result.get("ok", false)):
-        push_error("Complete replay physics tick update failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        _fail_replay_recording(String(result.get("diagnostic_message", "physics tick update failed")))
         return false
     return true
+
+
+func _fail_replay_recording(message: String) -> void:
+    if _replay_recording_failed:
+        return
+    _replay_recording_failed = true
+    _replay_recording_failure = message
+    push_error("Complete replay recording is irrecoverable: %s" % message)
 
 
 func _replay_frame_timestamp_us() -> int:
@@ -747,6 +760,8 @@ func _replay_canonical_json(value: Variant) -> String:
 
 func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     _replay_recording_active = false
+    _replay_recording_failed = false
+    _replay_recording_failure = ""
     _replay_authoritative_physics_tick = 0
     _replay_last_timestamp_us = 0
     _replay_epoch_offset_us = 0
@@ -784,14 +799,16 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     if _airsim_secondary_native.has_method("begin_replay_checkpoint_capture"):
         _airsim_secondary_native.call("begin_replay_checkpoint_capture")
     _replay_recording_active = true
-    _set_replay_physics_tick(0)
-    if not _record_replay_environment({}):
+    if not _set_replay_physics_tick(0) or not _record_replay_environment({}):
         _replay_recording_active = false
 
 
 func _finish_complete_replay_recording(reason: String) -> Dictionary:
     if not _replay_recording_active or native == null:
         return {"ok": false, "error": "complete replay recording is inactive"}
+    if _replay_recording_failed:
+        _replay_recording_active = false
+        return {"ok": false, "error": "complete replay recording failed", "diagnostic_message": _replay_recording_failure}
     var result: Dictionary = native.call("finish_complete_replay_recording", _replay_timestamp_us(), reason)
     _replay_recording_active = false
     if bool(result.get("ok", false)):
@@ -814,7 +831,7 @@ func complete_replay_recording() -> String:
 
 
 func _record_replay_command(vehicle_name: String, controls: Dictionary, timestamp_us: int = -1) -> void:
-    if not _replay_recording_active or native == null:
+    if _replay_recording_failed or not _replay_recording_active or native == null:
         return
     var mode := String(controls.get("mode", "ANGLE"))
     if mode == "ASSISTED_HOLD":
@@ -850,6 +867,7 @@ func _record_replay_command(vehicle_name: String, controls: Dictionary, timestam
             float(controls.get("yaw_rate", 0.0)),
             0)
     if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "command recording failed")))
         push_error("Complete replay command recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
         return
     var response_native: Object = _airsim_secondary_native if vehicle_name == String(_airsim_vehicle_names[1]) else native
@@ -865,7 +883,7 @@ func _record_replay_command(vehicle_name: String, controls: Dictionary, timestam
 
 
 func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: PackedFloat32Array, timestamp_us: int) -> void:
-    if not _replay_recording_active or native == null or actuator_outputs.size() < 4:
+    if _replay_recording_failed or not _replay_recording_active or native == null or actuator_outputs.size() < 4:
         return
     var result: Dictionary = native.call(
         "record_replay_actuator_command",
@@ -877,6 +895,7 @@ func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: Pac
         clampf(float(actuator_outputs[3]), 0.0, 1.0),
         2)
     if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "actuator recording failed")))
         push_error("Complete replay actuator recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
         return
     if native.has_method("capture_replay_recorded_response"):
@@ -887,7 +906,7 @@ func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: Pac
 
 
 func _record_replay_collision(vehicle_name: String, body, authority: int = 1, timestamp_us: int = -1) -> void:
-    if not _replay_recording_active or native == null or body == null or not body.contact_seen:
+    if _replay_recording_failed or not _replay_recording_active or native == null or body == null or not body.contact_seen:
         return
     var angular_velocity_body := _jolt_angular_velocity_body_y_up(body)
     var result: Dictionary = native.call(
@@ -912,11 +931,12 @@ func _record_replay_collision(vehicle_name: String, body, authority: int = 1, ti
         true,
         authority)
     if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "collision recording failed")))
         push_error("Complete replay collision recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
 
 
 func _record_replay_scene_object(operation: int, snapshot: Dictionary) -> void:
-    if not _replay_recording_active or native == null or snapshot.is_empty():
+    if _replay_recording_failed or not _replay_recording_active or native == null or snapshot.is_empty():
         return
     var position: Vector3 = snapshot.get("position", Vector3.ZERO)
     var orientation: Quaternion = snapshot.get("orientation", Quaternion.IDENTITY)
@@ -929,11 +949,12 @@ func _record_replay_scene_object(operation: int, snapshot: Dictionary) -> void:
         position,
         orientation)
     if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "scene recording failed")))
         push_error("Complete replay scene recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
 
 
 func _record_replay_environment(state: Dictionary) -> bool:
-    if not _replay_recording_active or native == null:
+    if _replay_recording_failed or not _replay_recording_active or native == null:
         return false
     var replay_state := state.duplicate(true)
     if native.has_method("wind_configuration"):
@@ -945,27 +966,31 @@ func _record_replay_environment(state: Dictionary) -> bool:
             replay_state["atmosphere_air_density_kg_m3"] = body_drag["air_density_kg_m3"]
     var result: Dictionary = native.call("record_replay_environment", _replay_timestamp_us(), JSON.stringify(replay_state))
     if not bool(result.get("ok", false)):
-        push_error("Complete replay environment recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        _fail_replay_recording(String(result.get("diagnostic_message", "environment recording failed")))
         return false
     return true
 
 
-func _record_replay_checkpoint(timestamp_us: int, upper_row: PackedFloat64Array) -> void:
-    if not _replay_recording_active or native == null or upper_row.size() < 12 or _replay_secondary_row.size() < 12:
-        return
+func _record_replay_checkpoint(timestamp_us: int, upper_row: PackedFloat64Array) -> bool:
+    if _replay_recording_failed or not _replay_recording_active or native == null or upper_row.size() < 12 or _replay_secondary_row.size() < 12:
+        return false
     var result: Dictionary = native.call("record_replay_checkpoint", timestamp_us, upper_row, _replay_secondary_row, _airsim_secondary_native)
     if not bool(result.get("ok", false)):
-        push_error("Complete replay checkpoint recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        _fail_replay_recording(String(result.get("diagnostic_message", "checkpoint recording failed")))
+        return false
+    return true
 
 
-func _record_replay_simulation_operation(operation: int, value: float) -> void:
-    if not _replay_recording_active or native == null:
-        return
+func _record_replay_simulation_operation(operation: int, value: float) -> bool:
+    if _replay_recording_failed or not _replay_recording_active or native == null:
+        return false
     var result: Dictionary = native.call("record_replay_simulation_operation", _replay_timestamp_us(), operation, value)
     if not bool(result.get("ok", false)):
-        push_error("Complete replay simulation recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        _fail_replay_recording(String(result.get("diagnostic_message", "simulation recording failed")))
+        return false
     elif operation == 4 or operation == 5:
         _replay_epoch_pending = true
+    return true
 
 
 func _record_replay_reset_environment() -> void:
@@ -974,11 +999,12 @@ func _record_replay_reset_environment() -> void:
 
 
 func _record_replay_async(simulation_time_seconds: float, vehicle_name: String, command_id: String, method: String, lifecycle: int) -> void:
-    if not _replay_recording_active or native == null:
+    if _replay_recording_failed or not _replay_recording_active or native == null:
         return
     var timestamp_us := _replay_timestamp_for_simulation_us(int(round(simulation_time_seconds * 1_000_000.0)))
     var result: Dictionary = native.call("record_replay_async_command", timestamp_us, vehicle_name, command_id, method, lifecycle)
     if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "async recording failed")))
         push_error("Complete replay async recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
 
 
@@ -1422,7 +1448,8 @@ func _process(_delta: float) -> void:
 func _physics_process(delta: float) -> void:
     if _replay_recording_active:
         _replay_authoritative_physics_tick += 1
-        _set_replay_physics_tick()
+        if not _set_replay_physics_tick():
+            return
     if _reset_pending_token != 0:
         _advance_reset_pending()
         return
@@ -3245,14 +3272,12 @@ func _refresh_native_imu_sample(step_native) -> bool:
         return not _handle_native_step_failure(step_native)
     return true
 
-func set_paused(value: bool, sync_session: bool = true) -> void:
+func set_paused(value: bool, sync_session: bool = true) -> bool:
     if not value and _airsim_lifecycle_stopped() and (airsim_session == null or not airsim_session.is_explicit_step_active()):
-        return
+        return false
     if paused != value and sync_session and _replay_recording_active and native != null:
-        var replay_pause_result: Dictionary = native.call(
-            "record_replay_simulation_operation", _replay_timestamp_us(), 0 if value else 1, 0.0)
-        if not bool(replay_pause_result.get("ok", false)):
-            push_error("Complete replay pause recording failed: %s" % String(replay_pause_result.get("diagnostic_message", "unknown error")))
+        if not _record_replay_simulation_operation(0 if value else 1, 0.0):
+            return false
     paused = value
     if not value:
         status_diagram_fullscreen = false
@@ -3268,6 +3293,7 @@ func set_paused(value: bool, sync_session: bool = true) -> void:
     if secondary_drone_body != null:
         secondary_drone_body.freeze = value
         secondary_drone_body.sleeping = value
+    return true
 
 func set_participant_mode(value: bool) -> void:
     participant_mode = value
@@ -4896,6 +4922,14 @@ func configure_quick_adjust(candidate: Variant, persist: bool = true) -> Diction
     if not bool(validation.get("ok", false)):
         return validation
     var profile: Dictionary = validation.profile
+    if _replay_recording_active and native != null and native.has_method("record_replay_quick_adjust_binding"):
+        if not _set_replay_physics_tick():
+            return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
+        var replay_result: Dictionary = native.call(
+                "record_replay_quick_adjust_binding", _replay_timestamp_us(), _replay_canonical_json(profile))
+        if not bool(replay_result.get("ok", false)):
+            _fail_replay_recording(String(replay_result.get("diagnostic_message", "Quick Adjust binding recording failed")))
+            return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
     if persist:
         if settings_store == null:
             return {"ok": false, "error": "settings_unavailable"}
@@ -4908,12 +4942,6 @@ func configure_quick_adjust(candidate: Variant, persist: bool = true) -> Diction
             return {"ok": false, "error": "settings_save_failed", "detail": saved.get("error", "")}
     _quick_adjust_profile = profile.duplicate(true)
     _reset_quick_adjust_rate_limits()
-    if _replay_recording_active and native != null and native.has_method("record_replay_quick_adjust_binding"):
-        _set_replay_physics_tick()
-        var replay_result: Dictionary = native.call(
-                "record_replay_quick_adjust_binding", _replay_timestamp_us(), _replay_canonical_json(profile))
-        if not bool(replay_result.get("ok", false)):
-            push_error("Complete replay Quick Adjust binding recording failed: %s" % String(replay_result.get("diagnostic_message", "unknown error")))
     return {"ok": true, "profile": _quick_adjust_profile.duplicate(true)}
 
 
@@ -4931,21 +4959,29 @@ func gsp_marker_request(peer_id: int, connection_id: int, request_seq: int, labe
         result["ok"] = false
         result["error"] = "replay_unavailable"
         return result
-    _set_replay_physics_tick()
+    if not _set_replay_physics_tick():
+        result["ok"] = false
+        result["error"] = "replay_recording_failed"
+        return result
     var recorded: Dictionary = native.call("record_replay_marker", _replay_timestamp_us(), label, note)
     for key in recorded:
         result[key] = recorded[key]
+    if not bool(recorded.get("ok", false)):
+        _fail_replay_recording(String(recorded.get("diagnostic_message", "marker recording failed")))
     return result
 
 
-func gsp_simulation_request(peer_id: int, connection_id: int, request_seq: int, operation: String) -> Dictionary:
-    var result := {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq, "operation": operation}
-    if operation not in ["pause", "resume"]:
+func gsp_simulation_request(peer_id: int, connection_id: int, request_seq: int, command: String) -> Dictionary:
+    var result := {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq, "cmd": command}
+    if command not in ["pause", "resume"]:
         result["ok"] = false
-        result["error"] = "unsupported_simulation_operation"
+        result["error"] = "unsupported_simulation_command"
         return result
     var was_paused := paused
-    set_paused(operation == "pause")
+    if not set_paused(command == "pause"):
+        result["ok"] = false
+        result["error"] = "replay_recording_failed"
+        return result
     result["ok"] = true
     result["changed"] = was_paused != paused
     return result
@@ -5251,7 +5287,13 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
     for key in native_result:
         result[key] = native_result[key]
     if bool(native_result.get("ok", false)):
-        _set_replay_physics_tick()
+        if not _set_replay_physics_tick():
+            result["ok"] = false
+            result["error"] = "replay_recording_failed"
+            result["diagnostic_message"] = _replay_recording_failure
+            if remember_result:
+                _remember_gsp_tuning_result(result)
+            return result
         result["apply_timing"] = _gsp_tuning_timings(changes).get("apply_timing", "unknown")
         var winners: Array = []
         var enriched_changes: Array = []
@@ -5348,7 +5390,13 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
                         String(change.get("source", source)),
                         int(change.get("quick_adjust_slot", -1)))
                 if not bool(replay_result.get("ok", false)):
-                    push_error("Complete replay tuning recording failed: %s" % String(replay_result.get("diagnostic_message", "unknown error")))
+                    _fail_replay_recording(String(replay_result.get("diagnostic_message", "tuning recording failed")))
+                    result["ok"] = false
+                    result["error"] = "replay_recording_failed"
+                    result["diagnostic_message"] = _replay_recording_failure
+                    if remember_result:
+                        _remember_gsp_tuning_result(result)
+                    return result
         if source == "quick_adjust" and bool(native_result.get("changed", false)):
             _quick_adjust_active_slot = quick_adjust_slot
             _quick_adjust_last_value = float(native_result.get("committed_value", _quick_adjust_last_value))

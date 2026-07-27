@@ -174,6 +174,7 @@ public:
             const godot::String &lower_config_json,
             std::int32_t lower_controller_authority);
     godot::Dictionary set_replay_physics_tick(std::int64_t physics_tick);
+    godot::Dictionary replay_recording_event_count() const;
     void begin_replay_checkpoint_capture();
     void capture_replay_recorded_response(bool non_neutral);
     godot::Dictionary record_replay_command(

@@ -376,9 +376,13 @@ static func validate_simulation_message(message: String, previous_sequence: int,
     if sequence != previous_sequence + 1:
         return {"ok": false, "error": "invalid simulation sequence"}
     var data: Dictionary = envelope.d
-    if data.size() != 1 or typeof(data.get("operation")) != TYPE_STRING or String(data.operation) not in ["pause", "resume"]:
-        return {"ok": false, "error": "unsupported simulation operation"}
-    return {"ok": true, "envelope": envelope, "sequence": sequence, "operation": String(data.operation)}
+    if not data.has("cmd") or typeof(data.get("cmd")) != TYPE_STRING or String(data.cmd) not in ["pause", "resume"]:
+        return {"ok": false, "error": "unsupported simulation command"}
+    if data.has("args") and (typeof(data.args) != TYPE_DICTIONARY or not data.args.is_empty()):
+        return {"ok": false, "error": "simulation args must be an empty dictionary"}
+    if data.size() > 2:
+        return {"ok": false, "error": "unsupported simulation fields"}
+    return {"ok": true, "envelope": envelope, "sequence": sequence, "command": String(data.cmd)}
 
 
 static func validate_preset_message(message: String, previous_sequence: int, expected_type: String) -> Dictionary:
@@ -741,14 +745,14 @@ func _poll_authenticated_peers() -> void:
                 if not bool(simulation_result.get("ok", false)):
                     failed = true
                     break
-                record["client_sequence"] = int(simulation_result.sequence)
                 var simulation_response := _submit_simulation_request(
                         int(record.id), int(record.connection_id), int(simulation_result.sequence),
-                        String(simulation_result.operation))
+                        String(simulation_result.command))
                 var simulation_data := simulation_response.duplicate(true)
                 simulation_data.erase("peer_id")
                 simulation_data.erase("connection_id")
                 simulation_data["request_seq"] = int(simulation_result.sequence)
+                record["client_sequence"] = int(simulation_result.sequence)
                 if not _queue_identity_message(record, "sim_cmd_ack", simulation_data):
                     failed = true
                     break
@@ -878,10 +882,10 @@ func _submit_marker_request(peer_id: int, connection_id: int, request_seq: int, 
     return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_marker_response"}
 
 
-func _submit_simulation_request(peer_id: int, connection_id: int, request_seq: int, operation: String) -> Dictionary:
+func _submit_simulation_request(peer_id: int, connection_id: int, request_seq: int, command: String) -> Dictionary:
     if not _simulation_request_provider.is_valid():
         return {"ok": false, "error": "simulation_unavailable"}
-    var result = _simulation_request_provider.call(peer_id, connection_id, request_seq, operation)
+    var result = _simulation_request_provider.call(peer_id, connection_id, request_seq, command)
     return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_simulation_response"}
 
 

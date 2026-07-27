@@ -75,17 +75,31 @@ func _init() -> void:
         "v": 2, "t": "mark", "seq": 1, "d": {"label": "中".repeat(86)}
     }), 0).get("ok", false)), "multibyte marker labels reject byte overflow")
     var simulation_pause := GspServer.validate_simulation_message(JSON.stringify({
-        "v": 2, "t": "sim_cmd", "seq": 1, "d": {"operation": "pause"}
+        "v": 2, "t": "sim_cmd", "seq": 1, "d": {"cmd": "pause"}
+    }), 0)
+    var simulation_resume_empty_args := GspServer.validate_simulation_message(JSON.stringify({
+        "v": 2, "t": "sim_cmd", "seq": 1, "d": {"cmd": "resume", "args": {}}
     }), 0)
     var simulation_shell := GspServer.validate_simulation_message(JSON.stringify({
-        "v": 2, "t": "sim_cmd", "seq": 1, "d": {"operation": "shell"}
+        "v": 2, "t": "sim_cmd", "seq": 1, "d": {"cmd": "shell"}
+    }), 0)
+    var simulation_nonempty_args := GspServer.validate_simulation_message(JSON.stringify({
+        "v": 2, "t": "sim_cmd", "seq": 1, "d": {"cmd": "pause", "args": {"x": 1}}
+    }), 0)
+    var simulation_wrong_args := GspServer.validate_simulation_message(JSON.stringify({
+        "v": 2, "t": "sim_cmd", "seq": 1, "d": {"cmd": "pause", "args": ""}
+    }), 0)
+    var simulation_operation_alias := GspServer.validate_simulation_message(JSON.stringify({
+        "v": 2, "t": "sim_cmd", "seq": 1, "d": {"operation": "pause"}
     }), 0)
     var simulation_alias := GspServer.validate_simulation_message(JSON.stringify({
-        "v": 2, "t": "simulation", "seq": 1, "d": {"operation": "pause"}
+        "v": 2, "t": "simulation", "seq": 1, "d": {"cmd": "pause"}
     }), 0)
-    _expect(bool(simulation_pause.get("ok", false)) and not bool(simulation_shell.get("ok", false)) and
+    _expect(bool(simulation_pause.get("ok", false)) and bool(simulation_resume_empty_args.get("ok", false)) and
+            not bool(simulation_shell.get("ok", false)) and not bool(simulation_nonempty_args.get("ok", false)) and
+            not bool(simulation_wrong_args.get("ok", false)) and not bool(simulation_operation_alias.get("ok", false)) and
             not bool(simulation_alias.get("ok", false)),
-            "simulation validation keeps the allowlist narrow")
+            "sim_cmd validates the canonical cmd/empty-args contract and rejects aliases")
     var replay_runtime := FlightRuntime.new()
     replay_runtime.airsim_session = AirSimSession.new(240)
     replay_runtime._replay_recording_active = true

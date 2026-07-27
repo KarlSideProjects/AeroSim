@@ -2103,6 +2103,9 @@ ReplaySessionRecorder::ReplaySessionRecorder(std::uint64_t seed, std::string set
 }
 
 bool ReplaySessionRecorder::set_physics_tick(std::uint64_t physics_tick) {
+    if (append_failed_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay event append already failed");
+    }
     if (physics_tick < physics_tick_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay physics tick cannot regress");
     }
@@ -2114,17 +2117,12 @@ bool ReplaySessionRecorder::set_physics_tick(std::uint64_t physics_tick) {
     return true;
 }
 
-bool ReplaySessionRecorder::set_next_event_order_for_test(std::uint64_t next_event_order) {
-    if (finished_) {
-        return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
-    }
-    next_event_order_ = next_event_order;
-    diagnostic_ = {};
-    return true;
-}
-
 bool ReplaySessionRecorder::append_event(ReplayEvent event) {
+    if (append_failed_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay event append already failed");
+    }
     if (next_event_order_ == std::numeric_limits<std::uint64_t>::max()) {
+        append_failed_ = true;
         return fail(ReplayDiagnosticCode::InvalidSession, "replay event order is exhausted");
     }
     event.physics_tick = physics_tick_;
@@ -2297,8 +2295,6 @@ bool ReplaySessionRecorder::record_async_command(
     if (!allowed) {
         return fail(ReplayDiagnosticCode::InvalidLifecycle, "invalid async replay lifecycle for command: " + command_id);
     }
-    async_lifecycle_[key] = lifecycle;
-    async_methods_[key] = method;
     ReplayEvent event;
     event.timestamp_us = timestamp_us;
     event.type = ReplayEventType::AsyncCommand;
@@ -2309,6 +2305,8 @@ bool ReplaySessionRecorder::record_async_command(
     if (!append_event(std::move(event))) {
         return false;
     }
+    async_lifecycle_[key] = lifecycle;
+    async_methods_[key] = method;
     diagnostic_ = {};
     return true;
 }
@@ -2359,14 +2357,15 @@ bool ReplaySessionRecorder::record_collision(
     event.timestamp_us = timestamp_us;
     event.type = ReplayEventType::Collision;
     event.vehicle_name = vehicle_name;
-    event.collision = {controller_authority, contact};
+    const ReplayCollision collision = {controller_authority, contact};
+    event.collision = collision;
     const auto vehicle = std::find_if(session_.vehicles.begin(), session_.vehicles.end(), [&](const ReplayVehicleConfig &entry) {
         return entry.name == vehicle_name;
     });
-    checkpoint_collisions_[static_cast<std::size_t>(std::distance(session_.vehicles.begin(), vehicle))] = event.collision;
     if (!append_event(std::move(event))) {
         return false;
     }
+    checkpoint_collisions_[static_cast<std::size_t>(std::distance(session_.vehicles.begin(), vehicle))] = collision;
     diagnostic_ = {};
     return true;
 }
@@ -2389,30 +2388,30 @@ bool ReplaySessionRecorder::record_scene_object(
     event.timestamp_us = timestamp_us;
     event.type = ReplayEventType::SceneObject;
     event.object_operation = operation;
-    event.object_name = std::move(object_name);
-    event.object_asset_id = std::move(asset_id);
+    event.object_name = object_name;
+    event.object_asset_id = asset_id;
     event.object_position = position;
     event.object_orientation = orientation;
+    if (!append_event(std::move(event))) {
+        return false;
+    }
     if (operation == ReplaySceneObjectOperation::Reset) {
         checkpoint_scene_objects_.clear();
     } else {
         const auto existing = std::find_if(checkpoint_scene_objects_.begin(), checkpoint_scene_objects_.end(), [&](const ReplaySceneObjectState &object) {
-            return object.name == event.object_name;
+            return object.name == object_name;
         });
         if (operation == ReplaySceneObjectOperation::Destroy) {
             if (existing != checkpoint_scene_objects_.end()) {
                 checkpoint_scene_objects_.erase(existing);
             }
         } else if (existing == checkpoint_scene_objects_.end()) {
-            checkpoint_scene_objects_.push_back({event.object_name, event.object_asset_id, event.object_position, event.object_orientation});
+            checkpoint_scene_objects_.push_back({object_name, asset_id, position, orientation});
         } else {
-            existing->asset_id = event.object_asset_id;
-            existing->position = event.object_position;
-            existing->orientation = event.object_orientation;
+            existing->asset_id = asset_id;
+            existing->position = position;
+            existing->orientation = orientation;
         }
-    }
-    if (!append_event(std::move(event))) {
-        return false;
     }
     diagnostic_ = {};
     return true;
@@ -2435,11 +2434,12 @@ bool ReplaySessionRecorder::record_environment(std::uint64_t timestamp_us, std::
     ReplayEvent event;
     event.timestamp_us = timestamp_us;
     event.type = ReplayEventType::Environment;
-    environment_json_ = compact_json(parsed);
-    event.environment_json = environment_json_;
+    const std::string compact_environment = compact_json(parsed);
+    event.environment_json = compact_environment;
     if (!append_event(std::move(event))) {
         return false;
     }
+    environment_json_ = compact_environment;
     diagnostic_ = {};
     return true;
 }
@@ -2537,6 +2537,9 @@ bool ReplaySessionRecorder::record_checkpoint(std::uint64_t timestamp_us, const 
 }
 
 bool ReplaySessionRecorder::record_checkpoint(std::uint64_t timestamp_us, ReplayRunCheckpoint checkpoint) {
+    if (append_failed_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay event append already failed");
+    }
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
     }
@@ -2559,6 +2562,9 @@ bool ReplaySessionRecorder::record_checkpoint(std::uint64_t timestamp_us, Replay
 }
 
 bool ReplaySessionRecorder::finish(std::uint64_t timestamp_us, std::string reason) {
+    if (append_failed_) {
+        return fail(ReplayDiagnosticCode::InvalidSession, "replay event append already failed");
+    }
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
     }
@@ -2941,6 +2947,13 @@ ReplayRunResult replay_session(
             ++recorded_checkpoint_index;
         }
     };
+    const auto checkpoint_legacy_event_at = [&](std::uint64_t timestamp_us) {
+        if (recorded_checkpoint_index < session.checkpoints.size() &&
+                session.checkpoints[recorded_checkpoint_index].timestamp_us == timestamp_us) {
+            checkpoint(timestamp_us);
+            ++recorded_checkpoint_index;
+        }
+    };
     const auto step_vehicle = [&](std::size_t index, RigidBodyState &vehicle_state, SimulationClock &clock,
                                   FlightController &controller, const SimulationConfig &vehicle_config) {
         if (!vehicle_active[index]) {
@@ -3099,7 +3112,7 @@ ReplayRunResult replay_session(
                 session.events[timestamp_group_end].timestamp_us == timestamp_us) {
             ++timestamp_group_end;
         }
-        const std::size_t group_end = authoritative_ordering ? event_index + 1 : timestamp_group_end;
+        const std::size_t group_end = event_index + 1;
         if (!paused && timestamp_us >= previous_timestamp_us &&
                 !advance_us(timestamp_us - previous_timestamp_us, timestamp_us)) {
             if (replay_step_status != StepStatus::Ok) {
@@ -3178,159 +3191,163 @@ ReplayRunResult replay_session(
             case ReplayEventType::Marker:
                 break;
             case ReplayEventType::Tuning: {
-            const int vehicle = vehicle_index(event.vehicle_name);
-            bool applied = false;
-            if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightRatePParameter) {
-                applied = controllers[vehicle].set_rate_p(event.tuning_committed_value);
-            } else if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightAnglePParameter) {
-                applied = controllers[vehicle].set_angle_p(event.tuning_committed_value);
-            } else if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightRateIParameter) {
-                applied = controllers[vehicle].set_rate_i(event.tuning_committed_value);
-            } else if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightRateDParameter) {
-                applied = controllers[vehicle].set_rate_d(event.tuning_committed_value);
-            }
-            if (!applied) {
-                return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay tuning input is unsupported"));
-            }
-            break;
-        }
-        case ReplayEventType::SceneObject: {
-            if (event.object_operation == ReplaySceneObjectOperation::Reset) {
-                scene_objects.clear();
-                break;
-            }
-            const auto existing = std::find_if(scene_objects.begin(), scene_objects.end(), [&](const ReplaySceneObjectState &object) {
-                return object.name == event.object_name;
-            });
-            if (event.object_operation == ReplaySceneObjectOperation::Destroy) {
-                if (existing != scene_objects.end()) {
-                    scene_objects.erase(existing);
-                }
-            } else if (existing == scene_objects.end()) {
-                scene_objects.push_back({event.object_name, event.object_asset_id, event.object_position, event.object_orientation});
-            } else {
-                existing->asset_id = event.object_asset_id;
-                existing->position = event.object_position;
-                existing->orientation = event.object_orientation;
-            }
-            break;
-        }
-        case ReplayEventType::Environment:
-            environment_json = event.environment_json;
-            if (!apply_environment_config(environment_json, active_configs, wind_fields)) {
-                return failed_run(invalid(ReplayDiagnosticCode::Corrupt, "replay environment state is unsupported"));
-            }
-            break;
-        case ReplayEventType::Collision: {
-            if (authoritative_ordering) {
                 const int vehicle = vehicle_index(event.vehicle_name);
-                if (vehicle < 0) {
-                    return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
+                bool applied = false;
+                if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightRatePParameter) {
+                    applied = controllers[vehicle].set_rate_p(event.tuning_committed_value);
+                } else if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightAnglePParameter) {
+                    applied = controllers[vehicle].set_angle_p(event.tuning_committed_value);
+                } else if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightRateIParameter) {
+                    applied = controllers[vehicle].set_rate_i(event.tuning_committed_value);
+                } else if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightRateDParameter) {
+                    applied = controllers[vehicle].set_rate_d(event.tuning_committed_value);
                 }
-                if (has_pending_collision[vehicle]) {
-                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "multiple replay collisions share one simulation frame"));
+                if (!applied) {
+                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay tuning input is unsupported"));
                 }
-                pending_collisions[vehicle] = event.collision.contact;
-                pending_collision_authorities[vehicle] = event.collision.authority;
-                last_collisions[vehicle] = event.collision;
-                has_pending_collision[vehicle] = true;
-            }
-            break;
-        }
-        case ReplayEventType::SimulationTime:
-            switch (event.simulation_operation) {
-            case ReplaySimulationOperation::Pause:
-                paused = true;
-                break;
-            case ReplaySimulationOperation::Resume:
-                paused = false;
-                break;
-            case ReplaySimulationOperation::StepFrames:
-                if (!step_frames(static_cast<std::int64_t>(event.simulation_value), event.timestamp_us)) {
-                    if (replay_step_status != StepStatus::Ok) {
-                        return replay_step_failure();
-                    }
-                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay collision authority diverged"));
-                }
-                break;
-            case ReplaySimulationOperation::StepSeconds:
-                if (!step_seconds(event.simulation_value, event.timestamp_us)) {
-                    if (replay_step_status != StepStatus::Ok) {
-                        return replay_step_failure();
-                    }
-                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay step seconds exceeds runtime frame limit"));
-                }
-                break;
-            case ReplaySimulationOperation::Reset:
-                state = {};
-                active_configs[0] = config.upper;
-                active_configs[1] = config.lower;
-                clocks[0] = {};
-                clocks[1] = {};
-                commands[0] = {};
-                commands[1] = {};
-                acro_commands[0] = {};
-                acro_commands[1] = {};
-                actuator_commands[0] = {};
-                actuator_commands[1] = {};
-                measured_altitudes[0] = 0.0;
-                measured_altitudes[1] = 0.0;
-                command_modes[0] = ReplayCommandMode::Angle;
-                command_modes[1] = ReplayCommandMode::Angle;
-                vehicle_active[0] = false;
-                vehicle_active[1] = false;
-                has_pending_collision[0] = false;
-                has_pending_collision[1] = false;
-                pending_collision_authorities[0] = ReplayControllerAuthority::FlightCore;
-                pending_collision_authorities[1] = ReplayControllerAuthority::FlightCore;
-                scene_objects.clear();
-                environment_json.clear();
-                controllers[0].reset_flight(state.upper, clocks[0]);
-                controllers[1].reset_flight(state.lower, clocks[1]);
-                last_collisions[0] = {};
-                last_collisions[1] = {};
-                frame_remainder = 0.0;
-                break;
-            case ReplaySimulationOperation::Respawn:
-                state = {config.upper.initial_state, config.lower.initial_state};
-                active_configs[0] = config.upper;
-                active_configs[1] = config.lower;
-                clocks[0] = {};
-                clocks[1] = {};
-                commands[0] = {};
-                commands[1] = {};
-                acro_commands[0] = {};
-                acro_commands[1] = {};
-                actuator_commands[0] = {};
-                actuator_commands[1] = {};
-                measured_altitudes[0] = 0.0;
-                measured_altitudes[1] = 0.0;
-                command_modes[0] = ReplayCommandMode::Angle;
-                command_modes[1] = ReplayCommandMode::Angle;
-                vehicle_active[0] = false;
-                vehicle_active[1] = false;
-                has_pending_collision[0] = false;
-                has_pending_collision[1] = false;
-                pending_collision_authorities[0] = ReplayControllerAuthority::FlightCore;
-                pending_collision_authorities[1] = ReplayControllerAuthority::FlightCore;
-                scene_objects.clear();
-                environment_json.clear();
-                controllers[0].reset_flight(state.upper, clocks[0]);
-                controllers[1].reset_flight(state.lower, clocks[1]);
-                last_collisions[0] = {};
-                last_collisions[1] = {};
-                frame_remainder = 0.0;
                 break;
             }
-            break;
-        }
+            case ReplayEventType::SceneObject: {
+                if (event.object_operation == ReplaySceneObjectOperation::Reset) {
+                    scene_objects.clear();
+                    break;
+                }
+                const auto existing = std::find_if(scene_objects.begin(), scene_objects.end(), [&](const ReplaySceneObjectState &object) {
+                    return object.name == event.object_name;
+                });
+                if (event.object_operation == ReplaySceneObjectOperation::Destroy) {
+                    if (existing != scene_objects.end()) {
+                        scene_objects.erase(existing);
+                    }
+                } else if (existing == scene_objects.end()) {
+                    scene_objects.push_back({event.object_name, event.object_asset_id, event.object_position, event.object_orientation});
+                } else {
+                    existing->asset_id = event.object_asset_id;
+                    existing->position = event.object_position;
+                    existing->orientation = event.object_orientation;
+                }
+                break;
+            }
+            case ReplayEventType::Environment:
+                environment_json = event.environment_json;
+                if (!apply_environment_config(environment_json, active_configs, wind_fields)) {
+                    return failed_run(invalid(ReplayDiagnosticCode::Corrupt, "replay environment state is unsupported"));
+                }
+                break;
+            case ReplayEventType::Collision: {
+                if (authoritative_ordering) {
+                    const int vehicle = vehicle_index(event.vehicle_name);
+                    if (vehicle < 0) {
+                        return failed_run(invalid(ReplayDiagnosticCode::UnknownVehicle, "unknown replay vehicle: " + event.vehicle_name));
+                    }
+                    if (has_pending_collision[vehicle]) {
+                        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "multiple replay collisions share one simulation frame"));
+                    }
+                    pending_collisions[vehicle] = event.collision.contact;
+                    pending_collision_authorities[vehicle] = event.collision.authority;
+                    last_collisions[vehicle] = event.collision;
+                    has_pending_collision[vehicle] = true;
+                }
+                break;
+            }
+            case ReplayEventType::SimulationTime:
+                switch (event.simulation_operation) {
+                case ReplaySimulationOperation::Pause:
+                    paused = true;
+                    break;
+                case ReplaySimulationOperation::Resume:
+                    paused = false;
+                    break;
+                case ReplaySimulationOperation::StepFrames:
+                    if (!step_frames(static_cast<std::int64_t>(event.simulation_value), event.timestamp_us)) {
+                        if (replay_step_status != StepStatus::Ok) {
+                            return replay_step_failure();
+                        }
+                        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay collision authority diverged"));
+                    }
+                    break;
+                case ReplaySimulationOperation::StepSeconds:
+                    if (!step_seconds(event.simulation_value, event.timestamp_us)) {
+                        if (replay_step_status != StepStatus::Ok) {
+                            return replay_step_failure();
+                        }
+                        return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay step seconds exceeds runtime frame limit"));
+                    }
+                    break;
+                case ReplaySimulationOperation::Reset:
+                    state = {};
+                    active_configs[0] = config.upper;
+                    active_configs[1] = config.lower;
+                    clocks[0] = {};
+                    clocks[1] = {};
+                    commands[0] = {};
+                    commands[1] = {};
+                    acro_commands[0] = {};
+                    acro_commands[1] = {};
+                    actuator_commands[0] = {};
+                    actuator_commands[1] = {};
+                    measured_altitudes[0] = 0.0;
+                    measured_altitudes[1] = 0.0;
+                    command_modes[0] = ReplayCommandMode::Angle;
+                    command_modes[1] = ReplayCommandMode::Angle;
+                    vehicle_active[0] = false;
+                    vehicle_active[1] = false;
+                    has_pending_collision[0] = false;
+                    has_pending_collision[1] = false;
+                    pending_collision_authorities[0] = ReplayControllerAuthority::FlightCore;
+                    pending_collision_authorities[1] = ReplayControllerAuthority::FlightCore;
+                    scene_objects.clear();
+                    environment_json.clear();
+                    controllers[0].reset_flight(state.upper, clocks[0]);
+                    controllers[1].reset_flight(state.lower, clocks[1]);
+                    last_collisions[0] = {};
+                    last_collisions[1] = {};
+                    frame_remainder = 0.0;
+                    break;
+                case ReplaySimulationOperation::Respawn:
+                    state = {config.upper.initial_state, config.lower.initial_state};
+                    active_configs[0] = config.upper;
+                    active_configs[1] = config.lower;
+                    clocks[0] = {};
+                    clocks[1] = {};
+                    commands[0] = {};
+                    commands[1] = {};
+                    acro_commands[0] = {};
+                    acro_commands[1] = {};
+                    actuator_commands[0] = {};
+                    actuator_commands[1] = {};
+                    measured_altitudes[0] = 0.0;
+                    measured_altitudes[1] = 0.0;
+                    command_modes[0] = ReplayCommandMode::Angle;
+                    command_modes[1] = ReplayCommandMode::Angle;
+                    vehicle_active[0] = false;
+                    vehicle_active[1] = false;
+                    has_pending_collision[0] = false;
+                    has_pending_collision[1] = false;
+                    pending_collision_authorities[0] = ReplayControllerAuthority::FlightCore;
+                    pending_collision_authorities[1] = ReplayControllerAuthority::FlightCore;
+                    scene_objects.clear();
+                    environment_json.clear();
+                    controllers[0].reset_flight(state.upper, clocks[0]);
+                    controllers[1].reset_flight(state.lower, clocks[1]);
+                    last_collisions[0] = {};
+                    last_collisions[1] = {};
+                    frame_remainder = 0.0;
+                    break;
+                }
+                break;
+            }
         }
         if (!has_recorded_checkpoints) {
             checkpoint(timestamp_us);
         }
         event_index = group_end;
-        if (has_recorded_checkpoints && event_index == timestamp_group_end) {
-            checkpoint_recorded_at(timestamp_us);
+        if (has_recorded_checkpoints && (!authoritative_ordering || event_index == timestamp_group_end)) {
+            if (authoritative_ordering) {
+                checkpoint_recorded_at(timestamp_us);
+            } else {
+                checkpoint_legacy_event_at(timestamp_us);
+            }
         }
     }
     if (!paused && session.termination_timestamp_us >= previous_timestamp_us &&

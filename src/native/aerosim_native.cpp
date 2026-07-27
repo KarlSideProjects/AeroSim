@@ -325,6 +325,7 @@ void AeroSimNative::_bind_methods() {
             D_METHOD("begin_complete_replay_recording", "seed", "settings_manifest_hash", "upper_name", "upper_config_manifest_hash", "upper_config_json", "upper_controller_authority", "lower_name", "lower_config_manifest_hash", "lower_config_json", "lower_controller_authority"),
             &AeroSimNative::begin_complete_replay_recording);
     ClassDB::bind_method(D_METHOD("set_replay_physics_tick", "physics_tick"), &AeroSimNative::set_replay_physics_tick);
+    ClassDB::bind_method(D_METHOD("replay_recording_event_count"), &AeroSimNative::replay_recording_event_count);
     ClassDB::bind_method(D_METHOD("begin_replay_checkpoint_capture"), &AeroSimNative::begin_replay_checkpoint_capture);
     ClassDB::bind_method(D_METHOD("capture_replay_recorded_response", "non_neutral"), &AeroSimNative::capture_replay_recorded_response);
     ClassDB::bind_method(
@@ -1209,6 +1210,13 @@ Dictionary AeroSimNative::set_replay_physics_tick(std::int64_t physics_tick) {
     }
     const bool ok = replay_recorder_->set_physics_tick(static_cast<std::uint64_t>(physics_tick));
     return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::replay_recording_event_count() const {
+    Dictionary result;
+    result["active"] = replay_recorder_ != nullptr;
+    result["count"] = replay_recorder_ == nullptr ? 0 : static_cast<std::int64_t>(replay_recorder_->session().events.size());
+    return result;
 }
 
 Dictionary AeroSimNative::record_replay_marker(
