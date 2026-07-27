@@ -108,12 +108,10 @@ PASS
 
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
 python3 scripts/test_gsp_idle_benchmark_smoke.py
-BLOCKED in this read-only environment: Godot could not create user://logs;
-with job-local XDG data it could not create the AirSim RPC listener
-(ERR_CANT_CREATE). No smoke PASS is claimed.
+GSP issue-251 real-time smoke: PASS
 
-The smoke failure is not promoted to the formal #251 result: the frozen
-machine-readable #251 qualification artifact remains the authoritative
+This short smoke does not replace or change the formal #251 result: the frozen
+machine-readable qualification artifact remains the authoritative
 `conditioning_sample_count` FAIL above.
 ```
 
