@@ -104,6 +104,40 @@ def finish_harness(process: subprocess.Popen[bytes], stop: Path, status: Path) -
     return json.loads(status.read_text(encoding="utf-8"))
 
 
+def delayed_probe_harness_command(temp: Path) -> tuple[list[str], Path, Path, Path, Path]:
+    ready = temp / "ready.json"
+    stop = temp / "stop"
+    status = temp / "status.json"
+    probe = temp / "probe"
+    return [
+        GODOT,
+        "--headless",
+        "--fixed-fps",
+        "240",
+        "--path",
+        str(ROOT),
+        "--script",
+        "res://tests/headless/gsp_delayed_probe_harness.gd",
+        "--",
+        "--ready-file",
+        str(ready),
+        "--stop-file",
+        str(stop),
+        "--status-file",
+        str(status),
+        "--probe-file",
+        str(probe),
+        "--probe-delay-ms",
+        "700",
+    ], ready, stop, status, probe
+
+
+def start_delayed_probe_harness(temp: Path) -> tuple[subprocess.Popen[bytes], dict[str, object], Path, Path, Path, Path]:
+    command, ready, stop, status, probe = delayed_probe_harness_command(temp)
+    process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return process, read_ready(ready, process), stop, status, ready, probe
+
+
 def launcher_command(stop: Path) -> list[str]:
     return [
         GODOT,
@@ -118,7 +152,21 @@ def launcher_command(stop: Path) -> list[str]:
     ]
 
 
-def start_launcher_harness(temp: Path) -> tuple[subprocess.Popen[bytes], dict[str, object], Path]:
+def stop_launcher_harness(process: subprocess.Popen[bytes], stop: Path) -> str:
+    if process.poll() is None:
+        stop.touch()
+    try:
+        output, _ = process.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            output, _ = process.communicate(timeout=2)
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("GSP launcher harness could not be stopped") from error
+    return output.decode(errors="replace")
+
+
+def start_launcher_harness(temp: Path) -> tuple[subprocess.Popen[bytes], dict[str, object], Path, list[str]]:
     stop = temp / "stop"
     process = subprocess.Popen(
         launcher_command(stop),
@@ -127,6 +175,7 @@ def start_launcher_harness(temp: Path) -> tuple[subprocess.Popen[bytes], dict[st
         stderr=subprocess.STDOUT,
     )
     if process.stdout is None:
+        stop_launcher_harness(process, stop)
         raise RuntimeError("GSP launcher harness did not expose stdout")
     deadline = time.monotonic() + 5.0
     output: list[str] = []
@@ -140,22 +189,17 @@ def start_launcher_harness(temp: Path) -> tuple[subprocess.Popen[bytes], dict[st
         output.append(line)
         match = LAUNCHER_URL.search(line)
         if match:
-            return process, {"port": int(match["port"]), "token": match["token"], "url": match["url"]}, stop
-    output.extend(process.stdout.read().decode(errors="replace").splitlines(keepends=True))
+            return process, {"port": int(match["port"]), "token": match["token"], "url": match["url"]}, stop, output
+    output.append(stop_launcher_harness(process, stop))
     raise RuntimeError(f"GSP launcher harness did not print a launch URL: {''.join(output)}")
 
 
-def finish_launcher_harness(process: subprocess.Popen[bytes], stop: Path) -> None:
-    if process.poll() is None:
-        stop.touch()
-    try:
-        output, _ = process.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        output, _ = process.communicate()
-        raise RuntimeError("GSP launcher harness did not stop")
+def finish_launcher_harness(process: subprocess.Popen[bytes], stop: Path, output: list[str]) -> None:
+    output.append(stop_launcher_harness(process, stop))
     if process.returncode not in (0, None):
-        raise RuntimeError(f"GSP launcher harness failed: {output.decode(errors='replace')}")
+        raise RuntimeError(f"GSP launcher harness failed: {''.join(output)}")
+    if len(list(LAUNCHER_URL.finditer("".join(output)))) != 1:
+        raise RuntimeError(f"GSP launcher stdout must contain exactly one panel URL record: {''.join(output)}")
 
 
 def poll_until_reclaimed(
@@ -171,7 +215,6 @@ def poll_until_reclaimed(
         try:
             snapshot = probe(sequence, min(0.25, remaining))
         except ProbePublicationTimeout:
-            sequence += 1
             continue
         if (snapshot["live_peer_count"], snapshot["authenticated_peer_count"], snapshot["closing_peer_count"]) == (0, 0, 0):
             return snapshot, sequence + 1
@@ -179,19 +222,35 @@ def poll_until_reclaimed(
     raise RuntimeError("abruptly lost peer was not reclaimed within five seconds")
 
 
-def run_probe_retry_regression() -> None:
-    attempts: list[tuple[int, float]] = []
-
-    def delayed_probe(sequence: int, timeout: float) -> dict[str, object]:
-        attempts.append((sequence, timeout))
-        if len(attempts) == 1:
-            raise ProbePublicationTimeout("delayed probe")
-        return {"live_peer_count": 0, "authenticated_peer_count": 0, "closing_peer_count": 0}
-
-    snapshot, next_sequence = poll_until_reclaimed(delayed_probe, lambda: False, time.monotonic() + 5.0, 2)
-    if snapshot["live_peer_count"] != 0 or len(attempts) != 2 or attempts[0][0] != 2 or attempts[1][0] != 3 or next_sequence != 4:
-        raise RuntimeError(f"probe timeout retry regression failed: attempts={attempts!r}, snapshot={snapshot!r}, next={next_sequence!r}")
-    print("GSP probe retry regression: PASS delayed_timeout_retry=true")
+def run_probe_delayed_consumption_regression(temp: Path) -> None:
+    process, identity, stop, status, _, probe = start_delayed_probe_harness(temp)
+    peer: socket.socket | None = None
+    try:
+        peer = websocket_connect("127.0.0.1", int(identity["port"]))
+        authenticate(peer, identity)
+        peer.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        peer.close()
+        peer = None
+        try:
+            probe_status(process, probe, status, 1, 0.25)
+        except ProbePublicationTimeout:
+            pass
+        else:
+            raise RuntimeError("delayed probe unexpectedly published inside the 250 ms timeout")
+        snapshot, next_sequence = poll_until_reclaimed(
+            lambda sequence, timeout: probe_status(process, probe, status, sequence, timeout),
+            lambda: process.poll() is not None,
+            time.monotonic() + 5.0,
+            1,
+        )
+        if snapshot["probe_sequence"] != 1 or next_sequence != 2:
+            raise RuntimeError(f"delayed probe did not publish the same sequence: {snapshot!r}, next={next_sequence!r}")
+        print("GSP probe retry regression: PASS delayed_timeout_retry=true same_sequence=true")
+    finally:
+        if peer is not None:
+            peer.close()
+        stop.touch()
+        finish_harness(process, stop, status)
 
 
 def probe_status(process: subprocess.Popen[bytes], probe: Path, status: Path, sequence: int, timeout: float = 5.0) -> dict[str, object]:
@@ -358,7 +417,7 @@ def run_restart_token_case(temp: Path) -> None:
     first_process, first_identity, first_stop, first_status, _, _ = start_harness(first_dir, False)
     first_stop.touch()
     finish_harness(first_process, first_stop, first_status)
-    second_process, second_identity, second_stop = start_launcher_harness(second_dir)
+    second_process, second_identity, second_stop, launcher_output = start_launcher_harness(second_dir)
     stale = None
     fresh = None
     try:
@@ -375,7 +434,7 @@ def run_restart_token_case(temp: Path) -> None:
             stale.close()
         if fresh is not None:
             fresh.close()
-        finish_launcher_harness(second_process, second_stop)
+        finish_launcher_harness(second_process, second_stop, launcher_output)
 
 
 def run_graceful_case(temp: Path) -> None:
@@ -446,7 +505,8 @@ def run_forced_case(temp: Path) -> None:
 
 
 def main() -> int:
-    run_probe_retry_regression()
+    with tempfile.TemporaryDirectory(prefix="aerosim-gsp-probe-delay-") as temp_dir:
+        run_probe_delayed_consumption_regression(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-pending-") as temp_dir:
         run_pending_handshake_boundary(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-graceful-") as temp_dir:
