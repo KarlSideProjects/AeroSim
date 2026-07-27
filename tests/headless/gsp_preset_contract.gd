@@ -194,9 +194,11 @@ func _init() -> void:
             var descriptor: Dictionary = runtime._gsp_tuning_registry[index]
             var key := String(descriptor.get("key", ""))
             ordered_values[key] = float(immediate_after.get(key, 0.0))
-        _expect(bool(GspPresetStore.new().save_preset("ordered", ordered_values,
-                runtime._gsp_tuning_registry_hash, "test-sim").get("ok", false)),
-                "reverse-ordered preset fixture saves")
+        var ordered_saved: Dictionary = store.save_preset(ordered_name, ordered_values,
+                runtime._gsp_tuning_registry_hash, "test-sim")
+        if bool(ordered_saved.get("ok", false)):
+            _remember_created(ordered_name)
+        _expect(bool(ordered_saved.get("ok", false)), "reverse-ordered preset fixture saves")
         var truncated_values: Dictionary = runtime_saved.preset.values.duplicate(true)
         truncated_values.erase("simpleflight.rate_p")
         var truncated_saved := store.save_preset(truncated_name, truncated_values, runtime._gsp_tuning_registry_hash, "test-sim")
@@ -219,11 +221,14 @@ func _init() -> void:
                 "matching-hash incomplete or unknown key sets reject load and compare without mutation")
         var ordered_load: Dictionary = runtime.gsp_load_preset(-1, -1, 7, ordered_name)
         var ordered_changes: Array = ordered_load.get("changes", [])
-        var registry_ordered := true
+        var registry_ordered := (
+                bool(ordered_saved.get("ok", false)) and bool(ordered_load.get("ok", false)) and
+                not ordered_changes.is_empty() and ordered_changes.size() == runtime._gsp_tuning_registry.size())
         for index in ordered_changes.size():
-            if String(ordered_changes[index].get("parameter", "")) != String(runtime._gsp_tuning_registry[index].get("key", "")):
+            if (index >= runtime._gsp_tuning_registry.size() or
+                    String(ordered_changes[index].get("parameter", "")) != String(runtime._gsp_tuning_registry[index].get("key", ""))):
                 registry_ordered = false
-        _expect(registry_ordered, "preset load stages changes in canonical registry order")
+        _expect(registry_ordered, "preset save/load has non-empty changes in canonical registry order")
         _expect(bool(runtime.gsp_tuning_request(-1, -1, 6, "simpleflight.rate_p", 1.2).get("ok", false)) and
                 runtime.gsp_compare_presets("", runtime_name).get("changes", []).size() == 1,
                 "current-versus-preset diff reports changed values only")

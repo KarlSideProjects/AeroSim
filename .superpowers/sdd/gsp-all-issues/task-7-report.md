@@ -322,3 +322,58 @@ scripts/verify_issue_11.sh
 # license scan: 11 dependencies passed; GUT: 277/277; preset/tuning/Quick Adjust/stress/headed/replay/smoke passed
 # smoke: native_probe=47, physics_ticks_per_second=240, simulated_frames=5
 ```
+
+## Fix round 2 — independent Sol-high quality findings
+
+Fix base: `a0e2516`. This round addressed only the two reported test/report defects. Agent/thread identity remains `CODEX_THREAD_ID=019fa267-1d99-72d1-8dce-b6423951d468`.
+
+### Findings and solutions
+
+- The canonical-order contract fixture still wrote the fixed name `ordered` while loading the generated `ordered_name`. It now saves, loads, and cleans the same collision-safe generated name, records it only after a successful save, and requires both save/load success and a non-empty full-size change list before checking canonical registry order. No fixed or pre-existing preset is pre-deleted or removed.
+- Real backend preset-A-versus-B comparison coverage was missing from the WebSocket integration. The test now authenticates origin and observer peers, saves baseline A, mutates through the normal tuning authority, saves distinct B through the authenticated origin, sends `compare_presets` through the real GSP provider path, and asserts `preset_ack` operation/sequence, exactly one changed `simpleflight.rate_p` row, and finite percentage data with explicit `percentage_status`. The existing active pending load and two-peer source-tagged commit assertions remain intact.
+
+### Fix-round TDD evidence
+
+RED discovery checks before the correction:
+
+```text
+! rg -n 'save_preset\("ordered"|gsp_load_preset\([^\n]*"ordered"' tests/headless/gsp_preset_contract.gd
+# exit 1; output showed tests/headless/gsp_preset_contract.gd:197 still writing literal "ordered"
+
+rg -n 'compare_presets' tests/headless/gsp_preset_integration.gd
+# exit 1; no output: real integration compare coverage was absent
+```
+
+The first focused contract run after the test correction was also RED on test syntax:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_preset_contract.gd
+# exit 1: Parse Error: Expected expression after "and" operator at line 224
+# after parenthesizing the multiline expression, the next run exposed the same
+# GDScript continuation rule for the multiline "or" at line 228; both were corrected.
+```
+
+Focused GREEN checks:
+
+```text
+node tests/test_gsp_panel_behavior.js
+# GSP panel row behavior passed
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_preset_contract.gd
+# GSP preset contract: PASS
+# expected Exponent too high warnings came from the deliberate 1e999 rejection fixture;
+# existing ObjectDB/resource leak diagnostics were non-fatal
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_preset_integration.gd
+# GSP preset integration: PASS
+# existing ObjectDB/resource leak diagnostics were non-fatal
+```
+
+### Fix-round files and scope
+
+Only `tests/headless/gsp_preset_contract.gd` and `tests/headless/gsp_preset_integration.gd` changed in this round. No production behavior, registry migration, lifecycle recovery, replay/session markers, dependency, Hardware configuration/SettingsStore/replay authority, or GPU qualification rule changed. GPU qualification remains vendor/type neutral: no vendor, device, adapter, or renderer allowlist/restriction was added.
+
+The committed fix-round gate result is appended below.

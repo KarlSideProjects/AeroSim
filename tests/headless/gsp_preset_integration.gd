@@ -34,6 +34,9 @@ func _run() -> void:
         return
 
     var baseline_name := _new_name("integration")
+    var second_name := _new_name("integration-second")
+    _expect(not baseline_name.is_empty() and not second_name.is_empty() and baseline_name != second_name,
+            "integration allocates two distinct collision-safe preset names")
     _server = GspServer.new()
     root.add_child(_server)
     _server.set_identity_provider(Callable(_runtime, "gsp_identity_snapshot"))
@@ -75,9 +78,36 @@ func _run() -> void:
     _runtime.paused = true
     _expect(bool(_runtime.gsp_tuning_request(-1, -1, 1, "simpleflight.rate_p", 1.2).get("ok", false)),
             "integration mutates current through tuning authority")
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "save_preset", "seq": 3,
+            "d": {"name": second_name, "note": "second"}})) == OK,
+            "second preset save request sends through the authenticated peer")
+    _server.poll()
+    var second_saved: Dictionary = await _next_message_type(_origin, "preset_ack", 240)
+    if bool(second_saved.get("d", {}).get("ok", false)):
+        _remember_created(second_name)
+    var baseline_rate := float(saved.get("d", {}).get("preset", {}).get("values", {}).get("simpleflight.rate_p", -1.0))
+    var second_rate := float(second_saved.get("d", {}).get("preset", {}).get("values", {}).get("simpleflight.rate_p", -1.0))
+    _expect(bool(second_saved.get("d", {}).get("ok", false)) and baseline_rate != second_rate,
+            "second preset saves a distinct changed tuning value")
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "compare_presets", "seq": 4,
+            "d": {"left": baseline_name, "right": second_name}})) == OK,
+            "preset comparison request sends through the authenticated peer")
+    _server.poll()
+    var comparison: Dictionary = await _next_message_type(_origin, "preset_ack", 240)
+    var comparison_data: Dictionary = comparison.get("d", {})
+    var comparison_changes: Array = comparison_data.get("changes", [])
+    var comparison_change: Dictionary = comparison_changes[0] if comparison_changes.size() == 1 else {}
+    var percentage = comparison_change.get("percentage", null)
+    _expect(comparison_data.get("operation", "") == "compare_presets" and
+            int(comparison_data.get("request_seq", -1)) == 4 and
+            bool(comparison_data.get("ok", false)) and comparison_changes.size() == 1 and
+            comparison_change.get("parameter", "") == "simpleflight.rate_p" and
+            comparison_change.has("percentage") and comparison_change.get("percentage_status", "") == "finite" and
+            typeof(percentage) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(percentage)),
+            "real backend preset comparison returns an acknowledged changed-only finite percentage row")
     _runtime.paused = false
     var before_load: Dictionary = _runtime.native.call("flight_tuning_configuration")
-    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "load_preset", "seq": 3,
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "load_preset", "seq": 5,
             "d": {"name": baseline_name}})) == OK,
             "active preset load request sends")
     _server.poll()
@@ -95,7 +125,7 @@ func _run() -> void:
     var load_data: Dictionary = load_ack.get("d", {})
     var origin_commit_data: Dictionary = origin_commit.get("d", {})
     var observer_commit_data: Dictionary = observer_commit.get("d", {})
-    _expect(bool(load_data.get("ok", false)) and int(load_data.get("request_seq", -1)) == 3 and
+    _expect(bool(load_data.get("ok", false)) and int(load_data.get("request_seq", -1)) == 5 and
             String(load_data.get("source", "")) == "preset" and
             int(origin_commit_data.get("commit_id", -1)) > 0 and
             int(origin_commit_data.get("commit_id", -1)) == int(observer_commit_data.get("commit_id", -2)) and
@@ -104,7 +134,7 @@ func _run() -> void:
             float(_runtime.native.call("flight_tuning_configuration").get("simpleflight.rate_p", -1.0)) == 0.6,
             "active preset load correlates origin ACK and broadcasts one source-tagged commit to both peers")
 
-    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "list_presets", "seq": 4, "d": {}})) == OK,
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "list_presets", "seq": 6, "d": {}})) == OK,
             "preset list request sends")
     _server.poll()
     var listed: Dictionary = await _next_message_type(_origin, "preset_ack", 240)
