@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import os
 import glob
+import platform
+import re
 import select
 import socket
+import shutil
 import statistics
 import subprocess
 import sys
@@ -38,6 +42,18 @@ MIN_TELEMETRY_SPAN_SECONDS = 59.5
 MAX_TELEMETRY_GAP_SECONDS = 2.0
 CPPC_DRIFT_MAX_PERCENT = 1.0
 TCTL_DRIFT_MAX_C = 1.0
+PROVENANCE_FIELDS = (
+    "commit_sha",
+    "godot_version",
+    "godot_sha256",
+    "godot_cpp_revision",
+    "gdextension_sha256",
+    "native_source_sha256",
+)
+
+
+class ProvenanceError(RuntimeError):
+    """Qualification evidence cannot be trusted or is unavailable."""
 
 
 class ExternalIdleClient:
@@ -167,9 +183,116 @@ def combine_protocol_results(*results: dict[str, object]) -> dict[str, object]:
     return {"status": "PASS", "failure_kind": None}
 
 
-def benchmark_command(output_path: Path, mode: str, commit_sha: str, warmup_seconds: int, seconds: int, ready_path: Path | None = None, benchmark_mode: str | None = None) -> list[str]:
+def _native_source_sha256(repo_root: Path) -> str:
+    files = [path for path in (repo_root / "src" / "native").rglob("*") if path.is_file()]
+    files.append(repo_root / "SConstruct")
+    entries = []
+    for path in sorted(files, key=lambda item: item.relative_to(repo_root).as_posix()):
+        relative = path.relative_to(repo_root).as_posix()
+        entries.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}")
+    return hashlib.sha256(("\n".join(entries) + "\n").encode("utf-8")).hexdigest()
+
+
+def collect_qualification_provenance(
+    repo_root: Path = ROOT,
+    godot_binary: str | Path | None = None,
+    native_provenance_path: Path | None = None,
+    configuration: dict[str, object] | None = None,
+    sys_root: Path = Path("/sys"),
+) -> dict[str, object]:
+    executable = str(godot_binary or GODOT)
+    resolved_executable = Path(shutil.which(executable) or executable).resolve()
+    if not resolved_executable.is_file():
+        raise ProvenanceError(f"Godot binary is unavailable: {resolved_executable}")
+    try:
+        godot_version = subprocess.check_output(
+            [str(resolved_executable), "--version"], stderr=subprocess.STDOUT, text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ProvenanceError(f"Godot version is unavailable: {error}") from error
+    artifact = native_provenance_path or Path(os.environ.get("AEROSIM_NATIVE_PROVENANCE", "build/native_debug_artifact.json"))
+    artifact = artifact if artifact.is_absolute() else repo_root / artifact
+    if not artifact.is_file():
+        raise ProvenanceError(f"native artifact provenance is missing: {artifact}")
+    try:
+        artifact_data = json.loads(artifact.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ProvenanceError(f"native artifact provenance is unreadable: {artifact}") from error
+    cppc_path = repo_root / "third_party" / "godot-cpp"
+    pinned_path = cppc_path / "AEROSIM_PINNED_COMMIT"
+    if pinned_path.is_file():
+        godot_cpp_revision = pinned_path.read_text(encoding="utf-8").strip()
+    else:
+        try:
+            godot_cpp_revision = subprocess.check_output(
+                ["git", "-C", str(cppc_path), "rev-parse", "HEAD"], text=True
+            ).strip()
+        except (OSError, subprocess.CalledProcessError) as error:
+            raise ProvenanceError(f"godot-cpp revision is unavailable: {error}") from error
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", godot_cpp_revision):
+        raise ProvenanceError("godot-cpp revision is not a 40-hex commit")
+
+    artifact_commit = artifact_data.get("commit_sha")
+    extension_value = artifact_data.get("gdextension_path")
+    declared_extension_hash = artifact_data.get("gdextension_sha256")
+    declared_source_hash = artifact_data.get("native_source_sha256")
+    if (
+        not isinstance(artifact_commit, str)
+        or not re.fullmatch(r"[0-9a-fA-F]{40}", artifact_commit)
+        or not isinstance(extension_value, str)
+        or not re.fullmatch(r"[0-9a-fA-F]{64}", str(declared_extension_hash))
+        or not re.fullmatch(r"[0-9a-fA-F]{64}", str(declared_source_hash))
+    ):
+        raise ProvenanceError("native artifact provenance fields are incomplete")
+    extension = Path(extension_value)
+    extension = extension if extension.is_absolute() else repo_root / extension
+    if not extension.is_file():
+        raise ProvenanceError(f"fixed debug GDExtension is missing: {extension}")
+    actual_extension_hash = hashlib.sha256(extension.read_bytes()).hexdigest()
+    actual_source_hash = _native_source_sha256(repo_root)
+    if actual_extension_hash != declared_extension_hash:
+        raise ProvenanceError("native artifact GDExtension hash mismatch")
+    if actual_source_hash != declared_source_hash:
+        raise ProvenanceError("native artifact native-source hash mismatch")
+
+    uname = platform.uname()
+    commit_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
+        raise ProvenanceError("commit provenance is not a 40-hex commit")
+    model_name = next(
+        (line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines() if line.startswith("model name") and ":" in line),
+        None,
+    )
+    return {
+        "commit_sha": commit_sha,
+        "godot_path": str(resolved_executable),
+        "godot_version": godot_version,
+        "godot_sha256": hashlib.sha256(resolved_executable.read_bytes()).hexdigest(),
+        "godot_cpp_revision": godot_cpp_revision.lower(),
+        "gdextension_path": str(extension.resolve()),
+        "gdextension_sha256": actual_extension_hash,
+        "native_source_sha256": actual_source_hash,
+        "native_artifact_commit_sha": artifact_commit,
+        "native_provenance_path": str(artifact.resolve()),
+        "os": {"platform": platform.platform(), "uname": dict(uname._asdict())},
+        "cpu": {"model_name": model_name, "affinity": sorted(os.sched_getaffinity(0))},
+        "configuration": configuration if configuration is not None else read_cpu_configuration(),
+        "gpu_metadata": read_gpu_metadata(sys_root),
+    }
+
+
+def benchmark_command(
+    output_path: Path,
+    mode: str,
+    commit_sha: str,
+    warmup_seconds: int,
+    seconds: int,
+    ready_path: Path | None = None,
+    benchmark_mode: str | None = None,
+    provenance: dict[str, object] | None = None,
+) -> list[str]:
     command = [
-        GODOT,
+        str(provenance["godot_path"]) if provenance is not None else GODOT,
         "--headless",
         "--remote-debug",
         "local://",
@@ -193,18 +316,39 @@ def benchmark_command(output_path: Path, mode: str, commit_sha: str, warmup_seco
         "--commit-sha",
         commit_sha,
     ]
+    if provenance is not None:
+        for field, argument in (
+            ("godot_version", "--godot-version"),
+            ("godot_sha256", "--godot-sha256"),
+            ("godot_cpp_revision", "--godot-cpp-revision"),
+            ("gdextension_sha256", "--gdextension-sha256"),
+            ("native_source_sha256", "--native-source-sha256"),
+        ):
+            command.extend([argument, str(provenance[field])])
     if ready_path is not None:
         command.extend(["--ready-file", str(ready_path), "--external-client"])
     return command
 
 
-def run_one(output_dir: Path, label: str, mode: str, commit_sha: str, warmup_seconds: int = WARMUP_SECONDS, seconds: int = MEASURED_SECONDS, benchmark_mode: str = "reference") -> None:
+def run_one(
+    output_dir: Path,
+    label: str,
+    mode: str,
+    commit_sha: str,
+    warmup_seconds: int = WARMUP_SECONDS,
+    seconds: int = MEASURED_SECONDS,
+    benchmark_mode: str = "reference",
+    provenance: dict[str, object] | None = None,
+) -> None:
     ready_path = output_dir / f"{label}.ready.json"
     output_path = output_dir / f"{label}.raw.json"
     client_path = output_dir / f"{label}.external.raw.json"
     environment_path = output_dir / f"{label}.environment.raw.json"
     log_path = output_dir / f"{label}.godot.log"
-    command = benchmark_command(output_path, mode, commit_sha, warmup_seconds, seconds, ready_path if mode == "authenticated-idle" else None, benchmark_mode)
+    command = benchmark_command(
+        output_path, mode, commit_sha, warmup_seconds, seconds,
+        ready_path if mode == "authenticated-idle" else None, benchmark_mode, provenance
+    )
     process_started = time.monotonic()
     configuration_start = read_cpu_configuration()
     sources = environment_sources()
@@ -262,6 +406,7 @@ def run_one(output_dir: Path, label: str, mode: str, commit_sha: str, warmup_sec
             "boost": _read_text(sources["boost_path"]) if sources["boost_path"] else None,
             "configuration_start": configuration_start,
             "configuration_end": configuration_end,
+            "qualification_provenance": provenance,
             "boundary_snapshots": {"initial": initial_sample, "final": final_sample},
             "sources": sources,
             "samples": environment_samples,
@@ -719,13 +864,18 @@ def record_environment_evidence_failure(output_dir: Path, commit_sha: str) -> Pa
     return write_qualification_failure(output_dir, commit_sha, "UNAVAILABLE", "environment_evidence_unavailable")
 
 
-def run_conditioning(output_dir: Path, commit_sha: str, configuration_start: dict[str, object] | None = None) -> dict[str, object]:
+def run_conditioning(
+    output_dir: Path,
+    commit_sha: str,
+    configuration_start: dict[str, object] | None = None,
+    provenance: dict[str, object] | None = None,
+) -> dict[str, object]:
     output_path = output_dir / "conditioning.raw.json"
     environment_path = output_dir / "conditioning.environment.raw.json"
     log_path = output_dir / "conditioning.godot.log"
     sources = environment_sources()
     configuration_start = configuration_start or read_cpu_configuration()
-    command = benchmark_command(output_path, "disabled", commit_sha, 0, CONDITIONING_SECONDS)
+    command = benchmark_command(output_path, "disabled", commit_sha, 0, CONDITIONING_SECONDS, benchmark_mode="smoke", provenance=provenance)
     process_started = time.monotonic()
     initial_sample = sample_environment(sources, process_started)
     samples: list[dict[str, object]] = [initial_sample]
@@ -755,6 +905,7 @@ def run_conditioning(output_dir: Path, commit_sha: str, configuration_start: dic
         "boost": _read_text(sources["boost_path"]) if sources["boost_path"] else None,
         "configuration_start": configuration_start,
         "configuration_end": configuration_end,
+        "qualification_provenance": provenance,
         "boundary_snapshots": {"initial": initial_sample, "final": final_sample},
         "sources": sources,
         "samples": samples,
@@ -788,6 +939,8 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
         if frequencies_a and frequencies_b and statistics.median(frequencies_a) else None
     )
     cooling = evaluate_cooling_sequence(samples, sources["processor_cooling_devices"])
+    # 240s is the shared counter boundary: each window measures its adjacent
+    # counter interval, so the boundary sample is not double-counted as a statistic.
     cppc_w1 = cppc_window_performance(samples, 180.0, 240.0)
     cppc_w2 = cppc_window_performance(samples, 240.0, 300.1)
     cppc_delta_percent = abs(cppc_w2 - cppc_w1) / cppc_w1 * 100.0 if cppc_w1 and cppc_w2 else None
@@ -796,14 +949,14 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
         {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
         if not temperatures_a or not temperatures_b or temperature_delta is None
         else {"status": "FAIL", "failure_kind": "conditioning_drift"}
-        if temperature_delta > 1.0
+        if temperature_delta > TCTL_DRIFT_MAX_C
         else {"status": "PASS", "failure_kind": None}
     )
     cppc_status = (
         {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
         if sources.get("cppc_protocol") != "available" or cppc_delta_percent is None
         else {"status": "FAIL", "failure_kind": "conditioning_drift"}
-        if cppc_delta_percent > 1.0
+        if cppc_delta_percent > CPPC_DRIFT_MAX_PERCENT
         else {"status": "PASS", "failure_kind": None}
     )
     cooling_status = combine_protocol_results(
@@ -818,12 +971,12 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
         "status": status,
         "failure_kind": failure_kind,
         "package_temperature_delta_c": temperature_delta,
-        "package_temperature_stable": temperature_delta is not None and temperature_delta <= 1.0,
+        "package_temperature_stable": temperature_delta is not None and temperature_delta <= TCTL_DRIFT_MAX_C,
         "frequency_diagnostic_delta_percent": frequency_delta_percent,
         "cppc_w1": cppc_w1,
         "cppc_w2": cppc_w2,
         "cppc_window_delta_percent": cppc_delta_percent,
-        "cppc_window_stable": cppc_delta_percent is not None and cppc_delta_percent <= 1.0,
+        "cppc_window_stable": cppc_delta_percent is not None and cppc_delta_percent <= CPPC_DRIFT_MAX_PERCENT,
         "cooling": cooling,
         "configuration": configuration,
         "aggregate_formula": "sum(reference_perf_cpu*delta_del_cpu)/sum(delta_ref_cpu)",
@@ -839,13 +992,24 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
     return payload
 
 
-def validate_raw(output_dir: Path, label: str, mode: str, commit_sha: str) -> dict[str, object]:
+def validate_raw(
+    output_dir: Path,
+    label: str,
+    mode: str,
+    commit_sha: str,
+    provenance: dict[str, object] | None = None,
+) -> dict[str, object]:
     payload = json.loads((output_dir / f"{label}.raw.json").read_text(encoding="utf-8"))
     samples = payload.get("samples_ms", [])
     if payload.get("sample_count") != SAMPLE_COUNT or len(samples) != SAMPLE_COUNT:
         raise RuntimeError(f"{label} did not produce exactly {SAMPLE_COUNT} physics samples")
     if payload.get("commit_sha") != commit_sha or payload.get("gsp_mode") != mode:
         raise RuntimeError(f"{label} provenance or mode is invalid")
+    if provenance is None:
+        raise RuntimeError(f"{label} complete qualification provenance is required")
+    for field in PROVENANCE_FIELDS:
+        if payload.get(field) != provenance.get(field):
+            raise RuntimeError(f"{label} {field} provenance is invalid")
     if payload.get("sampling_source") != "PhysicsFrameProfiler._tick" or payload.get("physics_ticks_per_second") != PHYSICS_HZ:
         raise RuntimeError(f"{label} lacks production PhysicsFrameProfiler provenance")
     timing = payload.get("monotonic_timing", {})
@@ -900,6 +1064,7 @@ def compare_payloads(
     output_dir: Path,
     commit_sha: str,
     gpu_metadata: dict[str, object] | None = None,
+    provenance: dict[str, object] | None = None,
 ) -> dict[str, object]:
     means = {label: statistics.fmean(payload["samples_ms"]) for label, payload in payloads.items()}
     pair_a_percent = (means["I_a"] - means["D_a"]) / means["D_a"] * 100.0
@@ -914,7 +1079,11 @@ def compare_payloads(
         }
         for label, payload in payloads.items()
     }
-    gpu_metadata = gpu_metadata or read_gpu_metadata()
+    provenance_record = dict(provenance or {"commit_sha": commit_sha})
+    gpu_metadata = gpu_metadata or provenance_record.get("gpu_metadata") or read_gpu_metadata()
+    provenance_record["gpu_metadata"] = gpu_metadata
+    provenance_record["gpu_recorded_by_process"] = gpu_metadata.get("status") == "available"
+    provenance_record["gpu_is_gate"] = False
     return {
         "status": "pass" if abs(aggregate_percent) < 1.0 else "fail",
         "run_order": RUN_ORDER,
@@ -938,12 +1107,7 @@ def compare_payloads(
         },
         "percentiles_are_diagnostic_only": True,
         "diagnostics": diagnostics,
-        "provenance": {
-            "commit_sha": commit_sha,
-            "gpu_metadata": gpu_metadata,
-            "gpu_recorded_by_process": gpu_metadata.get("status") == "available",
-            "gpu_is_gate": False,
-        },
+        "provenance": provenance_record,
         "raw_artifacts": {
             label: {
                 "physics": str(output_dir / f"{label}.raw.json"),
@@ -964,14 +1128,18 @@ def main() -> int:
         raise RuntimeError("commit provenance is required")
     pre_configuration = read_cpu_configuration()
     try:
-        conditioning = run_conditioning(output_dir, commit_sha, pre_configuration)
+        provenance = collect_qualification_provenance(configuration=pre_configuration)
+        conditioning = run_conditioning(output_dir, commit_sha, pre_configuration, provenance)
+    except ProvenanceError:
+        record_environment_evidence_failure(output_dir, commit_sha)
+        raise
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         record_environment_evidence_failure(output_dir, commit_sha)
         raise
     for label, mode in zip(RUN_LABELS, RUN_ORDER):
-        run_one(output_dir, label, mode, commit_sha)
-    payloads = {label: validate_raw(output_dir, label, mode, commit_sha) for label, mode in zip(RUN_LABELS, RUN_ORDER)}
-    comparison = compare_payloads(payloads, output_dir, commit_sha)
+        run_one(output_dir, label, mode, commit_sha, provenance=provenance)
+    payloads = {label: validate_raw(output_dir, label, mode, commit_sha, provenance) for label, mode in zip(RUN_LABELS, RUN_ORDER)}
+    comparison = compare_payloads(payloads, output_dir, commit_sha, provenance=provenance)
     post_configuration = read_cpu_configuration()
     try:
         environment_payloads = {

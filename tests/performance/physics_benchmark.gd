@@ -178,11 +178,11 @@ func _run() -> void:
     if _commit_sha.length() != 40:
         _fail("commit provenance is required")
         return
+    if _benchmark_mode != "smoke" and (_godot_version.is_empty() or _godot_sha256.length() != 64 or _godot_cpp_revision.length() != 40 or _gdextension_sha256.length() != 64 or _native_source_sha256.length() != 64):
+        _fail("complete Godot, godot-cpp, GDExtension, and native source provenance is required")
+        return
     if _gsp_mode != "none":
         await _run_gsp_mode()
-        return
-    if _godot_version.is_empty() or _godot_sha256.length() != 64 or _godot_cpp_revision.length() != 40 or _gdextension_sha256.length() != 64 or _native_source_sha256.length() != 64:
-        _fail("complete Godot, godot-cpp, GDExtension, and native source provenance is required")
         return
     var adapter := RenderingServer.get_video_adapter_name()
     if adapter.is_empty():
@@ -420,6 +420,11 @@ func _write_gsp_raw(output_path: String, mode: String, samples: Array[float]) ->
         "gsp_mode": mode,
         "authenticated_idle": mode == "authenticated-idle",
         "commit_sha": _commit_sha,
+        "godot_version": _godot_version,
+        "godot_sha256": _godot_sha256,
+        "godot_cpp_revision": _godot_cpp_revision,
+        "gdextension_sha256": _gdextension_sha256,
+        "native_source_sha256": _native_source_sha256,
         "physics_ticks_per_second": Engine.physics_ticks_per_second,
         "warmup_seconds": _warmup_seconds,
         "measured_seconds": _seconds,
