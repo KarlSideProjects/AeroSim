@@ -34,6 +34,21 @@ func _init() -> void:
     if overflow.get("t", "") != "error" or overflow.get("d", {}).get("code", "") != "overflow":
         failures.append("overflow must use the bounded error{code:overflow} envelope")
 
+    var source_file := FileAccess.open("res://common/gsp/gsp_server.gd", FileAccess.READ)
+    var source := source_file.get_as_text() if source_file != null else ""
+    if not source.contains("overflow_error_pending"):
+        failures.append("overflow state must have a persistent overflow-specific pending flag")
+    var failure_start := source.find("func _record_reliable_failure")
+    var failure_end := source.find("func _attempt_overflow_error", failure_start)
+    if failure_start < 0 or failure_end < 0 or source.substr(failure_start, failure_end - failure_start).contains("_attempt_overflow_error"):
+        failures.append("recording overflow must defer the attempt to the closing pump")
+    var overflow_start := source.find("func _attempt_overflow_error")
+    var overflow_end := source.find("func _record_hard_close", overflow_start)
+    if overflow_start < 0 or overflow_end < 0 or source.substr(overflow_start, overflow_end - overflow_start).contains("_flush_reliable"):
+        failures.append("overflow attempt must not recursively drain reliable FIFO")
+    if overflow_start < 0 or overflow_end < 0 or not source.substr(overflow_start, overflow_end - overflow_start).contains("_check_native_outbound_pressure"):
+        failures.append("overflow attempt must check native hard pressure before direct send")
+
     if failures.is_empty():
         print("GSP backpressure contract: PASS")
         quit(0)

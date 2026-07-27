@@ -52,6 +52,19 @@ def send_close(sock: socket.socket, payload: bytes) -> None:
     sock.sendall(bytes([0x88, 0x80 | len(payload)]) + mask + masked)
 
 
+def encode_text_frame(value: str) -> bytes:
+    payload = value.encode("utf-8")
+    mask = b"\x00\x00\x00\x00"
+    masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+    if len(payload) < 126:
+        header = bytes([0x81, 0x80 | len(payload)])
+    elif len(payload) < 65536:
+        header = bytes([0x81, 0x80 | 126]) + struct.pack("!H", len(payload))
+    else:
+        header = bytes([0x81, 0x80 | 127]) + struct.pack("!Q", len(payload))
+    return header + mask + masked
+
+
 def harness_command(ready: Path, stop: Path, status: Path, probe: Path, large_identity: bool, telemetry: bool = False) -> list[str]:
     command = [
         GODOT,
@@ -519,15 +532,32 @@ def run_slow_overflow_case(temp: Path) -> None:
             sock.close()
 
 
+def run_packet_overload_no_overflow_case(temp: Path) -> None:
+    process, identity, stop, status, _, _ = start_harness(temp, False)
+    sock: socket.socket | None = None
+    try:
+        sock = websocket_connect("127.0.0.1", int(identity["port"]))
+        authenticate(sock, identity)
+        sock.sendall(b"".join(encode_text_frame(json.dumps({"v": 2, "t": "ping", "seq": sequence, "d": {"request": sequence}}, separators=(",", ":"))) for sequence in range(1, 66)))
+        time.sleep(0.25)
+        stop.touch()
+        diagnostics = finish_harness(process, stop, status)
+        if diagnostics["reliable_send_failure_count"] != 1 or diagnostics["reliable_overflow_count"] != 0:
+            raise RuntimeError(f"packet-count rejection was not an ordinary send failure: {diagnostics!r}")
+        if diagnostics["reliable_overflow_error_attempt_count"] != 0:
+            raise RuntimeError(f"ordinary packet-count rejection attempted an overflow error: {diagnostics!r}")
+        print("GSP packet-count rejection: PASS overflow_error_attempted=false")
+    finally:
+        if sock is not None:
+            sock.close()
+
+
 def run_peer_isolation_case(temp: Path) -> None:
     process, identity, stop, status, _, probe = start_harness(temp, True, True)
     slow: socket.socket | None = None
     healthy: socket.socket | None = None
     try:
-        slow = websocket_connect("127.0.0.1", int(identity["port"]))
-        slow.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
-        if hasattr(socket, "TCP_WINDOW_CLAMP"):
-            slow.setsockopt(socket.IPPROTO_TCP, socket.TCP_WINDOW_CLAMP, 1024)
+        slow = websocket_connect("127.0.0.1", int(identity["port"]), receive_buffer_bytes=1024)
         authenticate(slow, identity)
         healthy = websocket_connect("127.0.0.1", int(identity["port"]))
         authenticate(healthy, identity)
@@ -601,6 +631,8 @@ def main() -> int:
         run_graceful_case(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-slow-") as temp_dir:
         run_slow_overflow_case(Path(temp_dir))
+    with tempfile.TemporaryDirectory(prefix="aerosim-gsp-packet-overload-") as temp_dir:
+        run_packet_overload_no_overflow_case(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-isolation-") as temp_dir:
         run_peer_isolation_case(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-replacement-") as temp_dir:

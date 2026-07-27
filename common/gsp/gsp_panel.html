@@ -108,7 +108,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   var presetStatus = $("preset-status");
   var presetDiff = $("preset-diff");
   var staticControls = [presetName, presetNote, presetSource, presetTarget, $("preset-save"), $("preset-refresh"), $("preset-retrieve"), $("preset-load"), $("preset-preview"), $("preset-compare-current"), $("preset-compare-two")];
-  var gspPerformance = { request_to_commit_ms: [], commit_to_rendered_ack_ms: [] };
+  var gspPerformance = { request_to_native_commit_ms: [], native_commit_to_rendered_ack_ms: [] };
   var maxPerformanceSamples = 512;
   var requestAnimationFrame = window.requestAnimationFrame || function (callback) { callback(performance.now()); return 0; };
 
@@ -119,11 +119,11 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     if (samples.length > maxPerformanceSamples) samples.shift();
   }
   window.__AEROSIM_GSP_PERF__ = {
-    reset: function () { gspPerformance.request_to_commit_ms = []; gspPerformance.commit_to_rendered_ack_ms = []; },
+    reset: function () { gspPerformance.request_to_native_commit_ms = []; gspPerformance.native_commit_to_rendered_ack_ms = []; },
     snapshot: function () {
       return {
-        request_to_commit_ms: gspPerformance.request_to_commit_ms.slice(),
-        commit_to_rendered_ack_ms: gspPerformance.commit_to_rendered_ack_ms.slice(),
+        request_to_native_commit_ms: gspPerformance.request_to_native_commit_ms.slice(),
+        native_commit_to_rendered_ack_ms: gspPerformance.native_commit_to_rendered_ack_ms.slice(),
       };
     },
   };
@@ -239,11 +239,13 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     if (!panelReady()) { controls.status.textContent = "Disconnected"; return; }
     var value = rawTuningValue(controls);
     if (value == null) { controls.status.textContent = "Invalid number"; return; }
-    var sequence = send(batch ? "set_tuning_batch" : "set_tuning", batch ? { changes: batch } : { parameter: descriptor.key, value: value });
+    var tuningData = batch ? { changes: batch } : { parameter: descriptor.key, value: value };
+    tuningData.client_sent_at_unix_ms = Number(performance.timeOrigin) + performance.now();
+    var sequence = send(batch ? "set_tuning_batch" : "set_tuning", tuningData);
     if (sequence == null) { controls.status.textContent = "Disconnected"; return; }
     controls.status.textContent = finalValue ? "Waiting for acknowledgement…" : "Preview " + value.toFixed(3);
     var generation = socketGeneration;
-    pendingTuning[sequence] = { controls: controls, descriptor: descriptor, final: finalValue, started: performance.now(), generation: generation };
+    pendingTuning[sequence] = { controls: controls, descriptor: descriptor, final: finalValue, started: performance.now(), startedClientEpochMs: tuningData.client_sent_at_unix_ms, generation: generation };
     setTimeout(function () {
       if (!pendingTuning[sequence] || pendingTuning[sequence].generation !== generation) return;
       delete pendingTuning[sequence];
@@ -497,11 +499,13 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         delete pendingTuning[Number(ack.request_seq)];
         pending.controls.status.textContent = ack.ok ? (ack.clamped ? "Clamped to " : "Committed ") + (ack.committed_value == null ? "" : Number(ack.committed_value).toFixed(3)) : String(ack.error || "Rejected");
         if (ack.ok && ack.committed_value != null) { pending.controls.slider.value = ack.committed_value; pending.controls.number.value = ack.committed_value; }
-        if (ack.ok && pending.final && Number(ack.commit_id) > 0) {
-          var commitReceivedAt = performance.now();
-          recordPerformanceSample("request_to_commit_ms", commitReceivedAt - pending.started);
-          requestAnimationFrame(function (renderedAt) {
-            recordPerformanceSample("commit_to_rendered_ack_ms", Number(renderedAt) - commitReceivedAt);
+        if (ack.ok && pending.final && Number(ack.commit_id) > 0 && Number.isFinite(Number(ack.native_commit_timestamp_unix_ms))) {
+          var nativeCommitEpochMs = Number(ack.native_commit_timestamp_unix_ms);
+          recordPerformanceSample("request_to_native_commit_ms", nativeCommitEpochMs - pending.startedClientEpochMs);
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function (renderedAt) {
+              recordPerformanceSample("native_commit_to_rendered_ack_ms", Number(performance.timeOrigin) + Number(renderedAt) - nativeCommitEpochMs);
+            });
           });
         }
       } else if (message.t === "tuning_commit") {

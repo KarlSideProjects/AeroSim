@@ -70,11 +70,14 @@ class FakeWebSocket {
 FakeWebSocket.OPEN = 1;
 
 let confirmResult = false;
+let wallClockMs = 1000;
+let rafCallbacks = [];
 const window = {
     location: { hash: "#port=8765&token=0123456789abcdef0123456789abcdef" },
     __AEROSIM_PANEL_TEST__: {},
     confirm: () => confirmResult,
     addEventListener() {},
+    requestAnimationFrame: (callback) => { rafCallbacks.push(callback); return rafCallbacks.length; },
 };
 const context = {
     window,
@@ -100,8 +103,8 @@ const context = {
     Object,
     String,
     Boolean,
-    Date,
-    performance: { now: () => 1 },
+    Date: { now: () => wallClockMs },
+    performance: { now: () => 1, timeOrigin: 1000 },
     setTimeout: () => 1,
     clearTimeout() {},
     setInterval: () => 1,
@@ -133,13 +136,19 @@ const tuningRequest = FakeWebSocket.instance.sent.at(-1);
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     v: 2,
     t: "tuning_ack",
-    d: { request_seq: tuningRequest.seq, ok: true, commit_id: 1, committed_value: 1.0 },
+    d: { request_seq: tuningRequest.seq, ok: true, commit_id: 1, committed_value: 1.0, native_commit_timestamp_unix_ms: 1011 },
 }) });
+assert.equal(rafCallbacks.length, 1);
+rafCallbacks.shift()(1013);
+assert.equal(rafCallbacks.length, 1);
+rafCallbacks.shift()(21);
 const timing = context.window.__AEROSIM_GSP_PERF__.snapshot();
-assert.equal(timing.request_to_commit_ms.length, 1);
-assert.equal(timing.commit_to_rendered_ack_ms.length, 1);
-assert.ok(timing.request_to_commit_ms[0] >= 0);
-assert.ok(timing.commit_to_rendered_ack_ms[0] >= 0);
+assert.equal(timing.request_to_native_commit_ms.length, 1);
+assert.equal(timing.native_commit_to_rendered_ack_ms.length, 1);
+assert.equal(timing.request_to_native_commit_ms[0], 10);
+assert.equal(timing.native_commit_to_rendered_ack_ms[0], 10);
+assert.equal(timing.request_to_commit_ms, undefined);
+assert.equal(timing.commit_to_rendered_ack_ms, undefined);
 
 const profile = { slots: Array(8).fill(null) };
 const registry = { parameters: [{ key: "simpleflight.rate_p", quick_adjust_eligible: true, min: 0.6, max: 1.4, step: 0.01 }] };

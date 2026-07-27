@@ -118,7 +118,7 @@ Do not replace it with a weaker metric.
 
 ## Handoff
 
-Write a detailed problem/solution/test report to `task-11-report.md`, including
+Write a detailed problem/solution/test report to `docs/reports/task-11-report.md`, including
 raw performance artifact paths and any environment-deferred qualification.
 Commit all task changes, remove only known generated Godot artifacts, and
 leave the worktree clean. Do not edit the ledger or GitHub issue.

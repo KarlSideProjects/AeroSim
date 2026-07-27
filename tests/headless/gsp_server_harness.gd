@@ -136,5 +136,5 @@ func _telemetry() -> Dictionary:
     return {
         "publish_count": Time.get_ticks_usec(),
         "tick": _process_ticks,
-        "fixture_payload": "x".repeat(15_000),
+        "fixture_payload": "x".repeat(30_000),
     }

@@ -61,8 +61,14 @@ def receive_frame(sock: socket.socket) -> tuple[int, bytes]:
     return opcode, payload
 
 
-def websocket_connect(host: str, port: int) -> socket.socket:
-    sock = socket.create_connection((host, port), timeout=5.0)
+def websocket_connect(host: str, port: int, receive_buffer_bytes: int | None = None) -> socket.socket:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(5.0)
+    if receive_buffer_bytes is not None:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer_bytes)
+        if hasattr(socket, "TCP_WINDOW_CLAMP"):
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_WINDOW_CLAMP, receive_buffer_bytes)
+    sock.connect((host, port))
     key = base64.b64encode(secrets.token_bytes(16)).decode("ascii")
     request = (
         f"GET / HTTP/1.1\r\nHost: {host}:{port}\r\n"

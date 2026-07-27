@@ -40,6 +40,7 @@ var hard_close_count := 0
 var last_reliable_error := ""
 var last_hard_close_error := ""
 var telemetry_snapshot_serialization_count := 0
+var telemetry_wire_serialization_count := 0
 var telemetry_send_count := 0
 var _telemetry_serialization_samples_usec: Array[float] = []
 
@@ -169,6 +170,7 @@ func get_peer_transport_diagnostics() -> Array[Dictionary]:
             "reliable_queue_count": record.get("reliable_queue", []).size(),
             "reliable_queue_bytes": int(record.get("reliable_bytes", 0)),
             "hard_close_recorded": bool(record.get("hard_close_recorded", false)),
+            "overflow_error_pending": bool(record.get("overflow_error_pending", false)),
             "overflow_error_attempted": bool(record.get("overflow_error_attempted", false)),
             "overflow_error_accepted": bool(record.get("overflow_error_accepted", false)),
             "overflow_error_delivered": false,
@@ -217,6 +219,7 @@ func get_telemetry_processing_diagnostics() -> Dictionary:
     var diagnostics := {
         "path": "always_process",
         "snapshot_serialization_count": telemetry_snapshot_serialization_count,
+        "wire_serialization_count": telemetry_wire_serialization_count,
         "send_count": telemetry_send_count,
         "serialization_samples_usec": samples,
     }
@@ -338,16 +341,19 @@ static func validate_set_tuning_message(message: String, previous_sequence: int)
     if sequence != previous_sequence + 1:
         return {"ok": false, "error": "invalid tuning sequence"}
     var data: Dictionary = envelope.d
-    if data.size() != 2 or typeof(data.get("parameter")) != TYPE_STRING or not data.has("value"):
+    if (data.size() != 2 and data.size() != 3) or typeof(data.get("parameter")) != TYPE_STRING or not data.has("value"):
         return {"ok": false, "error": "malformed tuning data"}
     if typeof(data.value) != TYPE_INT and typeof(data.value) != TYPE_FLOAT:
         return {"ok": false, "error": "wrong tuning value type"}
+    if data.has("client_sent_at_unix_ms") and (typeof(data.client_sent_at_unix_ms) != TYPE_INT and typeof(data.client_sent_at_unix_ms) != TYPE_FLOAT or not is_finite(float(data.client_sent_at_unix_ms)) or float(data.client_sent_at_unix_ms) < 0.0):
+        return {"ok": false, "error": "invalid tuning client timestamp"}
     return {
         "ok": true,
         "envelope": envelope,
         "sequence": sequence,
         "parameter": String(data.parameter),
         "value": data.value,
+        "client_sent_at_unix_ms": float(data.get("client_sent_at_unix_ms", -1.0)),
     }
 
 
@@ -360,7 +366,7 @@ static func validate_set_tuning_batch_message(message: String, previous_sequence
     if sequence != previous_sequence + 1:
         return {"ok": false, "error": "invalid tuning sequence"}
     var data: Dictionary = envelope.d
-    if data.size() != 1 or typeof(data.get("changes")) != TYPE_ARRAY or data.changes.is_empty():
+    if (data.size() != 1 and data.size() != 2) or typeof(data.get("changes")) != TYPE_ARRAY or data.changes.is_empty():
         return {"ok": false, "error": "malformed tuning batch"}
     var changes: Array = []
     for item in data.changes:
@@ -369,7 +375,9 @@ static func validate_set_tuning_batch_message(message: String, previous_sequence
         if typeof(item.value) != TYPE_INT and typeof(item.value) != TYPE_FLOAT:
             return {"ok": false, "error": "wrong tuning value type"}
         changes.append({"parameter": String(item.parameter), "value": item.value})
-    return {"ok": true, "envelope": envelope, "sequence": sequence, "changes": changes}
+    if data.has("client_sent_at_unix_ms") and (typeof(data.client_sent_at_unix_ms) != TYPE_INT and typeof(data.client_sent_at_unix_ms) != TYPE_FLOAT or not is_finite(float(data.client_sent_at_unix_ms)) or float(data.client_sent_at_unix_ms) < 0.0):
+        return {"ok": false, "error": "invalid tuning client timestamp"}
+    return {"ok": true, "envelope": envelope, "sequence": sequence, "changes": changes, "client_sent_at_unix_ms": float(data.get("client_sent_at_unix_ms", -1.0))}
 
 
 static func validate_set_quick_adjust_message(message: String, previous_sequence: int) -> Dictionary:
@@ -701,6 +709,7 @@ func _poll_unauthenticated_peers() -> void:
         record["telemetry_force_snapshot"] = true
         record["telemetry_request_seq"] = -1
         record["telemetry_next_due_usec"] = 0
+        record["tuning_client_sent_at_unix_ms"] = {}
         _authenticated_peers.append(record)
         if not _queue_identity_message(record, "hello", {}):
             _authenticated_peers.erase(record)
@@ -805,6 +814,10 @@ func _poll_authenticated_peers() -> void:
                 record["client_sequence"] = int(tuning_result.sequence)
                 var response := _submit_tuning_request(
                         int(record.id), int(record.connection_id), int(tuning_result.sequence), String(tuning_result.parameter), tuning_result.value)
+                var client_sent_at_unix_ms := float(tuning_result.get("client_sent_at_unix_ms", -1.0))
+                if client_sent_at_unix_ms >= 0.0:
+                    record["tuning_client_sent_at_unix_ms"][int(tuning_result.sequence)] = client_sent_at_unix_ms
+                    response["client_sent_at_unix_ms"] = client_sent_at_unix_ms
                 var response_ack_failed := false
                 if not bool(response.get("pending", false)):
                     response_ack_failed = not _queue_tuning_ack(record, int(tuning_result.sequence), response)
@@ -823,6 +836,10 @@ func _poll_authenticated_peers() -> void:
                 record["client_sequence"] = int(tuning_batch_result.sequence)
                 var batch_response := _submit_tuning_batch_request(
                         int(record.id), int(record.connection_id), int(tuning_batch_result.sequence), tuning_batch_result.changes)
+                var batch_client_sent_at_unix_ms := float(tuning_batch_result.get("client_sent_at_unix_ms", -1.0))
+                if batch_client_sent_at_unix_ms >= 0.0:
+                    record["tuning_client_sent_at_unix_ms"][int(tuning_batch_result.sequence)] = batch_client_sent_at_unix_ms
+                    batch_response["client_sent_at_unix_ms"] = batch_client_sent_at_unix_ms
                 var batch_ack_failed := false
                 if not bool(batch_response.get("pending", false)):
                     batch_ack_failed = not _queue_tuning_ack(record, int(tuning_batch_result.sequence), batch_response)
@@ -980,6 +997,13 @@ func _poll_tuning_results() -> void:
         for record in _authenticated_peers.duplicate():
             if int(record.get("id", -1)) != peer_id or int(record.get("connection_id", -1)) != connection_id:
                 continue
+            var request_seq := int(result.get("request_seq", -1))
+            var client_sent_times: Dictionary = record.get("tuning_client_sent_at_unix_ms", {})
+            if not result.has("client_sent_at_unix_ms") and client_sent_times.has(request_seq):
+                result = result.duplicate(true)
+                result["client_sent_at_unix_ms"] = float(client_sent_times[request_seq])
+            client_sent_times.erase(request_seq)
+            record["tuning_client_sent_at_unix_ms"] = client_sent_times
             if not _queue_tuning_ack(record, int(result.get("request_seq", -1)), result):
                 _authenticated_peers.erase(record)
                 _begin_close(record, "reliable send failed")
@@ -1053,17 +1077,13 @@ func _queue_reliable(record: Dictionary, envelope: Dictionary) -> bool:
     if serialized_bytes > MAX_RELIABLE_MESSAGE_BYTES:
         _record_reliable_failure(record, "reliable message too large", true)
         return false
-    if not _can_admit_reliable(queue, queued_bytes, serialized_bytes):
+    if not can_admit_reliable(queue.size(), queued_bytes, serialized_bytes):
         _record_reliable_failure(record, "reliable queue overflow", true)
         return false
     queue.append(serialized)
     record["reliable_queue"] = queue
     record["reliable_bytes"] = queued_bytes + serialized_bytes
     return true
-
-
-func _can_admit_reliable(queue: Array, queued_bytes: int, serialized_bytes: int) -> bool:
-    return can_admit_reliable(queue.size(), queued_bytes, serialized_bytes)
 
 
 static func can_admit_reliable(queue_count: int, queued_bytes: int, serialized_bytes: int) -> bool:
@@ -1107,27 +1127,19 @@ func _record_reliable_failure(record: Dictionary, reason: String, overflow: bool
             reliable_send_failure_count += 1
         last_reliable_error = reason
         record["reliable_failure_recorded"] = true
-    _begin_close(record, reason)
     if overflow:
-        _attempt_overflow_error(record)
+        record["overflow_error_pending"] = true
+    _begin_close(record, reason)
 
 
 func _attempt_overflow_error(record: Dictionary) -> void:
-    if bool(record.get("overflow_error_attempted", false)) or bool(record.get("overflow_error_draining", false)):
+    if not bool(record.get("overflow_error_pending", false)) or bool(record.get("overflow_error_attempted", false)):
         return
     record["overflow_error_accepted"] = false
     var peer: WebSocketPeer = record.get("peer")
-    if peer == null or peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+    if peer == null or peer.get_ready_state() != WebSocketPeer.STATE_OPEN or not record.get("reliable_queue", []).is_empty():
         return
-    if not record.get("reliable_queue", []).is_empty():
-        record["overflow_error_draining"] = true
-        var drained := _flush_reliable(record)
-        record["overflow_error_draining"] = false
-        if not drained:
-            return
-    if not record.get("reliable_queue", []).is_empty():
-        return
-    if peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+    if not _check_native_outbound_pressure(record):
         return
     record["overflow_error_attempted"] = true
     reliable_overflow_error_attempt_count += 1
@@ -1173,7 +1185,7 @@ func _begin_close(record: Dictionary, reason: String) -> void:
     record["close_reason"] = reason
     _closing_peers.append(record)
     var peer: WebSocketPeer = record.get("peer")
-    if peer != null and peer.get_ready_state() != WebSocketPeer.STATE_CLOSED and record.get("reliable_queue", []).is_empty():
+    if peer != null and peer.get_ready_state() != WebSocketPeer.STATE_CLOSED and record.get("reliable_queue", []).is_empty() and not bool(record.get("overflow_error_pending", false)):
         peer.close(1008, reason.substr(0, 120))
 
 
@@ -1201,9 +1213,9 @@ func _poll_closing_peers() -> void:
             if not _flush_reliable(record):
                 peer.close(1008, String(record.get("close_reason", "reliable close")).substr(0, 120))
                 continue
-        if peer.get_ready_state() == WebSocketPeer.STATE_OPEN and bool(record.get("reliable_failure_recorded", false)) and bool(record.get("overflow_error_attempted", false)) == false:
+        if peer.get_ready_state() == WebSocketPeer.STATE_OPEN and bool(record.get("overflow_error_pending", false)) and bool(record.get("overflow_error_attempted", false)) == false:
             _attempt_overflow_error(record)
-        if peer.get_ready_state() == WebSocketPeer.STATE_OPEN and record.get("reliable_queue", []).is_empty():
+        if peer.get_ready_state() == WebSocketPeer.STATE_OPEN and record.get("reliable_queue", []).is_empty() and (not bool(record.get("overflow_error_pending", false)) or bool(record.get("overflow_error_attempted", false))):
             peer.close(1008, String(record.get("close_reason", "closing")).substr(0, 120))
 
 
@@ -1217,14 +1229,10 @@ func _poll_telemetry() -> void:
     if source_sequence != _last_telemetry_source_seq:
         _last_telemetry_source_seq = source_sequence
         _telemetry_sample_seq += 1
-        var serialization_started_usec := Time.get_ticks_usec()
         _latest_telemetry_payload = serialize_telemetry_snapshot(
             source,
             _telemetry_sample_seq,
             int(source.get("tick", 0)))
-        _telemetry_serialization_samples_usec.append(float(Time.get_ticks_usec() - serialization_started_usec))
-        if _telemetry_serialization_samples_usec.size() > MAX_TELEMETRY_SERIALIZATION_SAMPLES:
-            _telemetry_serialization_samples_usec.pop_front()
         telemetry_snapshot_serialization_count += 1
     if _latest_telemetry_payload.is_empty():
         return
@@ -1269,7 +1277,13 @@ func _flush_telemetry(record: Dictionary) -> void:
     slot["d"] = data
     var next_sequence := int(record.sequence) + 1
     slot["seq"] = next_sequence
-    if peer.send_text(JSON.stringify(slot)) == OK:
+    var serialization_started_usec := Time.get_ticks_usec()
+    var serialized := JSON.stringify(slot)
+    _telemetry_serialization_samples_usec.append(float(Time.get_ticks_usec() - serialization_started_usec))
+    if _telemetry_serialization_samples_usec.size() > MAX_TELEMETRY_SERIALIZATION_SAMPLES:
+        _telemetry_serialization_samples_usec.pop_front()
+    telemetry_wire_serialization_count += 1
+    if peer.send_text(serialized) == OK:
         record["sequence"] = next_sequence
         if bool(data.get("fresh", false)):
             record["telemetry_force_snapshot"] = false

@@ -5296,10 +5296,14 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
         if remember_result:
             _remember_gsp_tuning_result(result)
         return result
+    var native_commit_started_usec := Time.get_ticks_usec()
     var native_result: Dictionary = native.call("commit_flight_tuning", public_physics_tick)
+    var native_commit_finished_usec := Time.get_ticks_usec()
     for key in native_result:
         result[key] = native_result[key]
     if bool(native_result.get("ok", false)):
+        result["native_commit_timestamp_unix_ms"] = Time.get_unix_time_from_system() * 1000.0
+        result["native_commit_latency_ms"] = float(native_commit_finished_usec - native_commit_started_usec) / 1000.0
         if _replay_recording_active and not _set_replay_physics_tick():
             result["ok"] = false
             result["error"] = "replay_recording_failed"
