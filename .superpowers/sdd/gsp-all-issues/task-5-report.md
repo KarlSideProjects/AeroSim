@@ -245,3 +245,27 @@ native-backed descriptors by changing their registry timing in memory.
 No GPU vendor, device-type, adapter, Vulkan ICD, NVIDIA, integrated, discrete,
 virtual, or software-adapter restriction was added. GPU evidence remains
 observational only.
+
+## Second-review committed-HEAD gate
+
+The implementation/report commit tested by the exact gate was `6598e88`:
+
+```text
+RUNNER_TEMP=/tmp/aerosim-gsp-245 \
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+scripts/verify_issue_11.sh
+# exit 0
+# license scan: passed
+# GUT JUnit: 276 tests, 0 failures, 0 errors
+# native atomic boundary: passed
+# GSP tuning integration: PASS
+# GSP tuning stress: PASS
+# headed acceptance: passed
+# complete-session replay integration: PASS
+# headless smoke: completed=true, native_probe=47, simulated_frames=5
+```
+
+The gate emitted existing Terrain3D/importer, renderer leak, and expected
+negative-path native diagnostics; none caused a failure. The report update is
+committed separately after that gate so the gate evidence remains tied to the
+implementation commit.
