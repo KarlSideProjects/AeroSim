@@ -6058,9 +6058,9 @@ func _refresh_quick_adjust_hud() -> void:
     quick_adjust_status_label.visible = screen == "flight"
     if _quick_adjust_active_slot >= 0 and _quick_adjust_active_slot < _quick_adjust_profile.slots.size() and _quick_adjust_profile.slots[_quick_adjust_active_slot] != null:
         var quick_slot: Dictionary = _quick_adjust_profile.slots[_quick_adjust_active_slot]
-        quick_adjust_status_label.text = "Quick Adjust %d: %s = %.3f" % [_quick_adjust_active_slot + 1, String(quick_slot.parameter), _quick_adjust_last_value]
+        quick_adjust_status_label.text = _format("ui.hud.quick_adjust_active", [_quick_adjust_active_slot + 1, String(quick_slot.parameter), _quick_adjust_last_value])
     else:
-        quick_adjust_status_label.text = "Quick Adjust: none"
+        quick_adjust_status_label.text = _t("ui.hud.quick_adjust_none")
 
 func _refresh_gamepad_hud() -> void:
     if gamepad_hud_panel == null or gamepad_hud_display == null:
