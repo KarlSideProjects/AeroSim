@@ -64,7 +64,7 @@ The exact committed-HEAD gate was run with:
 RUNNER_TEMP=/tmp/aerosim-gsp-251 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh
 ```
 
-It passed after implementation commit `119dfba`, including native build, license scan, GUT `277/277`, headed acceptance, replay, and headless smoke. It generated the expected build evidence at `build/gut/junit.xml`, `build/native_debug_artifact.json`, and `build/headless_smoke.json`; generated UID/import/translation files are cleanup-only artifacts.
+It passed on final committed HEAD `a35dea0`, including native build, license scan, GUT `277/277`, headed acceptance, replay, and headless smoke. It generated the expected build evidence at `build/gut/junit.xml`, `build/native_debug_artifact.json`, and `build/headless_smoke.json`; generated UID/import/translation files are cleanup-only artifacts.
 
 ## Deferred items
 
