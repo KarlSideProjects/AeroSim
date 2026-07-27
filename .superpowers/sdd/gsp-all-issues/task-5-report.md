@@ -142,6 +142,20 @@ scripts/verify_issue_11.sh
 
 Its result and final commit SHA are appended after execution.
 
+Full gate result on committed HEAD `0924c4e`:
+
+```text
+full_gate_status=0
+GUT JUnit: 276 tests, 0 failures, 0 errors
+GSP tuning integration: PASS
+GSP tuning stress: PASS
+complete-session replay integration: PASS
+headless smoke: PASS
+```
+
+The gate emitted the repository's existing renderer/importer warnings and
+expected negative-path native diagnostics; no new gate failure occurred.
+
 ## Scoped files and limitations
 
 The follow-up changes are limited to the existing native replay/configuration
