@@ -66,6 +66,32 @@ GSP telemetry integration: PASS
 
 The integration test covers authentication, NED/FRD/SI fields, independent `sample_seq`, hidden rate zero, fresh recovery, latest/current delivery after a three-second stall, and always-process serialization/send diagnostics.
 
+## Final Sol-high blocker addendum
+
+This second review-fix commit continues from `7db4d9212ab5af29f7b532d366573f70aaf07e22`; no earlier commit was amended.
+
+Problems and solutions:
+
+1. The panel rejected a matching fresh response when the paused snapshot reused the displayed `sample_seq`. Fresh/request correlation now runs before the non-waiting duplicate filter, so an equal sample is accepted only for the matching request; later ordinary duplicates remain suppressed.
+2. The server cleared `telemetry_force_snapshot` before `_flush_telemetry()` succeeded. Force and request state now remain set while sending is blocked; the latest unsent slot is rebuilt with the same `request_seq` and state is cleared only after a successful send.
+3. The stall test relied on localhost OS-buffer behavior. That could not establish application suppression, so the test now uses a local `SuppressedGspServer` subclass overriding `_flush_telemetry(record)` for a three-second suppression. The second peer is closed before this one-peer stall phase; diagnostics prove the nested depth-one slot advances near `stall_end_tick`, and release proves the first sent frame is the current correlated slot. The evidence is intentionally phrased as a newest unsent application slot, not retractable TCP history.
+4. The panel rendered `sample.tick` although the v2 envelope puts `tick` at the top level. It now renders `message.tick`, with a contract assertion preventing the nested form.
+5. Transport diagnostics read `telemetry_slot.sample_seq` instead of `telemetry_slot.d.sample_seq`. The diagnostic path now reads the nested payload; the suppression test asserts it while the slot is occupied.
+6. The earlier broad GUT failure came from tabs inserted into space-indented coordinate helper/test files. The native `Basis(...).get_euler(...)` Array implementation remains unchanged, and all affected files now preserve their established indentation. The corrected suite is 276/276.
+7. A direct `headless_smoke.gd` invocation did not create the authoritative artifact. The report now records only the prescribed `scripts/run_headless_smoke.sh` wrapper result. No GPU vendor/type restriction or production send-suppression seam was added.
+
+TDD RED evidence before the final production corrections included:
+
+```text
+gsp_telemetry_contract.gd
+RED: panel freshness ordering and top-level tick assertions failed.
+
+gsp_telemetry_integration.gd
+RED: diagnostics returned zero for an occupied nested slot and the old stall assertion was not near the stall end.
+```
+
+The final clarified test then passed with the test-only suppression subclass, including paused same-sample correlation, two-peer cadence before the one-peer stall phase, manual server polling, nested diagnostics, and first-frame release correlation.
+
 ## Verification
 
 ```text
@@ -112,7 +138,29 @@ PASS
 
 Existing GSP transport contract/integration/boundary/launch headless checks also passed.
 
-The smoke run emitted the repository’s expected invalid-fixture and Terrain3D mipmap warnings, but exited successfully. No headed/browser evidence was available or claimed.
+Final addendum gate rerun:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_telemetry_contract.gd
+GSP telemetry contract: PASS
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_telemetry_integration.gd
+GSP telemetry integration: PASS
+
+RUNNER_TEMP=/tmp/aerosim-gsp-final-native GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/test_native.sh
+PASS (exit 0)
+
+RUNNER_TEMP=/tmp/aerosim-gsp-final-issue11 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh
+PASS; GUT 276/276, headed acceptance report passed under Xvfb, headless smoke completed with native_probe=47 and 5 frames, replay and license/native gates passed
+
+sed -n '/<script>/,/<\/script>/p' common/gsp/gsp_panel.html | sed '1d;$d' | node --check
+PASS
+
+git diff --check
+PASS
+```
+
+The smoke run emitted the repository’s expected invalid-fixture and Terrain3D mipmap warnings, but exited successfully. The generic headed acceptance gate in `verify_issue_11.sh` also passed under Xvfb with no reported failures; no headed/browser evidence for the standalone GSP HTML panel was claimed.
 
 ## Scoped files
 

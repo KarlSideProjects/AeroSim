@@ -16,6 +16,7 @@ const CLOSING_PEER_TIMEOUT_MS := 1_000
 const MAX_MESSAGE_BYTES := 16_384
 const MAX_STRING_BYTES := 2_048
 const MAX_VALUE_DEPTH := 32
+const MAX_EXTRA_FIELDS := 16
 const MAX_RELIABLE_MESSAGES := 64
 const MAX_RELIABLE_BYTES := 65_536
 const NATIVE_OUTBOUND_BUFFER_BYTES := MAX_RELIABLE_BYTES + MAX_MESSAGE_BYTES
@@ -145,7 +146,7 @@ func get_peer_transport_diagnostics() -> Array[Dictionary]:
 			"reliable_queue_count": record.get("reliable_queue", []).size(),
 			"reliable_queue_bytes": int(record.get("reliable_bytes", 0)),
 			"telemetry_rate_hz": int(record.get("telemetry_rate_hz", 0)),
-			"telemetry_slot_sample_seq": int(record.get("telemetry_slot", {}).get("sample_seq", 0)),
+			"telemetry_slot_sample_seq": int(record.get("telemetry_slot", {}).get("d", {}).get("sample_seq", 0)),
 			"telemetry_slot_tick": int(record.get("telemetry_slot", {}).get("tick", 0)),
 		})
 	return diagnostics
@@ -224,12 +225,17 @@ static func validate_set_telemetry_message(message: String, previous_sequence: i
 	if sequence != previous_sequence + 1:
 		return {"ok": false, "error": "invalid telemetry sequence"}
 	var data: Dictionary = envelope.d
-	if data.size() != 2 or not data.has_all(["hz", "extra"]) or typeof(data.extra) != TYPE_BOOL:
+	if data.size() != 2 or not data.has_all(["hz", "extra"]) or typeof(data.extra) != TYPE_ARRAY:
 		return {"ok": false, "error": "malformed telemetry data"}
+	if data.extra.size() > MAX_EXTRA_FIELDS:
+		return {"ok": false, "error": "too many telemetry extra fields"}
+	for field_name in data.extra:
+		if typeof(field_name) != TYPE_STRING:
+			return {"ok": false, "error": "telemetry extra fields must be strings"}
 	var rate := _integer_value(data.hz)
 	if rate < 0 or rate > TELEMETRY_DEFAULT_RATE_HZ:
 		return {"ok": false, "error": "telemetry hz must be between zero and 30 Hz"}
-	return {"ok": true, "envelope": envelope, "sequence": sequence, "hz": rate, "extra": bool(data.extra)}
+	return {"ok": true, "envelope": envelope, "sequence": sequence, "hz": rate, "extra": data.extra.duplicate()}
 
 
 static func validate_request_snapshot_message(message: String, previous_sequence: int) -> Dictionary:
@@ -430,6 +436,7 @@ func _poll_unauthenticated_peers() -> void:
 		record["telemetry_slot"] = {}
 		record["telemetry_last_sample_seq"] = 0
 		record["telemetry_force_snapshot"] = true
+		record["telemetry_request_seq"] = -1
 		record["telemetry_next_due_usec"] = 0
 		_authenticated_peers.append(record)
 		if not _queue_identity_message(record, "hello", {}):
@@ -485,9 +492,6 @@ func _poll_authenticated_peers() -> void:
 				record["telemetry_rate_hz"] = int(rate_result.hz)
 				if int(rate_result.hz) == 0:
 					record["telemetry_slot"] = {}
-				else:
-					record["telemetry_force_snapshot"] = true
-					record["telemetry_next_due_usec"] = 0
 			elif message_type == "request_snapshot":
 				var request_result := validate_request_snapshot_message(message, int(record.get("client_sequence", -1)))
 				if not bool(request_result.get("ok", false)):
@@ -495,6 +499,7 @@ func _poll_authenticated_peers() -> void:
 					break
 				record["client_sequence"] = int(request_result.sequence)
 				record["telemetry_force_snapshot"] = true
+				record["telemetry_request_seq"] = int(request_result.sequence)
 				record["telemetry_next_due_usec"] = 0
 			else:
 				failed = true
@@ -654,20 +659,19 @@ func _poll_telemetry() -> void:
 		var force_snapshot := bool(record.get("telemetry_force_snapshot", false))
 		var next_due_usec := int(record.get("telemetry_next_due_usec", 0))
 		if force_snapshot or now_usec >= next_due_usec:
-			var next_sequence := int(record.sequence) + 1
 			var slot: Dictionary = _latest_telemetry_payload.duplicate(true)
-			slot["seq"] = next_sequence
 			if force_snapshot:
 				var slot_data: Dictionary = slot.d
 				slot_data["fresh"] = true
+				var request_sequence := int(record.get("telemetry_request_seq", -1))
+				if request_sequence >= 0:
+					slot_data["request_seq"] = request_sequence
 				slot["d"] = slot_data
-			record["sequence"] = next_sequence
 			if force_snapshot:
 				record["telemetry_slot"] = slot
 			else:
 				record["telemetry_slot"] = latest_wins_telemetry_slot(record.get("telemetry_slot", {}), slot)
 			record["telemetry_last_sample_seq"] = int(slot.d.get("sample_seq", 0))
-			record["telemetry_force_snapshot"] = false
 			record["telemetry_next_due_usec"] = now_usec + maxi(1, 1_000_000 / rate_hz)
 		_flush_telemetry(record)
 
@@ -682,7 +686,14 @@ func _flush_telemetry(record: Dictionary) -> void:
 	var data: Dictionary = slot.d
 	data["sent_at_unix_ms"] = Time.get_unix_time_from_system() * 1000.0
 	slot["d"] = data
+	var next_sequence := int(record.sequence) + 1
+	slot["seq"] = next_sequence
 	if peer.send_text(JSON.stringify(slot)) == OK:
+		record["sequence"] = next_sequence
+		if bool(data.get("fresh", false)):
+			record["telemetry_force_snapshot"] = false
+		if data.has("request_seq"):
+			record["telemetry_request_seq"] = -1
 		record["telemetry_slot"] = {}
 		telemetry_send_count += 1
 

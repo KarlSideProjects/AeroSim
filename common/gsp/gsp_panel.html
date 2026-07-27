@@ -53,6 +53,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   var clientSequence = 1;
   var lastSampleSequence = 0;
   var waitingForFresh = false;
+  var pendingFreshRequestSequence = null;
   var rateStartedAt = 0;
   var rateSamples = 0;
   var sparkValues = [];
@@ -69,16 +70,22 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     return "[" + Number(value.x_val).toFixed(3) + ", " + Number(value.y_val).toFixed(3) + ", " + Number(value.z_val).toFixed(3) + "] " + unit;
   }
   function euler(value) {
-    if (!value) return "—";
-    return "[roll " + Number(value.roll).toFixed(2) + "°, pitch " + Number(value.pitch).toFixed(2) + "°, yaw " + Number(value.yaw).toFixed(2) + "°] Z-Y-X";
+    if (!value || value.length !== 3) return "—";
+    return "[roll " + Number(value[0]).toFixed(2) + "°, pitch " + Number(value[1]).toFixed(2) + "°, yaw " + Number(value[2]).toFixed(2) + "°] Z-Y-X";
   }
   function send(type, data) {
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ v: protocolVersion, t: type, seq: clientSequence++, d: data }));
+    if (!socket || socket.readyState !== WebSocket.OPEN) return null;
+    var sequence = clientSequence++;
+    socket.send(JSON.stringify({ v: protocolVersion, t: type, seq: sequence, d: data }));
+    return sequence;
   }
-  function sendTelemetryRate(rate) { send("set_telemetry", { hz: rate, extra: false }); }
-  function requestFreshSnapshot() { waitingForFresh = true; freshState.textContent = "Waiting for fresh telemetry…"; send("request_snapshot", {}); }
-  function sendPing() { send("ping", { sent_at_unix_ms: Date.now() }); }
+  function sendTelemetryRate(rate) { send("set_telemetry", { hz: rate, extra: [] }); }
+  function requestFreshSnapshot() {
+    waitingForFresh = true;
+    freshState.textContent = "Waiting for fresh telemetry…";
+    pendingFreshRequestSequence = send("request_snapshot", {});
+  }
+  function sendPing() { send("ping", { sent_at_perf_ms: performance.now() }); }
   function disconnect(message) {
     if (socket) socket.close();
     socket = null;
@@ -103,15 +110,17 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   }
   function displayTelemetry(message) {
     var sample = message.d;
-    if (!sample.sample_seq || Number(sample.sample_seq) <= lastSampleSequence) return;
-    if (waitingForFresh && !sample.fresh) return;
+    if (waitingForFresh && (!sample.fresh || Number(sample.request_seq) !== pendingFreshRequestSequence)) return;
+    if (!sample.sample_seq) return;
+    if (!waitingForFresh && Number(sample.sample_seq) <= lastSampleSequence) return;
     lastSampleSequence = Number(sample.sample_seq);
     waitingForFresh = false;
+    pendingFreshRequestSequence = null;
     connection.textContent = "Connected";
     freshState.textContent = "Live telemetry";
     text("vehicle", sample.vehicle_instance || "—");
     text("authority", sample.authority || sample.control_authority || "—");
-    text("tick", sample.tick == null ? "—" : sample.tick);
+    text("tick", message.tick == null ? "—" : message.tick);
     rateSamples += 1;
     var elapsed = performance.now() - rateStartedAt;
     text("rate", elapsed > 0 ? (rateSamples * 1000 / elapsed).toFixed(1) + " Hz" : "—");
@@ -147,8 +156,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         sendPing();
         if (pingTimer) clearInterval(pingTimer);
         pingTimer = setInterval(sendPing, 1000);
-      } else if (message.t === "pong" && message.d.echo && message.d.echo.sent_at_unix_ms) {
-        text("latency", Math.max(0, Date.now() - Number(message.d.echo.sent_at_unix_ms)).toFixed(1) + " ms");
+      } else if (message.t === "pong" && message.d.echo && typeof message.d.echo.sent_at_perf_ms === "number") {
+        text("latency", Math.max(0, performance.now() - Number(message.d.echo.sent_at_perf_ms)).toFixed(1) + " ms");
       }
     });
     socket.addEventListener("close", function () { disconnect("GSP session closed"); });
