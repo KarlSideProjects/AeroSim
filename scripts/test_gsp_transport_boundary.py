@@ -112,9 +112,13 @@ def run_pending_handshake_boundary(temp: Path) -> None:
         timeout_seconds = 7.0
         time.sleep(timeout_seconds)
 
+        for index, peer in enumerate(held, start=1):
+            if not wait_for_eof(peer, 1.0):
+                raise RuntimeError(f"held incomplete handshake {index} was not reclaimed by the server")
+
         replacement = socket.create_connection(address, timeout=1.0)
         assert_stays_open(replacement, 0.5)
-        print("GSP pending handshake boundary: PASS peers=%d reclaimed=true capacity_reused=true" % pending_limit)
+        print("GSP pending handshake boundary: PASS peers=%d all_reclaimed=true capacity_reused=true" % pending_limit)
     finally:
         for peer in held:
             peer.close()

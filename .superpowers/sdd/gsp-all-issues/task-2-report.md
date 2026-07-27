@@ -109,14 +109,14 @@ The isolated raw boundary command and output:
 
 ```text
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 python3 scripts/test_gsp_transport_boundary.py
-GSP pending handshake boundary: PASS peers=8 reclaimed=true capacity_reused=true
+GSP pending handshake boundary: PASS peers=8 all_reclaimed=true capacity_reused=true
 GSP graceful boundary: PASS pongs=7 close_code=1008
 GSP forced boundary: PASS max_closing=1
 ```
 
-The graceful case uses a normal receive buffer, drains immediately, asserts the contiguous FIFO pong prefix and emitted close code 1008, and requires overflow count 1 with send-failure count 0. It does not claim graceful reclamation. The forced case uses a tiny receive buffer, never reads after flooding, waits beyond the one-second deadline, and asserts max closing >=1 followed by pre-stop live/closing zero with overflow count 1 and send-failure count 0. The pending case holds exactly eight incomplete TCP connections, verifies the ninth is rejected, waits seven seconds, and proves capacity reuse with a replacement connection.
+The graceful case uses a normal receive buffer, drains immediately, asserts the contiguous FIFO pong prefix and emitted close code 1008, and requires overflow count 1 with send-failure count 0. It does not claim graceful reclamation. The forced case uses a tiny receive buffer, never reads after flooding, waits beyond the one-second deadline, and asserts max closing >=1 followed by pre-stop live/closing zero with overflow count 1 and send-failure count 0. The pending case holds exactly eight incomplete TCP connections, verifies the ninth is rejected, waits seven seconds, then keeps every original socket open while asserting remote EOF on all eight before proving capacity reuse with a replacement connection.
 
-The three isolated cases were repeated three times; each repetition printed the same three PASS lines. Status snapshots are taken before server stop. The forced socket remains open and unread through its snapshot; the graceful socket remains open through its emission snapshot and is closed only by test cleanup afterward. The raw pending test uses no HTTP bytes or parser.
+The three isolated cases were repeated three times; each repetition printed the same three PASS lines. Status snapshots are taken before server stop. The forced socket remains open and unread through its snapshot; the graceful socket remains open through its emission snapshot and is closed only by test cleanup afterward. The pending sockets remain locally open while each server-side timeout is observed as EOF; cleanup and the status snapshot follow the capacity-reuse assertion. The raw pending test uses no HTTP bytes or parser.
 
 The launch contract was rerun after the release-debug gate change:
 
@@ -250,6 +250,7 @@ The review-fix Sol-high consultation also bound the reliable-queue ordering: `MA
 - Sol-high review required runtime boundary cases rather than source-text assertions. The new GDScript boundary suite and raw backpressure harness cover rejection, transition, fallback/exhaustion, sequence, overflow, close-code, and reclamation behavior.
 - Sol-high review found the ready-file publication race and conditional URL printing. The harness now atomically publishes readiness, and the launcher prints the fragment URL before optional shell opening.
 - The second independent Sol-high review found three blocking gaps: deadline checks after `continue`, no incomplete raw pending-handshake case, and client teardown before the status snapshot. The fix checks the deadline first, adds the standard-library raw pending-capacity/reclamation test, and keeps the forced backpressure socket open until status records pre-stop live zero. A replacement pending socket proves capacity reuse after the seven-second bounded wait.
+- The final pre-commit evidence review found that pending capacity reuse alone did not prove every original incomplete peer was reclaimed. The harness now observes remote EOF on each held original while its local socket remains open, then checks replacement capacity and performs cleanup/snapshot.
 - Sol-high's follow-up separated graceful close emission from forced reclamation. The graceful case now requires only overflow isolation, contiguous FIFO pongs, and emitted 1008; the forced case alone requires retention through the absolute deadline and pre-stop live/closing zero. The eager `_begin_close` flush was removed because isolation made it unnecessary; no outbound-buffer-zero inference or extra close operation was added.
 - No implementation problem remains. The only unavailable evidence is the headed/browser qualification described below; the focused transport and GUT gates are green.
 
