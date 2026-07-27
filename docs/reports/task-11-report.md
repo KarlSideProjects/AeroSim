@@ -1,5 +1,14 @@
 # Task 11 — GitHub issue #251 report
 
+## Current protocol revision
+
+The current code-bearing protocol revision is `dfa6d1c` (after `8976dfb` real-time timing and `95796bb` Processor cooling evidence). It adds sysfs CPPC `feedback_ctrs`/`reference_perf` parsing, `P(a,b)` window checks, resolved Processor cooling-device IDs, monotonic cooling/state/transition checks, phase-boundary snapshots, D_a/D_b CPPC/Tctl drift, exact CPU configuration provenance, and explicit `PASS`/`FAIL`/`UNAVAILABLE` with `failure_kind`.
+
+No formal conditioning or D-I-I-D qualification was run from `dfa6d1c`. The directories below are explicitly aborted pre-protocol attempts: each contains only `conditioning.godot.log`, has no valid raw artifact, and must not be counted as conditioning or qualification evidence.
+
+- `build/gsp-idle-qualification-8976dfb/` — aborted immediately after start by Ctrl-C; pre-Processor-cooling protocol.
+- `build/gsp-idle-qualification-95796bb/` — aborted immediately after start by Ctrl-C; pre-CPPC/final protocol.
+
 ## Problems and solutions
 
 - Reliable application admission now bounds application message count, application bytes, and message size independently. Native buffered bytes are sampled only by transport flush policy, so a native queue sample cannot consume application FIFO budget.
@@ -14,16 +23,17 @@
 RED:
 
 ```text
-python3 scripts/test_gsp_idle_benchmark_contract.py
+python3 -m unittest tests/test_gsp_issue251_protocol.py tests/test_gsp_issue251_contract.py
 ```
 
 The initial run failed because the old runner had same-process `paired` mode, no ready metadata/external client, and no frozen per-run signed comparison. GREEN passed after replacing that design.
 
-Focused GREEN evidence:
+Focused GREEN evidence for the current revision:
 
 ```text
-python3 scripts/test_gsp_idle_benchmark_contract.py                 # 3 tests PASS
+python3 -m unittest tests/test_gsp_issue251_protocol.py tests/test_gsp_issue251_contract.py  # 7 tests PASS
 python3 -m py_compile scripts/run_gsp_idle_benchmark.py              # PASS
+python3 scripts/test_gsp_idle_benchmark_smoke.py                     # PASS, real authenticated lifecycle
 python3 scripts/test_gsp_transport.py                                # PASS, 1000 samples, p99 0.119 ms
 Godot gsp_transport_contract.gd                                      # PASS
 Godot gsp_transport_integration.gd                                   # PASS
@@ -37,9 +47,9 @@ external authenticated-idle benchmark smoke                         # PASS
 
 `gsp_telemetry_integration.gd` was also run and failed its existing paused-restore assertion (`paused restore succeeds without a new source sample`). This issue changes only the performance benchmark and external runner; the telemetry contract and all boundary/transport focused tests passed. The failure is reported, not hidden.
 
-## Frozen qualification design and result
+## Historical qualification design and result
 
-Code-bearing HEAD: `328e9e356647cb75252d8fc50c364671af2f95b8`.
+Historical code-bearing HEAD: `328e9e356647cb75252d8fc50c364671af2f95b8`.
 
 The only fresh qualification was run once from a new output directory with this fixed order:
 
@@ -57,7 +67,7 @@ aggregate = (pair_a + pair_b) / 2
 
 Both individual signed pair percentages and the aggregate must have absolute value `<1%`. Percentiles are diagnostics only; no samples were dropped and no frame-index pairs were treated as independent experiments.
 
-Result: **FAIL**, retained as evidence; no post-result statistic or run count was changed.
+Result: **INVALID DURATION**, retained as invalid-duration evidence, not a performance FAIL. The runner passed `--fixed-fps 240`; artifact mtime showed only 5.4–6.4 wall seconds for the nominal 70-second runs, with 187–189 telemetry frames. It cannot establish the AC and was not reused.
 
 ```text
 D_a mean 0.1400449306 ms, p50 0.097 ms, p95 0.291 ms, p99 0.312 ms
@@ -79,6 +89,8 @@ The authenticated lifecycle evidence was valid in both idle runs: each had `16,8
 - `build/gsp-idle-benchmark-final3/`: old independent-process pilot from commit `a85323f`; it passed the superseded all-metrics calculation and is not qualification evidence.
 - `build/gsp-idle-benchmark-final4/`: old independent-process pilot from commit `3870388`; it failed the superseded all-metrics calculation (`mean +1.346645%`, `p99 +2.39617%`) and is not qualification evidence.
 - `build/gsp-idle-qualification/`: same-process AB/BA experiment from `0b4b718`; it showed phase drift and is not qualification evidence.
+- `build/gsp-idle-qualification-8976dfb/`: aborted pre-protocol attempt from `8976dfb`; only `conditioning.godot.log` exists.
+- `build/gsp-idle-qualification-95796bb/`: aborted pre-protocol attempt from `95796bb`; only `conditioning.godot.log` exists.
 
 These artifacts remain useful noise/root-cause evidence only. None was reused or selectively reclassified as the final result.
 
@@ -104,11 +116,11 @@ Command run once after code-bearing commit `328e9e3`:
 RUNNER_TEMP=/tmp/aerosim-gsp-251 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh
 ```
 
-The captured output reached the final headless smoke and reported native probe `47`, `5` simulated frames, native/license/build checks, GSP boundary, headed acceptance, replay, GUT `277/277`, and all visible sub-gates passed. The PTY wrapper lost the process before exposing a numeric exit-code record, so this report intentionally does not claim a captured `exit 0`.
+The wrapper result was `exit_code=0`; the captured output reached the final headless smoke and reported native probe `47`, `5` simulated frames, native/license/build checks, GSP boundary, headed acceptance, replay, GUT `277/277`, and all visible sub-gates passed. This was the prior gate, not a gate for current `dfa6d1c`.
 
 ## Deferred or blocked items
 
-- The paired `<1%` physics-overhead acceptance is **blocked by the recorded FAIL above**, not deferred and not claimed PASS. Completing it requires a new approved measurement design/root-cause correction; this session did not alter the frozen result after observing it.
+- The current CPPC/cooling-qualified `<1%` physics-overhead acceptance remains **not run** pending explicit authorization after `dfa6d1c`; no PASS or FAIL is claimed.
 - The paused-source-sample telemetry integration failure remains a focused-test blocker unrelated to this benchmark change and is recorded above.
 - No GPU vendor/type/device/driver/renderer allowlist was added. The frozen NVIDIA-specific G0.1 qualification was not used as proof for #251.
 - Codebase-memory MCP was available, the worktree index was ready, and it was used first for transport/telemetry/benchmark discovery. The issue ledger, GitHub, and #252 were not edited.
