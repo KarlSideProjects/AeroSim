@@ -34,7 +34,13 @@ func _init() -> void:
 		push_error("cannot write GSP harness readiness file")
 		quit(1)
 		return
-	ready.store_string(JSON.stringify({"port": started.port, "token": started.token, "listening": _server.is_listening()}))
+	ready.store_string(JSON.stringify({
+		"port": started.port,
+		"token": started.token,
+		"listening": _server.is_listening(),
+		"max_pending_handshakes": GspServer.MAX_PENDING_HANDSHAKES,
+		"closing_peer_timeout_ms": GspServer.CLOSING_PEER_TIMEOUT_MS,
+	}))
 	ready.flush()
 	ready.close()
 	if DirAccess.rename_absolute(temporary_path, _ready_path) != OK:

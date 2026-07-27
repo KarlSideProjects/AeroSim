@@ -484,6 +484,10 @@ func _poll_closing_peers() -> void:
 		if peer.get_ready_state() == WebSocketPeer.STATE_CLOSED:
 			_closing_peers.erase(record)
 			continue
+		if Time.get_ticks_msec() >= int(record.get("close_deadline_ms", 0)):
+			peer.close(-1)
+			_closing_peers.erase(record)
+			continue
 		if peer.get_ready_state() == WebSocketPeer.STATE_OPEN and not record.get("reliable_queue", []).is_empty():
 			if not _flush_reliable(record):
 				peer.close(1008, String(record.get("close_reason", "reliable close")).substr(0, 120))
@@ -491,9 +495,6 @@ func _poll_closing_peers() -> void:
 		if peer.get_ready_state() == WebSocketPeer.STATE_OPEN and record.get("reliable_queue", []).is_empty():
 			peer.close(1008, String(record.get("close_reason", "closing")).substr(0, 120))
 			continue
-		if Time.get_ticks_msec() >= int(record.get("close_deadline_ms", 0)):
-			peer.close(-1)
-			_closing_peers.erase(record)
 
 
 func _exit_tree() -> void:

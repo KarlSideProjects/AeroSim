@@ -12,6 +12,7 @@ Implemented the minimum authenticated GSP loopback transport below the issue #24
 - Authentication is the first complete bounded text application packet. It uses the authoritative v2 envelope and fixed-length constant-time token comparison.
 - Authenticated `hello` and `pong` messages use the same v2 envelope and carry `sim_version`, `proto_v`, `physics_hz`, `pid`, `instance_name`, `registry`, `registry_hash`, peer/process/vehicle/authority, and server sequence identity. The registry hash is explicitly `unavailable` until issue #244 supplies the parameter registry.
 - Reliable output is FIFO and bounded by application count/bytes plus native outbound buffered bytes. Native capacity is 81,920 bytes and native packet capacity is above the 64-message application limit. Overflow and send failures remain distinct; accepted work is retained in the closing set and flushed before the 1008 close frame.
+- Closing-peer deadlines are checked before every graceful-close or FIFO-flush branch. The one-second fallback uses `close(-1)` and removes the record; normal polling preserves accepted FIFO output before policy close 1008.
 - The dependency-free panel now reads the fragment, authenticates, and sends bounded v2 pings without persisting credentials.
 - No GPU vendor/type allowlist or NVIDIA-specific GSP requirement was added.
 
@@ -71,6 +72,16 @@ EXIT=1
 
 The first backpressure attempt also demonstrated why a real raw socket was required: the Godot test client's own outbound queue filled before the server boundary was driven. The final raw harness uses a small receive buffer and a large fixture identity so the server's native outbound buffer crosses the application hard limit.
 
+The second independent Sol-high review produced a new RED boundary before the final fix:
+
+```text
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 python3 scripts/test_gsp_transport_boundary.py
+RuntimeError: incomplete pending handshakes were not reclaimed by deadline
+RuntimeError: reliable backpressure was not recorded after sent=0: ...
+```
+
+The RED exposed both the missing pending-handshake transport case and the deadline path that could be skipped while a peer stayed open. An intermediate combined run after only moving the deadline check also showed that graceful-close and forced-reclamation evidence raced each other (`backpressure peer did not observe a WebSocket close; pongs=5`). Sol-high resolved this by isolating pending, graceful-emission, and forced-reclamation cases in separate harness processes. No eager production flush was retained.
+
 ### GREEN
 
 Exact focused contract command and output:
@@ -94,14 +105,18 @@ Review-fix transport boundary command and output:
 GSP transport boundary: PASS
 ```
 
-The raw reliable-overflow boundary command and output:
+The isolated raw boundary command and output:
 
 ```text
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 python3 scripts/test_gsp_transport_boundary.py
-GSP transport boundary backpressure: PASS sent=100 diagnostics={'after_stop_live_peer_count': 0, 'closing_peer_count': 0, 'last_reliable_error': 'reliable queue overflow', 'live_peer_count': 0, 'max_closing_peer_count': 1, 'peer_transport_diagnostics': [], 'reliable_overflow_count': 1, 'reliable_send_failure_count': 0}
+GSP pending handshake boundary: PASS peers=8 reclaimed=true capacity_reused=true
+GSP graceful boundary: PASS pongs=7 close_code=1008
+GSP forced boundary: PASS max_closing=1
 ```
 
-This test resumes reading after applying backpressure and asserts a contiguous pong prefix followed by WebSocket close code 1008. The closing peer remains observable and is reclaimed after the one-second absolute deadline.
+The graceful case uses a normal receive buffer, drains immediately, asserts the contiguous FIFO pong prefix and emitted close code 1008, and requires overflow count 1 with send-failure count 0. It does not claim graceful reclamation. The forced case uses a tiny receive buffer, never reads after flooding, waits beyond the one-second deadline, and asserts max closing >=1 followed by pre-stop live/closing zero with overflow count 1 and send-failure count 0. The pending case holds exactly eight incomplete TCP connections, verifies the ninth is rejected, waits seven seconds, and proves capacity reuse with a replacement connection.
+
+The three isolated cases were repeated three times; each repetition printed the same three PASS lines. Status snapshots are taken before server stop. The forced socket remains open and unread through its snapshot; the graceful socket remains open through its emission snapshot and is closed only by test cleanup afterward. The raw pending test uses no HTTP bytes or parser.
 
 The launch contract was rerun after the release-debug gate change:
 
@@ -114,7 +129,7 @@ The fixed-runner/raw-TCP harness used a 240 Hz fixed runner and a standard-libra
 
 ```text
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 python3 scripts/test_gsp_transport.py
-GSP fixed-runner transport: PASS samples=1000 p99_ms=0.086
+GSP fixed-runner transport: PASS samples=1000 p99_ms=0.121
 ```
 
 Python syntax, shell syntax, and whitespace checks:
@@ -151,6 +166,13 @@ exit 0
 ```
 
 The native script is quiet on success.
+
+During this uncommitted review-fix cycle, the normal GUT command correctly refused the stale native provenance artifact because the new fix commit did not yet exist. The proportionate recovery-mode rerun passed the test result gate while marking only its native-dependent cases pending:
+
+```text
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_gut_tests.sh --recovery-mode
+GUT JUnit: 275 tests, 0 failures, 0 errors
+```
 
 Headless smoke:
 
@@ -206,6 +228,7 @@ The review-fix Sol-high consultation also bound the reliable-queue ordering: `MA
 - The total live-peer bound includes all active and closing states; transition checks are exercised by real clients, not source-text assertions.
 - Native outbound capacity is 81,920 bytes, application reliable capacity is 65,536 bytes, and native queued packets are 80 versus the 64-message application cap.
 - Closing peers are retained until `STATE_CLOSED` or an absolute one-second deadline, where `close(-1)` prevents restarting graceful close for a non-reader.
+- The deadline check executes immediately after the closed-state check, before FIFO flush or graceful close. The forced boundary proves `close(-1)` reclamation without relying on client teardown; the graceful boundary records only close emission.
 - The ready-file harness publishes through a temporary file and atomic rename.
 - Identity comes from the existing flight runtime's telemetry/registry sources through a provider callback; the GSP layer does not create a parallel vehicle authority.
 - The server runs in always-process mode, not the physics loop.
@@ -216,16 +239,18 @@ The review-fix Sol-high consultation also bound the reliable-queue ordering: `MA
 
 - The first RED draft encoded the rejected string protocol. It was revised before implementation to integer v2 per the controller correction.
 - A manual parser was considered while investigating handshake validation. Sol-high's native API guidance rejected that approach; the final code uses `accept_stream()` exclusively.
-- The first fixed-runner attempt at the default 60 Hz runner measured p99 6.960 ms. The reproducible harness was corrected to run the server at `--fixed-fps 240`; an intermediate rerun measured 0.126 ms and the latest rerun measured 0.086 ms. The criterion was not weakened.
+- The first fixed-runner attempt at the default 60 Hz runner measured p99 6.960 ms. The reproducible harness was corrected to run the server at `--fixed-fps 240`; intermediate reruns measured 0.126 ms, 0.086 ms, and 0.114 ms, and the latest rerun measured 0.121 ms. The criterion was not weakened.
 - The first harness version allowed `_process()` to return `true`, causing the SceneTree harness to exit. It was corrected to return `false` and remain alive until the stop file.
 - A temporary indentation regression in the pre-existing flight runtime caused GUT parse errors. The affected lines were restored to the repository's existing four-space style; GUT then passed.
 - One unrelated collision-probe test transiently failed in an earlier full GUT run. A clean rerun passed all 275 tests with zero failures and zero errors.
 - Sol-high review found that one authenticated peer was incompatible with the two-panel workflow and that state-array-only admission could overflow during transitions. The fix uses a total eight-peer cap, two authenticated peers, and runtime transition checks.
 - Sol-high review found incomplete identity and a misleading config-hash-as-registry-hash shape. The fix emits the exact named identity fields and the explicit `registry_hash: "unavailable"` placeholder reserved for issue #244.
 - Sol-high review found permissive approximate integer checks and missing sequence continuity. The fix uses exact finite safe integrality, auth sequence zero, and strict incrementing client sequences; the numeric spelling decision is recorded above.
-- Sol-high review found that reliable accepted work could be discarded and that native outbound capacity was too small to make the intended overflow path reachable. The second Sol-high consultation resolved the remaining backpressure problem: use 81,920-byte native outbound capacity, count native plus application bytes, reject the triggering packet as a distinct overflow, retain closing records, flush accepted FIFO before 1008, and force-close with `close(-1)` at the one-second deadline. The raw receive-backpressure harness now proves overflow rather than send failure.
+- Sol-high review found that reliable accepted work could be discarded and that native outbound capacity was too small to make the intended overflow path reachable. The second Sol-high consultation resolved the remaining backpressure problem: use 81,920-byte native outbound capacity, count native plus application bytes, reject the triggering packet as a distinct overflow, retain closing records, preserve FIFO before 1008, and force-close with `close(-1)` at the one-second deadline. The isolated raw harness now proves overflow rather than send failure.
 - Sol-high review required runtime boundary cases rather than source-text assertions. The new GDScript boundary suite and raw backpressure harness cover rejection, transition, fallback/exhaustion, sequence, overflow, close-code, and reclamation behavior.
 - Sol-high review found the ready-file publication race and conditional URL printing. The harness now atomically publishes readiness, and the launcher prints the fragment URL before optional shell opening.
+- The second independent Sol-high review found three blocking gaps: deadline checks after `continue`, no incomplete raw pending-handshake case, and client teardown before the status snapshot. The fix checks the deadline first, adds the standard-library raw pending-capacity/reclamation test, and keeps the forced backpressure socket open until status records pre-stop live zero. A replacement pending socket proves capacity reuse after the seven-second bounded wait.
+- Sol-high's follow-up separated graceful close emission from forced reclamation. The graceful case now requires only overflow isolation, contiguous FIFO pongs, and emitted 1008; the forced case alone requires retention through the absolute deadline and pre-stop live/closing zero. The eager `_begin_close` flush was removed because isolation made it unnecessary; no outbound-buffer-zero inference or extra close operation was added.
 - No implementation problem remains. The only unavailable evidence is the headed/browser qualification described below; the focused transport and GUT gates are green.
 
 ## Acceptance evidence unavailable in this environment
