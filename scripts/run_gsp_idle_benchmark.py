@@ -36,6 +36,8 @@ CONDITIONING_MAX_SECONDS = 300.5
 MIN_TELEMETRY_FRAMES = 1800
 MIN_TELEMETRY_SPAN_SECONDS = 59.5
 MAX_TELEMETRY_GAP_SECONDS = 2.0
+CPPC_DRIFT_MAX_PERCENT = 1.0
+TCTL_DRIFT_MAX_C = 1.0
 
 
 class ExternalIdleClient:
@@ -191,8 +193,10 @@ def run_one(output_dir: Path, label: str, mode: str, commit_sha: str, warmup_sec
     log_path = output_dir / f"{label}.godot.log"
     command = benchmark_command(output_path, mode, commit_sha, warmup_seconds, seconds, ready_path if mode == "authenticated-idle" else None, benchmark_mode)
     process_started = time.monotonic()
+    configuration_start = read_cpu_configuration()
     sources = environment_sources()
-    environment_samples: list[dict[str, object]] = []
+    initial_sample = sample_environment(sources, process_started)
+    environment_samples: list[dict[str, object]] = [initial_sample]
     next_environment_sample = process_started
 
     def capture_environment() -> None:
@@ -235,12 +239,17 @@ def run_one(output_dir: Path, label: str, mode: str, commit_sha: str, warmup_sec
                 process.kill()
             process.wait()
         client_evidence["process_duration_seconds"] = time.monotonic() - process_started
+        final_sample = sample_environment(sources, process_started)
+        configuration_end = read_cpu_configuration()
         environment_path.write_text(json.dumps({
             "commit_sha": commit_sha,
             "sample_hz": 1,
             "process_duration_seconds": client_evidence["process_duration_seconds"],
             "governor": {path: _read_text(path) for path in sources["governor_paths"]},
             "boost": _read_text(sources["boost_path"]) if sources["boost_path"] else None,
+            "configuration_start": configuration_start,
+            "configuration_end": configuration_end,
+            "boundary_snapshots": {"initial": initial_sample, "final": final_sample},
             "sources": sources,
             "samples": environment_samples,
         }, indent=2) + "\n", encoding="utf-8")
@@ -254,6 +263,187 @@ def _read_text(path: str) -> str | None:
         return Path(path).read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
         return None
+
+
+def parse_cppc_snapshot(feedback_raw: str | None, reference_raw: str | None) -> dict[str, object] | None:
+    if feedback_raw is None or reference_raw is None or not reference_raw.strip().isdigit():
+        return None
+    counters: dict[str, int] = {}
+    for field in feedback_raw.split():
+        name, separator, value = field.partition(":")
+        if not separator or name not in {"ref", "del"} or not value.isdigit():
+            return None
+        counters[name] = int(value)
+    if set(counters) != {"ref", "del"}:
+        return None
+    return {
+        "raw": {"feedback_ctrs": feedback_raw, "reference_perf": reference_raw},
+        "feedback_ctrs": counters,
+        "reference_perf": int(reference_raw),
+    }
+
+
+def cppc_performance(before: dict[str, object] | None, after: dict[str, object] | None) -> float | None:
+    if before is None or after is None or before.get("reference_perf") != after.get("reference_perf"):
+        return None
+    before_counters = before.get("feedback_ctrs", {})
+    after_counters = after.get("feedback_ctrs", {})
+    reference_delta = int(after_counters.get("ref", -1)) - int(before_counters.get("ref", -1))
+    delivered_delta = int(after_counters.get("del", -1)) - int(before_counters.get("del", -1))
+    if reference_delta <= 0 or delivered_delta < 0:
+        return None
+    return float(before["reference_perf"]) * delivered_delta / reference_delta
+
+
+def compare_cpu_configuration(before: dict[str, object], after: dict[str, object]) -> dict[str, object]:
+    if not before or not after or "online_cpus" not in before or "policies" not in before or "boost" not in before:
+        return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence", "exact": False}
+    required = {"scaling_driver", "scaling_governor", "energy_performance_preference", "scaling_min_freq", "scaling_max_freq"}
+    if before["online_cpus"] is None or before["boost"] is None or any(
+        set(policy) != required or any(value is None for value in policy.values())
+        for policy in before["policies"].values()
+    ) or after["online_cpus"] is None or after["boost"] is None or any(
+        set(policy) != required or any(value is None for value in policy.values())
+        for policy in after["policies"].values()
+    ):
+        return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence", "exact": False}
+    equal = before == after
+    return {
+        "status": "PASS" if equal else "FAIL",
+        "failure_kind": None if equal else "configuration_drift",
+        "exact": equal,
+    }
+
+
+def evaluate_cooling_sequence(samples: list[dict[str, object]], devices: list[dict[str, object]]) -> dict[str, object]:
+    if not devices or not samples:
+        return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+    device_ids = [device["stable_id"] for device in devices]
+    parsed_samples = [sample.get("processor_cooling_samples") if "processor_cooling_samples" in sample else sample for sample in samples]
+    if any(
+        not isinstance(sample, dict)
+        or set(sample) != set(device_ids)
+        or any(
+            not isinstance(sample[device_id], dict)
+            or any(sample[device_id].get(key) is None for key in ("cur_state", "max_state", "total_trans", "time_in_state_ms"))
+            for device_id in device_ids
+        )
+        for sample in parsed_samples
+    ):
+        return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+    max_state_values = {
+        device_id: {sample[device_id]["max_state"] for sample in parsed_samples}
+        for device_id in device_ids
+    }
+    if any(len(values) != 1 for values in max_state_values.values()):
+        return {"status": "FAIL", "failure_kind": "cooling_reset", "max_state_values": max_state_values}
+    if any(sample[device_id]["cur_state"] != 0 for sample in parsed_samples for device_id in device_ids):
+        return {"status": "FAIL", "failure_kind": "cooling_state"}
+    for previous, current in zip(parsed_samples, parsed_samples[1:]):
+        for device_id in device_ids:
+            if current[device_id]["total_trans"] < previous[device_id]["total_trans"]:
+                return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback"}
+            for state in set(previous[device_id]["time_in_state_ms"]) | set(current[device_id]["time_in_state_ms"]):
+                if current[device_id]["time_in_state_ms"].get(state, -1) < previous[device_id]["time_in_state_ms"].get(state, -1):
+                    return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback"}
+    transition_increments = {
+        device_id: parsed_samples[-1][device_id]["total_trans"] - parsed_samples[0][device_id]["total_trans"]
+        for device_id in device_ids
+    }
+    if any(value < 0 for value in transition_increments.values()):
+        return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback", "transition_increments": transition_increments}
+    time_deltas: dict[str, dict[str, int]] = {}
+    for device_id in device_ids:
+        first = parsed_samples[0][device_id]["time_in_state_ms"]
+        last = parsed_samples[-1][device_id]["time_in_state_ms"]
+        states = set(first) | set(last)
+        if any(state not in first or state not in last for state in states):
+            return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+        deltas = {state: last[state] - first[state] for state in states}
+        if any(value < 0 for value in deltas.values()):
+            return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback", "time_deltas": {device_id: deltas}}
+        time_deltas[device_id] = deltas
+    if any(value > 0 for value in transition_increments.values()) or any(
+        delta > 0 for deltas in time_deltas.values() for state, delta in deltas.items() if state != "0"
+    ):
+        return {
+            "status": "FAIL",
+            "failure_kind": "thermal_throttle",
+            "transition_increments": transition_increments,
+            "time_deltas": time_deltas,
+        }
+    return {
+        "status": "PASS",
+        "failure_kind": None,
+        "transition_increments": transition_increments,
+        "time_deltas": time_deltas,
+        "max_state": {device_id: next(iter(values)) for device_id, values in max_state_values.items()},
+    }
+
+
+def evaluate_environment_protocol(
+    conditioning: dict[str, object],
+    run_payloads: dict[str, dict[str, object]],
+    pre_configuration: dict[str, object],
+    post_configuration: dict[str, object],
+) -> dict[str, object]:
+    configuration = compare_cpu_configuration(pre_configuration, post_configuration)
+    if configuration["status"] != "PASS":
+        return configuration
+    if conditioning.get("status") != "PASS" or conditioning.get("admitted") is False:
+        return {
+            "status": conditioning.get("status", "UNAVAILABLE"),
+            "failure_kind": conditioning.get("failure_kind", "missing_evidence"),
+        }
+    sources = conditioning.get("sources", {})
+    run_samples = {label: payload.get("samples", []) for label, payload in run_payloads.items()}
+    expected_phases = ["conditioning", *RUN_LABELS]
+    boundary_payloads = {"conditioning": conditioning, **run_payloads}
+    if any(
+        not isinstance(boundary_payloads.get(phase, {}).get("boundary_snapshots"), dict)
+        or set(boundary_payloads[phase]["boundary_snapshots"]) != {"initial", "final"}
+        for phase in expected_phases
+    ):
+        return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+    all_samples = list(conditioning.get("samples", []))
+    for samples in run_samples.values():
+        all_samples.extend(samples)
+    cooling = evaluate_cooling_sequence(all_samples, sources.get("processor_cooling_devices", []))
+    d_a = run_samples.get("D_a", [])
+    d_b = run_samples.get("D_b", [])
+    cppc_a = cppc_window_performance(d_a, 0.0, float("inf"))
+    cppc_b = cppc_window_performance(d_b, 0.0, float("inf"))
+    tctl_a = [sample["package_temperature_c"] for sample in d_a if sample.get("package_temperature_c") is not None]
+    tctl_b = [sample["package_temperature_c"] for sample in d_b if sample.get("package_temperature_c") is not None]
+    tctl_a_median = statistics.median(tctl_a) if tctl_a else None
+    tctl_b_median = statistics.median(tctl_b) if tctl_b else None
+    cppc_delta = abs(cppc_b - cppc_a) / cppc_a * 100.0 if cppc_a and cppc_b else None
+    tctl_delta = abs(tctl_b_median - tctl_a_median) if tctl_a_median is not None and tctl_b_median is not None else None
+    unavailable = cooling["status"] == "UNAVAILABLE" or cppc_delta is None or tctl_delta is None
+    failed = cooling["status"] == "FAIL" or (cppc_delta is not None and cppc_delta > CPPC_DRIFT_MAX_PERCENT) or (tctl_delta is not None and tctl_delta > TCTL_DRIFT_MAX_C)
+    status = "UNAVAILABLE" if unavailable else "FAIL" if failed else "PASS"
+    failure_kind = None if status == "PASS" else "missing_evidence" if status == "UNAVAILABLE" else cooling.get("failure_kind") or "run_environment_drift"
+    return {
+        "status": status,
+        "failure_kind": failure_kind,
+        "configuration": configuration,
+        "cooling": cooling,
+        "boundary_snapshots": {
+            "conditioning": conditioning.get("boundary_snapshots", {}),
+            **{label: payload.get("boundary_snapshots", {}) for label, payload in run_payloads.items()},
+        },
+        "D_a_D_b": {
+            "cppc_P_D_a": cppc_a,
+            "cppc_P_D_b": cppc_b,
+            "cppc_drift_percent": cppc_delta,
+            "tctl_median_D_a_c": tctl_a_median,
+            "tctl_median_D_b_c": tctl_b_median,
+            "tctl_drift_c": tctl_delta,
+            "cppc_threshold_percent": CPPC_DRIFT_MAX_PERCENT,
+            "tctl_threshold_c": TCTL_DRIFT_MAX_C,
+        },
+        "formula": "P(a,b)=reference_perf*(del_b-del_a)/(ref_b-ref_a)",
+    }
 
 
 def _read_processor_cooling_device(device_path: str, include_raw: bool = True) -> dict[str, object]:
@@ -276,10 +466,38 @@ def _read_processor_cooling_device(device_path: str, include_raw: bool = True) -
                 time_in_state = {}
                 break
             time_in_state[fields[0][5:]] = int(fields[1])
+        if parsed["max_state"] is not None and set(time_in_state) != {str(state) for state in range(parsed["max_state"] + 1)}:
+            time_in_state = {}
     parsed["time_in_state_ms"] = time_in_state or None
     if include_raw:
         parsed["raw"] = raw
     return parsed
+
+
+def _read_cppc_device(device: dict[str, str]) -> dict[str, object] | None:
+    snapshot = parse_cppc_snapshot(_read_text(device["feedback_path"]), _read_text(device["reference_path"]))
+    if snapshot is None:
+        return None
+    return {"stable_id": device["stable_id"], "path": device["path"], **snapshot}
+
+
+def read_cpu_configuration() -> dict[str, object]:
+    policies: dict[str, dict[str, str | None]] = {}
+    for policy_path in sorted(glob.glob("/sys/devices/system/cpu/cpufreq/policy*")):
+        resolved = Path(policy_path).resolve()
+        stable_id = resolved.name
+        policies[stable_id] = {
+            "scaling_driver": _read_text(str(resolved / "scaling_driver")),
+            "scaling_governor": _read_text(str(resolved / "scaling_governor")),
+            "energy_performance_preference": _read_text(str(resolved / "energy_performance_preference")),
+            "scaling_min_freq": _read_text(str(resolved / "scaling_min_freq")),
+            "scaling_max_freq": _read_text(str(resolved / "scaling_max_freq")),
+        }
+    return {
+        "online_cpus": _read_text("/sys/devices/system/cpu/online"),
+        "boost": _read_text("/sys/devices/system/cpu/cpufreq/boost"),
+        "policies": policies,
+    }
 
 
 def environment_sources() -> dict[str, object]:
@@ -303,7 +521,11 @@ def environment_sources() -> dict[str, object]:
     processor_cooling_devices = []
     for device_path in sorted(glob.glob("/sys/class/thermal/cooling_device*")):
         if _read_text(f"{device_path}/type") == "Processor":
-            processor_cooling_devices.append(_read_processor_cooling_device(device_path))
+            resolved = Path(device_path).resolve()
+            device = _read_processor_cooling_device(str(resolved))
+            device["stable_id"] = resolved.name
+            device["path"] = str(resolved)
+            processor_cooling_devices.append(device)
     processor_cooling_available = bool(processor_cooling_devices) and all(
         device["cur_state"] is not None
         and device["max_state"] is not None
@@ -311,6 +533,17 @@ def environment_sources() -> dict[str, object]:
         and device["time_in_state_ms"] is not None
         for device in processor_cooling_devices
     )
+    cppc_devices = []
+    for cppc_path in sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/acpi_cppc")):
+        resolved = Path(cppc_path).resolve()
+        cpu_id = resolved.parent.name
+        cppc_devices.append({
+            "stable_id": cpu_id,
+            "path": str(resolved),
+            "feedback_path": str(resolved / "feedback_ctrs"),
+            "reference_path": str(resolved / "reference_perf"),
+        })
+    cppc_available = bool(cppc_devices) and all(_read_cppc_device(device) is not None for device in cppc_devices)
     return {
         "cpu_frequency_paths": frequency_paths,
         "governor_paths": governor_paths,
@@ -322,6 +555,8 @@ def environment_sources() -> dict[str, object]:
         "thermal_throttle_status": "available" if throttle_paths else "unavailable",
         "processor_cooling_devices": processor_cooling_devices,
         "processor_cooling_protocol": "available" if processor_cooling_available else "unavailable",
+        "cppc_devices": cppc_devices,
+        "cppc_protocol": "available" if cppc_available else "unavailable",
     }
 
 
@@ -339,8 +574,14 @@ def sample_environment(sources: dict[str, object], started: float) -> dict[str, 
         if (value := _read_text(path)) is not None and value.isdigit()
     }
     processor_cooling_samples = {
-        device["path"]: _read_processor_cooling_device(device["path"])
+        device["stable_id"]: _read_processor_cooling_device(device["path"])
         for device in sources["processor_cooling_devices"]
+    }
+    for device in sources["processor_cooling_devices"]:
+        processor_cooling_samples[device["stable_id"]]["stable_id"] = device["stable_id"]
+    cppc_samples = {
+        device["stable_id"]: _read_cppc_device(device)
+        for device in sources["cppc_devices"]
     }
     return {
         "elapsed_seconds": time.monotonic() - started,
@@ -348,17 +589,31 @@ def sample_environment(sources: dict[str, object], started: float) -> dict[str, 
         "package_temperature_c": float(temperature_raw) / 1000.0 if temperature_raw and temperature_raw.lstrip("-").isdigit() else None,
         "thermal_throttle_counters": throttles if throttles else None,
         "processor_cooling_samples": processor_cooling_samples if processor_cooling_samples else None,
+        "cppc_samples": cppc_samples if cppc_samples else None,
     }
 
 
-def run_conditioning(output_dir: Path, commit_sha: str) -> dict[str, object]:
+def cppc_window_performance(samples: list[dict[str, object]], lower: float, upper: float) -> float | None:
+    window = [sample for sample in samples if lower <= float(sample.get("elapsed_seconds", -1.0)) <= upper]
+    if len(window) < 2:
+        return None
+    first = window[0].get("cppc_samples") or {}
+    last = window[-1].get("cppc_samples") or {}
+    values = [cppc_performance(first.get(cpu_id), last.get(cpu_id)) for cpu_id in set(first) & set(last)]
+    values = [value for value in values if value is not None]
+    return statistics.median(values) if values and len(values) == len(set(first) & set(last)) else None
+
+
+def run_conditioning(output_dir: Path, commit_sha: str, configuration_start: dict[str, object] | None = None) -> dict[str, object]:
     output_path = output_dir / "conditioning.raw.json"
     environment_path = output_dir / "conditioning.environment.raw.json"
     log_path = output_dir / "conditioning.godot.log"
     sources = environment_sources()
+    configuration_start = configuration_start or read_cpu_configuration()
     command = benchmark_command(output_path, "disabled", commit_sha, 0, CONDITIONING_SECONDS)
     process_started = time.monotonic()
-    samples: list[dict[str, object]] = []
+    initial_sample = sample_environment(sources, process_started)
+    samples: list[dict[str, object]] = [initial_sample]
     with log_path.open("wb") as log:
         process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
         next_sample = process_started
@@ -375,12 +630,17 @@ def run_conditioning(output_dir: Path, commit_sha: str) -> dict[str, object]:
                 process.kill()
                 process.wait()
     process_duration = time.monotonic() - process_started
+    final_sample = sample_environment(sources, process_started)
+    configuration_end = read_cpu_configuration()
     environment_path.write_text(json.dumps({
         "commit_sha": commit_sha,
         "sample_hz": 1,
         "process_duration_seconds": process_duration,
         "governor": {path: _read_text(path) for path in sources["governor_paths"]},
         "boost": _read_text(sources["boost_path"]) if sources["boost_path"] else None,
+        "configuration_start": configuration_start,
+        "configuration_end": configuration_end,
+        "boundary_snapshots": {"initial": initial_sample, "final": final_sample},
         "sources": sources,
         "samples": samples,
     }, indent=2) + "\n", encoding="utf-8")
@@ -401,9 +661,8 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
     if payload.get("commit_sha") != commit_sha:
         raise RuntimeError("conditioning environment provenance is invalid")
     sources = payload["sources"]
-    elapsed = lambda lower, upper: [sample for sample in samples if lower <= float(sample["elapsed_seconds"]) < upper]
-    first_window = elapsed(180.0, 240.0)
-    second_window = elapsed(240.0, 300.1)
+    first_window = [sample for sample in samples if 180.0 <= sample["elapsed_seconds"] < 240.0]
+    second_window = [sample for sample in samples if 240.0 <= sample["elapsed_seconds"] <= 300.1]
     temperatures_a = [sample["package_temperature_c"] for sample in first_window if sample["package_temperature_c"] is not None]
     temperatures_b = [sample["package_temperature_c"] for sample in second_window if sample["package_temperature_c"] is not None]
     frequencies_a = [sample["cpu_frequency_khz"] for sample in first_window if sample["cpu_frequency_khz"] is not None]
@@ -413,68 +672,49 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
         abs(statistics.median(frequencies_b) - statistics.median(frequencies_a)) / statistics.median(frequencies_a) * 100.0
         if frequencies_a and frequencies_b and statistics.median(frequencies_a) else None
     )
-    cooling_samples = [sample["processor_cooling_samples"] for sample in samples]
-    cooling_source_available = sources.get("processor_cooling_protocol") == "available"
-    cooling_paths = [device["path"] for device in sources["processor_cooling_devices"]]
-    cooling_samples_available = cooling_source_available and all(
-        set(sample or {}) == set(cooling_paths)
-        and
-        all(
-            device.get("cur_state") is not None
-            and device.get("max_state") is not None
-            and device.get("total_trans") is not None
-            and device.get("time_in_state_ms") is not None
-            for device in (sample or {}).values()
-        )
-        for sample in cooling_samples
+    cooling = evaluate_cooling_sequence(samples, sources["processor_cooling_devices"])
+    cppc_w1 = cppc_window_performance(samples, 180.0, 240.0)
+    cppc_w2 = cppc_window_performance(samples, 240.0, 300.1)
+    cppc_delta_percent = abs(cppc_w2 - cppc_w1) / cppc_w1 * 100.0 if cppc_w1 and cppc_w2 else None
+    configuration = compare_cpu_configuration(payload.get("configuration_start", {}), payload.get("configuration_end", {}))
+    source_missing = (
+        sources.get("cppc_protocol") != "available"
+        or sources.get("processor_cooling_protocol") != "available"
+        or not temperatures_a
+        or not temperatures_b
+        or cppc_delta_percent is None
+        or cooling["status"] == "UNAVAILABLE"
+        or configuration["status"] == "UNAVAILABLE"
     )
-    cooling_cur_states_zero = cooling_samples_available and all(
-        device.get("cur_state") == 0
-        for sample in cooling_samples
-        for device in sample.values()
+    failing_gate = (
+        temperature_delta is not None and temperature_delta > 1.0
+        or frequency_delta_percent is not None and frequency_delta_percent > 1.0
+        or cppc_delta_percent is not None and cppc_delta_percent > 1.0
+        or cooling["status"] == "FAIL"
+        or configuration["status"] == "FAIL"
     )
-    transition_increments: dict[str, int] = {}
-    nonzero_time_in_state_increments: dict[str, dict[str, int]] = {}
-    if cooling_samples_available:
-        for device in sources["processor_cooling_devices"]:
-            path = device["path"]
-            first = cooling_samples[0][path]
-            last = cooling_samples[-1][path]
-            transition_increments[path] = last["total_trans"] - first["total_trans"]
-            state_deltas = {
-                state: last["time_in_state_ms"][state] - first["time_in_state_ms"][state]
-                for state in set(first["time_in_state_ms"]) | set(last["time_in_state_ms"])
-                if state != "0"
-            }
-            nonzero_time_in_state_increments[path] = state_deltas
-    transition_stable = cooling_samples_available and all(value == 0 for value in transition_increments.values())
-    time_in_state_stable = cooling_samples_available and all(
-        value == 0
-        for device_deltas in nonzero_time_in_state_increments.values()
-        for value in device_deltas.values()
+    status = "UNAVAILABLE" if source_missing else "FAIL" if failing_gate else "PASS"
+    failure_kind = None if status == "PASS" else "missing_evidence" if status == "UNAVAILABLE" else (
+        cooling.get("failure_kind") if cooling["status"] == "FAIL" else configuration.get("failure_kind") if configuration["status"] == "FAIL" else "conditioning_drift"
     )
     checks = {
-        "package_temperature_source": sources.get("package_temperature_status") == "available" and bool(temperatures_a and temperatures_b),
+        "status": status,
+        "failure_kind": failure_kind,
         "package_temperature_delta_c": temperature_delta,
         "package_temperature_stable": temperature_delta is not None and temperature_delta <= 1.0,
-        "cpu_frequency_source": bool(frequencies_a and frequencies_b),
-        "cpu_frequency_delta_percent": frequency_delta_percent,
-        "cpu_frequency_stable": frequency_delta_percent is not None and frequency_delta_percent <= 1.0,
-        "thermal_throttle_source": cooling_source_available,
-        "thermal_throttle_increment": transition_increments if cooling_samples_available else None,
-        "thermal_throttle_stable": transition_stable,
-        "processor_cooling_protocol": {
-            "source_available": cooling_source_available,
-            "samples_parseable": cooling_samples_available,
-            "all_cur_state_zero": cooling_cur_states_zero,
-            "total_trans_increments": transition_increments,
-            "total_trans_stable": transition_stable,
-            "nonzero_time_in_state_ms_increments": nonzero_time_in_state_increments,
-            "nonzero_time_in_state_stable": time_in_state_stable,
-        },
+        "frequency_diagnostic_delta_percent": frequency_delta_percent,
+        "cppc_w1": cppc_w1,
+        "cppc_w2": cppc_w2,
+        "cppc_window_delta_percent": cppc_delta_percent,
+        "cppc_window_stable": cppc_delta_percent is not None and cppc_delta_percent <= 1.0,
+        "cooling": cooling,
+        "configuration": configuration,
+        "formula": "P(a,b)=reference_perf*(del_b-del_a)/(ref_b-ref_a)",
     }
     payload["protocol"] = checks
-    payload["admitted"] = all(value is True for key, value in checks.items() if key.endswith("_source") or key.endswith("_stable")) and cooling_cur_states_zero and time_in_state_stable
+    payload["status"] = status
+    payload["failure_kind"] = failure_kind
+    payload["admitted"] = status == "PASS"
     environment_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     if not payload["admitted"]:
         raise RuntimeError(f"conditioning protocol evidence is insufficient: {checks}")
@@ -575,11 +815,20 @@ def main() -> int:
     commit_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if len(commit_sha) != 40:
         raise RuntimeError("commit provenance is required")
-    run_conditioning(output_dir, commit_sha)
+    pre_configuration = read_cpu_configuration()
+    conditioning = run_conditioning(output_dir, commit_sha, pre_configuration)
     for label, mode in zip(RUN_LABELS, RUN_ORDER):
         run_one(output_dir, label, mode, commit_sha)
     payloads = {label: validate_raw(output_dir, label, mode, commit_sha) for label, mode in zip(RUN_LABELS, RUN_ORDER)}
     comparison = compare_payloads(payloads, output_dir, commit_sha)
+    post_configuration = read_cpu_configuration()
+    environment_payloads = {
+        label: json.loads((output_dir / f"{label}.environment.raw.json").read_text(encoding="utf-8"))
+        for label in RUN_LABELS
+    }
+    environment_protocol = evaluate_environment_protocol(conditioning, environment_payloads, pre_configuration, post_configuration)
+    comparison["environment_protocol"] = environment_protocol
+    comparison["status"] = "pass" if comparison["status"] == "pass" and environment_protocol["status"] == "PASS" else "fail"
     comparison_path = output_dir / "comparison.json"
     comparison_path.write_text(json.dumps(comparison, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(comparison, sort_keys=True))
