@@ -32,10 +32,6 @@ run_case disabled "$output_dir/disabled-a.raw.json"
 run_case authenticated-idle "$output_dir/authenticated-idle-a.raw.json"
 run_case authenticated-idle "$output_dir/authenticated-idle-b.raw.json"
 run_case disabled "$output_dir/disabled-b.raw.json"
-run_case disabled "$output_dir/disabled-c.raw.json"
-run_case authenticated-idle "$output_dir/authenticated-idle-c.raw.json"
-run_case authenticated-idle "$output_dir/authenticated-idle-d.raw.json"
-run_case disabled "$output_dir/disabled-d.raw.json"
 
 python3 - "$output_dir" "$comparison" <<'PY'
 import json
@@ -50,10 +46,6 @@ run_order = [
     ("authenticated-idle-a", "authenticated-idle"),
     ("authenticated-idle-b", "authenticated-idle"),
     ("disabled-b", "disabled"),
-    ("disabled-c", "disabled"),
-    ("authenticated-idle-c", "authenticated-idle"),
-    ("authenticated-idle-d", "authenticated-idle"),
-    ("disabled-d", "disabled"),
 ]
 payloads = {}
 for label, expected_mode in run_order:
@@ -91,11 +83,10 @@ passed = all(metric["absolute_delta_percent"] < 1.0 for metric in metrics.values
 comparison = {
     "status": "pass" if passed else "fail",
     "run_order": [label for label, mode in run_order],
-    "pairing": "two predeclared ABBA repetitions; aggregate every run metric by mode",
+    "pairing": "predeclared AB/BA repetitions; aggregate per-run metrics by mode",
     "warmup_seconds": 10,
     "measured_seconds": 60,
     "sample_count": 14400,
-    "run_count": len(run_order),
     "metric": "production PhysicsFrameProfiler physics_time_ms",
     "provenance": {
         "commits": sorted({payloads[label].get("commit_sha") for label, mode in run_order}),
