@@ -377,3 +377,24 @@ node tests/test_gsp_panel_behavior.js
 Only `tests/headless/gsp_preset_contract.gd` and `tests/headless/gsp_preset_integration.gd` changed in this round. No production behavior, registry migration, lifecycle recovery, replay/session markers, dependency, Hardware configuration/SettingsStore/replay authority, or GPU qualification rule changed. GPU qualification remains vendor/type neutral: no vendor, device, adapter, or renderer allowlist/restriction was added.
 
 The committed fix-round gate result is appended below.
+
+### Fix-round exact full gate
+
+Command, run on committed HEAD `28db4a2`:
+
+```text
+RUNNER_TEMP=/tmp/aerosim-gsp-247 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh
+# exit 0
+```
+
+Results:
+
+- native build/provenance completed;
+- license scan passed for 11 dependencies, including the expected GPL fixture rejection;
+- GUT passed 277/277 tests with 0 failures and 0 errors;
+- native atomic boundary, panel behavior, preset contract, real two-peer preset integration, GSP tuning, Quick Adjust, and GSP tuning stress passed;
+- headed acceptance passed on the available Vulkan environment;
+- complete-session replay integration passed;
+- headless smoke passed with `native_probe=47`, `physics_ticks_per_second=240`, and `simulated_frames=5`.
+
+The gate emitted only known non-fatal repository diagnostics: generated Godot `.uid`/import artifacts, Terrain3D mipmap warnings, the input-method warning, existing GUT orphans/leaks, native negative-path errors, and the deliberate non-finite preset fixture’s `Exponent too high` warning. No new failure or concern was introduced. GPU qualification remains vendor/type neutral; NVIDIA appeared only as the local headed-test device and no vendor/device/adapter/renderer restriction was added.
