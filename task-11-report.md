@@ -10,7 +10,7 @@
 ## Solutions
 
 - `common/gsp/gsp_server.gd` now keeps application count, application bytes, and serialized message size independently bounded. Native buffered bytes are excluded from admission and sampled only during reliable/telemetry flush.
-- Runtime policy is reachable and GPU-neutral: `0 < MAX_RELIABLE_MESSAGE_BYTES <= MAX_RELIABLE_BYTES < HARD_CLOSE_THRESHOLD_BYTES`, telemetry suppression precedes the reliable byte bound, and hard-close headroom fits `NATIVE_OUTBOUND_CAPACITY_BYTES`.
+- Runtime policy is reachable and GPU-neutral: `MAX_RELIABLE_BYTES=65536`, `MAX_RELIABLE_MESSAGE_BYTES=32768`, `TELEMETRY_SUPPRESSION_THRESHOLD_BYTES=32768`, `HARD_CLOSE_THRESHOLD_BYTES=98304`, and `NATIVE_OUTBOUND_CAPACITY_BYTES=131072`; these satisfy `0 < MAX_RELIABLE_MESSAGE_BYTES <= MAX_RELIABLE_BYTES`, telemetry suppression below the reliable bound, the reliable bound below hard close, and hard-close headroom within native capacity.
 - Reliable flush peeks the FIFO head, checks native pressure, sends, removes/decrements only after `OK`, then resamples and hard-closes only the impaired peer. Telemetry sends only with an empty reliable FIFO and native bytes below suppression.
 - Tuning commits route through `_queue_identity_message` and the central admission helper. Packet-count rejection is an explicit reliable send failure. Overflow preserves earlier FIFO order and performs one nonrecursive best-effort error attempt after earlier messages drain, recording local attempt and local acceptance separately without claiming delivery.
 - `common/gsp/gsp_panel.html` records bounded production timing samples and exposes a read-only test snapshot. No new dependency or architecture was added.
@@ -57,6 +57,14 @@ This is not acceptance evidence for telemetry suppression or hard-close isolatio
 - Panel timing contract: `tests/test_gsp_panel_behavior.js`
 - Telemetry distribution assertions: `tests/headless/gsp_telemetry_integration.gd`
 - No raw issue-specific browser performance JSON/SVG artifact was produced; stdout-only transport timings are not browser qualification artifacts.
+
+The exact committed-HEAD gate was run with:
+
+```text
+RUNNER_TEMP=/tmp/aerosim-gsp-251 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh
+```
+
+It passed after implementation commit `119dfba`, including native build, license scan, GUT `277/277`, headed acceptance, replay, and headless smoke. It generated the expected build evidence at `build/gut/junit.xml`, `build/native_debug_artifact.json`, and `build/headless_smoke.json`; generated UID/import/translation files are cleanup-only artifacts.
 
 ## Deferred items
 
