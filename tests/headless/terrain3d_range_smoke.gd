@@ -9,11 +9,11 @@ const TerrainAssets = preload("res://assets/third_party/terrain3d_demo/demo/data
 const FieldCenter := Vector3(480, 79.7, -740)
 ## Meadow east of the taxiway.
 const GrassSample := Vector3(540, 0, -760)
-## Midpoint of the worn dirt track joining the two pads.
-const SoilSandSample := Vector3(480, 0, -745)
+## The north pad's worn soil apron.
+const SoilSandSample := Vector3(528, 0, -790)
 ## The north launch pad's rock hardstand.
 const RockSample := Vector3(520, 0, -790)
-const ReliefSamples: Array[Vector3] = [Vector3(520, 0, -822), Vector3(556, 0, -700)]
+const ReliefSamples: Array[Vector3] = [Vector3(578, 0, -842), Vector3(556, 0, -700)]
 const PhysicalReliefSample := Vector3(408, 0, -792)
 
 func _initialize() -> void:

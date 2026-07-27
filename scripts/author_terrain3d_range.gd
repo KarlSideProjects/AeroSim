@@ -37,15 +37,18 @@ const MeadowHeightTolerance := 2.0
 
 const PadNorth := Vector2(520, -790)
 const PadSouth := Vector2(440, -700)
-const PadRadius := 9.0
-const PadFeather := 5.0
+const PadRadius := 6.0
+## Worn soil apron ringing the hardstand, so the pilot sees authored ground in
+## every direction from the spawn rather than only along the taxiway.
+const PadApronRadius := 11.0
+const PadFeather := 3.0
 
 ## Worn dirt track between the two pads.
 const TaxiwayHalfWidth := 3.5
 const TaxiwayFeather := 2.5
 
 ## Loose rock at the foot of the north ridge landmark.
-const ScreeCenter := Vector2(520, -822)
+const ScreeCenter := Vector2(578, -842)
 const ScreeRadius := 7.0
 
 ## Texture asset ids, matching `assets.tres`: 0 Rock, 1 Grass, 2 SoilSand.
@@ -140,22 +143,26 @@ func _paint_meadow(data: Terrain3DData) -> void:
 ## ground cover over hand-painted rock, so painting the pad this way is what
 ## keeps grass from growing through the surface the drone launches from.
 func _author_pad(data: Terrain3DData, center: Vector2) -> void:
-    var outer := PadRadius + PadFeather
+    var outer := PadApronRadius + PadFeather
     for x in range(int(center.x - outer) - 1, int(center.x + outer) + 2):
         for z in range(int(center.y - outer) - 1, int(center.y + outer) + 2):
             var distance := Vector2(x, z).distance_to(center)
             if distance > outer:
                 continue
             var position := Vector3(x, 0, z)
-            if distance <= PadRadius:
+            if distance <= PadApronRadius:
                 data.set_height(position, FieldHeight)
             else:
-                var pull := 1.0 - (distance - PadRadius) / PadFeather
+                var pull := 1.0 - (distance - PadApronRadius) / PadFeather
                 var height := data.get_height(position)
                 if is_finite(height):
                     data.set_height(position, lerpf(height, FieldHeight, pull * pull))
-            var blend := 1.0 if distance <= PadRadius else clampf(1.0 - (distance - PadRadius) / PadFeather, 0.0, 1.0)
-            _paint(data, position, TextureGrass, TextureRock, blend)
+            if distance <= PadRadius:
+                _paint(data, position, TextureGrass, TextureRock, 1.0)
+            elif distance <= PadApronRadius:
+                _paint(data, position, TextureGrass, TextureSoilSand, 1.0)
+            else:
+                _paint(data, position, TextureGrass, TextureSoilSand, clampf(1.0 - (distance - PadApronRadius) / PadFeather, 0.0, 1.0))
 
 
 ## A worn soil track joining the two pads, so the field reads as used ground
@@ -214,6 +221,7 @@ func _report(data: Terrain3DData) -> void:
     for probe in [
         ["PadNorth", Vector3(PadNorth.x, 0, PadNorth.y)],
         ["PadSouth", Vector3(PadSouth.x, 0, PadSouth.y)],
+        ["Apron", Vector3(528, 0, -790)],
         ["Taxiway", Vector3(480, 0, -745)],
         ["Meadow", Vector3(540, 0, -760)],
         ["Scree", Vector3(ScreeCenter.x, 0, ScreeCenter.y)],

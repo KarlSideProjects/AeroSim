@@ -122,7 +122,7 @@ assets/maps/terrain3d_range/data/              作業層輸出，場景 data_dir
 
 實作過程中量測出五件設計時未知的事，各自改變了做法。
 
-1. **起降坪鋪面改為岩石，另闢泥土滑行道。** 設計原本讓起降坪用 SoilSand。實作時發現 `addons/terrain_3d/extras/particle_example/particles.gdshader` 會剔除手繪岩石（id 0）上的地被，但不剔除 SoilSand，草會直接長穿起降坪。改為起降坪畫岩石硬鋪面（草被剔除），並在兩坪之間畫一條 SoilSand 泥土滑行道承載該貼圖層。三種地表的驗證意圖不變。
+1. **起降坪改為「岩石硬鋪面 + 泥土圍裙」，另加泥土滑行道。** 設計原本讓整個起降坪用 SoilSand。實作時發現 `addons/terrain_3d/extras/particle_example/particles.gdshader` 會剔除手繪岩石（id 0）上的地被，但不剔除 SoilSand，草會直接長穿起降坪。最終結構是：內圈半徑 6 m 岩石硬鋪面（草被剔除，無人機停這裡）、6~11 m SoilSand 泥土圍裙、11~14 m 羽化入草地，另在兩坪之間畫一條泥土滑行道。圍裙是必要的：`headed_acceptance.gd` 會統計出生點 FPV 截圖裡的草色與土色像素數，泥土必須環繞出生點而不能只沿單一軸向分佈，否則機頭朝向不同就拍不到。
 
 2. **作業筆刷必須清除 auto bit。** `auto_shader` 開啟時，shader 與 `Terrain3DData.get_texture_id()` 都依坡度推導地表、忽略手繪 id。所有作業像素都要先 `set_control_auto(position, false)`，手繪才會生效。
 
@@ -131,6 +131,12 @@ assets/maps/terrain3d_range/data/              作業層輸出，場景 data_dir
 4. **地被需要專案自有的參數。** 上游範例的葉片高度約 1.8 m，會淹沒停在坪上的無人機。新增 `assets/maps/terrain3d_range/grass_process_material.tres` 沿用上游 shader 但降到腳踝高度並放慢風速，於場景中覆蓋 `process_material` 與 `mesh`，不修改 addon。
 
 5. **`mesh_lods` 7 / `mesh_size` 48。** 原本的 4 / 16 是為 161 m 灰盒設定的，在 3 km 山谷會把遠景裁掉。改用 Terrain3D 預設值以撐出完整視距。
+
+6. **`headed_acceptance.gd` 也需要改，設計判斷錯誤。** 設計預期它只斷言節點名稱與相對關係。實跑發現第 340-347 行同樣寫死了 `(80,0,-80)`、`(8,0,-36)`、`(24,0,-44)` 與 `get_height((30,0,-72))`。已抽成檔頭常數並指向新飛行場，斷言不變。
+
+7. **`NorthRidgeRock` 移出出生點正前方。** 原本放在 `(520, -822)`，正對 `SpawnNorth` 的 −z 機頭方向且僅 32 m，實機第三人稱畫面被一顆巨石塞滿。移到 `(578, -842)`（地形高 83.2 m），起飛視野改為朝山谷開闊，岩石成為右前方地標。碎石繪製與兩份測試的起伏取樣點同步移動。
+
+8. **起降平台材質調暗。** 第三人稱鏡頭貼近地面，4 × 4 m 平台會佔滿畫面下半部；改亮色水泥後整片過曝。最終用 `Color(0.3, 0.31, 0.3)`、roughness 0.85，既能與深色硬鋪面區分又不搶畫面。
 
 另外，`tests/headless/terrain3d_range_smoke.gd` 有兩處射線起點寫死在 y=50 與 y=0，在 79.7 m 的地形上會從地底往下射而全部落空。已改為由 marker 高度與作業高度推導起點，斷言本身不變。
 
