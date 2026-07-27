@@ -1,28 +1,61 @@
 #!/usr/bin/env python3
-"""Collect and evaluate the non-human GSP Wayland qualification evidence."""
+"""Collect and evaluate explicit GSP Wayland qualification evidence."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any, Callable
 
-try:
-    from scripts.run_gsp_idle_benchmark import read_gpu_metadata
-except ModuleNotFoundError:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from run_gsp_idle_benchmark import read_gpu_metadata
-
 
 ROOT = Path(__file__).resolve().parents[1]
-REQUIRED_GATES = ("GS-P0", "GS-P1", "GS-P2", "GS-P3", "GS-P4")
+GSP_SUITE_KIND = "aerosim.gsp_p0_p4_suite"
+PLATFORM_KIND = "aerosim.gsp_wayland_platform"
+PERFORMANCE_KIND = "aerosim.gsp_performance"
+REQUIRED_GSP_PHASES = ("GS-P0", "GS-P1", "GS-P2", "GS-P3", "GS-P4")
+REQUIRED_PLATFORM_CHECKS = (
+    "native_wayland",
+    "hidpi_2x",
+    "cursor_focus_roundtrip",
+    "same_monitor",
+    "side_by_side",
+    "cross_monitor",
+    "focus_physics_tick",
+    "firefox_file_panel_lna",
+    "chromium_file_panel_lna",
+    "pipewire_recording_no_black_frames",
+    "codex_visual_verification",
+)
+REQUIRED_ENVIRONMENT = (
+    "ubuntu",
+    "gnome",
+    "kernel",
+    "godot",
+    "firefox",
+    "chromium",
+    "display_topology",
+    "scaling",
+    "wayland",
+    "pipewire_portal",
+)
 ISSUE_251_FAILURE = Path("build/gsp-idle-qualification-7310191/qualification.failure.json")
+HEX40 = re.compile(r"^[0-9a-fA-F]{40}$")
+HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
+STATUSES = {"pass", "fail", "blocked", "unavailable", "not_run"}
+
+
+def _git_commit(repo_root: Path) -> str | None:
+    try:
+        return subprocess.check_output(["git", "-C", str(repo_root), "rev-parse", "HEAD"], text=True, timeout=5).strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def browser_observation(command: str, lookup: Callable[[str], str | None] = shutil.which) -> dict[str, Any]:
@@ -30,9 +63,7 @@ def browser_observation(command: str, lookup: Callable[[str], str | None] = shut
     if executable is None:
         return {"status": "unavailable", "command": command}
     try:
-        version = subprocess.check_output(
-            [executable, "--version"], stderr=subprocess.STDOUT, text=True, timeout=5
-        ).strip()
+        version = subprocess.check_output([executable, "--version"], stderr=subprocess.STDOUT, text=True, timeout=5).strip()
     except (OSError, subprocess.SubprocessError) as error:
         return {"status": "unavailable", "command": command, "path": executable, "error": str(error)}
     return {"status": "available", "command": command, "path": executable, "version": version}
@@ -49,26 +80,55 @@ def _command_version(command: str) -> str | None:
 
 
 def _gsettings(key: str) -> str | None:
+    schema, name = key.rsplit(" ", 1)
     try:
-        return subprocess.check_output(["gsettings", "get", key.rsplit(" ", 1)[0], key.rsplit(" ", 1)[1]], text=True, timeout=5).strip()
+        return subprocess.check_output(["gsettings", "get", schema, name], text=True, timeout=5).strip()
     except (OSError, subprocess.SubprocessError):
         return None
 
 
 def _service_status(service: str) -> str:
     try:
-        return subprocess.run(
-            ["systemctl", "--user", "is-active", service], capture_output=True, text=True, timeout=5
-        ).stdout.strip() or "unknown"
+        return subprocess.run(["systemctl", "--user", "is-active", service], capture_output=True, text=True, timeout=5).stdout.strip() or "unknown"
     except (OSError, subprocess.SubprocessError):
         return "unavailable"
 
 
-def _scale_is_at_least_two(raw: str | None) -> bool:
+def scale_observation(raw: str | None) -> dict[str, Any]:
+    """Classify only the GNOME setting; effective compositor evidence is separate."""
     try:
-        return float((raw or "").split()[-1]) >= 2.0
+        value = float((raw or "").split()[-1])
     except (ValueError, IndexError):
-        return False
+        return {"status": "unavailable", "observed": raw, "reason": "scale is not numeric"}
+    if value == 0:
+        return {"status": "unavailable", "observed": raw, "reason": "GNOME automatic scaling; effective scale not observed"}
+    return {"status": "pass" if value >= 2.0 else "fail", "observed": raw, "value": value, "source": "GNOME setting only"}
+
+
+def gpu_metadata(sys_root: Path = Path("/sys")) -> dict[str, Any]:
+    """Read DRM card metadata without importing the benchmark runner."""
+    devices: list[dict[str, str]] = []
+    try:
+        entries = sorted((sys_root / "class" / "drm").iterdir(), key=lambda path: path.name)
+    except OSError:
+        return {"status": "unavailable", "devices": []}
+    for entry in entries:
+        if re.fullmatch(r"card\d+", entry.name) is None:
+            continue
+        device = entry / "device"
+        record: dict[str, str] = {"card_name": entry.name, "path": str(device.resolve())}
+        for field in ("vendor", "device", "subsystem_vendor", "subsystem_device"):
+            try:
+                record[field] = (device / field).read_text(encoding="utf-8").strip()
+            except OSError:
+                pass
+        driver = device / "driver"
+        try:
+            record["driver"] = str(driver.resolve()).rsplit("/", 1)[-1]
+        except OSError:
+            pass
+        devices.append(record)
+    return {"status": "available" if devices else "unavailable", "devices": devices}
 
 
 def _vulkan_observation() -> dict[str, Any]:
@@ -108,7 +168,7 @@ def _godot_observation(binary: str | None) -> dict[str, Any]:
     return {"status": "available", "requested": requested, "path": str(Path(executable).resolve()), "version": version}
 
 
-def collect_environment(repo_root: Path = ROOT, godot_binary: str | None = None) -> dict[str, Any]:
+def collect_environment(godot_binary: str | None = None) -> dict[str, Any]:
     os_release: dict[str, str] = {}
     try:
         for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
@@ -117,7 +177,6 @@ def collect_environment(repo_root: Path = ROOT, godot_binary: str | None = None)
                 os_release[key] = value.strip('"')
     except OSError:
         pass
-
     scaling = _gsettings("org.gnome.desktop.interface scaling-factor")
     browsers = {name: browser_observation(command) for name, command in {"firefox": "firefox", "chromium": "chromium", "google_chrome_observation_only": "google-chrome"}.items()}
     for browser in browsers.values():
@@ -125,11 +184,7 @@ def collect_environment(repo_root: Path = ROOT, godot_binary: str | None = None)
         browser["local_network_access"] = "not_run"
     return {
         "os": {"release": os_release, "platform": platform.platform(), "uname": platform.uname()._asdict()},
-        "desktop": {
-            "desktop": os.environ.get("XDG_CURRENT_DESKTOP"),
-            "session_desktop": os.environ.get("XDG_SESSION_DESKTOP"),
-            "gnome_shell": _command_version("gnome-shell"),
-        },
+        "desktop": {"desktop": os.environ.get("XDG_CURRENT_DESKTOP"), "session_desktop": os.environ.get("XDG_SESSION_DESKTOP"), "gnome_shell": _command_version("gnome-shell")},
         "godot": _godot_observation(godot_binary),
         "browsers": browsers,
         "display": {
@@ -137,97 +192,162 @@ def collect_environment(repo_root: Path = ROOT, godot_binary: str | None = None)
             "wayland_display": os.environ.get("WAYLAND_DISPLAY"),
             "x11_display_observed": os.environ.get("DISPLAY"),
             "gnome_scaling_factor": scaling,
-            "topology": {"status": "not_run", "reason": "no compositor topology evidence was collected"},
+            "scale_observation": scale_observation(scaling),
+            "topology": {"status": "unavailable", "reason": "no compositor topology evidence was collected"},
         },
-        "gpu": {"pci": _gpu_metadata(), "vulkan": _vulkan_observation()},
+        "gpu": {"pci": gpu_metadata(), "vulkan": _vulkan_observation()},
         "pipewire_portal": {
             "pipewire": _service_status("pipewire"),
             "wireplumber": _service_status("wireplumber"),
             "xdg_desktop_portal": _service_status("xdg-desktop-portal"),
             "xdg_desktop_portal_gnome": _service_status("xdg-desktop-portal-gnome"),
-            "recording": {"status": "not_run", "black_frame_check": "not_run"},
+            "recording": {"status": "unavailable", "black_frame_check": "unavailable"},
         },
     }
 
 
-def _gpu_metadata() -> dict[str, Any]:
+def _blocked(reason: str) -> dict[str, Any]:
+    return {"status": "blocked", "reason": reason}
+
+
+def _verify_artifact(record: Any, manifest_path: Path) -> dict[str, str] | None:
+    if not isinstance(record, dict) or not isinstance(record.get("path"), str) or not HEX64.fullmatch(str(record.get("sha256", ""))):
+        return None
+    raw_path = Path(record["path"])
+    resolved = (raw_path if raw_path.is_absolute() else manifest_path.parent / raw_path).resolve()
+    if not resolved.is_file():
+        return None
+    actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    if actual.lower() != record["sha256"].lower():
+        return None
+    return {"path": record["path"], "sha256": actual}
+
+
+def _provenance_valid(value: Any, commit: str) -> bool:
+    return isinstance(value, dict) and all(isinstance(value.get(key), str) and value[key] for key in ("source", "verifier")) and value.get("commit_sha") == commit
+
+
+def _environment_complete(value: Any) -> bool:
+    return isinstance(value, dict) and all(key in value and value[key] not in (None, "") for key in REQUIRED_ENVIRONMENT)
+
+
+def _platform_semantics(checks: dict[str, Any]) -> str | None:
+    native = checks["native_wayland"].get("evidence")
+    if not isinstance(native, dict) or native.get("display_server") != "Wayland" or "Godot DisplayServer" not in str(native.get("source", "")):
+        return "native_wayland requires Godot DisplayServer evidence"
+    hidpi = checks["hidpi_2x"].get("evidence")
+    if not isinstance(hidpi, dict) or "effective" not in str(hidpi.get("source", "")).lower() or not isinstance(hidpi.get("effective_scale"), (int, float)) or hidpi["effective_scale"] < 2.0:
+        return "hidpi_2x requires effective compositor/per-monitor scale >= 2"
+    codex = checks["codex_visual_verification"].get("evidence")
+    if not isinstance(codex, dict) or codex.get("verifier") != "Codex" or codex.get("provisional") is not True:
+        return "codex_visual_verification is required and must remain provisional"
+    return None
+
+
+def load_evidence_manifest(path: Path, kind: str, required_keys: tuple[str, ...], repo_root: Path) -> dict[str, Any]:
     try:
-        return read_gpu_metadata()
-    except (OSError, ValueError):
-        try:
-            return read_gpu_metadata()
-        except (OSError, ValueError):
-            return {"status": "unavailable", "devices": []}
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        return _blocked(f"unreadable manifest: {error}")
+    commit = _git_commit(repo_root)
+    if not isinstance(data, dict) or data.get("schema_version") != 1 or data.get("kind") != kind or not isinstance(data.get("commit_sha"), str) or not HEX40.fullmatch(data["commit_sha"]):
+        return _blocked("manifest schema, kind, or commit is invalid")
+    if commit is None or data["commit_sha"].lower() != commit.lower() or not _provenance_valid(data.get("provenance"), data["commit_sha"]):
+        return _blocked("manifest commit or provenance is stale")
+    mapping_key = "phases" if kind == GSP_SUITE_KIND else "checks"
+    mapping = data.get(mapping_key)
+    if not isinstance(mapping, dict) or set(mapping) != set(required_keys):
+        return _blocked(f"{mapping_key} keys must exactly match the required set")
+    normalized: dict[str, Any] = {}
+    for key in required_keys:
+        check = mapping[key]
+        if not isinstance(check, dict) or check.get("status") not in STATUSES:
+            return _blocked(f"{key} has an invalid status")
+        normalized[key] = dict(check)
+        if check["status"] == "pass":
+            artifact = _verify_artifact(check.get("artifact"), path)
+            if artifact is None:
+                return _blocked(f"{key} has missing or mismatched artifact evidence")
+            normalized[key]["artifact"] = artifact
+    if kind == PLATFORM_KIND:
+        if not _environment_complete(data.get("environment")):
+            return _blocked("platform environment/version metadata is incomplete")
+        if any(check["status"] == "pass" for check in normalized.values()):
+            semantic_error = _platform_semantics(normalized)
+            if semantic_error:
+                return _blocked(semantic_error)
+    status = "pass" if all(check["status"] == "pass" for check in normalized.values()) else "fail" if any(check["status"] == "fail" for check in normalized.values()) else "blocked"
+    result = {"status": status, "kind": kind, "commit_sha": data["commit_sha"], "provenance": data["provenance"], mapping_key: normalized, "source": str(path)}
+    if kind == PLATFORM_KIND:
+        result["environment"] = data["environment"]
+    return result
 
 
-def _issue_251_prerequisite(repo_root: Path) -> dict[str, Any]:
-    path = repo_root / ISSUE_251_FAILURE
-    if not path.is_file():
-        return {"status": "unavailable", "source": str(ISSUE_251_FAILURE)}
+def load_performance_evidence(path: Path | None, repo_root: Path) -> dict[str, Any]:
+    if path is None:
+        return {"status": "unavailable", "reason": "--performance-evidence was not provided"}
     try:
-        failure = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"status": "unavailable", "source": str(ISSUE_251_FAILURE)}
-    return {
-        "status": "pass" if failure.get("status") == "pass" else "fail",
-        "source": str(ISSUE_251_FAILURE),
-        "failure_kind": failure.get("failure_kind"),
-        "commit_sha": failure.get("commit_sha"),
-        "observed_sample_count": failure.get("observed_sample_count"),
-        "required_sample_count": failure.get("required_sample_count"),
-    }
-
-
-def _initial_gates(environment: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    chromium = environment["browsers"]["chromium"]
-    scale = environment["display"].get("gnome_scaling_factor") or ""
-    hidpi_blocked = not _scale_is_at_least_two(scale)
-    return {
-        "GS-P0": {"status": "not_run", "evidence": "scripts/run_gsp_headed_acceptance.sh"},
-        "GS-P1": {
-            "status": "blocked" if hidpi_blocked else "not_run",
-            "evidence": "tests/headed/gsp_headed_acceptance.gd",
-            "reason": "2x compositor scaling evidence is unavailable",
-        },
-        "GS-P2": {
-            "status": "blocked" if chromium["status"] != "available" else "not_run",
-            "evidence": "scripts/test_gsp_panel_browser.py",
-            "reason": "Chromium evidence is unavailable" if chromium["status"] != "available" else "browser workflow not run",
-        },
-        "GS-P3": {"status": "not_run", "evidence": "scripts/run_gsp_idle_benchmark.sh"},
-        "GS-P4": {"status": "not_run", "evidence": "PipeWire/GNOME portal recording", "reason": "recording not run"},
-    }
+        data = json.loads(path.read_text(encoding="utf-8"))
+        source_hash = hashlib.sha256(path.resolve().read_bytes()).hexdigest()
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        return _blocked(f"unreadable performance evidence: {error}")
+    source = {"path": str(path), "sha256": source_hash}
+    if path.resolve() == (repo_root / ISSUE_251_FAILURE).resolve() and data.get("status") == "fail" and data.get("failure_kind") == "conditioning_sample_count":
+        return {"status": "fail", "failure_kind": data["failure_kind"], "source": source, "commit_sha": data.get("commit_sha"), "observed_sample_count": data.get("observed_sample_count"), "required_sample_count": data.get("required_sample_count")}
+    if not isinstance(data, dict) or data.get("status") != "pass":
+        return {"status": "fail", "source": source, "failure_kind": data.get("failure_kind", "performance_evidence_not_pass")}
+    commit = _git_commit(repo_root)
+    if data.get("schema_version") != 1 or data.get("kind") != PERFORMANCE_KIND or commit is None or data.get("commit_sha", "").lower() != commit.lower() or not _provenance_valid(data.get("provenance"), data["commit_sha"]) or not isinstance(data.get("reference"), str) or not data["reference"]:
+        return _blocked("performance PASS lacks trusted schema, reference, commit, or provenance")
+    artifact = _verify_artifact(data.get("artifact"), path)
+    if artifact is None:
+        return _blocked("performance PASS has missing or mismatched artifact evidence")
+    return {"status": "pass", "kind": PERFORMANCE_KIND, "commit_sha": data["commit_sha"], "provenance": data["provenance"], "reference": data["reference"], "artifact": artifact, "source": source}
 
 
 def evaluate_qualification(manifest: dict[str, Any]) -> dict[str, Any]:
-    gates = manifest.get("gates", {})
-    nonpassing = [gate for gate in REQUIRED_GATES if gates.get(gate, {}).get("status") != "pass"]
-    prerequisite = manifest.get("prerequisites", {}).get("issue_251_performance", {})
-    reasons = [f"{gate}:{gates.get(gate, {}).get('status', 'missing')}" for gate in nonpassing]
-    if prerequisite.get("status") != "pass":
-        reasons.append(f"issue_251_performance:{prerequisite.get('status', 'missing')}:{prerequisite.get('failure_kind', '')}")
-    accepted = not nonpassing and prerequisite.get("status") == "pass"
-    return {
-        "status": "pass" if accepted else "blocked",
-        "accepted": accepted,
-        "required_gates": list(REQUIRED_GATES),
-        "missing_or_nonpassing_gates": nonpassing,
-        "blocking_reasons": reasons,
-    }
+    prerequisites = manifest.get("prerequisites", {})
+    suite = prerequisites.get("gsp_p0_p4_suite", {})
+    performance = prerequisites.get("issue_251_performance", {})
+    platform = manifest.get("platform_checks", {})
+    if not isinstance(suite, dict):
+        suite = {}
+    if not isinstance(performance, dict):
+        performance = {}
+    if not isinstance(platform, dict):
+        platform = {}
+    phase_results = suite.get("phases", {})
+    check_results = platform.get("checks", {})
+    nonpassing_phases = [phase for phase in REQUIRED_GSP_PHASES if phase_results.get(phase, {}).get("status") != "pass"]
+    nonpassing_checks = [check for check in REQUIRED_PLATFORM_CHECKS if check_results.get(check, {}).get("status") != "pass"]
+    reasons = [f"{phase}:{phase_results.get(phase, {}).get('status', suite.get('status', 'missing'))}" for phase in nonpassing_phases]
+    reasons.extend(f"{check}:{check_results.get(check, {}).get('status', platform.get('status', 'missing'))}" for check in nonpassing_checks)
+    if suite.get("status") != "pass" and not nonpassing_phases:
+        reasons.append(f"gsp_p0_p4_suite:{suite.get('status', 'missing')}")
+    if platform.get("status") != "pass" and not nonpassing_checks:
+        reasons.append(f"platform_checks:{platform.get('status', 'missing')}")
+    if performance.get("status") != "pass":
+        reasons.append(f"issue_251_performance:{performance.get('status', 'missing')}:{performance.get('failure_kind', '')}")
+    if not _environment_complete(platform.get("environment")):
+        reasons.append("platform_environment:missing_required_metadata")
+    accepted = suite.get("status") == "pass" and platform.get("status") == "pass" and not nonpassing_phases and not nonpassing_checks and performance.get("status") == "pass" and _environment_complete(platform.get("environment"))
+    return {"status": "pass" if accepted else "blocked", "accepted": accepted, "required_gsp_phases": list(REQUIRED_GSP_PHASES), "required_platform_checks": list(REQUIRED_PLATFORM_CHECKS), "missing_or_nonpassing_phases": nonpassing_phases, "missing_or_nonpassing_checks": nonpassing_checks, "blocking_reasons": reasons}
 
 
-def build_report(repo_root: Path = ROOT, godot_binary: str | None = None) -> dict[str, Any]:
-    environment = collect_environment(repo_root, godot_binary)
-    manifest = {
+def build_report(repo_root: Path = ROOT, godot_binary: str | None = None, gsp_suite_evidence: Path | None = None, performance_evidence: Path | None = None, platform_evidence: Path | None = None) -> dict[str, Any]:
+    suite = load_evidence_manifest(gsp_suite_evidence, GSP_SUITE_KIND, REQUIRED_GSP_PHASES, repo_root) if gsp_suite_evidence else {"status": "unavailable", "reason": "--gsp-suite-evidence was not provided"}
+    platform = load_evidence_manifest(platform_evidence, PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, repo_root) if platform_evidence else {"status": "unavailable", "reason": "--platform-evidence was not provided"}
+    report = {
         "schema_version": 1,
-        "issue": 252,
-        "environment": environment,
-        "prerequisites": {"issue_251_performance": _issue_251_prerequisite(repo_root)},
-        "gates": _initial_gates(environment),
-        "human_visual_review": {"status": "deferred", "until": "CAP-006"},
+        "kind": "aerosim.gsp_wayland_qualification",
+        "commit_sha": _git_commit(repo_root),
+        "environment": collect_environment(godot_binary),
+        "prerequisites": {"gsp_p0_p4_suite": suite, "issue_251_performance": load_performance_evidence(performance_evidence, repo_root)},
+        "platform_checks": platform,
+        "human_visual_review": {"status": "deferred", "until": "CAP-006", "substitute": "none; Codex evidence is a separate required platform check"},
     }
-    manifest["qualification"] = evaluate_qualification(manifest)
-    return manifest
+    report["qualification"] = evaluate_qualification(report)
+    return report
 
 
 def main() -> int:
@@ -235,8 +355,11 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--repo-root", type=Path, default=ROOT)
     parser.add_argument("--godot-bin")
+    parser.add_argument("--gsp-suite-evidence", type=Path)
+    parser.add_argument("--performance-evidence", type=Path)
+    parser.add_argument("--platform-evidence", type=Path)
     args = parser.parse_args()
-    report = build_report(args.repo_root.resolve(), args.godot_bin)
+    report = build_report(args.repo_root.resolve(), args.godot_bin, args.gsp_suite_evidence, args.performance_evidence, args.platform_evidence)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"GSP Wayland qualification: {report['qualification']['status'].upper()} ({args.output})")

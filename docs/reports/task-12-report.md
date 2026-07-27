@@ -2,91 +2,98 @@
 
 ## Outcome
 
-Issue #252 remains **BLOCKED / not accepted**. The new machine-readable evidence
-collector wrote `build/gsp-wayland-qualification-task12/report.json` and returned
-exit code `2` with qualification status `blocked` (SHA-256
-`e7c1fc2ce141800ec1f76059671282bbdfd545d9472211389dccee62fc6dc3de`). It does
-not claim platform qualification PASS.
+Issue #252 remains **BLOCKED / not accepted**. The collector now accepts
+explicit suite, performance, and platform evidence inputs and fails closed when
+they are absent or untrusted. The current run supplied only the known #251
+failure artifact:
 
-The mandatory #251 prerequisite is preserved as a real failure:
+```text
+python3 scripts/qualify_gsp_wayland.py \
+  --output build/gsp-wayland-qualification-task12/report.json \
+  --godot-bin /home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+  --performance-evidence build/gsp-idle-qualification-7310191/qualification.failure.json
+```
 
-- source: `build/gsp-idle-qualification-7310191/qualification.failure.json`
+Result: exit `2`, `blocked`.
+
+The #251 prerequisite remains the frozen formal `FAIL`:
+
 - failure: `conditioning_sample_count`
 - observed/required: `43479 / 72000`
-- frozen formal run: commit `73101915510e5517bd90f40c24543ec63b226888`
+- frozen run commit: `73101915510e5517bd90f40c24543ec63b226888`
+- input SHA-256: `5c04bf9da0f66837d9ca051b18775aa1ebb80fb8a5a60d4378c8049f9c6bb29b`
 
-No D-I-I-D comparison exists, so the required `<1%` physics-tick performance
-AC is not passed and cannot be bypassed by #252.
+No D-I-I-D comparison exists, so the required `<1%` performance AC is not
+passed and cannot be bypassed by #252.
 
-## Implementation
+## Evidence schema and verdict
 
-- Added `scripts/qualify_gsp_wayland.py`, a read-only stdlib collector and
-  fail-closed evaluator for the five required non-human gates `GS-P0` through
-  `GS-P4`.
-- Added `tests/test_gsp_wayland_qualification.py` covering the frozen #251
-  failure, required-gate enforcement, GPU-metadata neutrality, Chromium
-  absence, and the open-ended `>=2x` HiDPI threshold.
-- The evaluator only reads gate/prerequisite statuses. GPU vendor, model,
-  adapter type, driver, and renderer fields are metadata and cannot affect its
-  verdict.
-- Firefox and the exact `chromium` command are collected separately. The
-  available `google-chrome` command is recorded under
-  `google_chrome_observation_only`; it is never substituted for Chromium.
-- Human visual/usability review is recorded as deferred until CAP-006.
+- `prerequisites.gsp_p0_p4_suite` is the product phase prerequisite with the
+  exact keys `GS-P0`, `GS-P1`, `GS-P2`, `GS-P3`, and `GS-P4`. These names are
+  not platform subgates and no phase meaning is inferred here.
+- `prerequisites.issue_251_performance` is independent of the phase suite.
+  The known machine-readable #251 failure is recognized as `fail`; a future
+  performance `pass` requires schema, kind, current 40-hex commit, matching
+  provenance, reference, and a hash-verified artifact.
+- `platform_checks` has the exact semantic keys `native_wayland`, `hidpi_2x`,
+  `cursor_focus_roundtrip`, `same_monitor`, `side_by_side`, `cross_monitor`,
+  `focus_physics_tick`, `firefox_file_panel_lna`, `chromium_file_panel_lna`,
+  `pipewire_recording_no_black_frames`, and `codex_visual_verification`.
+- Suite/platform manifests require schema, kind, current 40-hex commit,
+  provenance, exact key sets, and an existing SHA-256-matching artifact for
+  every `pass` entry. Relative artifact paths resolve from their manifest
+  directory. Fabricated statuses cannot pass.
+- Final acceptance requires all five phase entries, the performance
+  prerequisite, all platform checks, and required OS/desktop/kernel/Godot/
+  Firefox/Chromium/display/scaling/Wayland/PipeWire metadata. GPU metadata is
+  optional and never participates in the verdict.
 
-## Current recorded environment
+The native Wayland check specifically requires Godot `DisplayServer` evidence;
+`WAYLAND_DISPLAY` or `XDG_SESSION_TYPE` environment variables are metadata and
+cannot prove it. `codex_visual_verification` is a required provisional check;
+human review is separately deferred until CAP-006 and is not a substitute.
 
-The report records Ubuntu 26.04 LTS, GNOME Shell 50.1, kernel
-7.0.0-28-generic, Godot 4.7, native Wayland (`wayland-0`), the observed X11
-display variable, GNOME scaling output `uint32 0`, Firefox 153, and Chromium
-unavailable. Google Chrome 150 is present only as a separate observation.
+## Current environment observations
 
-PCI and Vulkan metadata records the AMD `amdgpu` and NVIDIA `nvidia` devices,
-their models/types, drivers, and the available Vulkan renderer/driver entries,
-including the CPU `llvmpipe` entry. PipeWire, WirePlumber,
-`xdg-desktop-portal`, and `xdg-desktop-portal-gnome` were active. No compositor
-topology, cross-monitor, browser file-panel/local-network, external
-focus/cursor, physics-focus, or PipeWire non-black-frame run was performed;
-those are recorded as not run or blocked rather than inferred from metadata.
+The read-only collector recorded Ubuntu 26.04 LTS, GNOME Shell 50.1, kernel
+7.0.0-28-generic, Godot 4.7, Firefox 153, native-session environment values,
+and active PipeWire/WirePlumber/GNOME portal services. Chromium is unavailable;
+Google Chrome 150 is recorded separately and is never substituted.
 
-## Gate status
+GNOME returned `uint32 0`, which means automatic/unknown scaling. The report
+records scale as `unavailable`; only effective compositor/per-monitor evidence
+in a supplied platform manifest can prove `hidpi_2x` pass or fail. No platform
+manifest was supplied, so there is no topology, cursor/focus, same-monitor,
+side-by-side, cross-monitor, physics-focus, browser file-panel/local-network,
+PipeWire non-black-frame, or Codex visual evidence.
 
-| Gate | Status | Reason |
-| --- | --- | --- |
-| GS-P0 native Wayland launch/focus | `not_run` | Existing headed runner retained; no new live qualification claimed |
-| GS-P1 HiDPI/monitor/cursor workflows | `blocked` | Recorded scaling is below the `>=2x` requirement; topology evidence not run |
-| GS-P2 Firefox/Chromium panel workflows | `blocked` | Chromium command is unavailable; both browser behavior checks are not run |
-| GS-P3 focus versus physics/performance | `not_run` | #251 frozen performance prerequisite failed |
-| GS-P4 PipeWire/GNOME portal recording | `not_run` | Services are present, but recording and black-frame verification were not run |
-
-The manifest requires every gate to be `pass` and requires the #251
-performance prerequisite to be `pass`; therefore its final status is
-`blocked`.
+PCI and Vulkan GPU vendor/model/type/device/driver/renderer observations are
+metadata only. The collector uses an independent DRM `card\d+` sysfs scan and
+does not import the benchmark runner or retry GPU collection. GPU metadata may
+also be absent without changing the verdict.
 
 ## Prior evidence boundary
 
-The inspected #241–#250 reports establish the existing GSP launch, transport,
+The inspected #241–#250 reports establish existing GSP launch, transport,
 telemetry, tuning, preset, lifecycle, and replay behavior. Their headed or
-browser runs are not silently promoted to this final Ubuntu platform
-qualification: #241–#243 explicitly retain environment-deferred Wayland,
-HiDPI, focus, and standalone Firefox/Chromium coverage, while #244–#250 retain
-GPU-neutral behavior evidence. The #251 report is the authoritative frozen
-performance result used above.
+browser runs are not promoted to final platform qualification: #241–#243 retain
+environment-deferred Wayland/HiDPI/focus and standalone browser coverage, and
+#244–#250 retain GPU-neutral behavior evidence. The #251 report is the
+authoritative frozen performance result used above.
 
 ## Verification
 
 ```text
 python3 -m unittest tests.test_gsp_wayland_qualification
-5 tests, 0 failures
+16 tests, 0 failures
 
 python3 -m py_compile scripts/qualify_gsp_wayland.py tests/test_gsp_wayland_qualification.py
 git diff --check
 PASS
 
-python3 scripts/qualify_gsp_wayland.py \
-  --output build/gsp-wayland-qualification-task12/report.json \
-  --godot-bin /home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64
-exit 2: GSP Wayland qualification: BLOCKED
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+python3 scripts/test_gsp_idle_benchmark_smoke.py
+GSP issue-251 real-time smoke: PASS
 ```
 
 No packages, browser binaries, desktop configuration, or GitHub issue comments
