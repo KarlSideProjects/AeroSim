@@ -126,6 +126,21 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1 },
 }) });
 
+const tuning = context.window.__AEROSIM_PANEL_TEST__.tuningControls()["simpleflight.rate_p"];
+tuning.number.value = "1.0";
+tuning.button.click();
+const tuningRequest = FakeWebSocket.instance.sent.at(-1);
+FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "tuning_ack",
+    d: { request_seq: tuningRequest.seq, ok: true, commit_id: 1, committed_value: 1.0 },
+}) });
+const timing = context.window.__AEROSIM_GSP_PERF__.snapshot();
+assert.equal(timing.request_to_commit_ms.length, 1);
+assert.equal(timing.commit_to_rendered_ack_ms.length, 1);
+assert.ok(timing.request_to_commit_ms[0] >= 0);
+assert.ok(timing.commit_to_rendered_ack_ms[0] >= 0);
+
 const profile = { slots: Array(8).fill(null) };
 const registry = { parameters: [{ key: "simpleflight.rate_p", quick_adjust_eligible: true, min: 0.6, max: 1.4, step: 0.01 }] };
 context.window.__AEROSIM_PANEL_TEST__.renderQuickAdjust(profile, registry);

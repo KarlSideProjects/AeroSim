@@ -486,7 +486,7 @@ func _run() -> void:
     _expect(not saturated_record.is_empty() and not healthy_record.is_empty(),
             "capacity regression resolves both real authenticated peer records")
     var forced_queue: Array = []
-    for _slot in GspServer.MAX_RELIABLE_MESSAGES - 1:
+    for _slot in GspServer.MAX_RELIABLE_MESSAGES:
         forced_queue.append("{}")
     if not saturated_record.is_empty():
         saturated_record["reliable_queue"] = forced_queue

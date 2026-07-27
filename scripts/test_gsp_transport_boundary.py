@@ -32,7 +32,10 @@ def wait_for_eof(sock: socket.socket, timeout: float) -> bool:
         readable, _, _ = select.select([sock], [], [], min(0.1, remaining))
         if not readable:
             continue
-        if sock.recv(1) == b"":
+        try:
+            if sock.recv(1) == b"":
+                return True
+        except ConnectionResetError:
             return True
     return False
 
@@ -49,7 +52,7 @@ def send_close(sock: socket.socket, payload: bytes) -> None:
     sock.sendall(bytes([0x88, 0x80 | len(payload)]) + mask + masked)
 
 
-def harness_command(ready: Path, stop: Path, status: Path, probe: Path, large_identity: bool) -> list[str]:
+def harness_command(ready: Path, stop: Path, status: Path, probe: Path, large_identity: bool, telemetry: bool = False) -> list[str]:
     command = [
         GODOT,
         "--headless",
@@ -71,16 +74,18 @@ def harness_command(ready: Path, stop: Path, status: Path, probe: Path, large_id
     ]
     if large_identity:
         command.append("--large-identity")
+    if telemetry:
+        command.append("--telemetry")
     return command
 
 
-def start_harness(temp: Path, large_identity: bool) -> tuple[subprocess.Popen[bytes], dict[str, object], Path, Path, Path, Path]:
+def start_harness(temp: Path, large_identity: bool, telemetry: bool = False) -> tuple[subprocess.Popen[bytes], dict[str, object], Path, Path, Path, Path]:
     ready = temp / "ready.json"
     stop = temp / "stop"
     status = temp / "status.json"
     probe = temp / "probe"
     process = subprocess.Popen(
-        harness_command(ready, stop, status, probe, large_identity),
+        harness_command(ready, stop, status, probe, large_identity, telemetry),
         cwd=ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -450,6 +455,7 @@ def run_graceful_case(temp: Path) -> None:
             send_text(sock, json.dumps({"v": 2, "t": "ping", "seq": sequence, "d": {"request": sequence}}, separators=(",", ":")))
             sent += 1
         pongs: list[int] = []
+        overflow_error: dict[str, object] | None = None
         close_payload: bytes | None = None
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
@@ -458,6 +464,8 @@ def run_graceful_case(temp: Path) -> None:
                 message = json.loads(payload.decode("utf-8"))
                 if message.get("t") == "pong":
                     pongs.append(int(message["d"]["echo"]["request"]))
+                elif message.get("t") == "error" and message.get("d", {}).get("code") == "overflow":
+                    overflow_error = message
             elif opcode == 8:
                 close_payload = payload
                 if payload:
@@ -474,13 +482,20 @@ def run_graceful_case(temp: Path) -> None:
         diagnostics = finish_harness(process, stop, status)
         if diagnostics["reliable_overflow_count"] != 1 or diagnostics["reliable_send_failure_count"] != 0:
             raise RuntimeError(f"graceful reliable diagnostics were wrong after sent={sent}: {diagnostics!r}")
-        print("GSP graceful boundary: PASS pongs=%d close_code=1008" % len(pongs))
+        if diagnostics["reliable_overflow_error_attempt_count"] != 1:
+            raise RuntimeError(f"overflow error attempt was not bounded to one local attempt: {diagnostics!r}")
+        accepted = int(diagnostics["reliable_overflow_error_accepted_count"])
+        if accepted not in (0, 1):
+            raise RuntimeError(f"overflow error local acceptance was not boolean: {diagnostics!r}")
+        if accepted == 1 and overflow_error is None:
+            raise RuntimeError("accepted overflow error was not observed as a WebSocket frame")
+        print("GSP graceful boundary: PASS pongs=%d close_code=1008 overflow_error_accepted=%s" % (len(pongs), bool(accepted)))
     finally:
         if sock is not None:
             sock.close()
 
 
-def run_forced_case(temp: Path) -> None:
+def run_slow_overflow_case(temp: Path) -> None:
     process, identity, stop, status, _, _ = start_harness(temp, True)
     sock: socket.socket | None = None
     try:
@@ -495,13 +510,86 @@ def run_forced_case(temp: Path) -> None:
         stop.touch()
         diagnostics = finish_harness(process, stop, status)
         if diagnostics["reliable_overflow_count"] != 1 or diagnostics["reliable_send_failure_count"] != 0:
-            raise RuntimeError(f"forced reliable diagnostics were wrong after sent={sent}: {diagnostics!r}")
+            raise RuntimeError(f"slow-peer reliable diagnostics were wrong after sent={sent}: {diagnostics!r}")
         if diagnostics["max_closing_peer_count"] < 1 or diagnostics["live_peer_count"] != 0 or diagnostics["closing_peer_count"] != 0:
-            raise RuntimeError(f"forced peer was not retained then reclaimed: {diagnostics!r}")
-        print("GSP forced boundary: PASS max_closing=%d" % diagnostics["max_closing_peer_count"])
+            raise RuntimeError(f"slow peer was not retained then reclaimed: {diagnostics!r}")
+        print("GSP slow-peer overflow: PASS max_closing=%d" % diagnostics["max_closing_peer_count"])
     finally:
         if sock is not None:
             sock.close()
+
+
+def run_peer_isolation_case(temp: Path) -> None:
+    process, identity, stop, status, _, probe = start_harness(temp, True, True)
+    slow: socket.socket | None = None
+    healthy: socket.socket | None = None
+    try:
+        slow = websocket_connect("127.0.0.1", int(identity["port"]))
+        slow.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024)
+        if hasattr(socket, "TCP_WINDOW_CLAMP"):
+            slow.setsockopt(socket.IPPROTO_TCP, socket.TCP_WINDOW_CLAMP, 1024)
+        authenticate(slow, identity)
+        healthy = websocket_connect("127.0.0.1", int(identity["port"]))
+        authenticate(healthy, identity)
+        suppression_snapshot = None
+        max_native_buffered = 0
+        suppression_deadline = time.monotonic() + 5.0
+        while time.monotonic() < suppression_deadline:
+            suppression_snapshot = probe_status(process, probe, status, int(suppression_snapshot["probe_sequence"]) + 1 if suppression_snapshot else 1)
+            slow_diagnostics = [item for item in suppression_snapshot["peer_transport_diagnostics"] if int(item.get("peer_id", -1)) == 1]
+            max_native_buffered = max(max_native_buffered, *(int(item.get("outbound_buffered_bytes", 0)) for item in slow_diagnostics)) if slow_diagnostics else max_native_buffered
+            if any(
+                int(item.get("telemetry_slot_sample_seq", 0)) > 0
+                and int(item.get("outbound_buffered_bytes", 0)) >= int(identity["telemetry_suppression_threshold_bytes"])
+                for item in slow_diagnostics
+            ):
+                break
+        else:
+            processing = suppression_snapshot.get("telemetry_processing", {}) if suppression_snapshot else {}
+            print(
+                "GSP peer isolation: DEFERRED authenticated_slow_peer_native_buffer=%d/%d "
+                "telemetry_sends=%d suppression_threshold=%d platform_socket_backpressure_unobservable=true"
+                % (
+                    max_native_buffered,
+                    int(identity["native_outbound_capacity_bytes"]),
+                    int(processing.get("send_count", 0)),
+                    int(identity["telemetry_suppression_threshold_bytes"]),
+                )
+            )
+            return
+        healthy.settimeout(1.0)
+        healthy_pongs = 0
+        for sequence in range(1, 101):
+            send_text(slow, json.dumps({"v": 2, "t": "ping", "seq": sequence, "d": {"request": sequence}}, separators=(",", ":")))
+            send_text(healthy, json.dumps({"v": 2, "t": "ping", "seq": sequence, "d": {"request": sequence}}, separators=(",", ":")))
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                opcode, payload = receive_frame(healthy)
+                if opcode != 1:
+                    continue
+                message = json.loads(payload.decode("utf-8"))
+                if message.get("t") == "pong" and message.get("d", {}).get("echo", {}).get("request") == sequence:
+                    healthy_pongs += 1
+                    break
+        if healthy_pongs < 20:
+            raise RuntimeError(f"healthy peer did not continue receiving reliable ACKs: {healthy_pongs}")
+        if not wait_for_eof(slow, 3.0):
+            raise RuntimeError("hard-pressure peer was not closed")
+        snapshot = probe_status(process, probe, status, int(suppression_snapshot["probe_sequence"]) + 1)
+        if int(snapshot["hard_close_count"]) < 1:
+            raise RuntimeError(f"hard-pressure close was not recorded locally: {snapshot!r}")
+        if int(snapshot["authenticated_peer_count"]) != 1 or int(snapshot["closing_peer_count"]) > 1:
+            raise RuntimeError(f"hard-pressure close affected the healthy peer set: {snapshot!r}")
+        if int(snapshot["authenticated_peer_count"]) != 1:
+            raise RuntimeError(f"healthy authenticated peer did not remain isolated: {snapshot!r}")
+        print("GSP peer isolation: PASS telemetry_suppressed=true healthy_pongs=%d hard_close_count=%d" % (healthy_pongs, snapshot["hard_close_count"]))
+    finally:
+        if slow is not None:
+            slow.close()
+        if healthy is not None:
+            healthy.close()
+        stop.touch()
+        finish_harness(process, stop, status)
 
 
 def main() -> int:
@@ -511,8 +599,10 @@ def main() -> int:
         run_pending_handshake_boundary(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-graceful-") as temp_dir:
         run_graceful_case(Path(temp_dir))
-    with tempfile.TemporaryDirectory(prefix="aerosim-gsp-forced-") as temp_dir:
-        run_forced_case(Path(temp_dir))
+    with tempfile.TemporaryDirectory(prefix="aerosim-gsp-slow-") as temp_dir:
+        run_slow_overflow_case(Path(temp_dir))
+    with tempfile.TemporaryDirectory(prefix="aerosim-gsp-isolation-") as temp_dir:
+        run_peer_isolation_case(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-replacement-") as temp_dir:
         run_same_process_replacement_case(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-abrupt-") as temp_dir:

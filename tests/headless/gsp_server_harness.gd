@@ -10,6 +10,7 @@ var _probe_path := ""
 var _probe_sequence := 0
 var _max_closing_peer_count := 0
 var _large_identity := false
+var _telemetry_enabled := false
 var _process_ticks := 0
 
 
@@ -20,6 +21,7 @@ func _init() -> void:
     _status_path = _argument(args, "--status-file")
     _probe_path = _argument(args, "--probe-file")
     _large_identity = args.has("--large-identity")
+    _telemetry_enabled = args.has("--telemetry")
     if _ready_path.is_empty() or _stop_path.is_empty():
         push_error("GSP server harness requires --ready-file and --stop-file")
         quit(2)
@@ -27,6 +29,8 @@ func _init() -> void:
     _server = GspServer.new()
     get_root().add_child(_server)
     _server.set_identity_provider(Callable(self, "_identity"))
+    if _telemetry_enabled:
+        _server.set_telemetry_provider(Callable(self, "_telemetry"))
     var started := _server.start()
     if not bool(started.get("ok", false)):
         push_error(String(started.get("error", "GSP server failed to start")))
@@ -44,6 +48,9 @@ func _init() -> void:
         "listening": _server.is_listening(),
         "max_pending_handshakes": GspServer.MAX_PENDING_HANDSHAKES,
         "closing_peer_timeout_ms": GspServer.CLOSING_PEER_TIMEOUT_MS,
+        "telemetry_suppression_threshold_bytes": GspServer.TELEMETRY_SUPPRESSION_THRESHOLD_BYTES,
+        "hard_close_threshold_bytes": GspServer.HARD_CLOSE_THRESHOLD_BYTES,
+        "native_outbound_capacity_bytes": GspServer.NATIVE_OUTBOUND_CAPACITY_BYTES,
     }))
     ready.flush()
     ready.close()
@@ -75,6 +82,10 @@ func _status_snapshot() -> Dictionary:
         "probe_sequence": _probe_sequence,
         "reliable_overflow_count": _server.reliable_overflow_count,
         "reliable_send_failure_count": _server.reliable_send_failure_count,
+        "reliable_overflow_error_attempt_count": _server.reliable_overflow_error_attempt_count,
+        "reliable_overflow_error_accepted_count": _server.reliable_overflow_error_accepted_count,
+        "hard_close_count": _server.hard_close_count,
+        "last_hard_close_error": _server.last_hard_close_error,
         "last_reliable_error": _server.last_reliable_error,
         "live_peer_count": _server.get_live_peer_count(),
         "authenticated_peer_count": _server.get_authenticated_peer_count(),
@@ -82,6 +93,7 @@ func _status_snapshot() -> Dictionary:
         "max_closing_peer_count": _max_closing_peer_count,
         "process_ticks": _process_ticks,
         "physics_ticks": Engine.get_physics_frames(),
+        "telemetry_processing": _server.get_telemetry_processing_diagnostics(),
         "peer_transport_diagnostics": _server.get_peer_transport_diagnostics(),
     }
 
@@ -117,4 +129,12 @@ func _identity() -> Dictionary:
         "authority": "fixture",
         "registry": registry,
         "registry_hash": "unavailable",
+    }
+
+
+func _telemetry() -> Dictionary:
+    return {
+        "publish_count": Time.get_ticks_usec(),
+        "tick": _process_ticks,
+        "fixture_payload": "x".repeat(15_000),
     }

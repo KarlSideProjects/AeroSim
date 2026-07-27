@@ -108,6 +108,25 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   var presetStatus = $("preset-status");
   var presetDiff = $("preset-diff");
   var staticControls = [presetName, presetNote, presetSource, presetTarget, $("preset-save"), $("preset-refresh"), $("preset-retrieve"), $("preset-load"), $("preset-preview"), $("preset-compare-current"), $("preset-compare-two")];
+  var gspPerformance = { request_to_commit_ms: [], commit_to_rendered_ack_ms: [] };
+  var maxPerformanceSamples = 512;
+  var requestAnimationFrame = window.requestAnimationFrame || function (callback) { callback(performance.now()); return 0; };
+
+  function recordPerformanceSample(kind, value) {
+    if (!Number.isFinite(value) || value < 0) return;
+    var samples = gspPerformance[kind];
+    samples.push(value);
+    if (samples.length > maxPerformanceSamples) samples.shift();
+  }
+  window.__AEROSIM_GSP_PERF__ = {
+    reset: function () { gspPerformance.request_to_commit_ms = []; gspPerformance.commit_to_rendered_ack_ms = []; },
+    snapshot: function () {
+      return {
+        request_to_commit_ms: gspPerformance.request_to_commit_ms.slice(),
+        commit_to_rendered_ack_ms: gspPerformance.commit_to_rendered_ack_ms.slice(),
+      };
+    },
+  };
 
   function text(id, value) { $(id).textContent = value; }
   function panelReady() { return helloReady && snapshotReady; }
@@ -478,6 +497,13 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         delete pendingTuning[Number(ack.request_seq)];
         pending.controls.status.textContent = ack.ok ? (ack.clamped ? "Clamped to " : "Committed ") + (ack.committed_value == null ? "" : Number(ack.committed_value).toFixed(3)) : String(ack.error || "Rejected");
         if (ack.ok && ack.committed_value != null) { pending.controls.slider.value = ack.committed_value; pending.controls.number.value = ack.committed_value; }
+        if (ack.ok && pending.final && Number(ack.commit_id) > 0) {
+          var commitReceivedAt = performance.now();
+          recordPerformanceSample("request_to_commit_ms", commitReceivedAt - pending.started);
+          requestAnimationFrame(function (renderedAt) {
+            recordPerformanceSample("commit_to_rendered_ack_ms", Number(renderedAt) - commitReceivedAt);
+          });
+        }
       } else if (message.t === "tuning_commit") {
         var values = message.d.committed_values || message.d.values || {};
         Object.keys(values).forEach(function (key) {
@@ -524,6 +550,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   $("preset-compare-current").addEventListener("click", function () { if (presetSource.value) sendPreset("compare_presets", { left: "", right: presetSource.value }); });
   $("preset-compare-two").addEventListener("click", function () { if (presetSource.value && presetTarget.value) sendPreset("compare_presets", { left: presetSource.value, right: presetTarget.value }); });
   if (window.__AEROSIM_PANEL_TEST__) {
+    window.__AEROSIM_PANEL_TEST__.tuningControls = function () { return tuningControls; };
     window.__AEROSIM_PANEL_TEST__.renderQuickAdjust = renderQuickAdjust;
     window.__AEROSIM_PANEL_TEST__.quickAdjustControls = function () { return quickAdjustControls; };
     window.__AEROSIM_PANEL_TEST__.readinessControls = readinessControls;

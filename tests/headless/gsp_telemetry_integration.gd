@@ -118,6 +118,9 @@ func _init() -> void:
 	var processing := _server.get_telemetry_processing_diagnostics()
 	_expect(String(processing.get("path", "")) == "always_process", "telemetry processing is attributed outside physics")
 	_expect(int(processing.get("snapshot_serialization_count", 0)) > 0 and int(processing.get("send_count", 0)) > 0, "telemetry serialization and sending are measured")
+	var serialization_samples: Array = processing.get("serialization_samples_usec", [])
+	_expect(not serialization_samples.is_empty(), "telemetry serialization exposes a bounded distribution")
+	_expect(float(processing.get("serialization_p99_usec", 501.0)) < 500.0, "telemetry serialization p99 remains below 0.5 ms")
 
 	_client.close()
 	_second_client.close()

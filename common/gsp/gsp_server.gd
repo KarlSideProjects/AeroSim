@@ -22,15 +22,26 @@ const MAX_VALUE_DEPTH := 32
 const MAX_EXTRA_FIELDS := 16
 const MAX_RELIABLE_MESSAGES := 64
 const MAX_RELIABLE_BYTES := 65_536
-const NATIVE_OUTBOUND_BUFFER_BYTES := MAX_RELIABLE_BYTES + MAX_MESSAGE_BYTES
+const MAX_OUTBOUND_MESSAGE_BYTES := 32_768
+const MAX_RELIABLE_MESSAGE_BYTES := MAX_OUTBOUND_MESSAGE_BYTES
+const TELEMETRY_SUPPRESSION_THRESHOLD_BYTES := MAX_RELIABLE_BYTES / 2
+const HARD_CLOSE_THRESHOLD_BYTES := MAX_RELIABLE_BYTES + MAX_RELIABLE_MESSAGE_BYTES
+const NATIVE_OUTBOUND_CAPACITY_BYTES := HARD_CLOSE_THRESHOLD_BYTES + MAX_OUTBOUND_MESSAGE_BYTES
 const MAX_NATIVE_QUEUED_PACKETS := MAX_RELIABLE_MESSAGES + 16
 const TELEMETRY_DEFAULT_RATE_HZ := 30
+const RELIABLE_OVERFLOW_ERROR_CODE := "overflow"
+const MAX_TELEMETRY_SERIALIZATION_SAMPLES := 256
 
 var reliable_overflow_count := 0
 var reliable_send_failure_count := 0
+var reliable_overflow_error_attempt_count := 0
+var reliable_overflow_error_accepted_count := 0
+var hard_close_count := 0
 var last_reliable_error := ""
+var last_hard_close_error := ""
 var telemetry_snapshot_serialization_count := 0
 var telemetry_send_count := 0
+var _telemetry_serialization_samples_usec: Array[float] = []
 
 var _tcp_server := TCPServer.new()
 var _pending_handshakes: Array[Dictionary] = []
@@ -152,10 +163,15 @@ func get_peer_transport_diagnostics() -> Array[Dictionary]:
         if peer == null:
             continue
         diagnostics.append({
+            "peer_id": int(record.get("id", -1)),
             "state": peer.get_ready_state(),
-            "outbound_buffered_bytes": peer.get_current_outbound_buffered_amount(),
+            "outbound_buffered_bytes": _native_outbound_buffered_bytes(peer),
             "reliable_queue_count": record.get("reliable_queue", []).size(),
             "reliable_queue_bytes": int(record.get("reliable_bytes", 0)),
+            "hard_close_recorded": bool(record.get("hard_close_recorded", false)),
+            "overflow_error_attempted": bool(record.get("overflow_error_attempted", false)),
+            "overflow_error_accepted": bool(record.get("overflow_error_accepted", false)),
+            "overflow_error_delivered": false,
             "telemetry_rate_hz": int(record.get("telemetry_rate_hz", 0)),
             "telemetry_slot_sample_seq": int(record.get("telemetry_slot", {}).get("d", {}).get("sample_seq", 0)),
             "telemetry_slot_tick": int(record.get("telemetry_slot", {}).get("tick", 0)),
@@ -196,11 +212,36 @@ func set_simulation_request_provider(provider: Callable) -> void:
 
 
 func get_telemetry_processing_diagnostics() -> Dictionary:
-    return {
+    var samples := _telemetry_serialization_samples_usec.duplicate()
+    samples.sort()
+    var diagnostics := {
         "path": "always_process",
         "snapshot_serialization_count": telemetry_snapshot_serialization_count,
         "send_count": telemetry_send_count,
+        "serialization_samples_usec": samples,
     }
+    if not samples.is_empty():
+        diagnostics["serialization_p50_usec"] = samples[(samples.size() * 50) / 100]
+        diagnostics["serialization_p95_usec"] = samples[mini(samples.size() - 1, (samples.size() * 95) / 100)]
+        diagnostics["serialization_p99_usec"] = samples[mini(samples.size() - 1, (samples.size() * 99) / 100)]
+    return diagnostics
+
+
+static func overflow_error_envelope(sequence: int) -> Dictionary:
+    return {
+        "v": PROTOCOL_VERSION,
+        "t": "error",
+        "seq": sequence,
+        "d": {"code": RELIABLE_OVERFLOW_ERROR_CODE},
+    }
+
+
+static func is_telemetry_suppressed(buffered_bytes: int) -> bool:
+    return buffered_bytes >= TELEMETRY_SUPPRESSION_THRESHOLD_BYTES
+
+
+static func is_hard_close_pressure(buffered_bytes: int) -> bool:
+    return buffered_bytes >= HARD_CLOSE_THRESHOLD_BYTES
 
 
 func poll() -> void:
@@ -587,7 +628,7 @@ func _accept_connections() -> void:
             continue
         var websocket := WebSocketPeer.new()
         websocket.inbound_buffer_size = MAX_MESSAGE_BYTES
-        websocket.outbound_buffer_size = NATIVE_OUTBOUND_BUFFER_BYTES
+        websocket.outbound_buffer_size = NATIVE_OUTBOUND_CAPACITY_BYTES
         websocket.max_queued_packets = MAX_NATIVE_QUEUED_PACKETS
         var accept_error := websocket.accept_stream(stream)
         if accept_error != OK:
@@ -677,7 +718,7 @@ func _poll_authenticated_peers() -> void:
             continue
         if peer.get_available_packet_count() > MAX_RELIABLE_MESSAGES:
             _authenticated_peers.erase(record)
-            _begin_close(record, "too many queued packets")
+            _record_reliable_failure(record, "too many queued packets")
             continue
         var failed := false
         while peer.get_available_packet_count() > 0:
@@ -918,13 +959,6 @@ func _broadcast_tuning_commit(result: Dictionary, request_seq: int = -1) -> void
     if commit_request_seq >= 0:
         data["request_seq"] = commit_request_seq
     for record in _authenticated_peers.duplicate():
-        var queue: Array = record.get("reliable_queue", [])
-        var queued_bytes := int(record.get("reliable_bytes", 0))
-        var peer: WebSocketPeer = record.get("peer")
-        var native_buffered_bytes := maxi(0, peer.get_current_outbound_buffered_amount()) if peer != null else 0
-        if queue.size() >= MAX_RELIABLE_MESSAGES - 1 or queued_bytes + native_buffered_bytes + MAX_MESSAGE_BYTES > MAX_RELIABLE_BYTES:
-            _record_reliable_failure(record, "reliable queue overflow", true)
-            continue
         if not _queue_identity_message(record, "tuning_commit", data):
             continue
     _last_broadcast_tuning_commit_id = commit_id
@@ -1016,14 +1050,31 @@ func _queue_reliable(record: Dictionary, envelope: Dictionary) -> bool:
     if peer == null:
         _record_reliable_failure(record, "reliable peer unavailable")
         return false
-    var native_buffered_bytes := maxi(0, peer.get_current_outbound_buffered_amount())
-    if queue.size() >= MAX_RELIABLE_MESSAGES or queued_bytes + native_buffered_bytes + serialized_bytes > MAX_RELIABLE_BYTES:
+    if serialized_bytes > MAX_RELIABLE_MESSAGE_BYTES:
+        _record_reliable_failure(record, "reliable message too large", true)
+        return false
+    if not _can_admit_reliable(queue, queued_bytes, serialized_bytes):
         _record_reliable_failure(record, "reliable queue overflow", true)
         return false
     queue.append(serialized)
     record["reliable_queue"] = queue
     record["reliable_bytes"] = queued_bytes + serialized_bytes
     return true
+
+
+func _can_admit_reliable(queue: Array, queued_bytes: int, serialized_bytes: int) -> bool:
+    return can_admit_reliable(queue.size(), queued_bytes, serialized_bytes)
+
+
+static func can_admit_reliable(queue_count: int, queued_bytes: int, serialized_bytes: int) -> bool:
+    return (
+        serialized_bytes > 0
+        and serialized_bytes <= MAX_RELIABLE_MESSAGE_BYTES
+        and queue_count >= 0
+        and queue_count < MAX_RELIABLE_MESSAGES
+        and queued_bytes >= 0
+        and queued_bytes + serialized_bytes <= MAX_RELIABLE_BYTES
+    )
 
 
 func _flush_reliable(record: Dictionary) -> bool:
@@ -1033,6 +1084,8 @@ func _flush_reliable(record: Dictionary) -> bool:
         if peer == null or peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
             _record_reliable_failure(record, "reliable peer unavailable")
             return false
+        if not _check_native_outbound_pressure(record):
+            return false
         var serialized := String(queue[0])
         if peer.send_text(serialized) != OK:
             _record_reliable_failure(record, "reliable send failed")
@@ -1040,6 +1093,9 @@ func _flush_reliable(record: Dictionary) -> bool:
         queue.pop_front()
         record["reliable_bytes"] = maxi(0, int(record.get("reliable_bytes", 0)) - serialized.to_utf8_buffer().size())
         record["reliable_queue"] = queue
+        if is_hard_close_pressure(_native_outbound_buffered_bytes(peer)):
+            _record_hard_close(record)
+            return false
     return true
 
 
@@ -1052,6 +1108,61 @@ func _record_reliable_failure(record: Dictionary, reason: String, overflow: bool
         last_reliable_error = reason
         record["reliable_failure_recorded"] = true
     _begin_close(record, reason)
+    if overflow:
+        _attempt_overflow_error(record)
+
+
+func _attempt_overflow_error(record: Dictionary) -> void:
+    if bool(record.get("overflow_error_attempted", false)) or bool(record.get("overflow_error_draining", false)):
+        return
+    record["overflow_error_accepted"] = false
+    var peer: WebSocketPeer = record.get("peer")
+    if peer == null or peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+        return
+    if not record.get("reliable_queue", []).is_empty():
+        record["overflow_error_draining"] = true
+        var drained := _flush_reliable(record)
+        record["overflow_error_draining"] = false
+        if not drained:
+            return
+    if not record.get("reliable_queue", []).is_empty():
+        return
+    if peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+        return
+    record["overflow_error_attempted"] = true
+    reliable_overflow_error_attempt_count += 1
+    var next_sequence := int(record.get("sequence", 0)) + 1
+    var accepted := peer.send_text(JSON.stringify(overflow_error_envelope(next_sequence))) == OK
+    record["overflow_error_accepted"] = accepted
+    if accepted:
+        reliable_overflow_error_accepted_count += 1
+        record["sequence"] = next_sequence
+        if is_hard_close_pressure(_native_outbound_buffered_bytes(peer)):
+            _record_hard_close(record)
+    else:
+        last_reliable_error = "overflow error send failed"
+
+
+func _record_hard_close(record: Dictionary) -> void:
+    if not bool(record.get("hard_close_recorded", false)):
+        record["hard_close_recorded"] = true
+        hard_close_count += 1
+        last_hard_close_error = "native outbound buffer hard limit"
+    _begin_close(record, "native outbound buffer hard limit")
+
+
+func _check_native_outbound_pressure(record: Dictionary) -> bool:
+    var peer: WebSocketPeer = record.get("peer")
+    if peer == null:
+        return false
+    if is_hard_close_pressure(_native_outbound_buffered_bytes(peer)):
+        _record_hard_close(record)
+        return false
+    return true
+
+
+func _native_outbound_buffered_bytes(peer: WebSocketPeer) -> int:
+    return maxi(0, peer.get_current_outbound_buffered_amount())
 
 func _begin_close(record: Dictionary, reason: String) -> void:
     if bool(record.get("closing", false)):
@@ -1090,6 +1201,8 @@ func _poll_closing_peers() -> void:
             if not _flush_reliable(record):
                 peer.close(1008, String(record.get("close_reason", "reliable close")).substr(0, 120))
                 continue
+        if peer.get_ready_state() == WebSocketPeer.STATE_OPEN and bool(record.get("reliable_failure_recorded", false)) and bool(record.get("overflow_error_attempted", false)) == false:
+            _attempt_overflow_error(record)
         if peer.get_ready_state() == WebSocketPeer.STATE_OPEN and record.get("reliable_queue", []).is_empty():
             peer.close(1008, String(record.get("close_reason", "closing")).substr(0, 120))
 
@@ -1104,10 +1217,14 @@ func _poll_telemetry() -> void:
     if source_sequence != _last_telemetry_source_seq:
         _last_telemetry_source_seq = source_sequence
         _telemetry_sample_seq += 1
+        var serialization_started_usec := Time.get_ticks_usec()
         _latest_telemetry_payload = serialize_telemetry_snapshot(
             source,
             _telemetry_sample_seq,
             int(source.get("tick", 0)))
+        _telemetry_serialization_samples_usec.append(float(Time.get_ticks_usec() - serialization_started_usec))
+        if _telemetry_serialization_samples_usec.size() > MAX_TELEMETRY_SERIALIZATION_SAMPLES:
+            _telemetry_serialization_samples_usec.pop_front()
         telemetry_snapshot_serialization_count += 1
     if _latest_telemetry_payload.is_empty():
         return
@@ -1141,7 +1258,11 @@ func _flush_telemetry(record: Dictionary) -> void:
     var peer: WebSocketPeer = record.get("peer")
     if slot.is_empty() or peer == null or peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
         return
-    if peer.get_current_outbound_buffered_amount() > 0:
+    if not record.get("reliable_queue", []).is_empty():
+        return
+    if not _check_native_outbound_pressure(record):
+        return
+    if is_telemetry_suppressed(_native_outbound_buffered_bytes(peer)):
         return
     var data: Dictionary = slot.d
     data["sent_at_unix_ms"] = Time.get_unix_time_from_system() * 1000.0
@@ -1156,6 +1277,8 @@ func _flush_telemetry(record: Dictionary) -> void:
             record["telemetry_request_seq"] = -1
         record["telemetry_slot"] = {}
         telemetry_send_count += 1
+        if is_hard_close_pressure(_native_outbound_buffered_bytes(peer)):
+            _record_hard_close(record)
 
 
 func _exit_tree() -> void:
