@@ -2867,12 +2867,6 @@ ReplayRunResult replay_session(
                 pending_collision_authorities[vehicle] = event.collision.authority;
                 last_collisions[vehicle] = event.collision;
                 has_pending_collision[vehicle] = true;
-            } else if (event.type == ReplayEventType::Tuning) {
-                const int vehicle = vehicle_index(event.vehicle_name);
-                if (vehicle < 0 || event.tuning_parameter != "simpleflight.rate_p" ||
-                        !controllers[vehicle].set_rate_p(event.tuning_committed_value)) {
-                    return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay tuning input is unsupported"));
-                }
             }
         }
         for (std::size_t index = event_index; index < group_end; ++index) {
@@ -2883,8 +2877,14 @@ ReplayRunResult replay_session(
         }
         case ReplayEventType::AsyncCommand:
             break;
-        case ReplayEventType::Tuning:
+        case ReplayEventType::Tuning: {
+            const int vehicle = vehicle_index(event.vehicle_name);
+            if (vehicle < 0 || event.tuning_parameter != kSimpleFlightRatePParameter ||
+                    !controllers[vehicle].set_rate_p(event.tuning_committed_value)) {
+                return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay tuning input is unsupported"));
+            }
             break;
+        }
         case ReplayEventType::SceneObject: {
             if (event.object_operation == ReplaySceneObjectOperation::Reset) {
                 scene_objects.clear();

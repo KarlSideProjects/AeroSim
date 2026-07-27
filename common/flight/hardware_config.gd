@@ -132,6 +132,24 @@ func apply_to_runtime(runtime: Object, path: String) -> bool:
     var apply_ok := _apply_current_to_runtime(runtime, path)
     return ok and apply_ok
 
+func initialize_tuning(runtime: Object) -> bool:
+    if runtime.get("native") == null or not runtime.native.has_method("initialize_flight_tuning"):
+        last_ok = false
+        last_error = "native runtime missing tuning initialization"
+        return false
+    for descriptor_value in tuning_registry():
+        var descriptor: Dictionary = descriptor_value
+        var result: Dictionary = runtime.native.call(
+                "initialize_flight_tuning", String(descriptor.get("key", "")), float(descriptor.get("default", 0.0)))
+        if not bool(result.get("ok", false)):
+            last_ok = false
+            last_error = "native runtime rejected tuning initialization"
+            push_error(last_error)
+            return false
+    last_ok = true
+    last_error = ""
+    return true
+
 func prop_sample_at_rpm(config: Dictionary, rpm: float) -> Dictionary:
     var table: Array = config.get("propeller", {}).get("table", [])
     if table.size() < 2:
@@ -335,16 +353,6 @@ func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
             last_error = "native runtime rejected telemetry model"
             push_error(last_error)
             return false
-        if runtime.native.has_method("set_flight_tuning"):
-            for descriptor_value in tuning_registry():
-                var descriptor: Dictionary = descriptor_value
-                var tuning_result: Dictionary = runtime.native.call(
-                        "set_flight_tuning", String(descriptor.get("key", "")), float(descriptor.get("default", 0.0)))
-                if not bool(tuning_result.get("ok", false)):
-                    last_ok = false
-                    last_error = "native runtime rejected tuning default"
-                    push_error(last_error)
-                    return false
         if not runtime.native.has_method("set_a3_drag_model"):
             last_ok = false
             last_error = "native runtime missing A3 drag model setter"

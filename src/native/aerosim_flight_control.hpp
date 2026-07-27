@@ -7,6 +7,11 @@
 
 namespace aerosim {
 
+inline constexpr char kSimpleFlightRatePParameter[] = "simpleflight.rate_p";
+constexpr double kSimpleFlightRatePDefault = 0.600;
+constexpr double kSimpleFlightRatePMin = 0.0;
+constexpr double kSimpleFlightRatePMax = 2.0;
+
 struct FlightCommand {
     double throttle = 0.0;
     double roll_degrees = 0.0;
@@ -174,7 +179,7 @@ private:
     };
 
     bool armed_ = false;
-    double rate_p_ = 0.600;
+    double rate_p_ = kSimpleFlightRatePDefault;
     std::string arm_reject_code_ = "";
     int integrator_reset_count_ = 0;
     double motor_thrust_newtons_ = 0.0;

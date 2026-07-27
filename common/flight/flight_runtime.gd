@@ -232,6 +232,7 @@ var _gsp_tuning_registry: Array = []
 var _gsp_tuning_registry_hash := "unavailable"
 var _gsp_tuning_pending: Array[Dictionary] = []
 var _gsp_tuning_completed: Array[Dictionary] = []
+var _gsp_tuning_recent_results: Array[Dictionary] = []
 var _airsim_secondary_a5_configuration: Dictionary = {}
 var _secondary_collision_state_captured := false
 var _secondary_collision_layer := 1
@@ -344,6 +345,9 @@ func _ready() -> void:
     var hardware_config := HardwareConfig.new()
     _gsp_tuning_registry = hardware_config.tuning_registry()
     _gsp_tuning_registry_hash = hardware_config.tuning_registry_hash()
+    if not hardware_config.initialize_tuning(self):
+        last_error_message = hardware_config.last_error
+        push_error("Default tuning initialization failed: %s" % hardware_config.last_error)
     if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
         last_error_message = hardware_config.last_error
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
@@ -621,6 +625,10 @@ func _configure_secondary_native(hardware_config: RefCounted) -> bool:
         return false
     var primary_native := native
     native = _airsim_secondary_native
+    if not hardware_config.initialize_tuning(self):
+        native = primary_native
+        last_error_message = "second named vehicle tuning initialization failed"
+        return false
     var applied_result: Variant = hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET)
     var applied: bool = bool(applied_result)
     native = primary_native
@@ -1378,7 +1386,8 @@ func _physics_process(delta: float) -> void:
             drone_body.freeze = false
             drone_body.sleeping = false
         return
-    _apply_gsp_tuning_requests()
+    _sync_native_external_authority()
+    _apply_gsp_tuning_requests(_gsp_public_physics_tick())
     if paused:
         if airsim_session != null and not airsim_session.is_paused():
             set_paused(false, false)
@@ -4780,13 +4789,24 @@ func _on_dashboard_vehicle_selected(vehicle_name: String) -> void:
         _dashboard_vehicle_name = vehicle_name
 
 
-func gsp_tuning_request(peer_id: int, request_seq: int, parameter: String, value: Variant) -> Dictionary:
-    if px4_sitl_bridge != null and px4_sitl_bridge.is_authority_active():
-        return {"ok": false, "error": "external_authority", "authority": "px4"}
+func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, parameter: String, value: Variant) -> Dictionary:
+    _sync_native_external_authority()
+    if _gsp_external_authority_active():
+        var result := {
+            "peer_id": peer_id,
+            "connection_id": connection_id,
+            "request_seq": request_seq,
+            "ok": false,
+            "error": "external_authority",
+            "authority": "px4",
+        }
+        _remember_gsp_tuning_result(result)
+        return result
     if paused:
-        return _commit_gsp_tuning(peer_id, request_seq, parameter, value)
+        return _commit_gsp_tuning(peer_id, connection_id, request_seq, parameter, value, _gsp_public_physics_tick())
     _gsp_tuning_pending.append({
         "peer_id": peer_id,
+        "connection_id": connection_id,
         "request_seq": request_seq,
         "parameter": parameter,
         "value": value,
@@ -4800,7 +4820,7 @@ func gsp_tuning_results() -> Array:
     return results
 
 
-func _apply_gsp_tuning_requests() -> void:
+func _apply_gsp_tuning_requests(public_physics_tick: int) -> void:
     if _gsp_tuning_pending.is_empty():
         return
     var pending := _gsp_tuning_pending
@@ -4808,27 +4828,38 @@ func _apply_gsp_tuning_requests() -> void:
     for request in pending:
         _gsp_tuning_completed.append(_commit_gsp_tuning(
                 int(request.get("peer_id", -1)),
+                int(request.get("connection_id", -1)),
                 int(request.get("request_seq", -1)),
                 String(request.get("parameter", "")),
-                request.get("value")))
+                request.get("value"),
+                public_physics_tick))
 
 
-func _commit_gsp_tuning(peer_id: int, request_seq: int, parameter: String, value: Variant) -> Dictionary:
-    var result: Dictionary = {"peer_id": peer_id, "request_seq": request_seq}
-    if px4_sitl_bridge != null and px4_sitl_bridge.is_authority_active():
+func _commit_gsp_tuning(peer_id: int, connection_id: int, request_seq: int, parameter: String, value: Variant, public_physics_tick: int) -> Dictionary:
+    var result: Dictionary = {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    _sync_native_external_authority()
+    if _gsp_external_authority_active():
         result["ok"] = false
         result["error"] = "external_authority"
         result["authority"] = "px4"
+        _remember_gsp_tuning_result(result)
         return result
-    if native == null or not native.has_method("set_flight_tuning"):
+    if native == null or not native.has_method("stage_flight_tuning") or not native.has_method("commit_flight_tuning"):
         result["ok"] = false
         result["error"] = "tuning_unavailable"
+        _remember_gsp_tuning_result(result)
         return result
-    var native_result: Dictionary = native.call("set_flight_tuning", parameter, value)
+    var staged_result: Dictionary = native.call("stage_flight_tuning", parameter, value)
+    if not bool(staged_result.get("ok", false)):
+        for key in staged_result:
+            result[key] = staged_result[key]
+        _remember_gsp_tuning_result(result)
+        return result
+    var native_result: Dictionary = native.call("commit_flight_tuning", public_physics_tick)
     for key in native_result:
         result[key] = native_result[key]
     if bool(native_result.get("ok", false)):
-        if _replay_recording_active and native.has_method("record_replay_tuning"):
+        if bool(native_result.get("changed", false)) and _replay_recording_active and native.has_method("record_replay_tuning"):
             var replay_result: Dictionary = native.call(
                     "record_replay_tuning",
                     _replay_timestamp_us(),
@@ -4841,7 +4872,29 @@ func _commit_gsp_tuning(peer_id: int, request_seq: int, parameter: String, value
                     bool(native_result.get("clamped", false)))
             if not bool(replay_result.get("ok", false)):
                 push_error("Complete replay tuning recording failed: %s" % String(replay_result.get("diagnostic_message", "unknown error")))
+    _remember_gsp_tuning_result(result)
     return result
+
+
+func _remember_gsp_tuning_result(result: Dictionary) -> void:
+    var recent := result.duplicate(true)
+    recent.erase("peer_id")
+    _gsp_tuning_recent_results.append(recent)
+    if _gsp_tuning_recent_results.size() > 16:
+        _gsp_tuning_recent_results.pop_front()
+
+
+func _gsp_external_authority_active() -> bool:
+    return px4_sitl_bridge != null and px4_sitl_bridge.is_authority_active()
+
+
+func _sync_native_external_authority() -> void:
+    if native != null and native.has_method("set_external_authority_active"):
+        native.call("set_external_authority_active", _gsp_external_authority_active())
+
+
+func _gsp_public_physics_tick() -> int:
+    return airsim_session.frame_index if airsim_session != null else 0
 
 
 func gsp_identity_snapshot() -> Dictionary:
@@ -4863,6 +4916,8 @@ func gsp_identity_snapshot() -> Dictionary:
         "registry": {
             "vehicle_instances": _airsim_vehicle_names.duplicate(),
             "parameters": registry_parameters,
+            "tuning": active_tuning,
+            "tuning_recent_results": _gsp_tuning_recent_results.duplicate(true),
         },
         "registry_hash": _gsp_tuning_registry_hash,
         "tick": airsim_session.frame_index if airsim_session != null else 0,
@@ -4900,6 +4955,7 @@ func gsp_telemetry_snapshot() -> Dictionary:
     snapshot["vehicle_instance"] = _airsim_vehicle_name
     snapshot["authority"] = String(snapshot.get("control_authority", "unavailable"))
     snapshot["registry_hash"] = _gsp_tuning_registry_hash
+    snapshot["tuning"] = native.call("flight_tuning_configuration") if native != null and native.has_method("flight_tuning_configuration") else {}
     snapshot["tick"] = tick
     _gsp_telemetry_publish_count = publish_count
     _gsp_telemetry_cache = snapshot.duplicate(true)

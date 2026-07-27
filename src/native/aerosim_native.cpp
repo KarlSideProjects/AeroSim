@@ -386,7 +386,11 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("wind_configuration"), &AeroSimNative::wind_configuration);
     ClassDB::bind_method(D_METHOD("sample_wind", "time_seconds", "position_x", "position_y", "position_z"), &AeroSimNative::sample_wind);
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
-    ClassDB::bind_method(D_METHOD("set_flight_tuning", "parameter", "value"), &AeroSimNative::set_flight_tuning);
+    ClassDB::bind_method(D_METHOD("initialize_flight_tuning", "parameter", "value"), &AeroSimNative::initialize_flight_tuning);
+    ClassDB::bind_method(D_METHOD("stage_flight_tuning", "parameter", "value"), &AeroSimNative::stage_flight_tuning);
+    ClassDB::bind_method(D_METHOD("commit_flight_tuning", "public_physics_tick"), &AeroSimNative::commit_flight_tuning);
+    ClassDB::bind_method(D_METHOD("set_external_authority_active", "active"), &AeroSimNative::set_external_authority_active);
+    ClassDB::bind_method(D_METHOD("flight_tuning_contract"), &AeroSimNative::flight_tuning_contract);
     ClassDB::bind_method(D_METHOD("flight_tuning_configuration"), &AeroSimNative::flight_tuning_configuration);
     ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_per_motor_diagnostics"), &AeroSimNative::hardware_per_motor_diagnostics);
@@ -527,7 +531,7 @@ void AeroSimNative::apply_downwash_provider(aerosim::SimulationConfig &config) c
 AeroSimNative::StepSnapshot AeroSimNative::snapshot_step() const {
     return {
             simulation_state_, simulation_clock_, dual_aircraft_state_, dual_aircraft_clock_, flight_controller_, collision_authority_, imu_, last_imu_sample_,
-            has_last_imu_sample_, flight_control_used_estimated_attitude_, flight_mode_,
+            has_last_imu_sample_, flight_control_used_estimated_attitude_, flight_mode_, external_authority_active_,
             tuning_commit_id_,
     };
 }
@@ -544,6 +548,7 @@ void AeroSimNative::restore_step(const StepSnapshot &snapshot) {
     has_last_imu_sample_ = snapshot.has_last_imu_sample;
     flight_control_used_estimated_attitude_ = snapshot.flight_control_used_estimated_attitude;
     flight_mode_ = snapshot.flight_mode;
+    external_authority_active_ = snapshot.external_authority_active;
     tuning_commit_id_ = snapshot.tuning_commit_id;
 }
 
@@ -1237,6 +1242,7 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     }
     flight_controller_.publish_applied_telemetry(
             sample, config, (motor_0 + motor_1 + motor_2 + motor_3) * 0.25, "PX4_ACTUATOR");
+    external_authority_active_ = true;
     flight_mode_ = "PX4_ACTUATOR";
     PackedFloat64Array row;
     row.append(sample.time_seconds);
@@ -1345,6 +1351,7 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
         flight_controller_.publish_applied_telemetry(
                 result.sample, config, (motor_0 + motor_1 + motor_2 + motor_3) * 0.25, "PX4_ACTUATOR");
     }
+    external_authority_active_ = true;
     flight_mode_ = "PX4_ACTUATOR";
     PackedFloat64Array row;
     const aerosim::TrajectorySample &sample = result.sample;
@@ -1422,6 +1429,7 @@ void AeroSimNative::reset_flight() {
     has_last_imu_sample_ = false;
     sample_imu();
     flight_control_used_estimated_attitude_ = false;
+    external_authority_active_ = false;
     flight_mode_ = "ANGLE";
     clear_step_error();
 }
@@ -1583,11 +1591,15 @@ Dictionary AeroSimNative::flight_control_diagnostics() const {
     return diagnostics;
 }
 
-Dictionary AeroSimNative::set_flight_tuning(const String &parameter, const Variant &value) {
+Dictionary AeroSimNative::stage_flight_tuning(const String &parameter, const Variant &value) {
     Dictionary result;
     result["ok"] = false;
     result["parameter"] = parameter;
-    if (parameter != "simpleflight.rate_p") {
+    if (external_authority_active_) {
+        result["error"] = "external_authority";
+        return result;
+    }
+    if (parameter != aerosim::kSimpleFlightRatePParameter) {
         result["error"] = "unknown_parameter";
         return result;
     }
@@ -1600,21 +1612,100 @@ Dictionary AeroSimNative::set_flight_tuning(const String &parameter, const Varia
         result["error"] = "non_finite";
         return result;
     }
-    const double committed = std::clamp(requested, 0.0, 2.0);
-    const bool changed = flight_controller_.rate_p() != committed;
-    if (!flight_controller_.set_rate_p(committed)) {
-        result["error"] = "out_of_contract";
+    const double committed = std::clamp(requested, aerosim::kSimpleFlightRatePMin, aerosim::kSimpleFlightRatePMax);
+    staged_tuning_.valid = true;
+    staged_tuning_.parameter = parameter;
+    staged_tuning_.requested_value = requested;
+    staged_tuning_.committed_value = committed;
+    staged_tuning_.clamped = committed != requested;
+    result["ok"] = true;
+    result["requested_value"] = requested;
+    result["committed_value"] = committed;
+    result["clamped"] = staged_tuning_.clamped;
+    return result;
+}
+
+Dictionary AeroSimNative::commit_flight_tuning(std::int64_t public_physics_tick) {
+    if (public_physics_tick < 0) {
+        Dictionary result;
+        result["ok"] = false;
+        result["error"] = "invalid_physics_tick";
+        return result;
+    }
+    if (external_authority_active_) {
+        Dictionary result;
+        result["ok"] = false;
+        result["error"] = "external_authority";
+        result["authority"] = "px4";
+        return result;
+    }
+    if (!staged_tuning_.valid) {
+        Dictionary result;
+        result["ok"] = false;
+        result["error"] = "no_staged_tuning";
+        return result;
+    }
+    const bool changed = flight_controller_.rate_p() != staged_tuning_.committed_value;
+    if (changed && !flight_controller_.set_rate_p(staged_tuning_.committed_value)) {
+        staged_tuning_.valid = false;
+        Dictionary result;
+        result["ok"] = false;
+        result["error"] = "native_safety_rejection";
         return result;
     }
     if (changed) {
         ++tuning_commit_id_;
+        tuning_commit_tick_ = static_cast<std::uint64_t>(public_physics_tick);
     }
+    tuning_last_requested_value_ = staged_tuning_.requested_value;
+    tuning_last_changed_ = changed;
+    tuning_last_clamped_ = staged_tuning_.clamped;
+    Dictionary result;
     result["ok"] = true;
-    result["requested_value"] = requested;
-    result["committed_value"] = committed;
-    result["clamped"] = committed != requested;
+    result["parameter"] = staged_tuning_.parameter;
+    result["requested_value"] = staged_tuning_.requested_value;
+    result["committed_value"] = staged_tuning_.committed_value;
+    result["clamped"] = staged_tuning_.clamped;
+    result["changed"] = changed;
     result["commit_id"] = static_cast<std::int64_t>(tuning_commit_id_);
-    result["commit_tick"] = static_cast<std::int64_t>(simulation_clock_.total_substeps);
+    result["commit_tick"] = static_cast<std::int64_t>(tuning_commit_tick_);
+    staged_tuning_.valid = false;
+    return result;
+}
+
+Dictionary AeroSimNative::initialize_flight_tuning(const String &parameter, const Variant &value) {
+    if (tuning_commit_id_ != 0 || simulation_clock_.total_substeps != 0 || staged_tuning_.valid) {
+        Dictionary result;
+        result["ok"] = false;
+        result["error"] = "tuning_already_initialized";
+        return result;
+    }
+    Dictionary staged = stage_flight_tuning(parameter, value);
+    if (!static_cast<bool>(staged.get("ok", false))) {
+        return staged;
+    }
+    Dictionary committed = commit_flight_tuning(0);
+    if (static_cast<bool>(committed.get("ok", false))) {
+        tuning_commit_id_ = 0;
+        tuning_commit_tick_ = 0;
+    }
+    return committed;
+}
+
+void AeroSimNative::set_external_authority_active(bool active) {
+    external_authority_active_ = active;
+    if (active) {
+        staged_tuning_.valid = false;
+    }
+}
+
+Dictionary AeroSimNative::flight_tuning_contract() const {
+    Dictionary result;
+    result["key"] = aerosim::kSimpleFlightRatePParameter;
+    result["type"] = "float";
+    result["default"] = aerosim::kSimpleFlightRatePDefault;
+    result["min"] = aerosim::kSimpleFlightRatePMin;
+    result["max"] = aerosim::kSimpleFlightRatePMax;
     return result;
 }
 
@@ -1622,7 +1713,11 @@ Dictionary AeroSimNative::flight_tuning_configuration() const {
     Dictionary result;
     result["simpleflight.rate_p"] = flight_controller_.rate_p();
     result["commit_id"] = static_cast<std::int64_t>(tuning_commit_id_);
-    result["commit_tick"] = static_cast<std::int64_t>(simulation_clock_.total_substeps);
+    result["commit_tick"] = static_cast<std::int64_t>(tuning_commit_tick_);
+    result["requested_value"] = tuning_last_requested_value_;
+    result["committed_value"] = flight_controller_.rate_p();
+    result["changed"] = tuning_last_changed_;
+    result["clamped"] = tuning_last_clamped_;
     return result;
 }
 

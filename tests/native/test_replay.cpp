@@ -744,7 +744,32 @@ bool test_tuning_replay_contract() {
     aerosim::ReplaySession changed = loaded.session;
     changed.events[1].tuning_committed_value = 1.0;
     const aerosim::ReplayDivergence divergence = aerosim::compare_replay_sessions(loaded.session, changed);
-    return divergence.diverged && divergence.field == "tuning";
+    if (!divergence.diverged || divergence.field != "tuning") {
+        return false;
+    }
+
+    aerosim::ReplaySessionRecorder ordered_recorder(32, "manifest");
+    aerosim::FlightCommand command;
+    command.throttle = 0.55;
+    command.roll_degrees = 12.0;
+    if (!ordered_recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !ordered_recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !ordered_recorder.record_environment(0, complete_atmosphere(32)) ||
+            !ordered_recorder.record_command(0, "DroneA", command, aerosim::ReplayControllerAuthority::FlightCore) ||
+            !ordered_recorder.record_tuning(1000, "DroneA", 8, 1, "simpleflight.rate_p", 2.0, 2.0, false) ||
+            !ordered_recorder.record_simulation_operation(1000, aerosim::ReplaySimulationOperation::StepFrames, 1) ||
+            !ordered_recorder.finish(2000, "completed")) {
+        return false;
+    }
+    aerosim::ReplaySession reversed = ordered_recorder.session();
+    std::swap(reversed.events[2], reversed.events[3]);
+    const aerosim::SimulationConfig config = replay_test_config();
+    const aerosim::ReplayRunResult ordered_run = aerosim::replay_session(
+            ordered_recorder.session(), {config, config}, "manifest", {{"hash-a", "hash-b"}});
+    const aerosim::ReplayRunResult reversed_run = aerosim::replay_session(
+            reversed, {config, config}, "manifest", {{"hash-a", "hash-b"}});
+    const aerosim::ReplayDivergence order_divergence = aerosim::compare_replay_runs(ordered_run, reversed_run);
+    return ordered_run.ok && reversed_run.ok && order_divergence.diverged;
 }
 
 bool test_checked_replay_batches() {

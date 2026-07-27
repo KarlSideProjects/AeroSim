@@ -14,18 +14,34 @@ The initial gain is `simpleflight.rate_p`, the body-rate proportional gain used 
 - The required focused test initially failed to compile because `FlightController` had no `rate_p()` or `set_rate_p()` members. The native active-memory setter/getter and bounded validation were then added; the focused test passed.
 - The first GSP tuning contract accepted a dictionary as a numeric value. The validator was tightened to accept only Godot integer or float JSON values; the rerun passed.
 - Applying the canonical schema default initially consumed a tuning commit ID even when the active value was unchanged. Native commit accounting now increments only when the active controller value changes.
+- Sol finding: `commit_tick` used native 1 kHz substeps. The native commit now receives and stores the public AirSim/GSP physics-frame tick captured at `_physics_process` start.
+- Sol finding: the public native setter mutated active tuning directly and trusted a GDScript PX4 pre-check. It was replaced with native validate/stage plus native commit; native authority state is synchronized and checked at both stages and successful PX4 paths mark native external authority.
+- Sol finding: no-op behavior was undefined. Native now returns `changed:false`, preserves the commit ID, and runtime records replay tuning only for real changes.
+- Sol finding: the old `out_of_contract` branch was unreachable. Validation now clamps finite UI-range overflow with explicit requested/committed/clamped fields and returns a real `native_safety_rejection` if the active controller rejects a staged value.
+- Sol finding: disconnect reconciliation and peer correlation were incomplete. Runtime keeps only 16 recent results, hello/telemetry expose latest tuning state, and GSP carries a monotonic connection ID through pending results while stripping it from client acks.
+- Sol finding: hardware defaults were reapplied during later flight setup. Defaults now initialize each newly created native controller once, before the first hardware apply; later preset applies do not overwrite tuning.
+- Sol finding: server-side `tuning_pending` was write-only. It was removed.
+- Sol finding: replay applied tuning before all same-timestamp events and the test never called `replay_session()`. Tuning now executes in recorded event order; the native test runs ordered and reversed same-timestamp sessions and proves divergent replay results.
+- The first review integration run exposed a stale GDExtension missing `initialize_flight_tuning`; the full gate rebuilt it. The rebuilt integration then exposed an invalid test atmosphere and manifest hash, which were corrected to use canonical replay JSON and the native manifest hash.
 - The full Godot gate generated untracked `.uid`, `.import`, and translation artifacts. Only those known generated artifacts were removed; no unrelated source or user files were removed.
-- No Sol-high decision was required. The full gate exposed expected pre-existing invalid-fixture diagnostics and Terrain3D/import warnings, but no issue-specific failure.
 
 ## TDD and verification
 
-RED:
+Original implementation RED:
 
 ```text
 g++ -std=c++17 -Wall -Wextra -Werror -ffp-contract=off -Isrc/native tests/native/test_flight_control.cpp src/native/aerosim_aerodynamics.cpp src/native/aerosim_simulation.cpp src/native/aerosim_flight_control.cpp src/native/aerosim_imu.cpp src/native/aerosim_wind.cpp src/native/aerosim_collision.cpp src/native/aerosim_replay.cpp -o build/tests/test_flight_control_red
 ```
 
 Result: expected compile failure because `rate_p()` and `set_rate_p()` were not yet defined.
+
+Review-fix RED:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+```
+
+Result: expected failure against the pre-rebuild extension: `Nonexistent function 'initialize_flight_tuning (via call)' in base 'AeroSimNative'`.
 
 GREEN:
 
@@ -36,15 +52,25 @@ build/tests/test_flight_control
 
 Result: exit 0.
 
+Review-fix GREEN:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+```
+
+Result: `GSP tuning integration: PASS`.
+
 Additional results:
 
 - `scripts/test_native.sh`: PASS.
+- Native replay ordering test: PASS, including `replay_session()` and reversed same-timestamp order.
 - Godot `gsp_tuning_contract.gd`: PASS.
+- Godot `gsp_tuning_integration.gd`: PASS; active boundary, paused commit, public tick/ID, native readback, no-op, rejection, clamp, external authority, reconnect reconciliation, replay recording, and replay application.
 - Godot `gsp_transport_contract.gd`: PASS.
 - Godot `gsp_telemetry_contract.gd`: PASS.
 - GSP transport and telemetry integration checks: PASS.
 - `git diff --check`: PASS.
-- `RUNNER_TEMP=/tmp/aerosim-gsp-244 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh`: PASS; native, license, Python, headless GUT (276 tests, 0 failures, 0 errors), headed acceptance, replay, and smoke stages completed successfully.
+- The prescribed review gate was run before the final commit while iterating: native, license, Python, GUT (276 tests, 0 failures, 0 errors), and existing stages passed; the first run failed only at the new integration replay harness, then the focused integration rerun passed after the harness fixes.
 
 ## Scoped files
 
@@ -53,6 +79,7 @@ Additional results:
 - `common/flight/flight_runtime.gd`
 - `common/gsp/gsp_launcher.gd`
 - `common/gsp/gsp_server.gd`
+- `scripts/verify_issue_11.sh`
 - `common/gsp/gsp_panel.html`
 - `src/native/aerosim_flight_control.hpp`
 - `src/native/aerosim_flight_control.cpp`
@@ -63,6 +90,7 @@ Additional results:
 - `tests/native/test_flight_control.cpp`
 - `tests/native/test_replay.cpp`
 - `tests/headless/gsp_tuning_contract.gd`
+- `tests/headless/gsp_tuning_integration.gd`
 - this report
 
 ## Limitations and headed evidence

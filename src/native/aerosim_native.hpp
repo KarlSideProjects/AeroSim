@@ -36,6 +36,7 @@ private:
         bool has_last_imu_sample = false;
         bool flight_control_used_estimated_attitude = false;
         godot::String flight_mode;
+        bool external_authority_active = false;
         std::uint64_t tuning_commit_id = 0;
     };
     aerosim::RigidBodyState simulation_state_;
@@ -69,7 +70,19 @@ private:
     bool flight_control_used_estimated_attitude_ = false;
     godot::String flight_mode_ = "ANGLE";
     godot::String last_step_error_;
+    bool external_authority_active_ = false;
     std::uint64_t tuning_commit_id_ = 0;
+    std::uint64_t tuning_commit_tick_ = 0;
+    double tuning_last_requested_value_ = aerosim::kSimpleFlightRatePDefault;
+    bool tuning_last_changed_ = false;
+    bool tuning_last_clamped_ = false;
+    struct StagedTuning {
+        bool valid = false;
+        godot::String parameter;
+        double requested_value = 0.0;
+        double committed_value = 0.0;
+        bool clamped = false;
+    } staged_tuning_;
     aerosim::ImuSample sample_imu();
     void apply_downwash_provider(aerosim::SimulationConfig &config) const;
     StepSnapshot snapshot_step() const;
@@ -296,7 +309,11 @@ public:
     godot::Dictionary wind_configuration() const;
     godot::Vector3 sample_wind(double time_seconds, double position_x, double position_y, double position_z) const;
     godot::Dictionary flight_control_diagnostics() const;
-    godot::Dictionary set_flight_tuning(const godot::String &parameter, const godot::Variant &value);
+    godot::Dictionary initialize_flight_tuning(const godot::String &parameter, const godot::Variant &value);
+    godot::Dictionary stage_flight_tuning(const godot::String &parameter, const godot::Variant &value);
+    godot::Dictionary commit_flight_tuning(std::int64_t public_physics_tick);
+    void set_external_authority_active(bool active);
+    godot::Dictionary flight_tuning_contract() const;
     godot::Dictionary flight_tuning_configuration() const;
     godot::Dictionary hardware_power_diagnostics() const;
     godot::Dictionary hardware_per_motor_diagnostics() const;

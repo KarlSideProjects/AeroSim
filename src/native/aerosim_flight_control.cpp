@@ -457,7 +457,7 @@ double FlightController::motor_thrust_newtons() const {
 }
 
 bool FlightController::set_rate_p(double value) {
-    if (!std::isfinite(value) || value < 0.0 || value > 2.0) {
+    if (!std::isfinite(value) || value < kSimpleFlightRatePMin || value > kSimpleFlightRatePMax) {
         return false;
     }
     rate_p_ = value;
