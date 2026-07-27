@@ -6,6 +6,8 @@ var _server: GspServer
 var _ready_path := ""
 var _stop_path := ""
 var _status_path := ""
+var _probe_path := ""
+var _probe_sequence := 0
 var _max_closing_peer_count := 0
 var _large_identity := false
 var _process_ticks := 0
@@ -16,6 +18,7 @@ func _init() -> void:
 	_ready_path = _argument(args, "--ready-file")
 	_stop_path = _argument(args, "--stop-file")
 	_status_path = _argument(args, "--status-file")
+	_probe_path = _argument(args, "--probe-file")
 	_large_identity = args.has("--large-identity")
 	if _ready_path.is_empty() or _stop_path.is_empty():
 		push_error("GSP server harness requires --ready-file and --stop-file")
@@ -53,31 +56,45 @@ func _init() -> void:
 func _process(_delta: float) -> bool:
 	_process_ticks += 1
 	_max_closing_peer_count = maxi(_max_closing_peer_count, _server.get_closing_peer_count())
+	if not _probe_path.is_empty() and FileAccess.file_exists(_probe_path):
+		DirAccess.remove_absolute(_probe_path)
+		_probe_sequence += 1
+		_write_status(_status_snapshot())
 	if FileAccess.file_exists(_stop_path):
-		var closing_before_stop := _server.get_closing_peer_count()
-		if not _status_path.is_empty():
-			var status := FileAccess.open(_status_path, FileAccess.WRITE)
-			if status != null:
-				var snapshot := {
-					"reliable_overflow_count": _server.reliable_overflow_count,
-					"reliable_send_failure_count": _server.reliable_send_failure_count,
-					"last_reliable_error": _server.last_reliable_error,
-					"live_peer_count": _server.get_live_peer_count(),
-					"closing_peer_count": closing_before_stop,
-					"max_closing_peer_count": _max_closing_peer_count,
-					"process_ticks": _process_ticks,
-					"physics_ticks": Engine.get_physics_frames(),
-					"peer_transport_diagnostics": _server.get_peer_transport_diagnostics(),
-				}
-				_server.stop()
-				snapshot["after_stop_live_peer_count"] = _server.get_live_peer_count()
-				status.store_string(JSON.stringify(snapshot))
-				status.flush()
-				status.close()
-		else:
-			_server.stop()
+		var snapshot := _status_snapshot()
+		_server.stop()
+		snapshot["after_stop_live_peer_count"] = _server.get_live_peer_count()
+		_write_status(snapshot)
 		quit(0)
 	return false
+
+
+func _status_snapshot() -> Dictionary:
+	return {
+		"timestamp_ms": Time.get_ticks_msec(),
+		"probe_sequence": _probe_sequence,
+		"reliable_overflow_count": _server.reliable_overflow_count,
+		"reliable_send_failure_count": _server.reliable_send_failure_count,
+		"last_reliable_error": _server.last_reliable_error,
+		"live_peer_count": _server.get_live_peer_count(),
+		"authenticated_peer_count": _server.get_authenticated_peer_count(),
+		"closing_peer_count": _server.get_closing_peer_count(),
+		"max_closing_peer_count": _max_closing_peer_count,
+		"process_ticks": _process_ticks,
+		"physics_ticks": Engine.get_physics_frames(),
+		"peer_transport_diagnostics": _server.get_peer_transport_diagnostics(),
+	}
+
+
+func _write_status(snapshot: Dictionary) -> void:
+	if _status_path.is_empty():
+		return
+	var status := FileAccess.open(_status_path, FileAccess.WRITE)
+	if status == null:
+		return
+	status.store_string(JSON.stringify(snapshot))
+	status.flush()
+	status.close()
 
 
 func _argument(args: Array[String], name: String) -> String:

@@ -131,9 +131,10 @@ const context = {
     window,
     document: {
         hidden: false,
+        listeners: {},
         getElementById: (id) => elements.get(id),
         createElement: (tagName) => new Element(tagName),
-        addEventListener() {},
+        addEventListener(type, callback) { this.listeners[type] = callback; },
     },
     Option: class extends Element {
         constructor(text, value) {
@@ -204,14 +205,40 @@ assert.equal(elements.get("preset-save").disabled, true);
 fresh(first, firstRequest);
 assert.equal(controlsBeforeSnapshot[0].apply.disabled, false);
 assert.equal(elements.get("preset-save").disabled, false);
+let groupApply = elements.get("tuning-rows").children[0].children[1];
+assert.equal(groupApply.disabled, false);
 
+context.document.hidden = true;
 first.emit("close");
 assert.equal(elements.get("preset-save").disabled, true);
+assert.equal(groupApply.disabled, true);
 assert.equal(clock.nextDelay(), 250);
 clock.advance(249);
 assert.equal(FakeWebSocket.instances.length, 1);
 clock.advance(1);
 assert.equal(FakeWebSocket.instances.length, 2);
+
+const hiddenSocket = FakeWebSocket.instances.at(-1);
+const hiddenRequest = ready(hiddenSocket);
+groupApply = elements.get("tuning-rows").children.at(-1).children[1];
+const hiddenRates = hiddenSocket.sent.filter((item) => item.t === "set_telemetry");
+assert.equal(hiddenRates.at(-1).d.hz, 0);
+assert.equal(hiddenSocket.sent.filter((item) => item.t === "request_snapshot").at(-1).seq, hiddenRequest);
+assert.equal(elements.get("preset-save").disabled, true);
+assert.equal(groupApply.disabled, true);
+
+context.document.hidden = false;
+context.document.listeners.visibilitychange();
+const restoredRequest = hiddenSocket.sent.filter((item) => item.t === "request_snapshot").at(-1).seq;
+assert.equal(hiddenSocket.sent.filter((item) => item.t === "set_telemetry").at(-1).d.hz, 30);
+assert.equal(elements.get("preset-save").disabled, true);
+assert.equal(groupApply.disabled, true);
+fresh(hiddenSocket, restoredRequest);
+assert.equal(elements.get("preset-save").disabled, false);
+assert.equal(groupApply.disabled, false);
+hiddenSocket.emit("close");
+assert.equal(clock.nextDelay(), 250);
+clock.advance(250);
 
 const delays = [];
 for (const expected of [500, 1000, 2000, 4000, 5000]) {

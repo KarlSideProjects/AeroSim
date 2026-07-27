@@ -42,7 +42,7 @@ def send_close(sock: socket.socket, payload: bytes) -> None:
     sock.sendall(bytes([0x88, 0x80 | len(payload)]) + mask + masked)
 
 
-def harness_command(ready: Path, stop: Path, status: Path, large_identity: bool) -> list[str]:
+def harness_command(ready: Path, stop: Path, status: Path, probe: Path, large_identity: bool) -> list[str]:
     command = [
         GODOT,
         "--headless",
@@ -59,23 +59,26 @@ def harness_command(ready: Path, stop: Path, status: Path, large_identity: bool)
         str(stop),
         "--status-file",
         str(status),
+        "--probe-file",
+        str(probe),
     ]
     if large_identity:
         command.append("--large-identity")
     return command
 
 
-def start_harness(temp: Path, large_identity: bool) -> tuple[subprocess.Popen[bytes], dict[str, object], Path, Path, Path]:
+def start_harness(temp: Path, large_identity: bool) -> tuple[subprocess.Popen[bytes], dict[str, object], Path, Path, Path, Path]:
     ready = temp / "ready.json"
     stop = temp / "stop"
     status = temp / "status.json"
+    probe = temp / "probe"
     process = subprocess.Popen(
-        harness_command(ready, stop, status, large_identity),
+        harness_command(ready, stop, status, probe, large_identity),
         cwd=ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    return process, read_ready(ready, process), stop, status, ready
+    return process, read_ready(ready, process), stop, status, ready, probe
 
 
 def finish_harness(process: subprocess.Popen[bytes], stop: Path, status: Path) -> dict[str, object]:
@@ -94,8 +97,25 @@ def finish_harness(process: subprocess.Popen[bytes], stop: Path, status: Path) -
     return json.loads(status.read_text(encoding="utf-8"))
 
 
+def probe_status(process: subprocess.Popen[bytes], probe: Path, status: Path, sequence: int, timeout: float = 5.0) -> dict[str, object]:
+    probe.touch()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError("GSP boundary harness stopped before publishing probe status")
+        if status.exists():
+            try:
+                snapshot = json.loads(status.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                snapshot = None
+            if snapshot is not None and int(snapshot.get("probe_sequence", 0)) >= sequence:
+                return snapshot
+        time.sleep(0.05)
+    raise RuntimeError(f"GSP boundary harness did not publish probe status {sequence}")
+
+
 def run_pending_handshake_boundary(temp: Path) -> None:
-    process, identity, stop, status, _ = start_harness(temp, False)
+    process, identity, stop, status, _, _ = start_harness(temp, False)
     held: list[socket.socket] = []
     rejected: socket.socket | None = None
     replacement: socket.socket | None = None
@@ -154,20 +174,29 @@ def close_websocket(sock: socket.socket) -> None:
 
 
 def run_same_process_replacement_case(temp: Path) -> None:
-    process, identity, stop, status, _ = start_harness(temp, False)
+    process, identity, stop, status, _, probe = start_harness(temp, False)
     peers: list[socket.socket] = []
     try:
         first = websocket_connect("127.0.0.1", int(identity["port"]))
         peers.append(first)
         authenticate(first, identity)
+        before_close = probe_status(process, probe, status, 1)
+        if (before_close["live_peer_count"], before_close["authenticated_peer_count"], before_close["closing_peer_count"]) != (1, 1, 0):
+            raise RuntimeError(f"replacement pre-stop peer counts were wrong: {before_close!r}")
         close_websocket(first)
+        reclaimed = probe_status(process, probe, status, 2)
+        if (reclaimed["live_peer_count"], reclaimed["authenticated_peer_count"], reclaimed["closing_peer_count"]) != (0, 0, 0):
+            raise RuntimeError(f"same-process refresh did not reclaim the first peer before replacement: {reclaimed!r}")
         replacement = websocket_connect("127.0.0.1", int(identity["port"]))
         peers.append(replacement)
         authenticate(replacement, identity)
         observer = websocket_connect("127.0.0.1", int(identity["port"]))
         peers.append(observer)
         authenticate(observer, identity)
-        print("GSP same-process replacement: PASS same_token=true authenticated_peers=2")
+        replacement_snapshot = probe_status(process, probe, status, 3)
+        if (replacement_snapshot["live_peer_count"], replacement_snapshot["authenticated_peer_count"], replacement_snapshot["closing_peer_count"]) != (2, 2, 0):
+            raise RuntimeError(f"replacement capacity was not available after reclaim: {replacement_snapshot!r}")
+        print("GSP same-process replacement: PASS pre_stop=1/1/0 reclaimed=0/0/0 replacement=2/2/0")
     finally:
         for peer in peers:
             peer.close()
@@ -178,21 +207,48 @@ def run_same_process_replacement_case(temp: Path) -> None:
 
 
 def run_abrupt_reclaim_case(temp: Path) -> None:
-    process, identity, stop, status, _ = start_harness(temp, False)
+    process, identity, stop, status, _, probe = start_harness(temp, False)
     peers: list[socket.socket] = []
     try:
         lost = websocket_connect("127.0.0.1", int(identity["port"]))
         authenticate(lost, identity)
+        before_loss = probe_status(process, probe, status, 1)
+        if (before_loss["live_peer_count"], before_loss["authenticated_peer_count"], before_loss["closing_peer_count"]) != (1, 1, 0):
+            raise RuntimeError(f"abrupt loss pre-stop peer counts were wrong: {before_loss!r}")
+        loss_started = time.monotonic()
         lost.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
         lost.close()
-        time.sleep(2.0)
+        reclaimed = None
+        sequence = 2
+        while time.monotonic() - loss_started <= 5.0:
+            remaining = 5.0 - (time.monotonic() - loss_started)
+            snapshot = probe_status(process, probe, status, sequence, min(0.25, remaining))
+            sequence += 1
+            if (snapshot["live_peer_count"], snapshot["authenticated_peer_count"], snapshot["closing_peer_count"]) == (0, 0, 0):
+                reclaimed = snapshot
+                break
+        if reclaimed is None:
+            raise RuntimeError("abruptly lost peer was not reclaimed within five seconds")
+        if time.monotonic() - loss_started > 5.0:
+            raise RuntimeError("abruptly lost peer was reclaimed after five seconds")
+        if reclaimed["timestamp_ms"] <= before_loss["timestamp_ms"]:
+            raise RuntimeError(f"reclaim probe timestamp did not advance: {before_loss!r} -> {reclaimed!r}")
+        if reclaimed["process_ticks"] <= before_loss["process_ticks"] or reclaimed["physics_ticks"] <= before_loss["physics_ticks"]:
+            raise RuntimeError(f"simulation did not advance while reclaiming abrupt loss: {before_loss!r} -> {reclaimed!r}")
         replacement = websocket_connect("127.0.0.1", int(identity["port"]))
         peers.append(replacement)
         authenticate(replacement, identity)
         observer = websocket_connect("127.0.0.1", int(identity["port"]))
         peers.append(observer)
         authenticate(observer, identity)
-        print("GSP abrupt reclaim: PASS within_seconds=5 physics_ticks_continued=true")
+        replacement_snapshot = probe_status(process, probe, status, sequence)
+        if (replacement_snapshot["live_peer_count"], replacement_snapshot["authenticated_peer_count"], replacement_snapshot["closing_peer_count"]) != (2, 2, 0):
+            raise RuntimeError(f"abrupt reclaim replacement capacity was wrong: {replacement_snapshot!r}")
+        print("GSP abrupt reclaim: PASS reclaimed_within=%.3fs tick_delta=%d/%d replacement=2/2/0" % (
+            time.monotonic() - loss_started,
+            reclaimed["process_ticks"] - before_loss["process_ticks"],
+            reclaimed["physics_ticks"] - before_loss["physics_ticks"],
+        ))
     finally:
         for peer in peers:
             peer.close()
@@ -207,10 +263,10 @@ def run_restart_token_case(temp: Path) -> None:
     second_dir = temp / "second"
     first_dir.mkdir()
     second_dir.mkdir()
-    first_process, first_identity, first_stop, first_status, _ = start_harness(first_dir, False)
+    first_process, first_identity, first_stop, first_status, _, _ = start_harness(first_dir, False)
     first_stop.touch()
     finish_harness(first_process, first_stop, first_status)
-    second_process, second_identity, second_stop, second_status, _ = start_harness(second_dir, False)
+    second_process, second_identity, second_stop, second_status, _, _ = start_harness(second_dir, False)
     stale = None
     fresh = None
     try:
@@ -232,7 +288,7 @@ def run_restart_token_case(temp: Path) -> None:
 
 
 def run_graceful_case(temp: Path) -> None:
-    process, identity, stop, status, _ = start_harness(temp, True)
+    process, identity, stop, status, _, _ = start_harness(temp, True)
     sock: socket.socket | None = None
     try:
         sock = websocket_connect("127.0.0.1", int(identity["port"]))
@@ -275,7 +331,7 @@ def run_graceful_case(temp: Path) -> None:
 
 
 def run_forced_case(temp: Path) -> None:
-    process, identity, stop, status, _ = start_harness(temp, True)
+    process, identity, stop, status, _, _ = start_harness(temp, True)
     sock: socket.socket | None = None
     try:
         sock = websocket_connect("127.0.0.1", int(identity["port"]))
