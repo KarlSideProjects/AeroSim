@@ -35,6 +35,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 .preset-row input, .preset-row select, .preset-row button { background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
 .preset-row input, .preset-row select { flex: 1 1 10rem; }
 #preset-diff { white-space: pre-wrap; overflow-wrap: anywhere; }
+:disabled { opacity: .45; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -68,10 +69,17 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 <script>
 (function () {
   var protocolVersion = 2;
+  var RECONNECT_MIN_DELAY_MS = 250;
+  var RECONNECT_MAX_DELAY_MS = 5000;
   var fragment = new URLSearchParams(window.location.hash.slice(1));
   var port = Number(fragment.get("port"));
   var token = fragment.get("token") || "";
   var socket = null;
+  var socketGeneration = 0;
+  var reconnectTimer = null;
+  var reconnectAttempt = 0;
+  var helloReady = false;
+  var snapshotReady = false;
   var clientSequence = 1;
   var lastSampleSequence = 0;
   var waitingForFresh = false;
@@ -98,8 +106,29 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   var presetTarget = $("preset-target");
   var presetStatus = $("preset-status");
   var presetDiff = $("preset-diff");
+  var staticControls = [presetName, presetNote, presetSource, presetTarget, $("preset-save"), $("preset-refresh"), $("preset-retrieve"), $("preset-load"), $("preset-preview"), $("preset-compare-current"), $("preset-compare-two")];
 
   function text(id, value) { $(id).textContent = value; }
+  function panelReady() { return helloReady && snapshotReady; }
+  function setControlsEnabled(enabled) {
+    staticControls.forEach(function (control) { control.disabled = !enabled; });
+    Object.keys(tuningControls).forEach(function (key) {
+      var controls = tuningControls[key];
+      [controls.slider, controls.number, controls.button].forEach(function (control) { control.disabled = !enabled; });
+    });
+    quickAdjustControls.forEach(function (controls) {
+      [controls.parameter, controls.type, controls.mode, controls.subsetMin, controls.subsetMax, controls.deadzone, controls.step, controls.rate, controls.device, controls.axis, controls.negative, controls.positive, controls.apply].forEach(function (control) { control.disabled = !enabled; });
+    });
+  }
+  function resetSessionReadiness() {
+    helloReady = false;
+    snapshotReady = false;
+    setControlsEnabled(false);
+  }
+  function reconnectDelay() {
+    return Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_MIN_DELAY_MS * Math.pow(2, reconnectAttempt));
+  }
+  setControlsEnabled(false);
   function vector(value, unit) {
     if (!value) return "—";
     return "[" + Number(value.x_val).toFixed(3) + ", " + Number(value.y_val).toFixed(3) + ", " + Number(value.z_val).toFixed(3) + "] " + unit;
@@ -116,6 +145,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   }
   function sendTelemetryRate(rate) { send("set_telemetry", { hz: rate, extra: [] }); }
   function sendPreset(type, data) {
+    if (!panelReady()) { presetStatus.textContent = "Disconnected"; return null; }
     var sequence = send(type, data || {});
     if (sequence == null) { presetStatus.textContent = "Disconnected"; return null; }
     pendingPresets[sequence] = type;
@@ -162,6 +192,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   }
   function requestFreshSnapshot() {
     waitingForFresh = true;
+    snapshotReady = false;
+    setControlsEnabled(false);
     freshState.textContent = "Waiting for fresh telemetry…";
     pendingFreshRequestSequence = send("request_snapshot", {});
   }
@@ -176,14 +208,16 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   }
   function sendTuning(descriptor, controls, finalValue, batch) {
     cancelTransient(controls);
+    if (!panelReady()) { controls.status.textContent = "Disconnected"; return; }
     var value = rawTuningValue(controls);
     if (value == null) { controls.status.textContent = "Invalid number"; return; }
     var sequence = send(batch ? "set_tuning_batch" : "set_tuning", batch ? { changes: batch } : { parameter: descriptor.key, value: value });
     if (sequence == null) { controls.status.textContent = "Disconnected"; return; }
     controls.status.textContent = finalValue ? "Waiting for acknowledgement…" : "Preview " + value.toFixed(3);
-    pendingTuning[sequence] = { controls: controls, descriptor: descriptor, final: finalValue, started: performance.now() };
+    var generation = socketGeneration;
+    pendingTuning[sequence] = { controls: controls, descriptor: descriptor, final: finalValue, started: performance.now(), generation: generation };
     setTimeout(function () {
-      if (!pendingTuning[sequence]) return;
+      if (!pendingTuning[sequence] || pendingTuning[sequence].generation !== generation) return;
       delete pendingTuning[sequence];
       controls.status.textContent = "Timeout; committed value unknown";
     }, 1500);
@@ -191,7 +225,9 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   function scheduleTransient(descriptor, controls) {
     var elapsed = performance.now() - controls.lastTransientAt;
     cancelTransient(controls);
+    var generation = socketGeneration;
     controls.transientTimer = setTimeout(function () {
+      if (generation !== socketGeneration) { controls.transientTimer = null; return; }
       controls.lastTransientAt = performance.now();
       sendTuning(descriptor, controls, false, null);
       controls.transientTimer = null;
@@ -199,6 +235,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   }
   function renderTuning(registry) {
     tuningRows.textContent = "";
+    tuningControls = {};
     var parameters = registry && Array.isArray(registry.parameters) ? registry.parameters : [];
     var groups = {};
     parameters.forEach(function (descriptor) {
@@ -228,7 +265,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
       var initial = descriptor.active_value == null ? descriptor.default : descriptor.active_value; slider.value = initial; number.value = initial;
       var button = document.createElement("button"); button.textContent = "Apply";
       var status = document.createElement("span"); status.className = "muted";
-      var controls = { descriptor: descriptor, slider: slider, number: number, status: status, lastTransientAt: 0, transientTimer: null };
+      var controls = { descriptor: descriptor, slider: slider, number: number, button: button, status: status, lastTransientAt: 0, transientTimer: null };
       tuningControls[descriptor.key] = controls;
       function preview() { number.value = slider.value; scheduleTransient(descriptor, controls); }
       slider.addEventListener("input", preview); slider.addEventListener("change", function () { sendTuning(descriptor, controls, true, null); });
@@ -236,6 +273,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
       number.addEventListener("change", function () { sendTuning(descriptor, controls, true, null); });
       button.addEventListener("click", function () { sendTuning(descriptor, controls, true, null); });
       row.appendChild(label); row.appendChild(slider); row.appendChild(number); row.appendChild(button); row.appendChild(status); groups[descriptor.group || "Tuning"].appendChild(row);
+      setControlsEnabled(panelReady());
     });
     if (!parameters.length) tuningRows.textContent = "No tunable parameters.";
   }
@@ -273,6 +311,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
       }
       parameter.addEventListener("change", refreshBounds);
       apply.addEventListener("click", function () {
+        if (!panelReady()) { status.textContent = "Disconnected"; return; }
         var slotsToSend = quickAdjustControls.map(function (item) {
           if (!item.parameter.value) return null;
           var result = { parameter: item.parameter.value, binding_type: item.type.value, mode: item.mode.value, subset_min: Number(item.subsetMin.value), subset_max: Number(item.subsetMax.value), deadzone: Number(item.deadzone.value), step: Number(item.step.value), rate_limit: Number(item.rate.value) };
@@ -295,16 +334,31 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
       refreshBounds();
       [parameter, type, mode, subsetMin, subsetMax, deadzone, step, rate, device, axis, negative, positive, apply, status].forEach(function (item) { row.appendChild(item); });
       quickAdjustRows.appendChild(row);
+      setControlsEnabled(panelReady());
     }
   }
   function disconnect(message) {
-    if (socket) socket.close();
+    var generation = arguments.length > 1 ? arguments[1] : socketGeneration;
+    if (generation !== socketGeneration) return;
+    var disconnectedSocket = socket;
     socket = null;
+    if (disconnectedSocket) disconnectedSocket.close();
     if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+    resetSessionReadiness();
     waitingForFresh = true;
+    pendingFreshRequestSequence = null;
+    lastSampleSequence = 0;
     connection.textContent = message;
     freshState.textContent = "Live display disabled.";
     text("rate", "0 Hz");
+    if (reconnectTimer == null && port >= 8765 && port <= 8769 && /^[0-9a-f]{32}$/i.test(token)) {
+      var delay = reconnectDelay();
+      reconnectAttempt += 1;
+      reconnectTimer = setTimeout(function () {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    }
   }
   function drawSparkline() {
     context.clearRect(0, 0, canvas.width, canvas.height);
@@ -327,6 +381,11 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     lastSampleSequence = Number(sample.sample_seq);
     waitingForFresh = false;
     pendingFreshRequestSequence = null;
+    snapshotReady = true;
+    if (panelReady()) {
+      reconnectAttempt = 0;
+      setControlsEnabled(true);
+    }
     connection.textContent = "Connected";
     freshState.textContent = "Live telemetry";
     text("vehicle", sample.vehicle_instance || "—");
@@ -350,18 +409,40 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     if (port < 8765 || port > 8769 || !/^[0-9a-f]{32}$/i.test(token)) {
       connection.textContent = "No valid GSP session fragment"; return;
     }
-    socket = new WebSocket("ws://127.0.0.1:" + port);
-    socket.addEventListener("open", function () {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    var generation = ++socketGeneration;
+    resetSessionReadiness();
+    waitingForFresh = true;
+    pendingFreshRequestSequence = null;
+    lastSampleSequence = 0;
+    clientSequence = 1;
+    pendingTuning = {};
+    pendingQuickAdjust = {};
+    pendingPresets = {};
+    var candidate;
+    try {
+      candidate = new WebSocket("ws://127.0.0.1:" + port);
+    } catch (_error) {
+      disconnect("GSP session unavailable", generation);
+      return;
+    }
+    socket = candidate;
+    candidate.addEventListener("open", function () {
+      if (generation !== socketGeneration || socket !== candidate) return;
       connection.textContent = "Authenticating…";
-      socket.send(JSON.stringify({ v: protocolVersion, t: "auth", seq: 0, d: { token: token } }));
+      candidate.send(JSON.stringify({ v: protocolVersion, t: "auth", seq: 0, d: { token: token } }));
     });
-    socket.addEventListener("message", function (event) {
+    candidate.addEventListener("message", function (event) {
+      if (generation !== socketGeneration || socket !== candidate) return;
       var message;
       try { message = JSON.parse(event.data); } catch (_error) { disconnect("Invalid GSP response"); return; }
       if (message.t === "telemetry") { displayTelemetry(message); return; }
       if (message.v !== protocolVersion || typeof message.t !== "string" || !message.d) { disconnect("Invalid GSP protocol response"); return; }
       if (message.t === "hello") {
-        connection.textContent = "Connected";
+        helloReady = true;
+        snapshotReady = false;
+        setControlsEnabled(false);
+        connection.textContent = "Authenticating…";
         renderTuning(message.d.registry || {});
         renderQuickAdjust((message.d.registry || {}).quick_adjust || {}, message.d.registry || {});
         renderPresets((message.d.registry || {}).presets || []);
@@ -414,8 +495,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         }
       }
     });
-    socket.addEventListener("close", function () { disconnect("GSP session closed"); });
-    socket.addEventListener("error", function () { disconnect("GSP session unavailable"); });
+    candidate.addEventListener("close", function () { disconnect("GSP session closed", generation); });
+    candidate.addEventListener("error", function () { disconnect("GSP session unavailable", generation); });
   }
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) { waitingForFresh = true; sendTelemetryRate(0); freshState.textContent = "Panel hidden; telemetry stopped."; return; }

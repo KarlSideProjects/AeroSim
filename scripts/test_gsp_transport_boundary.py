@@ -7,6 +7,7 @@ import json
 import select
 import socket
 import subprocess
+import struct
 import tempfile
 import time
 from pathlib import Path
@@ -139,6 +140,97 @@ def authenticate(sock: socket.socket, identity: dict[str, object]) -> None:
         raise RuntimeError(f"invalid boundary hello: {hello!r}")
 
 
+def authenticate_rejected(sock: socket.socket, token: str) -> None:
+    send_text(sock, json.dumps({"v": 2, "t": "auth", "seq": 0, "d": {"token": token}}))
+    opcode, payload = receive_frame(sock)
+    if opcode == 1:
+        raise RuntimeError(f"stale token unexpectedly authenticated: {payload!r}")
+
+
+def close_websocket(sock: socket.socket) -> None:
+    send_close(sock, (1000).to_bytes(2, "big"))
+    if not wait_for_eof(sock, 3.0):
+        raise RuntimeError("graceful WebSocket close was not reclaimed")
+
+
+def run_same_process_replacement_case(temp: Path) -> None:
+    process, identity, stop, status, _ = start_harness(temp, False)
+    peers: list[socket.socket] = []
+    try:
+        first = websocket_connect("127.0.0.1", int(identity["port"]))
+        peers.append(first)
+        authenticate(first, identity)
+        close_websocket(first)
+        replacement = websocket_connect("127.0.0.1", int(identity["port"]))
+        peers.append(replacement)
+        authenticate(replacement, identity)
+        observer = websocket_connect("127.0.0.1", int(identity["port"]))
+        peers.append(observer)
+        authenticate(observer, identity)
+        print("GSP same-process replacement: PASS same_token=true authenticated_peers=2")
+    finally:
+        for peer in peers:
+            peer.close()
+        stop.touch()
+        diagnostics = finish_harness(process, stop, status)
+        if diagnostics["after_stop_live_peer_count"] != 0:
+            raise RuntimeError(f"replacement left peers behind: {diagnostics!r}")
+
+
+def run_abrupt_reclaim_case(temp: Path) -> None:
+    process, identity, stop, status, _ = start_harness(temp, False)
+    peers: list[socket.socket] = []
+    try:
+        lost = websocket_connect("127.0.0.1", int(identity["port"]))
+        authenticate(lost, identity)
+        lost.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        lost.close()
+        time.sleep(2.0)
+        replacement = websocket_connect("127.0.0.1", int(identity["port"]))
+        peers.append(replacement)
+        authenticate(replacement, identity)
+        observer = websocket_connect("127.0.0.1", int(identity["port"]))
+        peers.append(observer)
+        authenticate(observer, identity)
+        print("GSP abrupt reclaim: PASS within_seconds=5 physics_ticks_continued=true")
+    finally:
+        for peer in peers:
+            peer.close()
+        stop.touch()
+        diagnostics = finish_harness(process, stop, status)
+        if diagnostics["after_stop_live_peer_count"] != 0 or diagnostics["physics_ticks"] <= 0:
+            raise RuntimeError(f"abrupt reclaim did not preserve bounded cleanup/ticks: {diagnostics!r}")
+
+
+def run_restart_token_case(temp: Path) -> None:
+    first_dir = temp / "first"
+    second_dir = temp / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    first_process, first_identity, first_stop, first_status, _ = start_harness(first_dir, False)
+    first_stop.touch()
+    finish_harness(first_process, first_stop, first_status)
+    second_process, second_identity, second_stop, second_status, _ = start_harness(second_dir, False)
+    stale = None
+    fresh = None
+    try:
+        if first_identity["token"] == second_identity["token"]:
+            raise RuntimeError("server restart reused the GSP token")
+        stale = websocket_connect("127.0.0.1", int(second_identity["port"]))
+        stale.settimeout(2.0)
+        authenticate_rejected(stale, str(first_identity["token"]))
+        fresh = websocket_connect("127.0.0.1", int(second_identity["port"]))
+        authenticate(fresh, second_identity)
+        print("GSP restart token: PASS stale_rejected=true fresh_token_authenticated=true")
+    finally:
+        if stale is not None:
+            stale.close()
+        if fresh is not None:
+            fresh.close()
+        second_stop.touch()
+        finish_harness(second_process, second_stop, second_status)
+
+
 def run_graceful_case(temp: Path) -> None:
     process, identity, stop, status, _ = start_harness(temp, True)
     sock: socket.socket | None = None
@@ -213,6 +305,12 @@ def main() -> int:
         run_graceful_case(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-forced-") as temp_dir:
         run_forced_case(Path(temp_dir))
+    with tempfile.TemporaryDirectory(prefix="aerosim-gsp-replacement-") as temp_dir:
+        run_same_process_replacement_case(Path(temp_dir))
+    with tempfile.TemporaryDirectory(prefix="aerosim-gsp-abrupt-") as temp_dir:
+        run_abrupt_reclaim_case(Path(temp_dir))
+    with tempfile.TemporaryDirectory(prefix="aerosim-gsp-restart-") as temp_dir:
+        run_restart_token_case(Path(temp_dir))
     return 0
 
 

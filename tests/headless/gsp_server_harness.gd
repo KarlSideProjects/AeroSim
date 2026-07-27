@@ -8,6 +8,7 @@ var _stop_path := ""
 var _status_path := ""
 var _max_closing_peer_count := 0
 var _large_identity := false
+var _process_ticks := 0
 
 
 func _init() -> void:
@@ -50,6 +51,7 @@ func _init() -> void:
 
 
 func _process(_delta: float) -> bool:
+	_process_ticks += 1
 	_max_closing_peer_count = maxi(_max_closing_peer_count, _server.get_closing_peer_count())
 	if FileAccess.file_exists(_stop_path):
 		var closing_before_stop := _server.get_closing_peer_count()
@@ -63,6 +65,8 @@ func _process(_delta: float) -> bool:
 					"live_peer_count": _server.get_live_peer_count(),
 					"closing_peer_count": closing_before_stop,
 					"max_closing_peer_count": _max_closing_peer_count,
+					"process_ticks": _process_ticks,
+					"physics_ticks": Engine.get_physics_frames(),
 					"peer_transport_diagnostics": _server.get_peer_transport_diagnostics(),
 				}
 				_server.stop()

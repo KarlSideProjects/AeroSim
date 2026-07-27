@@ -7,8 +7,16 @@ class Element {
         this.tagName = tagName;
         this.children = [];
         this.listeners = {};
+        this.disabled = false;
         this.dataset = {};
-        this.textContent = "";
+        this._textContent = "";
+        Object.defineProperty(this, "textContent", {
+            get: () => this._textContent,
+            set: (value) => {
+                this._textContent = String(value);
+                if (this._textContent === "") this.children = [];
+            },
+        });
         this.value = "";
     }
 
@@ -22,7 +30,7 @@ class Element {
     }
 
     click() {
-        if (this.listeners.click) this.listeners.click();
+        if (!this.disabled && this.listeners.click) this.listeners.click();
     }
 
     getContext() {
@@ -32,6 +40,7 @@ class Element {
 
 const elements = new Map();
 for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state", "sparkline", "focus-state",
+    "rate", "vehicle", "authority", "tick", "latency", "registry", "position", "velocity", "attitude", "rates", "motors",
     "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
     "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report"]) {
     elements.set(id, new Element(id === "sparkline" ? "canvas" : "div"));
@@ -95,12 +104,27 @@ const context = {
     performance: { now: () => 1 },
     setTimeout: () => 1,
     clearTimeout() {},
+    setInterval: () => 1,
+    clearInterval() {},
     console,
 };
 
 const html = fs.readFileSync("common/gsp/gsp_panel.html", "utf8");
 const script = html.match(/<script>\n([\s\S]*?)\n<\/script>/)[1];
 vm.runInNewContext(script, context, { filename: "gsp_panel.html" });
+
+FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "hello",
+    d: { registry: { parameters: [{ key: "simpleflight.rate_p", quick_adjust_eligible: true, min: 0.6, max: 1.4, step: 0.01 }], quick_adjust: { slots: [] }, presets: [] } },
+}) });
+const freshRequest = FakeWebSocket.instance.sent.find((item) => item.t === "request_snapshot");
+FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "telemetry",
+    tick: 1,
+    d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1 },
+}) });
 
 const profile = { slots: Array(8).fill(null) };
 const registry = { parameters: [{ key: "simpleflight.rate_p", quick_adjust_eligible: true, min: 0.6, max: 1.4, step: 0.01 }] };
@@ -109,13 +133,14 @@ const controls = context.window.__AEROSIM_PANEL_TEST__.quickAdjustControls();
 assert.equal(controls.length, 8);
 controls[0].parameter.value = "simpleflight.rate_p";
 controls[0].apply.click();
+const quickRequest = FakeWebSocket.instance.sent.at(-1);
 assert.equal(controls[0].status.textContent, "Waiting for acknowledgement…");
 assert.notEqual(controls[7].status.textContent, "Waiting for acknowledgement…");
 
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     v: 2,
     t: "quick_adjust_ack",
-    d: { request_seq: 1, ok: true },
+    d: { request_seq: quickRequest.seq, ok: true },
 }) });
 assert.equal(controls[0].status.textContent, "Saved");
 assert.notEqual(controls[7].status.textContent, "Saved");

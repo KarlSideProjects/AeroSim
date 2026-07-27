@@ -13,6 +13,8 @@ godot_cpp_dir="${GODOT_CPP_DIR:-$repo_root/third_party/godot-cpp}"
 scripts/test_native.sh
 scripts/test_license_scan.sh
 node tests/test_gsp_panel_behavior.js
+node tests/test_gsp_panel_recovery.js
+GODOT_BIN="${GODOT_BIN:-godot}" python3 scripts/test_gsp_transport_boundary.py
 
 if ! command -v scons >/dev/null 2>&1; then
     python3 -m venv "$tool_root/scons-venv"
