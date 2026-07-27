@@ -637,10 +637,10 @@ func _queue_tuning_ack(record: Dictionary, request_seq: int, result: Dictionary)
     return _queue_identity_message(record, "tuning_ack", data)
 
 
-func _broadcast_tuning_commit(result: Dictionary, request_seq: int) -> bool:
+func _broadcast_tuning_commit(result: Dictionary, request_seq: int) -> void:
     var commit_id := int(result.get("commit_id", 0))
     if commit_id <= 0 or commit_id <= _last_broadcast_tuning_commit_id:
-        return true
+        return
     var data := result.duplicate(true)
     data.erase("peer_id")
     data.erase("connection_id")
@@ -652,19 +652,17 @@ func _broadcast_tuning_commit(result: Dictionary, request_seq: int) -> bool:
         data["changes"] = data.commit_changes
         data.erase("commit_changes")
     data["request_seq"] = request_seq
-    var peers := _authenticated_peers.duplicate()
-    for record in peers:
+    for record in _authenticated_peers.duplicate():
         var queue: Array = record.get("reliable_queue", [])
         var queued_bytes := int(record.get("reliable_bytes", 0))
         var peer: WebSocketPeer = record.get("peer")
         var native_buffered_bytes := maxi(0, peer.get_current_outbound_buffered_amount()) if peer != null else 0
         if queue.size() >= MAX_RELIABLE_MESSAGES - 1 or queued_bytes + native_buffered_bytes + MAX_MESSAGE_BYTES > MAX_RELIABLE_BYTES:
-            return false
-    for record in peers:
+            _record_reliable_failure(record, "reliable queue overflow", true)
+            continue
         if not _queue_identity_message(record, "tuning_commit", data):
-            return false
+            continue
     _last_broadcast_tuning_commit_id = commit_id
-    return true
 
 
 func _poll_tuning_results() -> void:
@@ -673,24 +671,30 @@ func _poll_tuning_results() -> void:
     var results = _tuning_result_provider.call()
     if typeof(results) != TYPE_ARRAY:
         return
+    var changed_results: Dictionary = {}
     for result_value in results:
         if typeof(result_value) != TYPE_DICTIONARY:
             continue
         var result: Dictionary = result_value
         var peer_id := int(result.get("peer_id", -1))
         var connection_id := int(result.get("connection_id", -1))
-        var origin_acknowledged := false
         for record in _authenticated_peers.duplicate():
             if int(record.get("id", -1)) != peer_id or int(record.get("connection_id", -1)) != connection_id:
                 continue
             if not _queue_tuning_ack(record, int(result.get("request_seq", -1)), result):
                 _authenticated_peers.erase(record)
                 _begin_close(record, "reliable send failed")
-            elif _flush_reliable(record):
-                origin_acknowledged = true
+            elif not _flush_reliable(record):
+                _authenticated_peers.erase(record)
+                _begin_close(record, "reliable send failed")
             break
-        if origin_acknowledged and bool(result.get("ok", false)) and bool(result.get("changed", false)):
-            _broadcast_tuning_commit(result, int(result.get("request_seq", -1)))
+        if bool(result.get("ok", false)) and bool(result.get("changed", false)):
+            var commit_id := int(result.get("commit_id", 0))
+            if commit_id > 0 and not changed_results.has(commit_id):
+                changed_results[commit_id] = result
+    for commit_id in changed_results:
+        var commit_result: Dictionary = changed_results[commit_id]
+        _broadcast_tuning_commit(commit_result, int(commit_result.get("request_seq", -1)))
 
 
 func _queue_identity_message(record: Dictionary, message_type: String, data: Dictionary) -> bool:
@@ -743,12 +747,13 @@ func _queue_reliable(record: Dictionary, envelope: Dictionary) -> bool:
     var serialized_bytes := serialized.to_utf8_buffer().size()
     var queue: Array = record.get("reliable_queue", [])
     var queued_bytes := int(record.get("reliable_bytes", 0))
-    var peer: WebSocketPeer = record.peer
+    var peer: WebSocketPeer = record.get("peer")
+    if peer == null:
+        _record_reliable_failure(record, "reliable peer unavailable")
+        return false
     var native_buffered_bytes := maxi(0, peer.get_current_outbound_buffered_amount())
     if queue.size() >= MAX_RELIABLE_MESSAGES or queued_bytes + native_buffered_bytes + serialized_bytes > MAX_RELIABLE_BYTES:
-        reliable_overflow_count += 1
-        last_reliable_error = "reliable queue overflow"
-        _begin_close(record, last_reliable_error)
+        _record_reliable_failure(record, "reliable queue overflow", true)
         return false
     queue.append(serialized)
     record["reliable_queue"] = queue
@@ -757,21 +762,31 @@ func _queue_reliable(record: Dictionary, envelope: Dictionary) -> bool:
 
 
 func _flush_reliable(record: Dictionary) -> bool:
-    var peer: WebSocketPeer = record.peer
+    var peer: WebSocketPeer = record.get("peer")
     var queue: Array = record.get("reliable_queue", [])
     while not queue.is_empty():
-        if peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+        if peer == null or peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+            _record_reliable_failure(record, "reliable peer unavailable")
             return false
         var serialized := String(queue[0])
         if peer.send_text(serialized) != OK:
-            reliable_send_failure_count += 1
-            last_reliable_error = "reliable send failed"
-            _begin_close(record, last_reliable_error)
+            _record_reliable_failure(record, "reliable send failed")
             return false
         queue.pop_front()
         record["reliable_bytes"] = maxi(0, int(record.get("reliable_bytes", 0)) - serialized.to_utf8_buffer().size())
         record["reliable_queue"] = queue
     return true
+
+
+func _record_reliable_failure(record: Dictionary, reason: String, overflow: bool = false) -> void:
+    if not bool(record.get("reliable_failure_recorded", false)):
+        if overflow:
+            reliable_overflow_count += 1
+        else:
+            reliable_send_failure_count += 1
+        last_reliable_error = reason
+        record["reliable_failure_recorded"] = true
+    _begin_close(record, reason)
 
 func _begin_close(record: Dictionary, reason: String) -> void:
     if bool(record.get("closing", false)):

@@ -329,6 +329,107 @@ func _run() -> void:
                 coalesced_commits.size(),
             ])
 
+    _server.poll()
+    reconnect_client.poll()
+    panel_client.poll()
+    _drain_all_messages(reconnect_client)
+    _drain_all_messages(panel_client)
+    for index in 4:
+        var alternate_client: WebSocketPeer = reconnect_client if index % 2 == 0 else panel_client
+        var alternate_sequence := 52 + index / 2 if index % 2 == 0 else 1 + index / 2
+        _expect(alternate_client.send_text(JSON.stringify({
+            "v": 2, "t": "set_tuning", "seq": alternate_sequence,
+            "d": {"parameter": "simpleflight.rate_p", "value": 1.5 + float(index) * 0.01}
+        })) == OK, "alternating-origin coalesce request %d sends" % index)
+    _server.poll()
+    _runtime._physics_process(1.0 / 240.0)
+    var alternate_events: Array = [[], []]
+    for _attempt in 120:
+        _server.poll()
+        reconnect_client.poll()
+        panel_client.poll()
+        alternate_events[0].append_array(_drain_all_messages(reconnect_client))
+        alternate_events[1].append_array(_drain_all_messages(panel_client))
+        if alternate_events[0].size() >= 3 and alternate_events[1].size() >= 3:
+            break
+        await process_frame
+    var alternate_commit_id := -1
+    var alternate_order_ok := true
+    for origin_index in 2:
+        var origin_events: Array = alternate_events[origin_index]
+        var expected_sequences: Array = [52, 53] if origin_index == 0 else [1, 2]
+        for expected_sequence in expected_sequences:
+            var ack_index := -1
+            var commit_index := -1
+            for event_index in origin_events.size():
+                var event: Dictionary = origin_events[event_index]
+                if String(event.get("t", "")) == "tuning_ack" and int(event.get("d", {}).get("request_seq", -1)) == expected_sequence:
+                    ack_index = event_index
+                if String(event.get("t", "")) == "tuning_commit":
+                    commit_index = event_index if commit_index < 0 else commit_index
+                    alternate_commit_id = int(event.get("d", {}).get("commit_id", alternate_commit_id))
+            alternate_order_ok = alternate_order_ok and ack_index >= 0 and commit_index >= 0 and ack_index < commit_index
+    _expect(alternate_order_ok and alternate_commit_id > 0,
+            "alternating origins observe each correlated ACK before the coalesced tuning_commit")
+
+    _expect(reconnect_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 54,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.7}
+    })) == OK, "disconnected-origin tuning request sends")
+    _server.poll()
+    reconnect_client.close()
+    for _attempt in 30:
+        _server.poll()
+        await process_frame
+    _runtime._physics_process(1.0 / 240.0)
+    var disconnected_observer_commits: Array = []
+    for _attempt in 120:
+        _server.poll()
+        panel_client.poll()
+        disconnected_observer_commits.append_array(_drain_messages(panel_client, "tuning_commit"))
+        if not disconnected_observer_commits.is_empty():
+            break
+        await process_frame
+    _expect(not disconnected_observer_commits.is_empty() and
+            int(disconnected_observer_commits.back().get("d", {}).get("commit_id", -1)) > alternate_commit_id,
+            "connected observer receives a commit after its origin disconnects before the physics boundary")
+
+    var capacity_client := WebSocketPeer.new()
+    await _connect_and_auth(capacity_client, int(started.port), String(started.token))
+    _expect(not (await _next_message_type(capacity_client, "hello", 240)).is_empty(),
+            "capacity regression client authenticates")
+    var saturated_record: Dictionary = {}
+    var healthy_record: Dictionary = {}
+    if _server._authenticated_peers.size() == 2:
+        saturated_record = _server._authenticated_peers[0]
+        healthy_record = _server._authenticated_peers[1]
+    _expect(not saturated_record.is_empty() and not healthy_record.is_empty(),
+            "capacity regression resolves both real authenticated peer records")
+    var forced_queue: Array = []
+    for _slot in GspServer.MAX_RELIABLE_MESSAGES - 1:
+        forced_queue.append("{}")
+    if not saturated_record.is_empty():
+        saturated_record["reliable_queue"] = forced_queue
+        saturated_record["reliable_bytes"] = forced_queue.size()
+    var overflow_before := _server.reliable_overflow_count
+    _server._broadcast_tuning_commit({
+        "ok": true,
+        "changed": true,
+        "commit_id": 9001,
+        "committed_values": {"simpleflight.rate_p": 1.71},
+    }, 9001)
+    if not healthy_record.is_empty():
+        _server._flush_reliable(healthy_record)
+    capacity_client.poll()
+    var capacity_commit := await _next_message_type(capacity_client, "tuning_commit", 120)
+    _expect(_server.reliable_overflow_count == overflow_before + 1 and
+            _server.last_reliable_error == "reliable queue overflow" and
+            not _server._authenticated_peers.has(saturated_record) and
+            int(capacity_commit.get("d", {}).get("commit_id", -1)) == 9001,
+            "capacity failure records diagnostics, isolates the saturated peer, and preserves healthy delivery")
+    capacity_client.close()
+    panel_client.close()
+
     var timing_registry := _runtime._gsp_tuning_registry.duplicate(true)
     for descriptor_value in _runtime._gsp_tuning_registry:
         var timing_descriptor: Dictionary = descriptor_value
@@ -427,6 +528,18 @@ func _drain_messages(client: WebSocketPeer, message_type: String) -> Array:
             continue
         var parsed = JSON.parse_string(packet.get_string_from_utf8())
         if typeof(parsed) == TYPE_DICTIONARY and String(parsed.get("t", "")) == message_type:
+            messages.append(parsed)
+    return messages
+
+
+func _drain_all_messages(client: WebSocketPeer) -> Array:
+    var messages: Array = []
+    while client.get_available_packet_count() > 0:
+        var packet := client.get_packet()
+        if not client.was_string_packet():
+            continue
+        var parsed = JSON.parse_string(packet.get_string_from_utf8())
+        if typeof(parsed) == TYPE_DICTIONARY:
             messages.append(parsed)
     return messages
 

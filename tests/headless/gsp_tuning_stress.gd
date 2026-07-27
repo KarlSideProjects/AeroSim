@@ -74,6 +74,7 @@ func _run() -> void:
     var commit_ids: Array[int] = []
     var seen_by_client := [{}, {}]
     var duplicate_commit := false
+    var multi_origin_coalesced := false
     var max_pending := 0
     var max_completed := 0
     var max_recent := 0
@@ -81,10 +82,12 @@ func _run() -> void:
     var max_queue_bytes := 0
     for frame in FRAME_COUNT:
         var wanted := mini(REQUEST_COUNT, int(floor(float(frame + 1) * float(REQUESTS_PER_SECOND) / 240.0)))
+        if frame == 0:
+            wanted = 2
         while sent < wanted:
             var client_index := sent % 2
             client_sequences[client_index] += 1
-            var value := 1.75 if sent == REQUEST_COUNT - 1 else 0.6 + float(sent) / 2000.0
+            var value := 1.10 if sent == 0 else 1.11 if sent == 1 else 1.75 if sent == REQUEST_COUNT - 1 else 0.6 + float(sent) / 2000.0
             var client: WebSocketPeer = _clients[client_index]
             var send_result := client.send_text(JSON.stringify({
                 "v": 2,
@@ -108,6 +111,8 @@ func _run() -> void:
                 var data: Dictionary = message.get("d", {})
                 if message_type == "tuning_ack":
                     ack_count += 1
+                    if bool(data.get("coalesced", false)):
+                        multi_origin_coalesced = true
                     var ack_commit_id := int(data.get("commit_id", 0))
                     if ack_commit_id > 0 and ack_commit_id not in ack_commit_ids:
                         ack_commit_ids.append(ack_commit_id)
@@ -157,7 +162,7 @@ func _run() -> void:
             "real server stress leaves finite native state")
     _expect(max_pending <= 2 and max_completed <= 2 and max_recent <= 16 and
             max_queue_count < GspServer.MAX_RELIABLE_MESSAGES and max_queue_bytes < GspServer.MAX_RELIABLE_BYTES and
-            _server.reliable_overflow_count == 0 and not duplicate_commit,
+            _server.reliable_overflow_count == 0 and not duplicate_commit and multi_origin_coalesced,
             "real server stress keeps queues, results, replay correlation, and broadcasts bounded")
     var replay_event_count := serialized.count("\"type\":\"tuning\"")
     _expect(bool(finish.get("ok", false)) and replay_event_count == ack_commit_ids.size() and

@@ -45,6 +45,81 @@ blockers and the minimum fixes in this follow-up are:
    never write an invented committed value; group final sends cancel every row
    timer.
 
+## Second Sol-high review — server blockers
+
+The second independent Sol-high review still rejected the prior commit with
+two server blockers. The confirmed findings and fixes were:
+
+1. `_poll_tuning_results` delivered an origin ACK and broadcast immediately
+   for each result, so alternating origins could observe a commit before their
+   own ACK, and a disconnected origin suppressed the broadcast. It now has an
+   ACK delivery/flush pass followed by a changed-result collection pass keyed
+   by native `commit_id`; only after all correlated ACK attempts does it
+   broadcast each commit once. Changed commits are collected independently of
+   origin connectivity, so an authenticated observer still receives the
+   commit when the origin disconnects at the boundary.
+2. `_broadcast_tuning_commit` previously returned false on the first full
+   queue without recording the failure, removing the chance to deliver to
+   healthy peers. It now owns failure handling: the reliable failure helper
+   records overflow/send diagnostics once, closes/removes only the affected
+   peer, and the broadcast continues through the remaining authenticated
+   peers. The broadcast has no ignored failure return; queue failures are
+   handled at the shared reliable seam.
+
+The new real-server regressions alternate four coalesced requests between two
+authenticated origins and assert each origin's correlated ACK precedes its
+`tuning_commit`. They also cover a disconnected origin with a connected
+observer, and force one authenticated record to `MAX_RELIABLE_MESSAGES - 1`
+through the real server helper to assert overflow diagnostics, peer isolation,
+and healthy delivery. The real 7,200-frame/1,500-request stress now forces its
+first two requests from alternating clients and asserts that at least one
+multi-origin coalesced ACK was observed.
+
+The first RED run for these regressions was:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+  --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+# expected failures:
+# alternating-origin ACK ordering
+# disconnected-origin observer broadcast
+# forced-capacity diagnostics/isolation/healthy delivery
+```
+
+The initial capacity assertion also revealed that client-side
+`WebSocketPeer` wrappers cannot identify the server-side peer objects by
+instance ID. The regression was corrected to select the two authenticated
+server records after authenticating the replacement client; production code
+was not broadened for this test detail.
+
+Second-review focused GREEN results:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+  --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+# GSP tuning integration: PASS
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+  --headless --path . --script res://tests/headless/gsp_tuning_stress.gd
+# GSP tuning stress: PASS
+
+scripts/test_native.sh
+# passed
+
+python3 scripts/test_gsp_transport.py
+# GSP fixed-runner transport: PASS samples=1000 p99_ms=0.091
+
+python3 scripts/test_gsp_transport_boundary.py
+# pending handshake, graceful boundary, and forced boundary: PASS
+
+GSP transport/telemetry/tuning contracts and integrations
+# all PASS
+```
+
+The repository codebase-memory index was attempted before targeted discovery
+and failed with the exact transport-closed error recorded above; no new
+high-value ambiguity remained after the review supplied the decisions.
+
 The codebase-memory index was attempted first and failed with the exact error:
 
 ```text
