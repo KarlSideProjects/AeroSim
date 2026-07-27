@@ -232,6 +232,9 @@ def collect_qualification_provenance(
     if not re.fullmatch(r"[0-9a-fA-F]{40}", godot_cpp_revision):
         raise ProvenanceError("godot-cpp revision is not a 40-hex commit")
 
+    commit_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
+        raise ProvenanceError("commit provenance is not a 40-hex commit")
     artifact_commit = artifact_data.get("commit_sha")
     extension_value = artifact_data.get("gdextension_path")
     declared_extension_hash = artifact_data.get("gdextension_sha256")
@@ -244,6 +247,8 @@ def collect_qualification_provenance(
         or not re.fullmatch(r"[0-9a-fA-F]{64}", str(declared_source_hash))
     ):
         raise ProvenanceError("native artifact provenance fields are incomplete")
+    if artifact_commit.lower() != commit_sha.lower():
+        raise ProvenanceError("native artifact provenance is stale for HEAD")
     extension = Path(extension_value)
     extension = extension if extension.is_absolute() else repo_root / extension
     if not extension.is_file():
@@ -256,9 +261,6 @@ def collect_qualification_provenance(
         raise ProvenanceError("native artifact native-source hash mismatch")
 
     uname = platform.uname()
-    commit_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
-    if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
-        raise ProvenanceError("commit provenance is not a 40-hex commit")
     model_name = next(
         (line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text(encoding="utf-8").splitlines() if line.startswith("model name") and ":" in line),
         None,
@@ -510,61 +512,74 @@ def evaluate_cooling_sequence(samples: list[dict[str, object]], devices: list[di
         return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
     device_ids = [device["stable_id"] for device in devices]
     parsed_samples = [sample.get("processor_cooling_samples") if "processor_cooling_samples" in sample else sample for sample in samples]
-    if any(
-        not isinstance(sample, dict)
-        or set(sample) != set(device_ids)
-        or any(
-            not isinstance(sample[device_id], dict)
-            or any(sample[device_id].get(key) is None for key in ("cur_state", "max_state", "total_trans", "time_in_state_ms"))
-            or "0" not in sample[device_id].get("time_in_state_ms", {})
-            for device_id in device_ids
-        )
-        for sample in parsed_samples
-    ):
-        return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
-    max_state_values = {
-        device_id: {sample[device_id]["max_state"] for sample in parsed_samples}
-        for device_id in device_ids
-    }
-    if any(len(values) != 1 for values in max_state_values.values()):
-        return {"status": "FAIL", "failure_kind": "cooling_reset", "max_state_values": max_state_values}
-    if any(sample[device_id]["cur_state"] != 0 for sample in parsed_samples for device_id in device_ids):
-        return {"status": "FAIL", "failure_kind": "cooling_state"}
-    for previous, current in zip(parsed_samples, parsed_samples[1:]):
+    records: dict[str, list[dict[str, object]]] = {device_id: [] for device_id in device_ids}
+    complete = True
+    for sample in parsed_samples:
+        if not isinstance(sample, dict) or set(sample) != set(device_ids):
+            complete = False
+            continue
         for device_id in device_ids:
-            if current[device_id]["total_trans"] < previous[device_id]["total_trans"]:
+            record = sample.get(device_id)
+            if not isinstance(record, dict):
+                complete = False
+                continue
+            if all(isinstance(record.get(key), int) for key in ("cur_state", "max_state", "total_trans")):
+                records[device_id].append(record)
+            else:
+                complete = False
+
+    # First pass: preserve a proven FAIL even when another device is malformed.
+    max_state_values = {device_id: {record["max_state"] for record in records[device_id]} for device_id in device_ids}
+    if any(record["cur_state"] != 0 for values in records.values() for record in values):
+        return {"status": "FAIL", "failure_kind": "cooling_state"}
+    if any(len(values) > 1 for values in max_state_values.values()):
+        return {"status": "FAIL", "failure_kind": "cooling_reset", "max_state_values": max_state_values}
+    for device_id in device_ids:
+        for previous, current in zip(records[device_id], records[device_id][1:]):
+            if current["total_trans"] > previous["total_trans"]:
+                return {"status": "FAIL", "failure_kind": "thermal_throttle"}
+            previous_time = previous.get("time_in_state_ms", {})
+            current_time = current.get("time_in_state_ms", {})
+            if isinstance(previous_time, dict) and isinstance(current_time, dict) and any(
+                current_time.get(state, -1) > previous_time.get(state, -1)
+                for state in set(previous_time) | set(current_time) if state != "0"
+            ):
+                return {"status": "FAIL", "failure_kind": "thermal_throttle"}
+
+    # Second pass: missing/rollback evidence is unavailable, never a failure.
+    if not complete or any(not records[device_id] for device_id in device_ids):
+        return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+    for device_id in device_ids:
+        for record in records[device_id]:
+            time_in_state = record.get("time_in_state_ms")
+            required_states = {str(state) for state in range(record["max_state"] + 1)}
+            if not isinstance(time_in_state, dict) or set(time_in_state) != required_states or not all(
+                isinstance(value, int) for value in time_in_state.values()
+            ):
+                return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
+        for previous, current in zip(records[device_id], records[device_id][1:]):
+            if current["total_trans"] < previous["total_trans"]:
                 return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback"}
-            if current[device_id]["time_in_state_ms"]["0"] <= previous[device_id]["time_in_state_ms"]["0"]:
-                return {"status": "UNAVAILABLE", "failure_kind": "cooling_state0_reset"}
-            for state in set(previous[device_id]["time_in_state_ms"]) | set(current[device_id]["time_in_state_ms"]):
-                if current[device_id]["time_in_state_ms"].get(state, -1) < previous[device_id]["time_in_state_ms"].get(state, -1):
-                    return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback"}
+            previous_time = previous["time_in_state_ms"]
+            current_time = current["time_in_state_ms"]
+            if current_time["0"] < previous_time["0"]:
+                return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback"}
+            if any(current_time[state] < previous_time[state] for state in previous_time):
+                return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback"}
+
     transition_increments = {
-        device_id: parsed_samples[-1][device_id]["total_trans"] - parsed_samples[0][device_id]["total_trans"]
+        device_id: records[device_id][-1]["total_trans"] - records[device_id][0]["total_trans"]
         for device_id in device_ids
     }
-    if any(value < 0 for value in transition_increments.values()):
-        return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback", "transition_increments": transition_increments}
-    time_deltas: dict[str, dict[str, int]] = {}
-    for device_id in device_ids:
-        first = parsed_samples[0][device_id]["time_in_state_ms"]
-        last = parsed_samples[-1][device_id]["time_in_state_ms"]
-        states = set(first) | set(last)
-        if any(state not in first or state not in last for state in states):
-            return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
-        deltas = {state: last[state] - first[state] for state in states}
-        if any(value < 0 for value in deltas.values()):
-            return {"status": "UNAVAILABLE", "failure_kind": "counter_rollback", "time_deltas": {device_id: deltas}}
-        time_deltas[device_id] = deltas
-    if any(value > 0 for value in transition_increments.values()) or any(
-        delta > 0 for deltas in time_deltas.values() for state, delta in deltas.items() if state != "0"
-    ):
-        return {
-            "status": "FAIL",
-            "failure_kind": "thermal_throttle",
-            "transition_increments": transition_increments,
-            "time_deltas": time_deltas,
+    time_deltas = {
+        device_id: {
+            state: records[device_id][-1]["time_in_state_ms"][state] - records[device_id][0]["time_in_state_ms"][state]
+            for state in records[device_id][0]["time_in_state_ms"]
         }
+        for device_id in device_ids
+    }
+    if any(records[device_id][-1]["time_in_state_ms"]["0"] <= records[device_id][0]["time_in_state_ms"]["0"] for device_id in device_ids):
+        return {"status": "UNAVAILABLE", "failure_kind": "cooling_state0_reset", "time_deltas": time_deltas}
     return {
         "status": "PASS",
         "failure_kind": None,
@@ -774,8 +789,14 @@ def sample_environment(sources: dict[str, object], started: float) -> dict[str, 
     }
 
 
-def cppc_window_performance(samples: list[dict[str, object]], lower: float, upper: float) -> float | None:
-    window = [sample for sample in samples if lower <= float(sample.get("elapsed_seconds", -1.0)) <= upper]
+def cppc_window_performance(
+    samples: list[dict[str, object]], lower: float, upper: float, upper_inclusive: bool = False
+) -> float | None:
+    window = [
+        sample for sample in samples
+        if lower <= float(sample.get("elapsed_seconds", -1.0)) < upper
+        or upper_inclusive and float(sample.get("elapsed_seconds", -1.0)) == upper
+    ]
     if len(window) < 2:
         return None
     first = window[0].get("cppc_samples") or {}
@@ -805,9 +826,12 @@ def ordered_cooling_samples(conditioning: dict[str, object], run_payloads: dict[
     phases = [("conditioning", conditioning), *[(label, run_payloads[label]) for label in RUN_LABELS]]
     for _label, payload in phases:
         boundaries = payload.get("boundary_snapshots", {})
-        ordered.append(boundaries["initial"])
-        ordered.extend(payload.get("samples", []))
-        ordered.append(boundaries["final"])
+        phase_samples = list(payload.get("samples", []))
+        if not phase_samples or phase_samples[0] != boundaries["initial"]:
+            ordered.append(boundaries["initial"])
+        ordered.extend(phase_samples)
+        if not phase_samples or phase_samples[-1] != boundaries["final"]:
+            ordered.append(boundaries["final"])
     return ordered
 
 
@@ -939,10 +963,8 @@ def validate_conditioning(environment_path: Path, samples: list[dict[str, object
         if frequencies_a and frequencies_b and statistics.median(frequencies_a) else None
     )
     cooling = evaluate_cooling_sequence(samples, sources["processor_cooling_devices"])
-    # 240s is the shared counter boundary: each window measures its adjacent
-    # counter interval, so the boundary sample is not double-counted as a statistic.
     cppc_w1 = cppc_window_performance(samples, 180.0, 240.0)
-    cppc_w2 = cppc_window_performance(samples, 240.0, 300.1)
+    cppc_w2 = cppc_window_performance(samples, 240.0, 300.1, upper_inclusive=True)
     cppc_delta_percent = abs(cppc_w2 - cppc_w1) / cppc_w1 * 100.0 if cppc_w1 and cppc_w2 else None
     configuration = compare_cpu_configuration(payload.get("configuration_start", {}), payload.get("configuration_end", {}))
     temperature_status = (
@@ -1045,6 +1067,8 @@ def validate_raw(
 def read_gpu_metadata(sys_root: Path = Path("/sys")) -> dict[str, object]:
     devices: list[dict[str, object]] = []
     for card_device in sorted((sys_root / "class" / "drm").glob("card[0-9]*/device")):
+        if not re.fullmatch(r"card\d+", card_device.parent.name):
+            continue
         resolved = card_device.resolve()
         device = {
             "card_name": card_device.parent.name,

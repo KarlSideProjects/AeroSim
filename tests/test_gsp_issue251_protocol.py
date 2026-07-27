@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -64,8 +65,15 @@ class GspIssue251ProtocolTests(unittest.TestCase):
                 (card / "device").parent.mkdir(parents=True)
                 (card / "device").symlink_to(device)
                 (device / "driver").symlink_to(driver)
+            connector = root / "devices" / "connector"
+            connector.mkdir()
+            connector_card = root / "class" / "drm" / "card0-DP-3"
+            connector_card.mkdir()
+            (connector_card / "device").symlink_to(connector)
             metadata = read_gpu_metadata(root)
             self.assertEqual(metadata["status"], "available")
+            self.assertEqual(len(metadata["devices"]), 2)
+            self.assertEqual({item["card_name"] for item in metadata["devices"]}, {"card0", "card1"})
             self.assertEqual({item["vendor"] for item in metadata["devices"]}, {"0x1002", "0x10de"})
             self.assertTrue(all(item["path"].startswith(str(root / "devices")) for item in metadata["devices"]))
             empty = read_gpu_metadata(root / "empty")
@@ -122,16 +130,21 @@ class GspIssue251ProtocolTests(unittest.TestCase):
         }
         self.assertEqual(cppc_window_performance([first, last], 180.0, 240.0), 190.0)
 
-    def test_cppc_windows_share_boundary_as_adjacent_counter_intervals(self) -> None:
+    def test_cppc_windows_are_half_open_unless_explicitly_inclusive(self) -> None:
         def sample(elapsed: float, delivered: int) -> dict[str, object]:
             return {
                 "elapsed_seconds": elapsed,
                 "cppc_samples": {"cpu0": parse_cppc_snapshot(f"ref:{delivered} del:{delivered}", "100")},
             }
 
-        samples = [sample(180.0, 0), sample(240.0, 100), sample(300.0, 200)]
+        samples = [
+            {"elapsed_seconds": 180.0, "cppc_samples": {"cpu0": parse_cppc_snapshot("ref:0 del:0", "100")}},
+            {"elapsed_seconds": 239.0, "cppc_samples": {"cpu0": parse_cppc_snapshot("ref:100 del:100", "100")}},
+            {"elapsed_seconds": 240.0, "cppc_samples": {"cpu0": parse_cppc_snapshot("ref:200 del:200", "200")}},
+            {"elapsed_seconds": 300.0, "cppc_samples": {"cpu0": parse_cppc_snapshot("ref:400 del:600", "200")}},
+        ]
         self.assertEqual(cppc_window_performance(samples, 180.0, 240.0), 100.0)
-        self.assertEqual(cppc_window_performance(samples, 240.0, 300.0), 100.0)
+        self.assertEqual(cppc_window_performance(samples, 240.0, 300.0, upper_inclusive=True), 400.0)
 
     def test_d_a_d_b_drift_passes_with_stable_cppc_and_tctl(self) -> None:
         def run() -> dict[str, object]:
@@ -156,9 +169,15 @@ class GspIssue251ProtocolTests(unittest.TestCase):
             extension = root / "bin" / "native.so"
             extension.parent.mkdir()
             extension.write_bytes(b"extension")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"], check=True)
+            head = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
             artifact = root / "native.json"
             artifact.write_text(json.dumps({
-                "commit_sha": "c" * 40,
+                "commit_sha": head,
                 "gdextension_path": "bin/native.so",
                 "gdextension_sha256": "0" * 64,
                 "native_source_sha256": "0" * 64,
@@ -185,6 +204,41 @@ class GspIssue251ProtocolTests(unittest.TestCase):
         self.assertEqual(command[0], provenance["godot_path"])
         for option, value in (("--godot-version", provenance["godot_version"]), ("--godot-sha256", provenance["godot_sha256"]), ("--godot-cpp-revision", provenance["godot_cpp_revision"]), ("--gdextension-sha256", provenance["gdextension_sha256"]), ("--native-source-sha256", provenance["native_source_sha256"])):
             self.assertEqual(command[command.index(option) + 1], value)
+
+    def test_collect_provenance_rejects_stale_native_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as path:
+            root = Path(path)
+            binary = root / "fake-godot"
+            binary.write_text("#!/bin/sh\necho 'Godot Engine v4.7.stable'\n", encoding="utf-8")
+            binary.chmod(0o755)
+            (root / "third_party" / "godot-cpp").mkdir(parents=True)
+            (root / "third_party" / "godot-cpp" / "AEROSIM_PINNED_COMMIT").write_text("b" * 40, encoding="utf-8")
+            (root / "src" / "native").mkdir(parents=True)
+            (root / "src" / "native" / "source.cpp").write_text("native", encoding="utf-8")
+            (root / "SConstruct").write_text("build", encoding="utf-8")
+            extension = root / "bin" / "native.so"
+            extension.parent.mkdir()
+            extension.write_bytes(b"extension")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"], check=True)
+            artifact = root / "native.json"
+            artifact.write_text(json.dumps({
+                "commit_sha": "0" * 40,
+                "gdextension_path": "bin/native.so",
+                "gdextension_sha256": "0" * 64,
+                "native_source_sha256": "0" * 64,
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "native artifact provenance is stale for HEAD"):
+                collect_qualification_provenance(
+                    repo_root=root,
+                    godot_binary=binary,
+                    native_provenance_path=artifact,
+                    configuration={},
+                    sys_root=root / "sys",
+                )
 
     def test_collect_provenance_missing_artifact_is_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as path:
@@ -244,6 +298,32 @@ class GspIssue251ProtocolTests(unittest.TestCase):
         missing = {devices[0]["stable_id"]: {**first[devices[0]["stable_id"]], "time_in_state_ms": {"1": 0}}}
         self.assertEqual(evaluate_cooling_sequence([first, unchanged], devices)["status"], "UNAVAILABLE")
         self.assertEqual(evaluate_cooling_sequence([first, missing], devices)["status"], "UNAVAILABLE")
+
+    def test_cooling_equal_adjacent_state0_is_legal_if_final_grows(self) -> None:
+        device_id = "/sys/devices/virtual/thermal/cooling_device0"
+        devices = [{"stable_id": device_id, "path": device_id}]
+
+        def sample(state0: int) -> dict[str, object]:
+            return {device_id: {"cur_state": 0, "max_state": 1, "total_trans": 0, "time_in_state_ms": {"0": state0, "1": 0}}}
+
+        self.assertEqual(evaluate_cooling_sequence([sample(100), sample(100), sample(101)], devices)["status"], "PASS")
+
+    def test_cooling_failure_precedes_another_device_missing(self) -> None:
+        devices = [
+            {"stable_id": "device0", "path": "/sys/device0"},
+            {"stable_id": "device1", "path": "/sys/device1"},
+        ]
+        valid = {"cur_state": 1, "max_state": 1, "total_trans": 0, "time_in_state_ms": {"0": 1, "1": 0}}
+        missing = {"cur_state": 0}
+        self.assertEqual(evaluate_cooling_sequence([{"device0": valid, "device1": missing}], devices)["status"], "FAIL")
+
+    def test_ordered_cooling_samples_does_not_duplicate_equal_boundaries(self) -> None:
+        initial = {"initial": 1}
+        middle = {"middle": 1}
+        final = {"final": 1}
+        payload = {"boundary_snapshots": {"initial": initial, "final": final}, "samples": [initial, middle, final]}
+        ordered = ordered_cooling_samples(payload, {label: payload for label in ("D_a", "I_a", "I_b", "D_b")})
+        self.assertEqual(ordered[:3], [initial, middle, final])
 
     def test_whole_cooling_sequence_includes_every_boundary(self) -> None:
         device_id = "/sys/devices/virtual/thermal/cooling_device0"
