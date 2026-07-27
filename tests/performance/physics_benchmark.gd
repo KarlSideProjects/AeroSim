@@ -154,6 +154,7 @@ var _gdextension_sha256 := ""
 var _native_source_sha256 := ""
 var _gsp_server: GspServer
 var _gsp_evidence_samples: Array[Dictionary] = []
+var _gsp_monotonic_timing: Dictionary = {}
 
 
 func _initialize() -> void:
@@ -341,8 +342,11 @@ func _run_gsp_mode() -> void:
     var samples: Array[float] = await _run_gsp_phase(_gsp_mode, runtime, effect_workload, profiler)
     EngineDebugger.profiler_enable("aerosim_physics_frame", false)
     EngineDebugger.unregister_profiler("aerosim_physics_frame")
-    if samples.size() != ceili(_seconds * Engine.physics_ticks_per_second):
+    if _benchmark_mode != "smoke" and samples.size() != ceili(_seconds * Engine.physics_ticks_per_second):
         _fail("PhysicsFrameProfiler captured %d of %d GSP measurement frames" % [samples.size(), ceili(_seconds * Engine.physics_ticks_per_second)])
+        return
+    if samples.is_empty():
+        _fail("PhysicsFrameProfiler captured no GSP measurement frames")
         return
     _write_gsp_raw(_output_path, _gsp_mode, samples)
     runtime.queue_free()
@@ -371,22 +375,32 @@ func _prepare_gsp_runtime() -> Dictionary:
 
 func _run_gsp_phase(mode: String, runtime: Node, _effect_workload: EffectWorkload, profiler: PhysicsFrameProfiler) -> Array[float]:
     _gsp_evidence_samples.clear()
+    _gsp_monotonic_timing = {}
     if mode == "authenticated-idle" and not await _start_external_gsp(runtime):
         _fail("authenticated idle GSP server could not start or external client did not authenticate")
         return []
 
     var warmup_frames := maxi(0, ceili(_warmup_seconds * Engine.physics_ticks_per_second))
+    var warmup_started_usec := Time.get_ticks_usec()
     for _frame in warmup_frames:
         await physics_frame
         _sample_gsp_evidence()
+    var warmup_elapsed_usec := Time.get_ticks_usec() - warmup_started_usec
     profiler.frame_ids.clear()
     profiler.samples_ms.clear()
     var measurement_frames := maxi(1, ceili(_seconds * Engine.physics_ticks_per_second))
+    var measurement_started_usec := Time.get_ticks_usec()
     for _frame in measurement_frames:
         await physics_frame
         _sample_gsp_evidence()
+    var measurement_elapsed_usec := Time.get_ticks_usec() - measurement_started_usec
     await process_frame
-    if profiler.samples_ms.size() != measurement_frames:
+    _gsp_monotonic_timing = {
+        "warmup_elapsed_monotonic_seconds": float(warmup_elapsed_usec) / 1000000.0,
+        "measurement_elapsed_monotonic_seconds": float(measurement_elapsed_usec) / 1000000.0,
+        "phase_elapsed_monotonic_seconds": float(warmup_elapsed_usec + measurement_elapsed_usec) / 1000000.0,
+    }
+    if _benchmark_mode != "smoke" and profiler.samples_ms.size() != measurement_frames:
         _fail("PhysicsFrameProfiler captured %d of %d GSP measurement frames" % [profiler.samples_ms.size(), measurement_frames])
         return []
     return profiler.samples_ms.duplicate()
@@ -410,6 +424,7 @@ func _write_gsp_raw(output_path: String, mode: String, samples: Array[float]) ->
         "warmup_seconds": _warmup_seconds,
         "measured_seconds": _seconds,
         "workload_initialization": "fresh Godot process; EffectWorkload.configure once before warmup",
+        "monotonic_timing": _gsp_monotonic_timing,
         "gsp_server_evidence": _gsp_server_evidence(),
     }))
     output.close()

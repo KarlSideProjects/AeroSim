@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import glob
 import select
 import socket
 import statistics
@@ -20,11 +21,21 @@ from test_gsp_transport import GODOT, receive_frame, read_ready, send_text, webs
 ROOT = Path(__file__).resolve().parents[1]
 RUN_ORDER = ["disabled", "authenticated-idle", "authenticated-idle", "disabled"]
 RUN_LABELS = ["D_a", "I_a", "I_b", "D_b"]
+RUN_SEQUENCE = "D-I-I-D"
 WARMUP_SECONDS = 10
 MEASURED_SECONDS = 60
 PHYSICS_HZ = 240
 SAMPLE_COUNT = MEASURED_SECONDS * PHYSICS_HZ
-PROCESS_TIMEOUT_SECONDS = 240
+CONDITIONING_SECONDS = 300
+CONDITIONING_SAMPLE_COUNT = CONDITIONING_SECONDS * PHYSICS_HZ
+PROCESS_TIMEOUT_SECONDS = 330
+MEASUREMENT_MIN_SECONDS = 59.5
+MEASUREMENT_MAX_SECONDS = 60.5
+CONDITIONING_MIN_SECONDS = 299.5
+CONDITIONING_MAX_SECONDS = 300.5
+MIN_TELEMETRY_FRAMES = 1800
+MIN_TELEMETRY_SPAN_SECONDS = 59.5
+MAX_TELEMETRY_GAP_SECONDS = 2.0
 
 
 class ExternalIdleClient:
@@ -39,6 +50,7 @@ class ExternalIdleClient:
         self.poll_iterations = 0
         self.socket_eof = False
         self.premature_eof = False
+        self.telemetry_frame_times: list[float] = []
 
     def _frames(self) -> list[tuple[int, bytes]]:
         frames: list[tuple[int, bytes]] = []
@@ -89,17 +101,20 @@ class ExternalIdleClient:
                     continue
                 if message.get("t") == "telemetry":
                     self.telemetry_received += 1
+                    self.telemetry_frame_times.append(time.monotonic())
                 elif message.get("t") == "hello":
                     self.hello_received = True
             elif opcode == 8:
                 self.socket_eof = True
 
-    def run_until_exit(self, process: subprocess.Popen[bytes], completion_path: Path) -> None:
+    def run_until_exit(self, process: subprocess.Popen[bytes], completion_path: Path, sample_callback=None) -> None:
         self.sock.setblocking(False)
         deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
         while process.poll() is None:
             if time.monotonic() >= deadline:
                 raise RuntimeError("authenticated-idle Godot process exceeded 240 seconds")
+            if sample_callback is not None:
+                sample_callback()
             self.poll_iterations += 1
             self.drain()
             if self.socket_eof:
@@ -111,22 +126,36 @@ class ExternalIdleClient:
             select.select([self.sock], [], [], 0.01)
         self.drain()
 
+    def evidence(self) -> dict[str, object]:
+        gaps = [
+            later - earlier
+            for earlier, later in zip(self.telemetry_frame_times, self.telemetry_frame_times[1:])
+        ]
+        return {
+            "hello_received": self.hello_received,
+            "telemetry_received": self.telemetry_received,
+            "drained_frames": self.drained_frames,
+            "poll_iterations": self.poll_iterations,
+            "socket_eof": self.socket_eof,
+            "open_throughout": not self.premature_eof,
+            "telemetry_frame_times": self.telemetry_frame_times,
+            "telemetry_span_seconds": (
+                self.telemetry_frame_times[-1] - self.telemetry_frame_times[0]
+                if len(self.telemetry_frame_times) >= 2 else 0.0
+            ),
+            "max_telemetry_gap_seconds": max(gaps, default=0.0),
+        }
+
 
 def percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     return ordered[min(len(ordered) - 1, math.ceil(len(ordered) * fraction) - 1)]
 
 
-def run_one(output_dir: Path, label: str, mode: str, commit_sha: str) -> None:
-    ready_path = output_dir / f"{label}.ready.json"
-    output_path = output_dir / f"{label}.raw.json"
-    client_path = output_dir / f"{label}.external.raw.json"
-    log_path = output_dir / f"{label}.godot.log"
+def benchmark_command(output_path: Path, mode: str, commit_sha: str, warmup_seconds: int, seconds: int, ready_path: Path | None = None, benchmark_mode: str | None = None) -> list[str]:
     command = [
         GODOT,
         "--headless",
-        "--fixed-fps",
-        str(PHYSICS_HZ),
         "--remote-debug",
         "local://",
         "--path",
@@ -135,7 +164,7 @@ def run_one(output_dir: Path, label: str, mode: str, commit_sha: str) -> None:
         "res://tests/performance/physics_benchmark.gd",
         "--",
         "--benchmark-mode",
-        "reference",
+        benchmark_mode or ("reference" if mode != "disabled" or seconds == MEASURED_SECONDS else "smoke"),
         "--gsp-mode",
         mode,
         "--output",
@@ -143,14 +172,36 @@ def run_one(output_dir: Path, label: str, mode: str, commit_sha: str) -> None:
         "--effects",
         "off",
         "--warmup-seconds",
-        str(WARMUP_SECONDS),
+        str(warmup_seconds),
         "--seconds",
-        str(MEASURED_SECONDS),
+        str(seconds),
         "--commit-sha",
         commit_sha,
     ]
-    if mode == "authenticated-idle":
+    if ready_path is not None:
         command.extend(["--ready-file", str(ready_path), "--external-client"])
+    return command
+
+
+def run_one(output_dir: Path, label: str, mode: str, commit_sha: str, warmup_seconds: int = WARMUP_SECONDS, seconds: int = MEASURED_SECONDS, benchmark_mode: str = "reference") -> None:
+    ready_path = output_dir / f"{label}.ready.json"
+    output_path = output_dir / f"{label}.raw.json"
+    client_path = output_dir / f"{label}.external.raw.json"
+    environment_path = output_dir / f"{label}.environment.raw.json"
+    log_path = output_dir / f"{label}.godot.log"
+    command = benchmark_command(output_path, mode, commit_sha, warmup_seconds, seconds, ready_path if mode == "authenticated-idle" else None, benchmark_mode)
+    process_started = time.monotonic()
+    sources = environment_sources()
+    environment_samples: list[dict[str, object]] = []
+    next_environment_sample = process_started
+
+    def capture_environment() -> None:
+        nonlocal next_environment_sample
+        now = time.monotonic()
+        if now >= next_environment_sample:
+            environment_samples.append(sample_environment(sources, process_started))
+            next_environment_sample += 1.0
+
     with log_path.open("wb") as log:
         process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
         client_evidence: dict[str, object] = {
@@ -170,27 +221,176 @@ def run_one(output_dir: Path, label: str, mode: str, commit_sha: str) -> None:
                     client = ExternalIdleClient(sock)
                     client.hello_received = True
                     send_text(sock, json.dumps({"v": 2, "t": "set_telemetry", "seq": 1, "d": {"hz": 30, "extra": []}}))
-                    client.run_until_exit(process, output_path)
-                    client_evidence.update({
-                        "hello_received": client.hello_received,
-                        "telemetry_received": client.telemetry_received,
-                        "drained_frames": client.drained_frames,
-                        "poll_iterations": client.poll_iterations,
-                        "socket_eof": client.socket_eof,
-                        "open_throughout": not client.premature_eof,
-                    })
+                    client.run_until_exit(process, output_path, capture_environment)
+                    client_evidence.update(client.evidence())
             else:
-                try:
-                    process.wait(timeout=PROCESS_TIMEOUT_SECONDS)
-                except subprocess.TimeoutExpired as error:
-                    raise RuntimeError(f"disabled Godot process exceeded {PROCESS_TIMEOUT_SECONDS} seconds") from error
+                deadline = time.monotonic() + PROCESS_TIMEOUT_SECONDS
+                while process.poll() is None:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f"disabled Godot process exceeded {PROCESS_TIMEOUT_SECONDS} seconds")
+                    capture_environment()
+                    time.sleep(0.05)
         finally:
             if process.poll() is None:
                 process.kill()
             process.wait()
+        client_evidence["process_duration_seconds"] = time.monotonic() - process_started
+        environment_path.write_text(json.dumps({
+            "commit_sha": commit_sha,
+            "sample_hz": 1,
+            "process_duration_seconds": client_evidence["process_duration_seconds"],
+            "governor": {path: _read_text(path) for path in sources["governor_paths"]},
+            "boost": _read_text(sources["boost_path"]) if sources["boost_path"] else None,
+            "sources": sources,
+            "samples": environment_samples,
+        }, indent=2) + "\n", encoding="utf-8")
         if process.returncode != 0:
             raise RuntimeError(f"{label} Godot process failed; see {log_path}")
         client_path.write_text(json.dumps(client_evidence, indent=2) + "\n", encoding="utf-8")
+
+
+def _read_text(path: str) -> str | None:
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def environment_sources() -> dict[str, object]:
+    frequency_paths = sorted(glob.glob("/sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq"))
+    governor_paths = sorted(glob.glob("/sys/devices/system/cpu/cpufreq/policy*/scaling_governor"))
+    boost_path = "/sys/devices/system/cpu/cpufreq/boost"
+    temperature_candidates: list[tuple[int, str, str]] = []
+    for hwmon in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        name = (_read_text(f"{hwmon}/name") or "").lower()
+        for input_path in sorted(glob.glob(f"{hwmon}/temp*_input")):
+            stem = Path(input_path).stem
+            label = (_read_text(f"{hwmon}/{stem.replace('_input', '_label')}") or "").lower()
+            priority = 0 if "package" in label else 1 if label == "tctl" else 2
+            if "package" in label or label == "tctl":
+                temperature_candidates.append((priority, input_path, label))
+            elif name == "k10temp" and stem == "temp1_input":
+                temperature_candidates.append((3, input_path, label or name))
+    temperature_candidates.sort()
+    temperature_path = temperature_candidates[0][1] if temperature_candidates else None
+    throttle_paths = sorted(glob.glob("/sys/devices/system/cpu/cpu[0-9]*/thermal_throttle/*_count"))
+    return {
+        "cpu_frequency_paths": frequency_paths,
+        "governor_paths": governor_paths,
+        "boost_path": boost_path if Path(boost_path).is_file() else None,
+        "package_temperature_path": temperature_path,
+        "package_temperature_label": temperature_candidates[0][2] if temperature_candidates else None,
+        "thermal_throttle_paths": throttle_paths,
+        "package_temperature_status": "available" if temperature_path else "unavailable",
+        "thermal_throttle_status": "available" if throttle_paths else "unavailable",
+    }
+
+
+def sample_environment(sources: dict[str, object], started: float) -> dict[str, object]:
+    frequencies = [
+        int(value)
+        for path in sources["cpu_frequency_paths"]
+        if (value := _read_text(path)) is not None and value.isdigit()
+    ]
+    temperature_path = sources.get("package_temperature_path")
+    temperature_raw = _read_text(temperature_path) if temperature_path else None
+    throttles = {
+        path: int(value)
+        for path in sources["thermal_throttle_paths"]
+        if (value := _read_text(path)) is not None and value.isdigit()
+    }
+    return {
+        "elapsed_seconds": time.monotonic() - started,
+        "cpu_frequency_khz": statistics.median(frequencies) if frequencies else None,
+        "package_temperature_c": float(temperature_raw) / 1000.0 if temperature_raw and temperature_raw.lstrip("-").isdigit() else None,
+        "thermal_throttle_counters": throttles if throttles else None,
+    }
+
+
+def run_conditioning(output_dir: Path, commit_sha: str) -> dict[str, object]:
+    output_path = output_dir / "conditioning.raw.json"
+    environment_path = output_dir / "conditioning.environment.raw.json"
+    log_path = output_dir / "conditioning.godot.log"
+    sources = environment_sources()
+    command = benchmark_command(output_path, "disabled", commit_sha, 0, CONDITIONING_SECONDS)
+    process_started = time.monotonic()
+    samples: list[dict[str, object]] = []
+    with log_path.open("wb") as log:
+        process = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+        next_sample = process_started
+        try:
+            while process.poll() is None:
+                now = time.monotonic()
+                if now >= next_sample:
+                    samples.append(sample_environment(sources, process_started))
+                    next_sample += 1.0
+                time.sleep(min(0.05, max(0.0, next_sample - time.monotonic())))
+            process.wait(timeout=5)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+    process_duration = time.monotonic() - process_started
+    environment_path.write_text(json.dumps({
+        "commit_sha": commit_sha,
+        "sample_hz": 1,
+        "process_duration_seconds": process_duration,
+        "governor": {path: _read_text(path) for path in sources["governor_paths"]},
+        "boost": _read_text(sources["boost_path"]) if sources["boost_path"] else None,
+        "sources": sources,
+        "samples": samples,
+    }, indent=2) + "\n", encoding="utf-8")
+    if process.returncode != 0:
+        raise RuntimeError(f"conditioning Godot process failed; see {log_path}")
+    raw = json.loads(output_path.read_text(encoding="utf-8"))
+    if raw.get("sample_count") != CONDITIONING_SAMPLE_COUNT or len(raw.get("samples_ms", [])) != CONDITIONING_SAMPLE_COUNT:
+        raise RuntimeError("conditioning did not produce exactly 72000 physics samples")
+    timing = raw.get("monotonic_timing", {})
+    measurement_elapsed = float(timing.get("measurement_elapsed_monotonic_seconds", -1.0))
+    if not CONDITIONING_MIN_SECONDS <= measurement_elapsed <= CONDITIONING_MAX_SECONDS:
+        raise RuntimeError(f"conditioning measurement duration was {measurement_elapsed:.3f}s")
+    return validate_conditioning(environment_path, samples, commit_sha)
+
+
+def validate_conditioning(environment_path: Path, samples: list[dict[str, object]], commit_sha: str) -> dict[str, object]:
+    payload = json.loads(environment_path.read_text(encoding="utf-8"))
+    if payload.get("commit_sha") != commit_sha:
+        raise RuntimeError("conditioning environment provenance is invalid")
+    sources = payload["sources"]
+    elapsed = lambda lower, upper: [sample for sample in samples if lower <= float(sample["elapsed_seconds"]) < upper]
+    first_window = elapsed(180.0, 240.0)
+    second_window = elapsed(240.0, 300.1)
+    temperatures_a = [sample["package_temperature_c"] for sample in first_window if sample["package_temperature_c"] is not None]
+    temperatures_b = [sample["package_temperature_c"] for sample in second_window if sample["package_temperature_c"] is not None]
+    frequencies_a = [sample["cpu_frequency_khz"] for sample in first_window if sample["cpu_frequency_khz"] is not None]
+    frequencies_b = [sample["cpu_frequency_khz"] for sample in second_window if sample["cpu_frequency_khz"] is not None]
+    temperature_delta = abs(statistics.median(temperatures_b) - statistics.median(temperatures_a)) if temperatures_a and temperatures_b else None
+    frequency_delta_percent = (
+        abs(statistics.median(frequencies_b) - statistics.median(frequencies_a)) / statistics.median(frequencies_a) * 100.0
+        if frequencies_a and frequencies_b and statistics.median(frequencies_a) else None
+    )
+    throttle_values = [sample["thermal_throttle_counters"] for sample in samples]
+    throttle_available = sources.get("thermal_throttle_status") == "available" and all(value is not None for value in throttle_values)
+    throttle_increment = None
+    if throttle_available:
+        throttle_increment = sum(throttle_values[-1].get(path, 0) - throttle_values[0].get(path, 0) for path in sources["thermal_throttle_paths"])
+    checks = {
+        "package_temperature_source": sources.get("package_temperature_status") == "available" and bool(temperatures_a and temperatures_b),
+        "package_temperature_delta_c": temperature_delta,
+        "package_temperature_stable": temperature_delta is not None and temperature_delta <= 1.0,
+        "cpu_frequency_source": bool(frequencies_a and frequencies_b),
+        "cpu_frequency_delta_percent": frequency_delta_percent,
+        "cpu_frequency_stable": frequency_delta_percent is not None and frequency_delta_percent <= 1.0,
+        "thermal_throttle_source": throttle_available,
+        "thermal_throttle_increment": throttle_increment,
+        "thermal_throttle_stable": throttle_increment is not None and throttle_increment == 0,
+    }
+    payload["protocol"] = checks
+    payload["admitted"] = all(value is True for key, value in checks.items() if key.endswith("_source") or key.endswith("_stable"))
+    environment_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    if not payload["admitted"]:
+        raise RuntimeError(f"conditioning protocol evidence is insufficient: {checks}")
+    return payload
 
 
 def validate_raw(output_dir: Path, label: str, mode: str, commit_sha: str) -> dict[str, object]:
@@ -202,6 +402,13 @@ def validate_raw(output_dir: Path, label: str, mode: str, commit_sha: str) -> di
         raise RuntimeError(f"{label} provenance or mode is invalid")
     if payload.get("sampling_source") != "PhysicsFrameProfiler._tick" or payload.get("physics_ticks_per_second") != PHYSICS_HZ:
         raise RuntimeError(f"{label} lacks production PhysicsFrameProfiler provenance")
+    timing = payload.get("monotonic_timing", {})
+    measurement_elapsed = float(timing.get("measurement_elapsed_monotonic_seconds", -1.0))
+    if not MEASUREMENT_MIN_SECONDS <= measurement_elapsed <= MEASUREMENT_MAX_SECONDS:
+        raise RuntimeError(f"{label} measurement duration was {measurement_elapsed:.3f}s")
+    warmup_elapsed = float(timing.get("warmup_elapsed_monotonic_seconds", -1.0))
+    if not 9.5 <= warmup_elapsed <= 10.5:
+        raise RuntimeError(f"{label} warmup duration was {warmup_elapsed:.3f}s")
     if not all(isinstance(item, (int, float)) and math.isfinite(item) and item > 0 for item in samples):
         raise RuntimeError(f"{label} contains invalid physics samples")
     evidence = payload.get("gsp_server_evidence", {})
@@ -214,10 +421,14 @@ def validate_raw(output_dir: Path, label: str, mode: str, commit_sha: str) -> di
         if int(evidence.get("telemetry_send_count", 0)) <= 0:
             raise RuntimeError(f"{label} produced no server telemetry: {evidence}")
         client = json.loads((output_dir / f"{label}.external.raw.json").read_text(encoding="utf-8"))
-        if not client.get("hello_received") or int(client.get("telemetry_received", 0)) <= 0:
+        if not client.get("hello_received") or int(client.get("telemetry_received", 0)) < MIN_TELEMETRY_FRAMES:
             raise RuntimeError(f"{label} external client did not receive telemetry: {client}")
         if not client.get("open_throughout"):
             raise RuntimeError(f"{label} external client observed an early close: {client}")
+        if float(client.get("telemetry_span_seconds", 0.0)) < MIN_TELEMETRY_SPAN_SECONDS:
+            raise RuntimeError(f"{label} external telemetry did not span the measurement: {client}")
+        if float(client.get("max_telemetry_gap_seconds", float("inf"))) > MAX_TELEMETRY_GAP_SECONDS:
+            raise RuntimeError(f"{label} external telemetry had an excessive drain gap: {client}")
     return payload
 
 
@@ -236,8 +447,9 @@ def compare_payloads(payloads: dict[str, dict[str, object]], output_dir: Path, c
         for label, payload in payloads.items()
     }
     return {
-        "status": "pass" if all(abs(value) < 1.0 for value in (pair_a_percent, pair_b_percent, aggregate_percent)) else "fail",
+        "status": "pass" if abs(aggregate_percent) < 1.0 else "fail",
         "run_order": RUN_ORDER,
+        "run_sequence": RUN_SEQUENCE,
         "run_labels": RUN_LABELS,
         "warmup_seconds": WARMUP_SECONDS,
         "measured_seconds": MEASURED_SECONDS,
@@ -250,6 +462,7 @@ def compare_payloads(payloads: dict[str, dict[str, object]], output_dir: Path, c
             },
             "aggregate_pair_delta_percent": aggregate_percent,
             "threshold_percent": 1.0,
+            "gate": "abs(aggregate_percent) < 1.0; pair deltas are diagnostic",
             "formula": "pair_a=(mean(I_a)-mean(D_a))/mean(D_a); pair_b=(mean(I_b)-mean(D_b))/mean(D_b); aggregate=(pair_a+pair_b)/2",
             "experimental_unit": "one fresh Godot process per run; no frame-index pairing",
         },
@@ -260,6 +473,7 @@ def compare_payloads(payloads: dict[str, dict[str, object]], output_dir: Path, c
             label: {
                 "physics": str(output_dir / f"{label}.raw.json"),
                 "external_client": str(output_dir / f"{label}.external.raw.json"),
+                "environment": str(output_dir / f"{label}.environment.raw.json"),
                 "godot_log": str(output_dir / f"{label}.godot.log"),
             }
             for label in RUN_LABELS
@@ -273,6 +487,7 @@ def main() -> int:
     commit_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     if len(commit_sha) != 40:
         raise RuntimeError("commit provenance is required")
+    run_conditioning(output_dir, commit_sha)
     for label, mode in zip(RUN_LABELS, RUN_ORDER):
         run_one(output_dir, label, mode, commit_sha)
     payloads = {label: validate_raw(output_dir, label, mode, commit_sha) for label, mode in zip(RUN_LABELS, RUN_ORDER)}
