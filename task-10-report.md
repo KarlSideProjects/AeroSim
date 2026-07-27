@@ -12,8 +12,16 @@ The runtime tick is cumulative for the replay session and advances before reset-
 
 ## Tests
 
-- Native TDD coverage: schema v5 round-trip, same-tick ordering, v5 order rejection, v4 compatibility without false precision, marker bounds/round-trip, derived JSONL provenance, and preset source validation.
-- Headless contract coverage: authenticated marker/simulation validation and monotonic replay tick across `AirSimSession.reset()`.
+- Native TDD coverage: schema v5 round-trip, same-tick ordering, first-order-zero and overflow-safe v5 rejection, v4 compatibility without false precision, recorder tick/order guards, marker bounds/round-trip, derived JSONL provenance, and preset source validation.
+- Headless contract coverage: exact `sim_cmd`/reliable ACK validation, whitespace and multibyte marker byte boundaries, and monotonic replay tick across `AirSimSession.reset()`.
+- Real authenticated WebSocket replay integration: registers the runtime tuning, Quick Adjust, preset, marker, and simulation providers; records transient/final panel commits, persisted Quick Adjust binding/commit, confirmed preset migration, pause, and marker; verifies rejected marker/simulation/tuning requests add no events; checks same-tick distinct event types and exact ordered event inputs; then loads/replays and derives authoritative JSONL.
+- Focused commands passed:
+
+  `scripts/test_native.sh`
+
+  `/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_replay_integration.gd`
+
+  `/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --script res://tests/headless/gsp_tuning_contract.gd`
 - Exact committed-HEAD gate passed:
 
   `RUNNER_TEMP=/tmp/aerosim-gsp-250 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh`
@@ -26,3 +34,5 @@ Codebase-memory transport was available and used for repository discovery; no di
 
 - `056a594 Add schema v5 authoritative replay events`
 - `537bc55 Fix preset replay test value`
+- `1f3ccc2 Document issue 250 replay gate`
+- `ef094bb Fix issue 250 replay review findings`
