@@ -4976,7 +4976,7 @@ func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, para
     return gsp_tuning_batch_request(peer_id, connection_id, request_seq, [{"parameter": parameter, "value": value}], source, quick_adjust_slot)
 
 
-func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array, source: String = "panel", quick_adjust_slot: int = -1, atomic_barrier: bool = false) -> Dictionary:
+func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array, source: String = "panel", quick_adjust_slot: int = -1, atomic_barrier: bool = false, preset_provenance: Dictionary = {}) -> Dictionary:
     _sync_native_external_authority()
     if _gsp_external_authority_active():
         var result := {
@@ -5013,16 +5013,18 @@ func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int
         _remember_gsp_tuning_result(deferred_result)
         return deferred_result
     if apply_timing == "immediate" or paused:
-        var provenance: Dictionary = {}
+        var provenance: Dictionary = preset_provenance.duplicate(true)
         for change_value in changes:
             if typeof(change_value) == TYPE_DICTIONARY:
-                provenance[String(change_value.get("parameter", ""))] = {
-                    "source": source,
-                    "request_seq": request_seq,
-                    "quick_adjust_slot": quick_adjust_slot,
-                    "request_id": 0,
-                }
-        return _commit_gsp_tuning_batch(peer_id, connection_id, request_seq, changes, _gsp_public_physics_tick(), true, source, quick_adjust_slot, provenance, atomic_barrier)
+                var key := String(change_value.get("parameter", ""))
+                if not provenance.has(key):
+                    provenance[key] = {
+                        "source": source,
+                        "request_seq": request_seq,
+                        "quick_adjust_slot": quick_adjust_slot,
+                        "request_id": 0,
+                    }
+        return _commit_gsp_tuning_batch(peer_id, connection_id, request_seq, changes, _gsp_public_physics_tick(), true, source, quick_adjust_slot, provenance)
     _gsp_tuning_pending.append({
         "peer_id": peer_id,
         "connection_id": connection_id,
@@ -5031,6 +5033,7 @@ func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int
         "source": source,
         "quick_adjust_slot": quick_adjust_slot,
         "atomic_barrier": atomic_barrier,
+        "provenance": preset_provenance.duplicate(true),
     })
     return {"ok": true, "pending": true, "apply_timing": apply_timing}
 
@@ -5054,21 +5057,22 @@ func _apply_gsp_tuning_requests(public_physics_tick: int) -> void:
             _commit_gsp_tuning_group(ordinary_group, public_physics_tick)
             ordinary_group.clear()
             var migration_changes: Array = request.get("changes", [])
-            var migration_provenance: Dictionary = {}
+            var migration_provenance: Dictionary = request.get("provenance", {}).duplicate(true)
             for change_value in migration_changes:
                 if typeof(change_value) == TYPE_DICTIONARY:
                     var migration_change: Dictionary = change_value
                     var migration_key := String(migration_change.get("parameter", ""))
                     migration_keys[migration_key] = true
-                    migration_provenance[migration_key] = {
-                        "source": "preset",
-                        "request_seq": int(request.get("request_seq", -1)),
-                        "quick_adjust_slot": -1,
-                        "request_id": 0,
-                    }
+                    if not migration_provenance.has(migration_key):
+                        migration_provenance[migration_key] = {
+                            "source": "preset",
+                            "request_seq": int(request.get("request_seq", -1)),
+                            "quick_adjust_slot": -1,
+                            "request_id": 0,
+                        }
             var migration_commit := _commit_gsp_tuning_batch(
                     -1, -1, -1, migration_changes, public_physics_tick, false, "preset", -1,
-                    migration_provenance, true)
+                    migration_provenance)
             var migration_ack := _gsp_tuning_request_ack(migration_commit, request)
             migration_ack["commit_request_seq"] = int(migration_commit.get("request_seq", -1))
             migration_ack["peer_id"] = int(request.get("peer_id", -1))
@@ -5129,7 +5133,7 @@ func _commit_gsp_tuning_group(pending: Array[Dictionary], public_physics_tick: i
         _gsp_tuning_completed.append(acknowledged)
 
 
-func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int, changes: Array, public_physics_tick: int, remember_result: bool = true, source: String = "panel", quick_adjust_slot: int = -1, provenance: Dictionary = {}, allow_out_of_contract: bool = false) -> Dictionary:
+func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int, changes: Array, public_physics_tick: int, remember_result: bool = true, source: String = "panel", quick_adjust_slot: int = -1, provenance: Dictionary = {}) -> Dictionary:
     var result: Dictionary = {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
     _sync_native_external_authority()
     if _gsp_external_authority_active():
@@ -5160,7 +5164,40 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
         if remember_result:
             _remember_gsp_tuning_result(result)
         return result
-    var staged_result: Dictionary = native.call("stage_flight_tuning_batch", changes, allow_out_of_contract)
+    var preset_migration := false
+    var preset_keys: Dictionary = {}
+    for change_value in changes:
+        if typeof(change_value) != TYPE_DICTIONARY:
+            continue
+        var change: Dictionary = change_value
+        var key := String(change.get("parameter", ""))
+        var metadata: Dictionary = provenance.get(key, {})
+        if metadata.has("preset_original"):
+            preset_migration = true
+            preset_keys[key] = true
+            var descriptor: Dictionary = {}
+            for descriptor_value in _gsp_tuning_registry:
+                if String(descriptor_value.get("key", "")) == key:
+                    descriptor = descriptor_value
+                    break
+            var staged_value := float(change.get("value", NAN))
+            if descriptor.is_empty() or not metadata.has("requested_value") or not metadata.has("staged_value") or \
+                    not metadata.has("corrected_value") or metadata.get("staged_value") != metadata.get("corrected_value") or \
+                    staged_value != float(metadata.get("staged_value", NAN)) or not is_finite(staged_value) or \
+                    staged_value < float(descriptor.get("min", INF)) or staged_value > float(descriptor.get("max", -INF)) or \
+                    not is_finite(float(metadata.get("requested_value", NAN))):
+                result["ok"] = false
+                result["error"] = "migration_invariant"
+                if remember_result:
+                    _remember_gsp_tuning_result(result)
+                return result
+    if preset_migration and (preset_keys.size() != _gsp_tuning_registry.size() or not _gsp_preset_values_match_registry(_changes_to_values(changes), true) or provenance.size() != changes.size()):
+        result["ok"] = false
+        result["error"] = "migration_invariant"
+        if remember_result:
+            _remember_gsp_tuning_result(result)
+        return result
+    var staged_result: Dictionary = native.call("stage_flight_tuning_batch", changes)
     if not bool(staged_result.get("ok", false)):
         for key in staged_result:
             result[key] = staged_result[key]
@@ -5185,6 +5222,17 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
             })
             change["source"] = String(winner.get("source", source))
             change["request_seq"] = int(winner.get("request_seq", request_seq))
+            if preset_migration:
+                var native_clamped := bool(change.get("clamped", false))
+                var clamp_reason: Array = winner.get("clamp_reason", [])
+                change["native_requested_value"] = change.get("requested_value", null)
+                change["native_clamped"] = native_clamped
+                change["native_clamp_reason"] = change.get("native_clamp_reason", "")
+                change["requested_value"] = winner.get("requested_value")
+                change["staged_value"] = winner.get("staged_value")
+                change["corrected_value"] = winner.get("corrected_value")
+                change["clamp_reason"] = clamp_reason.duplicate(true)
+                change["clamped"] = native_clamped or not clamp_reason.is_empty()
             var winner_slot := int(winner.get("quick_adjust_slot", -1))
             if winner_slot >= 0:
                 change["quick_adjust_slot"] = winner_slot
@@ -5209,6 +5257,29 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
             if winner_request_id not in winner_requests:
                 winner_requests.append(winner_request_id)
         result["changes"] = enriched_changes
+        if preset_migration and not enriched_changes.is_empty():
+            var committed_keys: Dictionary = {}
+            for change_value in enriched_changes:
+                var committed_change: Dictionary = change_value
+                var committed_key := String(committed_change.get("parameter", ""))
+                committed_keys[committed_key] = true
+                if not preset_keys.has(committed_key) or not native_result.get("committed_values", {}).has(committed_key) or \
+                        float(native_result.committed_values[committed_key]) != float(provenance[committed_key].get("staged_value", NAN)):
+                    result["ok"] = false
+                    result["error"] = "migration_invariant"
+                    if remember_result:
+                        _remember_gsp_tuning_result(result)
+                    return result
+            if committed_keys != preset_keys:
+                result["ok"] = false
+                result["error"] = "migration_invariant"
+                if remember_result:
+                    _remember_gsp_tuning_result(result)
+                return result
+            var first_preset_change: Dictionary = enriched_changes[0]
+            for field in ["requested_value", "staged_value", "corrected_value", "clamp_reason", "native_clamped", "native_clamp_reason", "clamped"]:
+                if first_preset_change.has(field):
+                    result[field] = first_preset_change[field]
         result["source"] = winner_sources[0] if winner_sources.size() == 1 else "mixed"
         if all_winners_have_one_slot and common_slot >= 0:
             result["quick_adjust_slot"] = common_slot
@@ -5289,7 +5360,7 @@ func _gsp_tuning_request_ack(commit: Dictionary, request: Dictionary) -> Diction
                 break
         if committed_change.is_empty():
             committed_change = {"parameter": key, "committed_value": committed_values[key], "changed": true}
-        if requested_values.has(key):
+        if requested_values.has(key) and not committed_change.has("requested_value"):
             committed_change["requested_value"] = requested_values[key]
         request_changes.append(committed_change)
     var request_values: Dictionary = {}
@@ -5307,11 +5378,11 @@ func _gsp_tuning_request_ack(commit: Dictionary, request: Dictionary) -> Diction
     acknowledged["changed"] = changed
     if request_changes.size() == 1:
         var scalar: Dictionary = request_changes[0]
-        for key in ["parameter", "requested_value", "committed_value", "clamped"]:
+        for key in ["parameter", "requested_value", "staged_value", "corrected_value", "clamp_reason", "native_clamped", "native_clamp_reason", "committed_value", "clamped"]:
             if scalar.has(key):
                 acknowledged[key] = scalar[key]
     else:
-        for key in ["parameter", "requested_value", "committed_value", "clamped"]:
+        for key in ["parameter", "requested_value", "staged_value", "corrected_value", "clamp_reason", "native_clamped", "native_clamp_reason", "committed_value", "clamped"]:
             acknowledged.erase(key)
     return acknowledged
 
@@ -5427,7 +5498,7 @@ func gsp_preview_preset_migration(name: String) -> Dictionary:
         "content_hash": String(loaded.get("content_hash", "")),
         "registry_hash": _gsp_tuning_registry_hash,
         "values": classification.values.duplicate(true),
-        "requested_values": classification.requested_values.duplicate(true),
+        "corrections": classification.corrections.duplicate(true),
         "created_at_ms": Time.get_ticks_msec(),
         "expires_at_ms": Time.get_ticks_msec() + GSP_MIGRATION_CAPABILITY_TTL_MS,
     })
@@ -5483,15 +5554,39 @@ func gsp_apply_preset_migration(peer_id: int, connection_id: int, request_seq: i
         invalid_context["ok"] = false
         invalid_context["error"] = "migration_stale"
         return invalid_context
+    var classification := GspPresetStore.classify_migration(loaded.preset.get("values", {}), _gsp_tuning_registry)
+    if not bool(classification.get("ok", false)) or classification.get("values", {}) != capability.get("values", {}) or \
+            classification.get("corrections", {}) != capability.get("corrections", {}) or \
+            not _gsp_preset_values_match_registry(capability.get("values", {}), true):
+        _gsp_migration_capabilities.remove_at(capability_index)
+        _gsp_used_migration_ids.append(migration_id)
+        _trim_gsp_migration_id_history(_gsp_used_migration_ids)
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_stale"
+        return invalid_context
     _gsp_migration_capabilities.remove_at(capability_index)
     _gsp_used_migration_ids.append(migration_id)
     _trim_gsp_migration_id_history(_gsp_used_migration_ids)
     var changes: Array = []
+    var provenance: Dictionary = {}
     for descriptor_value in _gsp_tuning_registry:
         var descriptor: Dictionary = descriptor_value
         var key := String(descriptor.get("key", ""))
-        changes.append({"parameter": key, "value": capability.requested_values[key]})
-    var result := gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset", -1, true)
+        var effective_value := float(capability.values[key])
+        var correction: Dictionary = capability.corrections[key]
+        changes.append({"parameter": key, "value": effective_value})
+        provenance[key] = {
+            "source": "preset",
+            "request_seq": request_seq,
+            "quick_adjust_slot": -1,
+            "request_id": 0,
+            "preset_original": true,
+            "requested_value": float(correction.requested_value),
+            "staged_value": effective_value,
+            "corrected_value": effective_value,
+            "clamp_reason": correction.get("clamp_reason", []).duplicate(true),
+        }
+    var result := gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset", -1, true, provenance)
     result["source"] = "preset"
     return result
 
@@ -5518,7 +5613,7 @@ func _trim_gsp_migration_id_history(history: Array[String]) -> void:
         history.pop_front()
 
 
-func _gsp_preset_values_match_registry(values: Variant) -> bool:
+func _gsp_preset_values_match_registry(values: Variant, require_bounds: bool = false) -> bool:
     if typeof(values) != TYPE_DICTIONARY or values.size() != _gsp_tuning_registry.size():
         return false
     var registry_keys := {}
@@ -5531,7 +5626,25 @@ func _gsp_preset_values_match_registry(values: Variant) -> bool:
     for key in values.keys():
         if typeof(key) != TYPE_STRING or not registry_keys.has(String(key)):
             return false
+        if require_bounds:
+            var value := float(values[key])
+            var descriptor: Dictionary = {}
+            for descriptor_value in _gsp_tuning_registry:
+                if String(descriptor_value.get("key", "")) == String(key):
+                    descriptor = descriptor_value
+                    break
+            if descriptor.is_empty() or not is_finite(value) or value < float(descriptor.get("min", INF)) or value > float(descriptor.get("max", -INF)):
+                return false
     return true
+
+
+func _changes_to_values(changes: Array) -> Dictionary:
+    var values: Dictionary = {}
+    for change_value in changes:
+        if typeof(change_value) == TYPE_DICTIONARY:
+            var change: Dictionary = change_value
+            values[String(change.get("parameter", ""))] = change.get("value", null)
+    return values
 
 
 func gsp_preset_request(peer_id: int, connection_id: int, request_seq: int, operation: String, data: Dictionary) -> Dictionary:

@@ -94,6 +94,7 @@ static func classify_migration(values: Variant, registry: Array) -> Dictionary:
     var current_keys: Dictionary = {}
     var final_values: Dictionary = {}
     var requested_values: Dictionary = {}
+    var corrections: Dictionary = {}
     var missing: Array = []
     var out_of_range: Array = []
     for descriptor_value in registry:
@@ -106,11 +107,28 @@ static func classify_migration(values: Variant, registry: Array) -> Dictionary:
         current_keys[key] = true
         var minimum := float(descriptor.get("min", -INF))
         var maximum := float(descriptor.get("max", INF))
+        var step := float(descriptor.get("step", 0.0))
+        if not is_finite(minimum) or not is_finite(maximum) or not is_finite(step) or minimum > maximum or step <= 0.0:
+            return {"ok": false, "error": "tuning registry contains an invalid range or step"}
         if values.has(key):
             var original := float(values[key])
+            if not is_finite(original):
+                return {"ok": false, "error": "preset contains a non-finite value"}
             requested_values[key] = original
-            var corrected := clampf(original, minimum, maximum)
+            var range_corrected := clampf(original, minimum, maximum)
+            var corrected := clampf(roundf(range_corrected / step) * step, minimum, maximum)
             final_values[key] = corrected
+            var clamp_reason: Array[String] = []
+            if original != range_corrected:
+                clamp_reason.append("registry_range")
+            if range_corrected != corrected:
+                clamp_reason.append("registry_step")
+            corrections[key] = {
+                "requested_value": original,
+                "staged_value": corrected,
+                "corrected_value": corrected,
+                "clamp_reason": clamp_reason,
+            }
             if original != corrected:
                 out_of_range.append({
                     "classification": "out_of_range",
@@ -119,16 +137,33 @@ static func classify_migration(values: Variant, registry: Array) -> Dictionary:
                     "corrected_value": corrected,
                     "min": minimum,
                     "max": maximum,
+                    "clamp_reason": clamp_reason,
                 })
         else:
-            var default_value := clampf(float(descriptor.get("default", 0.0)), minimum, maximum)
+            var requested_default := float(descriptor.get("default", 0.0))
+            if not is_finite(requested_default):
+                return {"ok": false, "error": "tuning registry contains a non-finite default"}
+            var range_corrected_default := clampf(requested_default, minimum, maximum)
+            var default_value := clampf(roundf(range_corrected_default / step) * step, minimum, maximum)
             final_values[key] = default_value
-            requested_values[key] = default_value
+            requested_values[key] = requested_default
+            var default_clamp_reason: Array[String] = []
+            if requested_default != range_corrected_default:
+                default_clamp_reason.append("registry_range")
+            if range_corrected_default != default_value:
+                default_clamp_reason.append("registry_step")
+            corrections[key] = {
+                "requested_value": requested_default,
+                "staged_value": default_value,
+                "corrected_value": default_value,
+                "clamp_reason": default_clamp_reason,
+            }
             missing.append({
                 "classification": "missing",
                 "parameter": key,
                 "default_value": default_value,
                 "corrected_value": default_value,
+                "clamp_reason": default_clamp_reason,
             })
     var removed: Array = []
     for key_value in values.keys():
@@ -147,6 +182,7 @@ static func classify_migration(values: Variant, registry: Array) -> Dictionary:
         "out_of_range": out_of_range,
         "values": final_values,
         "requested_values": requested_values,
+        "corrections": corrections,
     }
 
 

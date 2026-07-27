@@ -147,6 +147,14 @@ func _init() -> void:
             float(migration_classification.requested_values.get("missing.parameter", -1.0)) == 3.0 and
             not migration_classification.values.has("removed.parameter"),
             "migration classification removes obsolete keys, fills defaults, and retains requested values beside corrected values")
+    var step_classification := GspPresetStore.classify_migration(
+            {"quantized.parameter": 1.234},
+            [{"key": "quantized.parameter", "default": 1.0, "min": 0.0, "max": 2.0, "step": 0.1}])
+    _expect(bool(step_classification.get("ok", false)) and step_classification.get("out_of_range", []).size() == 1 and
+            is_equal_approx(float(step_classification.values.get("quantized.parameter", -1.0)), 1.2) and
+            step_classification.out_of_range[0].get("clamp_reason", []) == ["registry_step"] and
+            is_equal_approx(float(step_classification.corrections["quantized.parameter"].get("staged_value", -1.0)), 1.2),
+            "migration preview includes registry step quantization in its safe effective value and correction metadata")
 
     var changes := GspPresetStore.diff_values(
             {"zero": 0.0, "same": 1.0, "positive": 2.0, "negative": -2.0, "sign": 1.0, "target_zero": 2.0, "tiny": 1.0, "tiny_sign": 1e-308, "overflow": 1e-10, "delta_overflow": -1e308},

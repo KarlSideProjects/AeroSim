@@ -186,16 +186,35 @@ func _run() -> void:
     var migration_commit_data: Dictionary = migration_commit.get("d", {})
     var observer_migration_commit_data: Dictionary = observer_migration_commit.get("d", {})
     var migration_rate_p_change: Dictionary = {}
+    var committed_rate_p_change: Dictionary = {}
+    var observer_rate_p_change: Dictionary = {}
     for change_value in migration_ack_data.get("changes", []):
         if String(change_value.get("parameter", "")) == "simpleflight.rate_p":
             migration_rate_p_change = change_value
+            break
+    for change_value in migration_commit_data.get("changes", []):
+        if String(change_value.get("parameter", "")) == "simpleflight.rate_p":
+            committed_rate_p_change = change_value
+            break
+    for change_value in observer_migration_commit_data.get("changes", []):
+        if String(change_value.get("parameter", "")) == "simpleflight.rate_p":
+            observer_rate_p_change = change_value
             break
     _expect(bool(migration_ack_data.get("ok", false)) and String(migration_ack_data.get("source", "")) == "preset" and
             migration_ack_data.get("committed_values", {}) == expected_migration_values and
             migration_commit_data.get("committed_values", {}) == expected_migration_values and
             float(migration_rate_p_change.get("requested_value", 0.0)) == 99.0 and
+            float(migration_rate_p_change.get("staged_value", 0.0)) == 2.0 and
+            float(migration_rate_p_change.get("corrected_value", 0.0)) == 2.0 and
             float(migration_rate_p_change.get("committed_value", 0.0)) == 2.0 and
+            migration_rate_p_change.get("clamp_reason", []) == ["registry_range"] and
             bool(migration_rate_p_change.get("clamped", false)) and
+            float(migration_rate_p_change.get("native_requested_value", 0.0)) == 2.0 and
+            not bool(migration_rate_p_change.get("native_clamped", true)) and
+            committed_rate_p_change.get("requested_value", null) == 99.0 and
+            committed_rate_p_change.get("corrected_value", null) == 2.0 and
+            observer_rate_p_change.get("requested_value", null) == 99.0 and
+            observer_rate_p_change.get("corrected_value", null) == 2.0 and
             int(migration_commit_data.get("commit_id", -1)) == int(observer_migration_commit_data.get("commit_id", -2)) and
             String(observer_migration_commit_data.get("source", "")) == "preset",
             "confirmed migration stages requested values, preserves clamp provenance, and broadcasts the authoritative preset commit")
