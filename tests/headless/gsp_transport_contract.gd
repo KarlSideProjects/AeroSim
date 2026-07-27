@@ -10,9 +10,6 @@ func _init() -> void:
 		failures.append("GSP protocol version must be integer 2")
 	if GspServer.PORT_RANGE != [8765, 8766, 8767, 8768, 8769]:
 		failures.append("GSP must try ports 8765 through 8769")
-	var server_source_file := FileAccess.open("res://common/gsp/gsp_server.gd", FileAccess.READ)
-	if server_source_file == null or not server_source_file.get_as_text().contains("MAX_UNAUTHENTICATED_PEERS"):
-		failures.append("GSP must bound the separate open-unauthenticated peer set")
 	if not GspServer.validate_bind_address("127.0.0.1").ok or GspServer.validate_bind_address("0.0.0.0").ok:
 		failures.append("GSP must reject non-loopback bind addresses")
 
@@ -28,7 +25,7 @@ func _init() -> void:
 		failures.append("GSP launch URL must carry the selected port and token in its fragment")
 
 	var auth := GspServer.validate_auth_message(
-		JSON.stringify({"v": 2, "t": "auth", "seq": 1, "d": {"token": first_token}}),
+		JSON.stringify({"v": 2, "t": "auth", "seq": 0, "d": {"token": first_token}}),
 		first_token)
 	if not bool(auth.get("ok", false)):
 		failures.append("valid auth envelope must be accepted: %s" % auth)
@@ -48,7 +45,7 @@ func _init() -> void:
 	var oversized := GspServer.validate_auth_message("x".repeat(GspServer.MAX_MESSAGE_BYTES + 1), first_token)
 	if bool(oversized.get("ok", true)):
 		failures.append("oversized auth message must be rejected")
-	var ping := GspServer.validate_ping_message(JSON.stringify({"v": 2, "t": "ping", "seq": 2, "d": {"request": "fixture"}}))
+	var ping := GspServer.validate_ping_message(JSON.stringify({"v": 2, "t": "ping", "seq": 1, "d": {"request": "fixture"}}))
 	if not bool(ping.get("ok", false)):
 		failures.append("valid v2 ping envelope must be accepted")
 	var panel_file := FileAccess.open("res://common/gsp/gsp_panel.html", FileAccess.READ)

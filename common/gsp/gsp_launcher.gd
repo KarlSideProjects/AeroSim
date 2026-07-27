@@ -73,12 +73,11 @@ func launch(options: Dictionary = {}) -> Dictionary:
 		_server.stop()
 		return installed
 	var url := panel_url(file_uri(String(installed.path)), int(server_result.port), String(server_result.token))
+	print("GSP panel URL: %s" % url)
 	var open_requested := bool(launch_options.get("open", false))
 	var opened := true
 	if open_requested:
 		opened = open_panel(url)
-	if not open_requested or not opened:
-		print("GSP panel URL: %s" % url)
 	var shell_result: Dictionary = shell_open_result(open_requested, opened, url)
 	var result := {
 		"ok": bool(shell_result.get("ok", false)),

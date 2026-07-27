@@ -39,23 +39,25 @@ func _run_integration() -> void:
 		return
 
 	var token := String(started.token)
-	_expect(_client.send_text(JSON.stringify({"v": 2, "t": "auth", "seq": 1, "d": {"token": token}})) == OK, "client sends v2 auth")
+	_expect(_client.send_text(JSON.stringify({"v": 2, "t": "auth", "seq": 0, "d": {"token": token}})) == OK, "client sends v2 auth")
 	var hello := await _next_message(240)
 	_expect(String(hello.get("t", "")) == "hello", "authenticated peer receives hello")
 	_expect(int(hello.get("v", -1)) == 2, "hello uses v2 envelope")
 	var hello_data: Dictionary = hello.get("d", {})
-	for required_key in ["peer", "process", "vehicle_instance", "authority", "registry"]:
+	for required_key in ["sim_version", "proto_v", "physics_hz", "pid", "instance_name", "registry", "registry_hash", "peer", "process", "vehicle_instance", "authority", "sequence"]:
 		_expect(hello_data.has(required_key), "hello carries %s identity" % required_key)
+	_expect(int(hello.get("seq", 0)) == 1 and int(hello_data.get("sequence", 0)) == 1, "hello carries server sequence identity")
 
 	var request_data := {"client_timestamp_ms": 12345, "request": "fixed-runner"}
-	_expect(_client.send_text(JSON.stringify({"v": 2, "t": "ping", "seq": 2, "d": request_data})) == OK, "client sends v2 ping")
+	_expect(_client.send_text(JSON.stringify({"v": 2, "t": "ping", "seq": 1, "d": request_data})) == OK, "client sends v2 ping")
 	var pong := await _next_message(240)
 	_expect(String(pong.get("t", "")) == "pong", "authenticated peer receives pong")
 	_expect(int(pong.get("v", -1)) == 2, "pong uses v2 envelope")
 	var pong_data: Dictionary = pong.get("d", {})
 	var echo: Dictionary = pong_data.get("echo", {})
 	_expect(int(echo.get("client_timestamp_ms", -1)) == 12345 and String(echo.get("request", "")) == "fixed-runner", "pong echoes the client request data")
-	_expect(pong_data.has("peer") and pong_data.has("registry"), "pong carries identity")
+	for required_key in ["sim_version", "proto_v", "physics_hz", "pid", "instance_name", "registry", "registry_hash", "peer", "process", "vehicle_instance", "authority", "sequence"]:
+		_expect(pong_data.has(required_key), "pong carries %s identity" % required_key)
 
 	_client.close()
 	_server.stop()

@@ -4774,12 +4774,19 @@ func _on_dashboard_vehicle_selected(vehicle_name: String) -> void:
 func gsp_identity_snapshot() -> Dictionary:
     var telemetry: Dictionary = native.call("telemetry_snapshot") if native != null and native.has_method("telemetry_snapshot") else {}
     return {
+        "sim_version": String(ProjectSettings.get_setting("application/config/version", "unavailable")),
+        "proto_v": 2,
+        "physics_hz": Engine.physics_ticks_per_second,
+        "pid": OS.get_process_id(),
+        "instance_name": _airsim_vehicle_name,
         "vehicle_instance": _airsim_vehicle_name,
         "authority": String(telemetry.get("control_authority", "unavailable")),
         "registry": {
             "vehicle_instances": _airsim_vehicle_names.duplicate(),
-            "config_hash": String(telemetry.get("config_hash", "")),
         },
+        # The parameter registry is introduced by GSP issue #244; keep this one
+        # explicit rather than mislabeling a vehicle config hash as its hash.
+        "registry_hash": "unavailable",
         "tick": airsim_session.frame_index if airsim_session != null else 0,
     }
 

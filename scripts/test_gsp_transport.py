@@ -105,7 +105,11 @@ def read_ready(path: Path, process: subprocess.Popen[bytes]) -> dict:
         if process.poll() is not None:
             raise RuntimeError(f"Godot harness exited with status {process.returncode}")
         if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                time.sleep(0.01)
+                continue
         time.sleep(0.01)
     raise RuntimeError("timed out waiting for GSP harness")
 
