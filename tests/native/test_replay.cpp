@@ -1126,21 +1126,26 @@ bool test_replay_recorder_rejects_tick_regression_and_order_exhaustion() {
             !recorder.record_environment(0, complete_atmosphere(252)) ||
             !recorder.set_physics_tick(9) || recorder.set_physics_tick(8) ||
             recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidSession ||
-            !recorder.record_marker(100, "after-regression")) {
+            recorder.record_marker(100, "after-regression") ||
+            recorder.session().events.size() != 1 || recorder.finish(200, "completed")) {
         return false;
     }
-    const aerosim::ReplaySession &session = recorder.session();
-    if (session.events.back().physics_tick != 9 || session.events.back().event_order != 0) {
+    aerosim::ReplaySessionRecorder overflow_recorder(253, "manifest");
+    if (!overflow_recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !overflow_recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !overflow_recorder.record_environment(0, complete_atmosphere(253)) ||
+            !overflow_recorder.set_physics_tick(9) ||
+            overflow_recorder.session().events.size() != 1) {
         return false;
     }
-    if (!aerosim::ReplaySessionRecorderTestAccess::exhaust_event_order(recorder) ||
-            recorder.record_marker(101, "overflow") ||
-            recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidSession ||
-            recorder.session().events.size() != 2) {
+    if (!aerosim::ReplaySessionRecorderTestAccess::exhaust_event_order(overflow_recorder) ||
+            overflow_recorder.record_marker(101, "overflow") ||
+            overflow_recorder.diagnostic().code != aerosim::ReplayDiagnosticCode::InvalidSession ||
+            overflow_recorder.session().events.size() != 1 ||
+            overflow_recorder.finish(200, "completed")) {
         return false;
     }
-    return !recorder.finish(200, "completed") &&
-            recorder.diagnostic().code == aerosim::ReplayDiagnosticCode::InvalidSession;
+    return recorder.diagnostic().code == aerosim::ReplayDiagnosticCode::InvalidSession;
 }
 
 bool test_replay_v5_order_validation_and_marker_byte_boundaries() {
@@ -1190,13 +1195,28 @@ bool test_genuine_v4_same_timestamp_checkpoint_fixture() {
     if (!loaded.ok || loaded.session.schema_version != aerosim::kLegacyReplaySchemaVersion ||
             loaded.session.events.size() != 3 || loaded.session.checkpoints.size() != 2 ||
             loaded.session.events[0].has_authoritative_order || loaded.session.events[1].has_authoritative_order ||
-            loaded.session.events[2].has_authoritative_order || loaded.session.events[1].timestamp_us != loaded.session.events[2].timestamp_us) {
+            loaded.session.events[2].has_authoritative_order || loaded.session.events[1].timestamp_us != loaded.session.events[2].timestamp_us ||
+            loaded.session.events[1].type != aerosim::ReplayEventType::SceneObject ||
+            loaded.session.events[1].object_operation != aerosim::ReplaySceneObjectOperation::Spawn ||
+            loaded.session.events[2].object_operation != aerosim::ReplaySceneObjectOperation::Move) {
         return false;
     }
     const aerosim::SimulationConfig config = replay_test_config();
     const aerosim::ReplayRunResult run = aerosim::replay_session(
             loaded.session, aerosim::DualAircraftConfig{config, config}, "manifest", {"hash-a", "hash-b"}, false);
     if (!run.ok || run.checkpoints.size() != loaded.session.checkpoints.size()) {
+        return false;
+    }
+    const auto same_position = [](const aerosim::Vec3 &position, double x, double y, double z) {
+        return position.x == x && position.y == y && position.z == z;
+    };
+    if (loaded.session.checkpoints[0].scene_objects.size() != 1 ||
+            loaded.session.checkpoints[1].scene_objects.size() != 1 ||
+            !same_position(loaded.session.checkpoints[0].scene_objects[0].position, 1.0, 2.0, 3.0) ||
+            !same_position(loaded.session.checkpoints[1].scene_objects[0].position, 4.0, 5.0, 6.0) ||
+            run.checkpoints[0].scene_objects.size() != 1 || run.checkpoints[1].scene_objects.size() != 1 ||
+            !same_position(run.checkpoints[0].scene_objects[0].position, 1.0, 2.0, 3.0) ||
+            !same_position(run.checkpoints[1].scene_objects[0].position, 4.0, 5.0, 6.0)) {
         return false;
     }
     aerosim::ReplayRunResult expected = run;

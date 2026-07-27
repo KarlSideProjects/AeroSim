@@ -17,7 +17,7 @@ for test_source in tests/native/test_*.cpp; do
     test_name=$(basename "${test_source}" .cpp)
     output="build/tests/${test_name}${exe_suffix}"
     if [ "${AEROSIM_MSVC:-0}" = "1" ]; then
-        ${CXX:-cl} /nologo /std:c++17 /W4 /WX /EHsc /fp:strict /D_CRT_SECURE_NO_WARNINGS /Isrc/native \
+        ${CXX:-cl} /nologo /std:c++17 /W4 /WX /EHsc /fp:strict /DAEROSIM_REPLAY_TESTING /D_CRT_SECURE_NO_WARNINGS /Isrc/native \
             "${test_source}" "${native_sources[@]}" \
             /Fe:"$output"
     else

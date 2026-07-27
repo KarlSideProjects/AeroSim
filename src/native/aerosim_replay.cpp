@@ -2107,6 +2107,7 @@ bool ReplaySessionRecorder::set_physics_tick(std::uint64_t physics_tick) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay event append already failed");
     }
     if (physics_tick < physics_tick_) {
+        append_failed_ = true;
         return fail(ReplayDiagnosticCode::InvalidSession, "replay physics tick cannot regress");
     }
     if (physics_tick_ != physics_tick) {
