@@ -152,6 +152,9 @@ var _gdextension_sha256 := ""
 var _native_source_sha256 := ""
 var _gsp_server: GspServer
 var _gsp_client := WebSocketPeer.new()
+var _gsp_pair_order := "disabled,authenticated-idle"
+var _gsp_pair_label := "pair"
+var _gsp_output_dir := "build/gsp-idle-benchmark"
 
 
 func _initialize() -> void:
@@ -322,32 +325,81 @@ func _configure_effects(native: Object) -> bool:
 
 
 func _run_gsp_mode() -> void:
-    if _gsp_mode != "disabled" and _gsp_mode != "authenticated-idle":
-        _fail("GSP benchmark mode must be disabled or authenticated-idle")
+    if _gsp_mode == "paired":
+        await _run_gsp_paired()
         return
+    if _gsp_mode != "disabled" and _gsp_mode != "authenticated-idle":
+        _fail("GSP benchmark mode must be disabled, authenticated-idle, or paired")
+        return
+    var setup := await _prepare_gsp_runtime()
+    if setup.is_empty():
+        return
+    var runtime: Node = setup.runtime
+    var effect_workload: EffectWorkload = setup.effect_workload
+    var profiler := PhysicsFrameProfiler.new()
+    EngineDebugger.register_profiler("aerosim_physics_frame", profiler)
+    EngineDebugger.profiler_enable("aerosim_physics_frame", true)
+    var samples: Array[float] = await _run_gsp_phase(_gsp_mode, runtime, effect_workload, profiler)
+    EngineDebugger.profiler_enable("aerosim_physics_frame", false)
+    EngineDebugger.unregister_profiler("aerosim_physics_frame")
+    if samples.size() != ceili(_seconds * Engine.physics_ticks_per_second):
+        _fail("PhysicsFrameProfiler captured %d of %d GSP measurement frames" % [samples.size(), ceili(_seconds * Engine.physics_ticks_per_second)])
+        return
+    _write_gsp_raw(_output_path, _gsp_mode, samples, [_gsp_mode])
+    runtime.queue_free()
+    quit(0)
+
+
+func _run_gsp_paired() -> void:
+    var order := _gsp_pair_order.split(",")
+    if order.size() != 2 or order[0] == order[1] or (order[0] not in ["disabled", "authenticated-idle"]) or (order[1] not in ["disabled", "authenticated-idle"]):
+        _fail("GSP paired benchmark order must be disabled,authenticated-idle or its reverse")
+        return
+    var setup := await _prepare_gsp_runtime()
+    if setup.is_empty():
+        return
+    var runtime: Node = setup.runtime
+    var effect_workload: EffectWorkload = setup.effect_workload
+    var profiler := PhysicsFrameProfiler.new()
+    EngineDebugger.register_profiler("aerosim_physics_frame", profiler)
+    EngineDebugger.profiler_enable("aerosim_physics_frame", true)
+    for phase in order:
+        var samples: Array[float] = await _run_gsp_phase(phase, runtime, effect_workload, profiler)
+        var output_path := "%s/%s-%s.raw.json" % [_gsp_output_dir, _gsp_pair_label, phase]
+        _write_gsp_raw(output_path, phase, samples, order)
+    EngineDebugger.profiler_enable("aerosim_physics_frame", false)
+    EngineDebugger.unregister_profiler("aerosim_physics_frame")
+    runtime.queue_free()
+    quit(0)
+
+
+func _prepare_gsp_runtime() -> Dictionary:
     var runtime: Node = SmokeScene.instantiate()
     root.add_child(runtime)
     await process_frame
     if runtime.native == null:
         _fail("AeroSimNative is not registered")
-        return
+        return {}
     _install_deterministic_valid_license(runtime)
     _effects = "off"
     if not _configure_effects(runtime.native):
-        return
+        return {}
     var effect_workload := EffectWorkload.new()
     if not effect_workload.configure(runtime.native, false):
         _fail("GSP benchmark could not configure the production EffectWorkload")
-        return
+        return {}
     effect_workload.process_physics_priority = 100
     root.add_child(effect_workload)
-    if _gsp_mode == "authenticated-idle" and not await _connect_authenticated_idle(runtime):
-        _fail("authenticated idle GSP client could not connect")
-        return
+    return {"runtime": runtime, "effect_workload": effect_workload}
 
-    var profiler := PhysicsFrameProfiler.new()
-    EngineDebugger.register_profiler("aerosim_physics_frame", profiler)
-    EngineDebugger.profiler_enable("aerosim_physics_frame", true)
+
+func _run_gsp_phase(mode: String, runtime: Node, effect_workload: EffectWorkload, profiler: PhysicsFrameProfiler) -> Array[float]:
+    if mode == "authenticated-idle" and not await _connect_authenticated_idle(runtime):
+        _fail("authenticated idle GSP client could not connect")
+        return []
+    if mode == "disabled" and _gsp_server != null:
+        _stop_authenticated_idle()
+
     var warmup_frames := maxi(0, ceili(_warmup_seconds * Engine.physics_ticks_per_second))
     for _frame in warmup_frames:
         await physics_frame
@@ -358,33 +410,45 @@ func _run_gsp_mode() -> void:
     for _frame in measurement_frames:
         await physics_frame
     await process_frame
-    EngineDebugger.profiler_enable("aerosim_physics_frame", false)
-    EngineDebugger.unregister_profiler("aerosim_physics_frame")
     if profiler.samples_ms.size() != measurement_frames:
         _fail("PhysicsFrameProfiler captured %d of %d GSP measurement frames" % [profiler.samples_ms.size(), measurement_frames])
-        return
-    var output := FileAccess.open(_output_path, FileAccess.WRITE)
+        return []
+    var samples: Array[float] = profiler.samples_ms.duplicate()
+    if mode == "authenticated-idle":
+        _stop_authenticated_idle()
+    return samples
+
+
+func _write_gsp_raw(output_path: String, mode: String, samples: Array[float], phase_order: Array) -> void:
+    DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output_path.get_base_dir()))
+    var output := FileAccess.open(output_path, FileAccess.WRITE)
     if output == null:
-        _fail("Cannot write GSP benchmark output: %s" % _output_path)
+        _fail("Cannot write GSP benchmark output: %s" % output_path)
         return
     output.store_string(JSON.stringify({
-        "samples_ms": profiler.samples_ms,
-        "sample_count": profiler.samples_ms.size(),
+        "samples_ms": samples,
+        "sample_count": samples.size(),
         "sampling_source": "PhysicsFrameProfiler._tick",
         "workload_source": "EffectWorkload on the production SmokeScene",
-        "gsp_mode": _gsp_mode,
-        "authenticated_idle": _gsp_mode == "authenticated-idle",
+        "gsp_mode": mode,
+        "authenticated_idle": mode == "authenticated-idle",
         "commit_sha": _commit_sha,
         "physics_ticks_per_second": Engine.physics_ticks_per_second,
         "warmup_seconds": _warmup_seconds,
         "measured_seconds": _seconds,
-        "run_order_contract": "runner records disabled then authenticated-idle",
+        "phase_order": phase_order,
     }))
     output.close()
+
+
+func _stop_authenticated_idle() -> void:
+    if _gsp_client.get_ready_state() != WebSocketPeer.STATE_CLOSED:
+        _gsp_client.close()
+    _gsp_client = WebSocketPeer.new()
     if _gsp_server != null:
         _gsp_server.stop()
-    runtime.queue_free()
-    quit(0)
+        _gsp_server.queue_free()
+        _gsp_server = null
 
 
 func _connect_authenticated_idle(runtime: Node) -> bool:
@@ -445,6 +509,12 @@ func _parse_args() -> void:
                 _benchmark_mode = args[index + 1]
             "--gsp-mode":
                 _gsp_mode = args[index + 1]
+            "--gsp-pair-order":
+                _gsp_pair_order = args[index + 1]
+            "--gsp-pair-label":
+                _gsp_pair_label = args[index + 1]
+            "--gsp-output-dir":
+                _gsp_output_dir = args[index + 1]
             "--commit-sha":
                 _commit_sha = args[index + 1]
             "--godot-version":

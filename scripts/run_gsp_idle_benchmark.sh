@@ -18,20 +18,18 @@ commit_sha="$(git rev-parse HEAD)"
 mkdir -p "$output_dir"
 comparison="$output_dir/comparison.json"
 
-run_case() {
-    local mode="$1"
-    local output="$2"
+run_pair() {
+    local label="$1"
+    local order="$2"
     timeout 240s "$godot_bin" --headless --fixed-fps 240 --remote-debug local:// --path . \
         --script res://tests/performance/physics_benchmark.gd -- \
-        --benchmark-mode reference --gsp-mode "$mode" --effects off \
-        --warmup-seconds 10 --seconds 60 --commit-sha "$commit_sha" \
-        --output "$output"
+        --benchmark-mode reference --gsp-mode paired --gsp-pair-label "$label" \
+        --gsp-pair-order "$order" --gsp-output-dir "$output_dir" --effects off \
+        --warmup-seconds 10 --seconds 60 --commit-sha "$commit_sha"
 }
 
-run_case disabled "$output_dir/disabled-a.raw.json"
-run_case authenticated-idle "$output_dir/authenticated-idle-a.raw.json"
-run_case authenticated-idle "$output_dir/authenticated-idle-b.raw.json"
-run_case disabled "$output_dir/disabled-b.raw.json"
+run_pair ab "disabled,authenticated-idle"
+run_pair ba "authenticated-idle,disabled"
 
 python3 - "$output_dir" "$comparison" <<'PY'
 import json
@@ -41,12 +39,7 @@ import sys
 from pathlib import Path
 
 output_dir, comparison_path = map(Path, sys.argv[1:])
-run_order = [
-    ("disabled-a", "disabled"),
-    ("authenticated-idle-a", "authenticated-idle"),
-    ("authenticated-idle-b", "authenticated-idle"),
-    ("disabled-b", "disabled"),
-]
+run_order = [("ab-disabled", "disabled"), ("ab-authenticated-idle", "authenticated-idle"), ("ba-authenticated-idle", "authenticated-idle"), ("ba-disabled", "disabled")]
 payloads = {}
 for label, expected_mode in run_order:
     payload = json.loads((output_dir / f"{label}.raw.json").read_text())
@@ -83,7 +76,7 @@ passed = all(metric["absolute_delta_percent"] < 1.0 for metric in metrics.values
 comparison = {
     "status": "pass" if passed else "fail",
     "run_order": [label for label, mode in run_order],
-    "pairing": "predeclared AB/BA repetitions; aggregate per-run metrics by mode",
+    "pairing": "predeclared same-process AB and BA phase pairs; aggregate every phase by mode",
     "warmup_seconds": 10,
     "measured_seconds": 60,
     "sample_count": 14400,
