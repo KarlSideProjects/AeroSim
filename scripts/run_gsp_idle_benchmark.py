@@ -895,6 +895,29 @@ def record_environment_evidence_failure(output_dir: Path, commit_sha: str) -> Pa
     return write_qualification_failure(output_dir, commit_sha, "UNAVAILABLE", "environment_evidence_unavailable")
 
 
+def write_conditioning_sample_count_failure(
+    output_dir: Path,
+    commit_sha: str,
+    required_sample_count: int,
+    observed_sample_count: int,
+    measurement_elapsed_monotonic_seconds: float | None = None,
+) -> Path:
+    payload: dict[str, object] = {
+        "status": "fail",
+        "environment_status": "FAIL",
+        "failure_kind": "conditioning_sample_count",
+        "commit_sha": commit_sha,
+        "required_sample_count": required_sample_count,
+        "observed_sample_count": observed_sample_count,
+        "artifact_origin": "runner",
+    }
+    if measurement_elapsed_monotonic_seconds is not None:
+        payload["measurement_elapsed_monotonic_seconds"] = measurement_elapsed_monotonic_seconds
+    path = output_dir / "qualification.failure.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def run_conditioning(
     output_dir: Path,
     commit_sha: str,
@@ -944,10 +967,18 @@ def run_conditioning(
     if process.returncode != 0:
         raise RuntimeError(f"conditioning Godot process failed; see {log_path}")
     raw = json.loads(output_path.read_text(encoding="utf-8"))
-    if raw.get("sample_count") != CONDITIONING_SAMPLE_COUNT or len(raw.get("samples_ms", [])) != CONDITIONING_SAMPLE_COUNT:
-        raise RuntimeError("conditioning did not produce exactly 72000 physics samples")
     timing = raw.get("monotonic_timing", {})
     measurement_elapsed = float(timing.get("measurement_elapsed_monotonic_seconds", -1.0))
+    observed_sample_count = len(raw.get("samples_ms", []))
+    if raw.get("sample_count") != CONDITIONING_SAMPLE_COUNT or observed_sample_count != CONDITIONING_SAMPLE_COUNT:
+        write_conditioning_sample_count_failure(
+            output_dir,
+            commit_sha,
+            CONDITIONING_SAMPLE_COUNT,
+            observed_sample_count,
+            measurement_elapsed if measurement_elapsed >= 0.0 else None,
+        )
+        raise RuntimeError("conditioning did not produce exactly 72000 physics samples")
     if not CONDITIONING_MIN_SECONDS <= measurement_elapsed <= CONDITIONING_MAX_SECONDS:
         raise RuntimeError(f"conditioning measurement duration was {measurement_elapsed:.3f}s")
     return validate_conditioning(environment_path, samples, commit_sha)

@@ -24,6 +24,7 @@ from run_gsp_idle_benchmark import (  # noqa: E402
     parse_cppc_snapshot,
     read_gpu_metadata,
     record_environment_evidence_failure,
+    write_conditioning_sample_count_failure,
     validate_conditioning,
     write_qualification_failure,
 )
@@ -357,6 +358,23 @@ class GspIssue251ProtocolTests(unittest.TestCase):
                 import json
                 result = json.loads(failure_path.read_text(encoding="utf-8"))
                 self.assertEqual(result, {"status": "fail", "environment_status": "UNAVAILABLE", "failure_kind": "environment_evidence_unavailable", "commit_sha": "a" * 40})
+
+    def test_conditioning_sample_count_failure_writes_runner_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as path:
+            failure_path = write_conditioning_sample_count_failure(
+                Path(path), "a" * 40, 72000, 43479, 299.997691
+            )
+            result = json.loads(failure_path.read_text(encoding="utf-8"))
+            self.assertEqual(result, {
+                "status": "fail",
+                "environment_status": "FAIL",
+                "failure_kind": "conditioning_sample_count",
+                "commit_sha": "a" * 40,
+                "required_sample_count": 72000,
+                "observed_sample_count": 43479,
+                "measurement_elapsed_monotonic_seconds": 299.997691,
+                "artifact_origin": "runner",
+            })
 
     def test_validate_conditioning_raise_leaves_failure_artifact(self) -> None:
         import json
