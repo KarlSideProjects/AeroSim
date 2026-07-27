@@ -198,6 +198,34 @@ The initial focused contract run also exposed two test-fixture problems: Godot p
 
 The post-review implementation changes are in `common/gsp/gsp_preset_store.gd`, `common/gsp/gsp_server.gd`, and `common/flight/flight_runtime.gd`; focused coverage is in `tests/headless/gsp_preset_contract.gd` and `tests/test_gsp_panel_behavior.js`. The final commit identifiers and full-gate result are appended after the committed gate run below.
 
+The correction commit is `dcaf47a` (`Fix #247 preset review gaps`). It preserves the prior #247 range `612803f..bde7480` and all unrelated work. The report itself was force-added because its directory is ignored.
+
+### Exact full gate on correction commit
+
+Command:
+
+```text
+RUNNER_TEMP=/tmp/aerosim-gsp-247 \
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+scripts/verify_issue_11.sh
+```
+
+Result: exit `0` on committed HEAD `dcaf47a`.
+
+Observed results:
+
+- native build and provenance completed;
+- license scan passed for 11 dependencies, including the expected GPL fixture rejection;
+- GUT: 277 tests, 0 failures, 0 errors;
+- GSP preset contract and WebSocket integration passed;
+- existing GSP tuning integration and stress passed;
+- Quick Adjust integration passed;
+- headed acceptance passed on the available NVIDIA Vulkan environment;
+- complete-session replay integration passed;
+- headless smoke passed with `native_probe=47`, `physics_ticks_per_second=240`, and `simulated_frames=5`.
+
+The gate also emitted the repository’s expected negative-path native errors, Terrain3D mipmap warnings, one editor/input-method warning, three existing GUT orphans, and the deliberate `1e999` non-finite fixture’s `Exponent too high` parser warning. None changed the exit status.
+
 ### Consultation and scope
 
 The separate configured read-only Sol-high recommendation was supplied by the user/controller and verified against the indexed code seams. No additional Sol consultation was needed in this reconciliation. No registry migration (#248), lifecycle recovery (#249), expanded replay/session markers (#250), dependency, Hardware configuration/SettingsStore authority, replay authority, or GPU restriction was added.
