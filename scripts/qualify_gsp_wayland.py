@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -45,10 +46,28 @@ REQUIRED_ENVIRONMENT = (
     "wayland",
     "pipewire_portal",
 )
+GPU_REQUIRED_FIELDS = ("vendor", "model", "driver")
 ISSUE_251_FAILURE = Path("build/gsp-idle-qualification-7310191/qualification.failure.json")
 HEX40 = re.compile(r"^[0-9a-fA-F]{40}$")
 HEX64 = re.compile(r"^[0-9a-fA-F]{64}$")
 STATUSES = {"pass", "fail", "blocked", "unavailable", "not_run"}
+_VALIDATION_TOKEN = object()
+
+
+class _ValidatedEvidence(dict):
+    __slots__ = ("_validation_token",)
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        super().__init__(payload)
+        self._validation_token = _VALIDATION_TOKEN
+
+
+def _validated(payload: dict[str, Any]) -> _ValidatedEvidence:
+    return _ValidatedEvidence(payload)
+
+
+def _is_validated(value: Any) -> bool:
+    return isinstance(value, _ValidatedEvidence) and getattr(value, "_validation_token", None) is _VALIDATION_TOKEN
 
 
 def _git_commit(repo_root: Path) -> str | None:
@@ -103,6 +122,10 @@ def scale_observation(raw: str | None) -> dict[str, Any]:
     if value == 0:
         return {"status": "unavailable", "observed": raw, "reason": "GNOME automatic scaling; effective scale not observed"}
     return {"status": "pass" if value >= 2.0 else "fail", "observed": raw, "value": value, "source": "GNOME setting only"}
+
+
+def _effective_scale_is_valid(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 2.0
 
 
 def gpu_metadata(sys_root: Path = Path("/sys")) -> dict[str, Any]:
@@ -207,7 +230,7 @@ def collect_environment(godot_binary: str | None = None) -> dict[str, Any]:
 
 
 def _blocked(reason: str) -> dict[str, Any]:
-    return {"status": "blocked", "reason": reason}
+    return _validated({"status": "blocked", "reason": reason})
 
 
 def _verify_artifact(record: Any, manifest_path: Path) -> dict[str, str] | None:
@@ -231,14 +254,54 @@ def _environment_complete(value: Any) -> bool:
     return isinstance(value, dict) and all(key in value and value[key] not in (None, "") for key in REQUIRED_ENVIRONMENT)
 
 
-def _platform_semantics(checks: dict[str, Any]) -> str | None:
-    native = checks["native_wayland"].get("evidence")
+def _gpu_metadata_is_complete(value: Any) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    return all(
+        isinstance(observation, dict)
+        and all(isinstance(observation.get(field), str) and observation[field] for field in GPU_REQUIRED_FIELDS)
+        for observation in value
+    )
+
+
+def _topology_is_complete(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("monitor_count"), int)
+        and not isinstance(value.get("monitor_count"), bool)
+        and value["monitor_count"] >= 2
+        and isinstance(value.get("arrangement"), str)
+        and bool(value["arrangement"].strip())
+    )
+
+
+def _platform_environment_complete(value: Any) -> bool:
+    return _environment_complete(value) and _topology_is_complete(value.get("display_topology")) and _gpu_metadata_is_complete(value.get("gpu"))
+
+
+def _platform_semantics(checks: Any, environment: Any) -> str | None:
+    if not _platform_environment_complete(environment):
+        return "platform environment/version metadata is incomplete"
+    if not isinstance(checks, dict):
+        return "platform checks are malformed"
+    native_check = checks.get("native_wayland")
+    native = native_check.get("evidence") if isinstance(native_check, dict) else None
     if not isinstance(native, dict) or native.get("display_server") != "Wayland" or "Godot DisplayServer" not in str(native.get("source", "")):
         return "native_wayland requires Godot DisplayServer evidence"
-    hidpi = checks["hidpi_2x"].get("evidence")
-    if not isinstance(hidpi, dict) or "effective" not in str(hidpi.get("source", "")).lower() or not isinstance(hidpi.get("effective_scale"), (int, float)) or hidpi["effective_scale"] < 2.0:
+    hidpi_check = checks.get("hidpi_2x")
+    hidpi = hidpi_check.get("evidence") if isinstance(hidpi_check, dict) else None
+    if not isinstance(hidpi, dict) or "effective" not in str(hidpi.get("source", "")).lower() or not _effective_scale_is_valid(hidpi.get("effective_scale")):
         return "hidpi_2x requires effective compositor/per-monitor scale >= 2"
-    codex = checks["codex_visual_verification"].get("evidence")
+    cross_monitor_check = checks.get("cross_monitor")
+    topology = cross_monitor_check.get("evidence") if isinstance(cross_monitor_check, dict) else None
+    topology = topology.get("topology") if isinstance(topology, dict) else None
+    environment_topology = environment["display_topology"]
+    if not _topology_is_complete(topology):
+        return "cross_monitor requires at least two monitors and arrangement evidence"
+    if topology["monitor_count"] != environment_topology["monitor_count"] or topology["arrangement"] != environment_topology["arrangement"]:
+        return "cross_monitor topology must match environment display_topology"
+    codex_check = checks.get("codex_visual_verification")
+    codex = codex_check.get("evidence") if isinstance(codex_check, dict) else None
     if not isinstance(codex, dict) or codex.get("verifier") != "Codex" or codex.get("provisional") is not True:
         return "codex_visual_verification is required and must remain provisional"
     return None
@@ -270,73 +333,91 @@ def load_evidence_manifest(path: Path, kind: str, required_keys: tuple[str, ...]
                 return _blocked(f"{key} has missing or mismatched artifact evidence")
             normalized[key]["artifact"] = artifact
     if kind == PLATFORM_KIND:
-        if not _environment_complete(data.get("environment")):
+        if not _platform_environment_complete(data.get("environment")):
             return _blocked("platform environment/version metadata is incomplete")
         if any(check["status"] == "pass" for check in normalized.values()):
-            semantic_error = _platform_semantics(normalized)
+            semantic_error = _platform_semantics(normalized, data["environment"])
             if semantic_error:
                 return _blocked(semantic_error)
     status = "pass" if all(check["status"] == "pass" for check in normalized.values()) else "fail" if any(check["status"] == "fail" for check in normalized.values()) else "blocked"
     result = {"status": status, "kind": kind, "commit_sha": data["commit_sha"], "provenance": data["provenance"], mapping_key: normalized, "source": str(path)}
     if kind == PLATFORM_KIND:
         result["environment"] = data["environment"]
-    return result
+    return _validated(result)
 
 
 def load_performance_evidence(path: Path | None, repo_root: Path) -> dict[str, Any]:
     if path is None:
-        return {"status": "unavailable", "reason": "--performance-evidence was not provided"}
+        return _validated({"status": "unavailable", "reason": "--performance-evidence was not provided"})
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         source_hash = hashlib.sha256(path.resolve().read_bytes()).hexdigest()
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         return _blocked(f"unreadable performance evidence: {error}")
     source = {"path": str(path), "sha256": source_hash}
-    if path.resolve() == (repo_root / ISSUE_251_FAILURE).resolve() and data.get("status") == "fail" and data.get("failure_kind") == "conditioning_sample_count":
-        return {"status": "fail", "failure_kind": data["failure_kind"], "source": source, "commit_sha": data.get("commit_sha"), "observed_sample_count": data.get("observed_sample_count"), "required_sample_count": data.get("required_sample_count")}
-    if not isinstance(data, dict) or data.get("status") != "pass":
-        return {"status": "fail", "source": source, "failure_kind": data.get("failure_kind", "performance_evidence_not_pass")}
+    if not isinstance(data, dict):
+        return _blocked("performance evidence must be a JSON object")
+    status = data.get("status")
+    failure_kind = data.get("failure_kind")
+    if not isinstance(status, str) or ("failure_kind" in data and not isinstance(failure_kind, str)) or ("commit_sha" in data and not isinstance(data["commit_sha"], str)):
+        return _blocked("performance evidence has invalid field types")
+    if path.resolve() == (repo_root / ISSUE_251_FAILURE).resolve() and status == "fail" and failure_kind == "conditioning_sample_count":
+        failure_commit = data.get("commit_sha")
+        if not isinstance(failure_commit, str) or not HEX40.fullmatch(failure_commit) or not isinstance(data.get("observed_sample_count"), int) or isinstance(data.get("observed_sample_count"), bool) or not isinstance(data.get("required_sample_count"), int) or isinstance(data.get("required_sample_count"), bool):
+            return _blocked("known issue-251 failure has invalid field types")
+        return _validated({"status": "fail", "failure_kind": failure_kind, "source": source, "commit_sha": failure_commit, "observed_sample_count": data["observed_sample_count"], "required_sample_count": data["required_sample_count"]})
+    if status != "pass":
+        return _validated({"status": "fail", "source": source, "failure_kind": failure_kind if isinstance(failure_kind, str) else "performance_evidence_not_pass"})
     commit = _git_commit(repo_root)
-    if data.get("schema_version") != 1 or data.get("kind") != PERFORMANCE_KIND or commit is None or data.get("commit_sha", "").lower() != commit.lower() or not _provenance_valid(data.get("provenance"), data["commit_sha"]) or not isinstance(data.get("reference"), str) or not data["reference"]:
+    performance_commit = data.get("commit_sha")
+    if not isinstance(performance_commit, str) or not HEX40.fullmatch(performance_commit) or data.get("schema_version") != 1 or data.get("kind") != PERFORMANCE_KIND or commit is None or performance_commit.lower() != commit.lower() or not _provenance_valid(data.get("provenance"), performance_commit) or not isinstance(data.get("reference"), str) or not data["reference"]:
         return _blocked("performance PASS lacks trusted schema, reference, commit, or provenance")
     artifact = _verify_artifact(data.get("artifact"), path)
     if artifact is None:
         return _blocked("performance PASS has missing or mismatched artifact evidence")
-    return {"status": "pass", "kind": PERFORMANCE_KIND, "commit_sha": data["commit_sha"], "provenance": data["provenance"], "reference": data["reference"], "artifact": artifact, "source": source}
+    return _validated({"status": "pass", "kind": PERFORMANCE_KIND, "commit_sha": performance_commit, "provenance": data["provenance"], "reference": data["reference"], "artifact": artifact, "source": source})
 
 
 def evaluate_qualification(manifest: dict[str, Any]) -> dict[str, Any]:
-    prerequisites = manifest.get("prerequisites", {})
-    suite = prerequisites.get("gsp_p0_p4_suite", {})
-    performance = prerequisites.get("issue_251_performance", {})
-    platform = manifest.get("platform_checks", {})
-    if not isinstance(suite, dict):
+    prerequisites = manifest.get("prerequisites", {}) if isinstance(manifest, dict) else {}
+    suite = prerequisites.get("gsp_p0_p4_suite", {}) if isinstance(prerequisites, dict) else {}
+    performance = prerequisites.get("issue_251_performance", {}) if isinstance(prerequisites, dict) else {}
+    platform = manifest.get("platform_checks", {}) if isinstance(manifest, dict) else {}
+    if not _is_validated(suite):
         suite = {}
-    if not isinstance(performance, dict):
+    if not _is_validated(performance):
         performance = {}
-    if not isinstance(platform, dict):
+    if not _is_validated(platform):
         platform = {}
     phase_results = suite.get("phases", {})
     check_results = platform.get("checks", {})
-    nonpassing_phases = [phase for phase in REQUIRED_GSP_PHASES if phase_results.get(phase, {}).get("status") != "pass"]
-    nonpassing_checks = [check for check in REQUIRED_PLATFORM_CHECKS if check_results.get(check, {}).get("status") != "pass"]
-    reasons = [f"{phase}:{phase_results.get(phase, {}).get('status', suite.get('status', 'missing'))}" for phase in nonpassing_phases]
-    reasons.extend(f"{check}:{check_results.get(check, {}).get('status', platform.get('status', 'missing'))}" for check in nonpassing_checks)
+    if not isinstance(phase_results, dict):
+        phase_results = {}
+    if not isinstance(check_results, dict):
+        check_results = {}
+    entry_status = lambda mapping, key: mapping.get(key, {}).get("status") if isinstance(mapping.get(key, {}), dict) else None
+    nonpassing_phases = [phase for phase in REQUIRED_GSP_PHASES if entry_status(phase_results, phase) != "pass"]
+    nonpassing_checks = [check for check in REQUIRED_PLATFORM_CHECKS if entry_status(check_results, check) != "pass"]
+    reasons = [f"{phase}:{entry_status(phase_results, phase) or suite.get('status', 'missing')}" for phase in nonpassing_phases]
+    reasons.extend(f"{check}:{entry_status(check_results, check) or platform.get('status', 'missing')}" for check in nonpassing_checks)
     if suite.get("status") != "pass" and not nonpassing_phases:
         reasons.append(f"gsp_p0_p4_suite:{suite.get('status', 'missing')}")
     if platform.get("status") != "pass" and not nonpassing_checks:
         reasons.append(f"platform_checks:{platform.get('status', 'missing')}")
     if performance.get("status") != "pass":
         reasons.append(f"issue_251_performance:{performance.get('status', 'missing')}:{performance.get('failure_kind', '')}")
-    if not _environment_complete(platform.get("environment")):
+    if not _platform_environment_complete(platform.get("environment")):
         reasons.append("platform_environment:missing_required_metadata")
-    accepted = suite.get("status") == "pass" and platform.get("status") == "pass" and not nonpassing_phases and not nonpassing_checks and performance.get("status") == "pass" and _environment_complete(platform.get("environment"))
+    semantic_error = _platform_semantics(check_results, platform.get("environment"))
+    if semantic_error:
+        reasons.append(f"platform_semantics:{semantic_error}")
+    accepted = suite.get("status") == "pass" and platform.get("status") == "pass" and not nonpassing_phases and not nonpassing_checks and performance.get("status") == "pass" and _platform_environment_complete(platform.get("environment")) and semantic_error is None
     return {"status": "pass" if accepted else "blocked", "accepted": accepted, "required_gsp_phases": list(REQUIRED_GSP_PHASES), "required_platform_checks": list(REQUIRED_PLATFORM_CHECKS), "missing_or_nonpassing_phases": nonpassing_phases, "missing_or_nonpassing_checks": nonpassing_checks, "blocking_reasons": reasons}
 
 
 def build_report(repo_root: Path = ROOT, godot_binary: str | None = None, gsp_suite_evidence: Path | None = None, performance_evidence: Path | None = None, platform_evidence: Path | None = None) -> dict[str, Any]:
-    suite = load_evidence_manifest(gsp_suite_evidence, GSP_SUITE_KIND, REQUIRED_GSP_PHASES, repo_root) if gsp_suite_evidence else {"status": "unavailable", "reason": "--gsp-suite-evidence was not provided"}
-    platform = load_evidence_manifest(platform_evidence, PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, repo_root) if platform_evidence else {"status": "unavailable", "reason": "--platform-evidence was not provided"}
+    suite = load_evidence_manifest(gsp_suite_evidence, GSP_SUITE_KIND, REQUIRED_GSP_PHASES, repo_root) if gsp_suite_evidence else _validated({"status": "unavailable", "reason": "--gsp-suite-evidence was not provided"})
+    platform = load_evidence_manifest(platform_evidence, PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, repo_root) if platform_evidence else _validated({"status": "unavailable", "reason": "--platform-evidence was not provided"})
     report = {
         "schema_version": 1,
         "kind": "aerosim.gsp_wayland_qualification",

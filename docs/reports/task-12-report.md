@@ -42,11 +42,17 @@ passed and cannot be bypassed by #252.
 - Suite/platform manifests require schema, kind, current 40-hex commit,
   provenance, exact key sets, and an existing SHA-256-matching artifact for
   every `pass` entry. Relative artifact paths resolve from their manifest
-  directory. Fabricated statuses cannot pass.
+  directory. Evaluator input must carry the loader's private validation token;
+  raw fabricated status dictionaries cannot pass.
 - Final acceptance requires all five phase entries, the performance
   prerequisite, all platform checks, and required OS/desktop/kernel/Godot/
-  Firefox/Chromium/display/scaling/Wayland/PipeWire metadata. GPU metadata is
-  optional and never participates in the verdict.
+  Firefox/Chromium/display/scaling/Wayland/PipeWire metadata. Accepted
+  platform evidence must also contain a non-empty structured GPU observation
+  list with actual vendor/model/driver strings; type/device/renderer are
+  recorded when available. These values have no allowlist and never
+  participate in the verdict. Structured environment topology additionally
+  requires `monitor_count >= 2` and non-empty arrangement evidence; the
+  `cross_monitor` evidence must match that count and arrangement.
 
 The native Wayland check specifically requires Godot `DisplayServer` evidence;
 `WAYLAND_DISPLAY` or `XDG_SESSION_TYPE` environment variables are metadata and
@@ -65,12 +71,17 @@ records scale as `unavailable`; only effective compositor/per-monitor evidence
 in a supplied platform manifest can prove `hidpi_2x` pass or fail. No platform
 manifest was supplied, so there is no topology, cursor/focus, same-monitor,
 side-by-side, cross-monitor, physics-focus, browser file-panel/local-network,
-PipeWire non-black-frame, or Codex visual evidence.
+PipeWire non-black-frame, or Codex visual evidence. In particular, there is no
+trusted topology evidence to compare or accept; collector observations remain
+metadata until a platform manifest records the matching structured topology.
 
 PCI and Vulkan GPU vendor/model/type/device/driver/renderer observations are
 metadata only. The collector uses an independent DRM `card\d+` sysfs scan and
-does not import the benchmark runner or retry GPU collection. GPU metadata may
-also be absent without changing the verdict.
+does not import the benchmark runner or retry GPU collection. The current
+collector's metadata is not a platform manifest, so it cannot establish
+qualification; accepted platform evidence must provide the structured GPU
+observation contract above. No vendor/type/model/driver/renderer restriction
+is applied.
 
 ## Prior evidence boundary
 
@@ -85,7 +96,11 @@ authoritative frozen performance result used above.
 
 ```text
 python3 -m unittest tests.test_gsp_wayland_qualification
-16 tests, 0 failures
+23 tests, 0 failures
+
+python3 -m unittest tests.test_gsp_wayland_qualification \
+  tests.test_gsp_issue251_protocol tests.test_gsp_issue251_contract
+57 tests, 0 failures
 
 python3 -m py_compile scripts/qualify_gsp_wayland.py tests/test_gsp_wayland_qualification.py
 git diff --check
@@ -93,7 +108,13 @@ PASS
 
 GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
 python3 scripts/test_gsp_idle_benchmark_smoke.py
-GSP issue-251 real-time smoke: PASS
+BLOCKED in this read-only environment: Godot could not create user://logs;
+with job-local XDG data it could not create the AirSim RPC listener
+(ERR_CANT_CREATE). No smoke PASS is claimed.
+
+The smoke failure is not promoted to the formal #251 result: the frozen
+machine-readable #251 qualification artifact remains the authoritative
+`conditioning_sample_count` FAIL above.
 ```
 
 No packages, browser binaries, desktop configuration, or GitHub issue comments

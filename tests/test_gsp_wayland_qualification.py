@@ -62,6 +62,8 @@ def platform_manifest(directory: Path, *, checks=None, environment=None, commit=
         checks["native_wayland"]["evidence"] = {"source": "Godot DisplayServer", "display_server": "Wayland"}
     if "hidpi_2x" in checks:
         checks["hidpi_2x"]["evidence"] = {"source": "effective compositor/per-monitor evidence", "effective_scale": 2.0}
+    if "cross_monitor" in checks:
+        checks["cross_monitor"]["evidence"] = {"topology": {"monitor_count": 2, "arrangement": "side_by_side"}}
     if "codex_visual_verification" in checks:
         checks["codex_visual_verification"]["evidence"] = {"verifier": "Codex", "provisional": True}
     body = {
@@ -76,10 +78,11 @@ def platform_manifest(directory: Path, *, checks=None, environment=None, commit=
             "godot": "4.7",
             "firefox": "153",
             "chromium": "153",
-            "display_topology": "single monitor",
+            "display_topology": {"monitor_count": 2, "arrangement": "side_by_side"},
             "scaling": {"effective_scale": 2.0},
             "wayland": "native",
             "pipewire_portal": "verified",
+            "gpu": [{"vendor": "AMD", "model": "Radeon", "driver": "amdgpu", "type": "integrated", "device": "0x1", "renderer": "radv"}],
         },
         "checks": checks,
     }
@@ -116,6 +119,18 @@ class GspWaylandQualificationTests(unittest.TestCase):
         self.assertEqual(scale_observation("uint32 0")["status"], "unavailable")
         self.assertEqual(scale_observation("uint32 1")["status"], "fail")
         self.assertEqual(scale_observation("uint32 2")["status"], "pass")
+
+    def test_effective_scale_rejects_bool_nan_inf_and_below_two(self):
+        for value in (True, float("nan"), float("inf"), 1.5):
+            with self.subTest(value=value):
+                with tempfile.TemporaryDirectory() as raw:
+                    directory = Path(raw)
+                    path = platform_manifest(directory)
+                    body = json.loads(path.read_text())
+                    body["checks"]["hidpi_2x"]["evidence"]["effective_scale"] = value
+                    path.write_text(json.dumps(body), encoding="utf-8")
+                    result = load_evidence_manifest(path, PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
+                self.assertEqual(result["status"], "blocked")
 
     def test_gpu_metadata_keeps_only_exact_drm_cards(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -209,15 +224,85 @@ class GspWaylandQualificationTests(unittest.TestCase):
             platform = load_evidence_manifest(platform_manifest(directory), PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
             performance = load_performance_evidence(performance_manifest(directory), ROOT)
             base = {"prerequisites": {"gsp_p0_p4_suite": suite, "issue_251_performance": performance}, "platform_checks": platform}
-            amd = json.loads(json.dumps(base))
-            amd["platform_checks"]["environment"]["gpu"] = {"vendor": "AMD", "model": "integrated", "type": "iGPU", "device": "x", "driver": "amdgpu", "renderer": "radv"}
-            nvidia = json.loads(json.dumps(base))
-            nvidia["platform_checks"]["environment"]["gpu"] = {"vendor": "NVIDIA", "model": "discrete", "type": "dGPU", "device": "y", "driver": "nvidia", "renderer": "vulkan"}
-            absent = json.loads(json.dumps(base))
-            absent["platform_checks"]["environment"].pop("gpu", None)
+            results = []
+            for gpu in (
+                {"vendor": "AMD", "model": "integrated", "type": "iGPU", "device": "x", "driver": "amdgpu", "renderer": "radv"},
+                {"vendor": "NVIDIA", "model": "discrete", "type": "dGPU", "device": "y", "driver": "nvidia", "renderer": "vulkan"},
+                {"vendor": "Other", "model": "software", "type": "cpu", "device": "z", "driver": "llvmpipe", "renderer": "software"},
+            ):
+                platform["environment"]["gpu"] = [gpu]
+                results.append(evaluate_qualification(base))
+            platform["environment"].pop("gpu")
+            absent = evaluate_qualification(base)
 
-        self.assertEqual(evaluate_qualification(amd), evaluate_qualification(nvidia))
-        self.assertEqual(evaluate_qualification(amd), evaluate_qualification(absent))
+        self.assertTrue(all(result["accepted"] for result in results))
+        self.assertEqual({result["accepted"] for result in results}, {True})
+        self.assertFalse(absent["accepted"])
+
+    def test_single_monitor_topology_cannot_pass_cross_monitor(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            path = platform_manifest(directory)
+            body = json.loads(path.read_text())
+            body["checks"]["cross_monitor"]["evidence"]["topology"]["monitor_count"] = 1
+            path.write_text(json.dumps(body), encoding="utf-8")
+            result = load_evidence_manifest(path, PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
+
+        self.assertEqual(result["status"], "blocked")
+
+    def test_environment_single_monitor_cannot_pass_cross_monitor_evidence(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            path = platform_manifest(directory)
+            body = json.loads(path.read_text())
+            body["environment"]["display_topology"]["monitor_count"] = 1
+            path.write_text(json.dumps(body), encoding="utf-8")
+            result = load_evidence_manifest(path, PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
+
+        self.assertEqual(result["status"], "blocked")
+
+    def test_environment_topology_arrangement_must_match_cross_monitor_evidence(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            path = platform_manifest(directory)
+            body = json.loads(path.read_text())
+            body["environment"]["display_topology"]["arrangement"] = "stacked"
+            path.write_text(json.dumps(body), encoding="utf-8")
+            result = load_evidence_manifest(path, PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT)
+
+        self.assertEqual(result["status"], "blocked")
+
+    def test_evaluator_rechecks_mutated_validated_platform_semantics(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            manifest = {
+                "prerequisites": {
+                    "gsp_p0_p4_suite": load_evidence_manifest(suite_manifest(directory), GSP_SUITE_KIND, REQUIRED_GSP_PHASES, ROOT),
+                    "issue_251_performance": load_performance_evidence(performance_manifest(directory), ROOT),
+                },
+                "platform_checks": load_evidence_manifest(platform_manifest(directory), PLATFORM_KIND, REQUIRED_PLATFORM_CHECKS, ROOT),
+            }
+            manifest["platform_checks"]["environment"]["display_topology"]["monitor_count"] = 1
+
+        self.assertFalse(evaluate_qualification(manifest)["accepted"])
+
+    def test_raw_fabricated_statuses_cannot_be_evaluated_as_validated_evidence(self):
+        raw = {
+            "prerequisites": {
+                "gsp_p0_p4_suite": {"status": "pass", "phases": {phase: {"status": "pass"} for phase in REQUIRED_GSP_PHASES}},
+                "issue_251_performance": {"status": "pass"},
+            },
+            "platform_checks": {
+                "status": "pass",
+                "checks": {check: {"status": "pass"} for check in REQUIRED_PLATFORM_CHECKS},
+                "environment": {key: "fabricated" for key in ("ubuntu", "gnome", "kernel", "godot", "firefox", "chromium", "display_topology", "scaling", "wayland", "pipewire_portal", "gpu")},
+            },
+        }
+
+        result = evaluate_qualification(raw)
+
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["status"], "blocked")
 
     def test_fully_valid_manifests_and_artifacts_can_pass(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -252,6 +337,21 @@ class GspWaylandQualificationTests(unittest.TestCase):
 
         self.assertEqual(failure["status"], "fail")
         self.assertEqual(failure["failure_kind"], "conditioning_sample_count")
+
+    def test_malformed_performance_inputs_fail_closed(self):
+        for value in ([], 7, "pass"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as raw:
+                path = Path(raw) / "performance.json"
+                path.write_text(json.dumps(value), encoding="utf-8")
+                result = load_performance_evidence(path, ROOT)
+            self.assertEqual(result["status"], "blocked")
+
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "performance.json"
+            path.write_text(json.dumps({"status": "pass", "commit_sha": 123}), encoding="utf-8")
+            result = load_performance_evidence(path, ROOT)
+
+        self.assertEqual(result["status"], "blocked")
 
     def test_cli_ingests_explicit_inputs_and_absent_inputs_block(self):
         with tempfile.TemporaryDirectory() as raw:
