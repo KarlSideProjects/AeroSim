@@ -4811,16 +4811,16 @@ func gsp_telemetry_snapshot() -> Dictionary:
     var tick: int = airsim_session.frame_index if airsim_session != null else 0
     var position_payload := _airsim_vector3(position_ned)
     var velocity_payload := _airsim_vector3(velocity_ned)
-    var attitude_payload := _airsim_quaternion(attitude_ned)
     var rates_payload := _airsim_vector3(rates_frd)
-    snapshot["position_ned"] = position_payload
-    snapshot["velocity_ned_mps"] = velocity_payload
-    snapshot["attitude_ned"] = attitude_payload
-    snapshot["rates_frd_rad_s"] = rates_payload
-    snapshot["position"] = position_payload
-    snapshot["velocity"] = velocity_payload
-    snapshot["attitude"] = attitude_payload
-    snapshot["rates"] = rates_payload
+    snapshot["pos_ned"] = position_payload
+    snapshot["vel_ned"] = velocity_payload
+    snapshot["att_euler_deg"] = AirSimCoordinateContract.ned_orientation_to_zyx_euler_degrees(attitude_ned)
+    snapshot["gyro_body"] = rates_payload
+    var rpm: Array[float] = []
+    for motor_value in snapshot.get("motors", []):
+        var motor: Dictionary = motor_value
+        rpm.append(float(motor.get("speed_rad_s", 0.0)) * 60.0 / TAU)
+    snapshot["rpm"] = rpm
     snapshot["vehicle_instance"] = _airsim_vehicle_name
     snapshot["authority"] = String(snapshot.get("control_authority", "unavailable"))
     snapshot["registry_hash"] = "unavailable"

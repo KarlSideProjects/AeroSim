@@ -39,6 +39,20 @@ static func ned_orientation_to_godot(orientation: Quaternion) -> Quaternion:
     return Quaternion(orientation.x, -orientation.z, orientation.y, orientation.w).normalized()
 
 
+static func ned_orientation_to_zyx_euler_degrees(orientation: Quaternion) -> Dictionary:
+    var quaternion := orientation.normalized()
+    var sin_pitch := clampf(2.0 * (quaternion.w * quaternion.y - quaternion.z * quaternion.x), -1.0, 1.0)
+    return {
+        "roll": rad_to_deg(atan2(
+            2.0 * (quaternion.w * quaternion.x + quaternion.y * quaternion.z),
+            1.0 - 2.0 * (quaternion.x * quaternion.x + quaternion.y * quaternion.y))),
+        "pitch": rad_to_deg(asin(sin_pitch)),
+        "yaw": rad_to_deg(atan2(
+            2.0 * (quaternion.w * quaternion.z + quaternion.x * quaternion.y),
+            1.0 - 2.0 * (quaternion.y * quaternion.y + quaternion.z * quaternion.z))),
+    }
+
+
 static func godot_yaw_radians_to_ned_degrees(yaw_radians: float) -> float:
     return -rad_to_deg(yaw_radians)
 

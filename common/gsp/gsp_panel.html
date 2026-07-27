@@ -36,7 +36,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   <dt>Authority</dt><dd id="authority">—</dd>
   <dt>Tick</dt><dd id="tick">—</dd>
   <dt>Actual telemetry rate</dt><dd id="rate">0 Hz</dd>
-  <dt>Latency</dt><dd id="latency">—</dd>
+  <dt>WebSocket RTT</dt><dd id="latency">—</dd>
   <dt>Registry hash</dt><dd id="registry">—</dd>
 </dl></section>
 <section class="card"><strong>Position / velocity (NED, SI)</strong><p id="position" class="muted">—</p><p id="velocity" class="muted">—</p><strong>Attitude / rates (FRD, SI)</strong><p id="attitude" class="muted">—</p><p id="rates" class="muted">—</p></section>
@@ -56,6 +56,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   var rateStartedAt = 0;
   var rateSamples = 0;
   var sparkValues = [];
+  var pingTimer = null;
   var $ = function (id) { return document.getElementById(id); };
   var connection = $("connection");
   var freshState = $("fresh-state");
@@ -67,19 +68,21 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     if (!value) return "—";
     return "[" + Number(value.x_val).toFixed(3) + ", " + Number(value.y_val).toFixed(3) + ", " + Number(value.z_val).toFixed(3) + "] " + unit;
   }
-  function quaternion(value) {
+  function euler(value) {
     if (!value) return "—";
-    return "[w " + Number(value.w_val).toFixed(3) + ", x " + Number(value.x_val).toFixed(3) + ", y " + Number(value.y_val).toFixed(3) + ", z " + Number(value.z_val).toFixed(3) + "]";
+    return "[roll " + Number(value.roll).toFixed(2) + "°, pitch " + Number(value.pitch).toFixed(2) + "°, yaw " + Number(value.yaw).toFixed(2) + "°] Z-Y-X";
   }
   function send(type, data) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ v: protocolVersion, t: type, seq: clientSequence++, d: data }));
   }
-  function sendTelemetryRate(rate) { send("telemetry_rate", { rate_hz: rate }); }
-  function requestFreshSnapshot() { waitingForFresh = true; freshState.textContent = "Waiting for fresh telemetry…"; send("telemetry_request", { fresh: true }); }
+  function sendTelemetryRate(rate) { send("set_telemetry", { hz: rate, extra: false }); }
+  function requestFreshSnapshot() { waitingForFresh = true; freshState.textContent = "Waiting for fresh telemetry…"; send("request_snapshot", {}); }
+  function sendPing() { send("ping", { sent_at_unix_ms: Date.now() }); }
   function disconnect(message) {
     if (socket) socket.close();
     socket = null;
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
     waitingForFresh = true;
     connection.textContent = message;
     freshState.textContent = "Live display disabled.";
@@ -99,7 +102,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     context.stroke();
   }
   function displayTelemetry(message) {
-    var sample = message.d || message;
+    var sample = message.d;
     if (!sample.sample_seq || Number(sample.sample_seq) <= lastSampleSequence) return;
     if (waitingForFresh && !sample.fresh) return;
     lastSampleSequence = Number(sample.sample_seq);
@@ -112,15 +115,14 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     rateSamples += 1;
     var elapsed = performance.now() - rateStartedAt;
     text("rate", elapsed > 0 ? (rateSamples * 1000 / elapsed).toFixed(1) + " Hz" : "—");
-    text("latency", sample.sent_at_unix_ms ? Math.max(0, Date.now() - Number(sample.sent_at_unix_ms)).toFixed(1) + " ms" : "—");
     text("registry", sample.registry_hash || "unavailable");
-    text("position", "position: " + vector(sample.position_ned || sample.position, "m NED"));
-    text("velocity", "velocity: " + vector(sample.velocity_ned_mps || sample.velocity, "m/s NED"));
-    text("attitude", "attitude: " + quaternion(sample.attitude_ned || sample.attitude));
-    text("rates", "rates: " + vector(sample.rates_frd_rad_s || sample.rates, "rad/s FRD"));
+    text("position", "position: " + vector(sample.pos_ned, "m NED"));
+    text("velocity", "velocity: " + vector(sample.vel_ned, "m/s NED"));
+    text("attitude", "attitude: " + euler(sample.att_euler_deg));
+    text("rates", "rates: " + vector(sample.gyro_body, "rad/s FRD"));
     var motors = sample.motors || [];
     text("motors", motors.map(function (motor) { return Number(motor.thrust_newtons).toFixed(2) + " N"; }).join(" | ") || "—");
-    sparkValues.push(motors.reduce(function (sum, motor) { return sum + Number(motor.thrust_newtons || 0); }, 0) / 40);
+    sparkValues.push((sample.rpm || []).reduce(function (sum, rpm) { return sum + Number(rpm || 0); }, 0) / 60000);
     if (sparkValues.length > 80) sparkValues.shift();
     drawSparkline();
   }
@@ -142,6 +144,11 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         connection.textContent = "Connected";
         rateStartedAt = performance.now(); rateSamples = 0;
         sendTelemetryRate(30); requestFreshSnapshot();
+        sendPing();
+        if (pingTimer) clearInterval(pingTimer);
+        pingTimer = setInterval(sendPing, 1000);
+      } else if (message.t === "pong" && message.d.echo && message.d.echo.sent_at_unix_ms) {
+        text("latency", Math.max(0, Date.now() - Number(message.d.echo.sent_at_unix_ms)).toFixed(1) + " ms");
       }
     });
     socket.addEventListener("close", function () { disconnect("GSP session closed"); });
