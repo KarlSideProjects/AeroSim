@@ -317,6 +317,18 @@ class GspIssue251ProtocolTests(unittest.TestCase):
         missing = {"cur_state": 0}
         self.assertEqual(evaluate_cooling_sequence([{"device0": valid, "device1": missing}], devices)["status"], "FAIL")
 
+    def test_cooling_nonzero_cur_state_fails_before_record_admission(self) -> None:
+        device_id = "/sys/devices/virtual/thermal/cooling_device0"
+        devices = [{"stable_id": device_id, "path": device_id}]
+        self.assertEqual(
+            evaluate_cooling_sequence([{device_id: {"cur_state": 1}}], devices),
+            {"status": "FAIL", "failure_kind": "cooling_state"},
+        )
+        self.assertEqual(
+            evaluate_cooling_sequence([{device_id: {"cur_state": 0}}], devices)["status"],
+            "UNAVAILABLE",
+        )
+
     def test_ordered_cooling_samples_does_not_duplicate_equal_boundaries(self) -> None:
         initial = {"initial": 1}
         middle = {"middle": 1}

@@ -512,6 +512,13 @@ def evaluate_cooling_sequence(samples: list[dict[str, object]], devices: list[di
         return {"status": "UNAVAILABLE", "failure_kind": "missing_evidence"}
     device_ids = [device["stable_id"] for device in devices]
     parsed_samples = [sample.get("processor_cooling_samples") if "processor_cooling_samples" in sample else sample for sample in samples]
+    for sample in parsed_samples:
+        if not isinstance(sample, dict):
+            continue
+        for device_id in device_ids:
+            record = sample.get(device_id)
+            if isinstance(record, dict) and type(record.get("cur_state")) is int and record["cur_state"] != 0:
+                return {"status": "FAIL", "failure_kind": "cooling_state"}
     records: dict[str, list[dict[str, object]]] = {device_id: [] for device_id in device_ids}
     complete = True
     for sample in parsed_samples:
