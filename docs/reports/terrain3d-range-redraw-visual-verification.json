@@ -1,0 +1,44 @@
+{
+  "commit": "1771bc8",
+  "input_hashes": {
+    "headed/01_terrain_range_preflight.png": "57cc9486492b6dca8b10734660b47e239b05a93eaf17c48302e59b4b72bf6941",
+    "headed/01_third_person_preflight.png": "83892a6cded5725db7387c531a8bf95731c6922ebb041c0c42809bed556412d3",
+    "headed/03_takeoff.png": "9dd23aaf7a15d974695ff613345c16d85d3c5609c32909db7800401ebc4a870e",
+    "scene_shots/02_field_overview.png": "2a393393ce0129310faf69926366e638fad3061409a0ffb8ef2c00661da37672",
+    "scene_shots/04_spawn_forward.png": "13420c1bb56359e88ee15a4aeedb8ff01d4c201cf3c184958ca0de3cf3045ea4",
+    "scene_shots/yard_01_overview.png": "6295140a79363c836e7851ed29ef756b580b73a863bcbe33d052687940af8474"
+  },
+  "renderer": {
+    "godot_version": "4.7-stable (official)",
+    "display_driver": "X11",
+    "gpu_adapter": "NVIDIA GeForce RTX 4060 Ti",
+    "resolution": ["1280x720 headed acceptance", "1600x900 fixed scene stations"]
+  },
+  "rubric_version": "aerosim-visual-provisional-v1",
+  "reviewer_model": "claude-opus-5",
+  "reference_status": "provisional",
+  "severity": "low",
+  "findings": [
+    {
+      "severity": "low",
+      "view": "headed/01_terrain_range_preflight.png",
+      "finding": "The preflight drone inspection panel occupies the lower half of the centre viewport, so the authored ground is only visible as a band above it. This panel is pre-existing UI and is unchanged by this slice; it was confirmed independent of the scene by varying the launch platform albedo across three values with no effect on the panel.",
+      "disposition": "Out of scope for the map redraw. The same ground is fully visible in scene_shots/04_spawn_forward.png."
+    },
+    {
+      "severity": "low",
+      "view": "scene_shots/02_field_overview.png",
+      "finding": "The cloud layer is four flattened shaded spheres. They read as distant lens-shaped cloud under fog, but do not stand up to close inspection from above.",
+      "disposition": "The CloudLayer node and its visible mesh geometry are a headless gate contract, so the layer cannot be removed. Documented for the post-CAP-006 visual pass."
+    }
+  ],
+  "checked": [
+    "objects readable as a mountaintop flight field: two hardstands, soil aprons, taxiway, hangar, control tower, depot, workshop, fuel tank, two boulders",
+    "scale plausible and ground-contacting: no floating or half-sunk landmarks at any station",
+    "no white models: every Kenney asset renders with its colormap texture on both Free Flight maps",
+    "no missing texture, z-fighting, or clipping observed at any station",
+    "sky, fog and exposure consistent from 80 m field level to 420 m altitude",
+    "spawn pads and flight corridor legible from the spawn, with the valley open ahead rather than blocked by a landmark"
+  ],
+  "verdict": "provisional_pass"
+}
