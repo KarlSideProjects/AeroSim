@@ -24,6 +24,7 @@ func _init() -> void:
     var truncated_name := _new_name(store, "truncated")
     var unknown_name := _new_name(store, "unknown")
     var ordered_name := _new_name(store, "ordered")
+    var capability_name := _new_name(store, "capability")
     _expect(GspPresetStore.validate_name("race_01").get("ok", false), "ASCII preset names are accepted")
     for valid_name in ["-", "_", "-leading", "_leading", "x".repeat(64)]:
         _expect(bool(GspPresetStore.validate_name(valid_name).get("ok", false)),
@@ -114,6 +115,30 @@ func _init() -> void:
             "GSP rejects traversal before preset path construction")
     _expect(GspServer.validate_save_preset_message(JSON.stringify({"v": 2, "t": "save_preset", "seq": 1, "d": {"name": "rаce"}}), 0).get("ok", false) == false,
             "GSP rejects Unicode lookalike names at the trust boundary")
+    var migration_preview_message := JSON.stringify({"v": 2, "t": "preview_preset_migration", "seq": 1, "d": {"name": "race_01"}})
+    var migration_apply_message := JSON.stringify({"v": 2, "t": "apply_preset_migration", "seq": 2, "d": {"name": "race_01", "migration_id": "opaque", "confirmed": true}})
+    _expect(GspServer.validate_preset_message(migration_preview_message, 0, "preview_preset_migration").get("ok", false),
+            "GSP accepts a migration preview request")
+    _expect(GspServer.validate_preset_message(migration_apply_message, 1, "apply_preset_migration").get("ok", false),
+            "GSP accepts only explicitly confirmed migration apply requests")
+    _expect(not GspServer.validate_preset_message(JSON.stringify({"v": 2, "t": "apply_preset_migration", "seq": 2,
+            "d": {"name": "race_01", "migration_id": "opaque", "confirmed": false}}), 1, "apply_preset_migration").get("ok", false),
+            "GSP rejects migration apply without explicit confirmation")
+
+    var migration_classification := GspPresetStore.classify_migration(
+            {"removed.parameter": 8.0, "bounded.parameter": 99.0},
+            [{"key": "bounded.parameter", "default": 2.0, "min": 0.0, "max": 10.0, "step": 0.1},
+            {"key": "missing.parameter", "default": 3.0, "min": 0.0, "max": 10.0, "step": 0.1}])
+    _expect(bool(migration_classification.get("ok", false)) and
+            migration_classification.get("removed", []).size() == 1 and
+            migration_classification.get("missing", []).size() == 1 and
+            migration_classification.get("out_of_range", []).size() == 1 and
+            float(migration_classification.out_of_range[0].get("original_value", -1.0)) == 99.0 and
+            float(migration_classification.out_of_range[0].get("corrected_value", -1.0)) == 10.0 and
+            float(migration_classification.values.get("bounded.parameter", -1.0)) == 10.0 and
+            float(migration_classification.values.get("missing.parameter", -1.0)) == 3.0 and
+            not migration_classification.values.has("removed.parameter"),
+            "migration classification removes obsolete keys, fills defaults, and clamps with both values visible")
 
     var changes := GspPresetStore.diff_values(
             {"zero": 0.0, "same": 1.0, "positive": 2.0, "negative": -2.0, "sign": 1.0, "target_zero": 2.0, "tiny": 1.0, "tiny_sign": 1e-308, "overflow": 1e-10, "delta_overflow": -1e308},
@@ -232,11 +257,43 @@ func _init() -> void:
         _expect(bool(runtime.gsp_tuning_request(-1, -1, 6, "simpleflight.rate_p", 1.2).get("ok", false)) and
                 runtime.gsp_compare_presets("", runtime_name).get("changes", []).size() == 1,
                 "current-versus-preset diff reports changed values only")
+        var capability_values: Dictionary = runtime_saved.preset.values.duplicate(true)
+        var capability_saved := store.save_preset(capability_name, capability_values, "previous-registry", "test-sim")
+        if bool(capability_saved.get("ok", false)):
+            _remember_created(capability_name)
+        _expect(bool(capability_saved.get("ok", false)), "migration capability fixture saves")
+        var capability_preview: Dictionary = runtime.gsp_preview_preset_migration(capability_name)
+        var migration_id := String(capability_preview.get("migration_id", ""))
+        var unchanged_before_invalid: Dictionary = runtime.native.call("flight_tuning_configuration")
+        var wrong_apply := runtime.gsp_apply_preset_migration(-1, -1, 10, capability_name, "wrong-id", true)
+        var missing_apply := runtime.gsp_apply_preset_migration(-1, -1, 11, capability_name, "", true)
+        _expect(wrong_apply.get("error", "") == "migration_wrong" and missing_apply.get("error", "") == "migration_missing" and
+                int(runtime.native.call("flight_tuning_configuration").get("commit_id", -1)) == int(unchanged_before_invalid.get("commit_id", -2)),
+                "wrong and missing migration identifiers are rejected read-only")
+        runtime._gsp_migration_capabilities[0].expires_at_ms = 0
+        var expired_apply := runtime.gsp_apply_preset_migration(-1, -1, 12, capability_name, migration_id, true)
+        _expect(expired_apply.get("error", "") == "migration_expired", "expired migration identifier is rejected")
+        var fresh_capability: Dictionary = runtime.gsp_preview_preset_migration(capability_name)
+        var fresh_migration_id := String(fresh_capability.get("migration_id", ""))
+        var unconfirmed_apply := runtime.gsp_apply_preset_migration(-1, -1, 13, capability_name, fresh_migration_id, false)
+        _expect(unconfirmed_apply.get("error", "") == "migration_confirmation_required", "unconfirmed migration is rejected")
+        var registry_stale_preview: Dictionary = runtime.gsp_preview_preset_migration(capability_name)
+        var registry_stale_id := String(registry_stale_preview.get("migration_id", ""))
+        var original_registry_hash := runtime._gsp_tuning_registry_hash
+        runtime._gsp_tuning_registry_hash = "changed-registry"
+        var registry_stale_apply := runtime.gsp_apply_preset_migration(-1, -1, 14, capability_name, registry_stale_id, true)
+        runtime._gsp_tuning_registry_hash = original_registry_hash
+        _expect(registry_stale_apply.get("error", "") == "migration_stale", "registry changes stale migration capability")
+        var committed_migration := runtime.gsp_apply_preset_migration(-1, -1, 14, capability_name, fresh_migration_id, true)
+        var reused_migration := runtime.gsp_apply_preset_migration(-1, -1, 15, capability_name, fresh_migration_id, true)
+        _expect(bool(committed_migration.get("ok", false)) and reused_migration.get("error", "") == "migration_reused",
+                "accepted migration capability is single-use")
 
     var panel := FileAccess.open("res://common/gsp/gsp_panel.html", FileAccess.READ)
     var panel_text := panel.get_as_text() if panel != null else ""
     for required in ["list_presets", "save_preset", "retrieve_preset", "load_preset", "compare_presets",
-            "preset-diff", "registry_hash", "created_at", "percentage_status"]:
+            "preview_preset_migration", "apply_preset_migration", "preset-diff", "migration-report",
+            "registry_hash", "created_at", "percentage_status", "original_value", "corrected_value"]:
         _expect(panel_text.contains(required), "panel supports %s" % required)
 
     _cleanup()

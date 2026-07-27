@@ -88,6 +88,64 @@ static func diff_values(left: Dictionary, right: Dictionary) -> Array:
     return changes
 
 
+static func classify_migration(values: Variant, registry: Array) -> Dictionary:
+    if typeof(values) != TYPE_DICTIONARY or values.is_empty():
+        return {"ok": false, "error": "preset values must be a non-empty object"}
+    var current_keys: Dictionary = {}
+    var final_values: Dictionary = {}
+    var missing: Array = []
+    var out_of_range: Array = []
+    for descriptor_value in registry:
+        if typeof(descriptor_value) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "tuning registry is malformed"}
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        if key.is_empty() or current_keys.has(key):
+            return {"ok": false, "error": "tuning registry contains duplicate or empty keys"}
+        current_keys[key] = true
+        var minimum := float(descriptor.get("min", -INF))
+        var maximum := float(descriptor.get("max", INF))
+        if values.has(key):
+            var original := float(values[key])
+            var corrected := clampf(original, minimum, maximum)
+            final_values[key] = corrected
+            if original != corrected:
+                out_of_range.append({
+                    "classification": "out_of_range",
+                    "parameter": key,
+                    "original_value": original,
+                    "corrected_value": corrected,
+                    "min": minimum,
+                    "max": maximum,
+                })
+        else:
+            var default_value := clampf(float(descriptor.get("default", 0.0)), minimum, maximum)
+            final_values[key] = default_value
+            missing.append({
+                "classification": "missing",
+                "parameter": key,
+                "default_value": default_value,
+                "corrected_value": default_value,
+            })
+    var removed: Array = []
+    for key_value in values.keys():
+        var key := String(key_value)
+        if not current_keys.has(key):
+            removed.append({
+                "classification": "removed",
+                "parameter": key,
+                "value": float(values[key]),
+            })
+    removed.sort_custom(func(left: Dictionary, right: Dictionary) -> bool: return String(left.parameter) < String(right.parameter))
+    return {
+        "ok": true,
+        "removed": removed,
+        "missing": missing,
+        "out_of_range": out_of_range,
+        "values": final_values,
+    }
+
+
 func save_preset(name: String, values: Dictionary, registry_hash: String, sim_version: String, note: String = "") -> Dictionary:
     var name_result := validate_name(name)
     if not bool(name_result.get("ok", false)):
@@ -177,6 +235,9 @@ func _read_preset_file(path: String, expected_name: String = "") -> Dictionary:
     if file.get_length() > MAX_FILE_BYTES:
         file.close()
         return {"ok": false, "error": "preset file is too large"}
+    var content := file.get_buffer(file.get_length())
+    var content_hash := _hash_content(content)
+    file.seek(0)
     var parser := JSON.new()
     var parse_error := parser.parse(file.get_as_text())
     file.close()
@@ -185,7 +246,14 @@ func _read_preset_file(path: String, expected_name: String = "") -> Dictionary:
     var result := _validate_preset(parser.data, expected_name)
     if not bool(result.get("ok", false)):
         return result
-    return {"ok": true, "preset": result.preset}
+    return {"ok": true, "preset": result.preset, "content_hash": content_hash}
+
+
+static func _hash_content(content: PackedByteArray) -> String:
+    var context := HashingContext.new()
+    context.start(HashingContext.HASH_SHA256)
+    context.update(content)
+    return context.finish().hex_encode()
 
 
 static func _validate_preset(candidate: Variant, expected_name: String = "") -> Dictionary:

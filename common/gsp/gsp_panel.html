@@ -59,9 +59,9 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 <section class="card"><strong>In-flight Quick Adjust</strong><div id="quick-adjust-rows" class="muted">Waiting for registry.</div></section>
 <section class="card"><strong>Presets</strong>
   <div class="preset-row"><input id="preset-name" placeholder="preset name" maxlength="64"><input id="preset-note" placeholder="optional note" maxlength="512"><button id="preset-save">Save</button><button id="preset-refresh">Refresh</button></div>
-  <div class="preset-row"><select id="preset-source"><option value="">Current</option></select><button id="preset-retrieve">Retrieve</button><button id="preset-load">Load</button><button id="preset-compare-current">Compare current</button></div>
+  <div class="preset-row"><select id="preset-source"><option value="">Current</option></select><button id="preset-retrieve">Retrieve</button><button id="preset-load">Load</button><button id="preset-preview">Preview migration</button><button id="preset-compare-current">Compare current</button></div>
   <div class="preset-row"><select id="preset-target"><option value="">Current</option></select><button id="preset-compare-two">Compare presets</button></div>
-  <div id="preset-status" class="muted">No presets loaded.</div><pre id="preset-diff" class="muted">No changes.</pre>
+  <div id="preset-status" class="muted">No presets loaded.</div><pre id="preset-diff" class="muted">No changes.</pre><pre id="migration-report" class="muted">No migration preview.</pre>
 </section>
 </div>
 </main>
@@ -141,6 +141,24 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
       var after = change.after == null ? "missing" : Number(change.after).toFixed(6);
       return change.parameter + ": " + before + " → " + after + " (" + percentage + ")";
     }).join("\n");
+  }
+  function renderMigrationReport(result) {
+    var sections = [
+      ["Removed from current registry", result && result.removed],
+      ["Missing; current defaults", result && result.missing],
+      ["Out of range; corrected", result && result.out_of_range]
+    ];
+    var lines = [];
+    sections.forEach(function (section) {
+      lines.push(section[0] + ":");
+      (Array.isArray(section[1]) ? section[1] : []).forEach(function (item) {
+        var original = item.original_value == null ? item.value : item.original_value;
+        var corrected = item.corrected_value == null ? item.default_value : item.corrected_value;
+        lines.push("  " + item.parameter + ": " + (original == null ? "missing" : original) + " → " + (corrected == null ? "removed" : corrected));
+      });
+      if (!section[1] || !section[1].length) lines.push("  none");
+    });
+    $("migration-report").textContent = lines.join("\n");
   }
   function requestFreshSnapshot() {
     waitingForFresh = true;
@@ -387,6 +405,13 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         if (operation === "list_presets" || operation === "save_preset") renderPresets(presetAck.presets || []);
         if (operation === "retrieve_preset" && presetAck.preset) presetStatus.textContent = presetAck.preset.name + " — " + (presetAck.preset.note || "no note");
         if (operation === "compare_presets") { presetStatus.textContent = "Comparison ready."; renderPresetDiff(presetAck); }
+        if (operation === "preview_preset_migration") {
+          renderMigrationReport(presetAck);
+          presetStatus.textContent = "Migration preview ready; confirmation required.";
+          if (window.confirm("Apply this preset migration at the next authoritative boundary?")) {
+            sendPreset("apply_preset_migration", { name: presetAck.preset_name, migration_id: presetAck.migration_id, confirmed: true });
+          }
+        }
       }
     });
     socket.addEventListener("close", function () { disconnect("GSP session closed"); });
@@ -402,6 +427,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   $("preset-refresh").addEventListener("click", function () { sendPreset("list_presets", {}); });
   $("preset-retrieve").addEventListener("click", function () { if (presetSource.value) sendPreset("retrieve_preset", { name: presetSource.value }); });
   $("preset-load").addEventListener("click", function () { if (presetSource.value) sendPreset("load_preset", { name: presetSource.value }); });
+  $("preset-preview").addEventListener("click", function () { if (presetSource.value) sendPreset("preview_preset_migration", { name: presetSource.value }); });
   $("preset-compare-current").addEventListener("click", function () { if (presetSource.value) sendPreset("compare_presets", { left: "", right: presetSource.value }); });
   $("preset-compare-two").addEventListener("click", function () { if (presetSource.value && presetTarget.value) sendPreset("compare_presets", { left: presetSource.value, right: presetTarget.value }); });
   if (window.__AEROSIM_PANEL_TEST__) {
@@ -409,6 +435,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     window.__AEROSIM_PANEL_TEST__.quickAdjustControls = function () { return quickAdjustControls; };
     window.__AEROSIM_PANEL_TEST__.renderPresets = renderPresets;
     window.__AEROSIM_PANEL_TEST__.renderPresetDiff = renderPresetDiff;
+    window.__AEROSIM_PANEL_TEST__.renderMigrationReport = renderMigrationReport;
   }
   connect(); drawSparkline();
 }());

@@ -359,6 +359,22 @@ static func validate_preset_message(message: String, previous_sequence: int, exp
             return save_name_result
         if data.has("note") and (typeof(data.note) != TYPE_STRING or String(data.note).to_utf8_buffer().size() > GspPresetStore.NOTE_MAX_LENGTH):
             return {"ok": false, "error": "invalid preset note"}
+    elif expected_type == "preview_preset_migration":
+        if data.size() != 1 or typeof(data.get("name")) != TYPE_STRING:
+            return {"ok": false, "error": "malformed migration preview data"}
+        var preview_name_result := GspPresetStore.validate_name(data.name)
+        if not bool(preview_name_result.get("ok", false)):
+            return preview_name_result
+    elif expected_type == "apply_preset_migration":
+        if data.size() != 3 or typeof(data.get("name")) != TYPE_STRING or typeof(data.get("migration_id")) != TYPE_STRING or typeof(data.get("confirmed")) != TYPE_BOOL:
+            return {"ok": false, "error": "malformed migration apply data"}
+        if not bool(data.confirmed):
+            return {"ok": false, "error": "migration confirmation required"}
+        var apply_name_result := GspPresetStore.validate_name(data.name)
+        if not bool(apply_name_result.get("ok", false)):
+            return apply_name_result
+        if String(data.migration_id).is_empty():
+            return {"ok": false, "error": "migration identifier is required"}
     elif expected_type == "compare_presets":
         if data.size() != 2 or typeof(data.get("left")) != TYPE_STRING or typeof(data.get("right")) != TYPE_STRING:
             return {"ok": false, "error": "malformed compare preset data"}
@@ -706,7 +722,7 @@ func _poll_authenticated_peers() -> void:
                 if not _queue_identity_message(record, "quick_adjust_ack", quick_data):
                     failed = true
                     break
-            elif message_type in ["list_presets", "save_preset", "retrieve_preset", "load_preset", "compare_presets"]:
+            elif message_type in ["list_presets", "save_preset", "retrieve_preset", "load_preset", "compare_presets", "preview_preset_migration", "apply_preset_migration"]:
                 var preset_result := validate_preset_message(message, int(record.get("client_sequence", -1)), message_type)
                 if not bool(preset_result.get("ok", false)):
                     failed = true
@@ -717,7 +733,7 @@ func _poll_authenticated_peers() -> void:
                 if bool(preset_response.get("pending", false)):
                     continue
                 var preset_response_ack_failed := false
-                if message_type == "load_preset":
+                if message_type in ["load_preset", "apply_preset_migration"]:
                     preset_response_ack_failed = not _queue_tuning_ack(record, int(preset_result.sequence), preset_response)
                 else:
                     var preset_data := preset_response.duplicate(true)
@@ -729,7 +745,7 @@ func _poll_authenticated_peers() -> void:
                 if preset_response_ack_failed:
                     failed = true
                     break
-                if message_type == "load_preset" and bool(preset_response.get("ok", false)) and bool(preset_response.get("changed", false)):
+                if message_type in ["load_preset", "apply_preset_migration"] and bool(preset_response.get("ok", false)) and bool(preset_response.get("changed", false)):
                     if not _flush_reliable(record):
                         failed = true
                         break

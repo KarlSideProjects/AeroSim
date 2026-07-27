@@ -33,7 +33,7 @@ class Element {
 const elements = new Map();
 for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state", "sparkline", "focus-state",
     "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
-    "preset-retrieve", "preset-load", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff"]) {
+    "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report"]) {
     elements.set(id, new Element(id === "sparkline" ? "canvas" : "div"));
 }
 elements.get("sparkline").width = 840;
@@ -63,6 +63,7 @@ FakeWebSocket.OPEN = 1;
 const window = {
     location: { hash: "#port=8765&token=0123456789abcdef0123456789abcdef" },
     __AEROSIM_PANEL_TEST__: {},
+    confirm: () => true,
     addEventListener() {},
 };
 const context = {
@@ -143,6 +144,31 @@ socket.listeners.message({ data: JSON.stringify({
     d: { request_seq: retrieveRequest.seq, ok: true, preset: { name: "race_01", note: "panel note" } },
 }) });
 assert.match(elements.get("preset-status").textContent, /panel note/);
+
+elements.get("preset-preview").click();
+const previewRequest = socket.sent.at(-1);
+assert.equal(previewRequest.t, "preview_preset_migration");
+assert.deepEqual(previewRequest.d, { name: "race_01" });
+socket.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "preset_ack",
+    d: {
+        request_seq: previewRequest.seq,
+        ok: true,
+        operation: "preview_preset_migration",
+        preset_name: "race_01",
+        migration_id: "opaque-migration-id",
+        removed: [{ parameter: "old", value: 9 }],
+        missing: [{ parameter: "new", default_value: 3 }],
+        out_of_range: [{ parameter: "simpleflight.rate_p", original_value: 99, corrected_value: 1.4 }],
+    },
+}) });
+assert.match(elements.get("migration-report").textContent, /old/);
+assert.match(elements.get("migration-report").textContent, /new/);
+assert.match(elements.get("migration-report").textContent, /99.*1\.4/);
+const applyRequest = socket.sent.at(-1);
+assert.equal(applyRequest.t, "apply_preset_migration");
+assert.deepEqual(applyRequest.d, { name: "race_01", migration_id: "opaque-migration-id", confirmed: true });
 
 elements.get("preset-compare-current").click();
 const compareRequest = socket.sent.at(-1);

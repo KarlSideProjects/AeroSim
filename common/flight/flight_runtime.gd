@@ -235,6 +235,11 @@ var _gsp_tuning_registry_hash := "unavailable"
 var _gsp_tuning_pending: Array[Dictionary] = []
 var _gsp_tuning_completed: Array[Dictionary] = []
 var _gsp_tuning_recent_results: Array[Dictionary] = []
+const GSP_MIGRATION_CAPABILITY_TTL_MS := 30_000
+const GSP_MIGRATION_CAPABILITY_LIMIT := 8
+var _gsp_migration_capabilities: Array[Dictionary] = []
+var _gsp_used_migration_ids: Array[String] = []
+var _gsp_expired_migration_ids: Array[String] = []
 var _quick_adjust_profile: Dictionary = InputProfiles.QuickAdjustProfile.default_profile()
 var _quick_adjust_next_allowed_usec: Array[int] = []
 var _quick_adjust_request_seq := 0
@@ -5355,6 +5360,111 @@ func gsp_load_preset(peer_id: int, connection_id: int, request_seq: int, name: S
     return gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset", -1)
 
 
+func gsp_preview_preset_migration(name: String) -> Dictionary:
+    var loaded: Dictionary = gsp_retrieve_preset(name)
+    if not bool(loaded.get("ok", false)):
+        return loaded
+    var preset: Dictionary = loaded.preset
+    var classification := GspPresetStore.classify_migration(preset.get("values", {}), _gsp_tuning_registry)
+    if not bool(classification.get("ok", false)):
+        return classification
+    _prune_gsp_migration_capabilities()
+    var migration_id := _new_gsp_migration_id()
+    _gsp_migration_capabilities.append({
+        "id": migration_id,
+        "name": name,
+        "content_hash": String(loaded.get("content_hash", "")),
+        "registry_hash": _gsp_tuning_registry_hash,
+        "values": classification.values.duplicate(true),
+        "created_at_ms": Time.get_ticks_msec(),
+        "expires_at_ms": Time.get_ticks_msec() + GSP_MIGRATION_CAPABILITY_TTL_MS,
+    })
+    while _gsp_migration_capabilities.size() > GSP_MIGRATION_CAPABILITY_LIMIT:
+        _gsp_expired_migration_ids.append(String(_gsp_migration_capabilities.pop_front().id))
+        _trim_gsp_migration_id_history(_gsp_expired_migration_ids)
+    classification.erase("values")
+    classification["ok"] = true
+    classification["operation"] = "preview_preset_migration"
+    classification["preset_name"] = name
+    classification["preset_registry_hash"] = String(preset.get("registry_hash", ""))
+    classification["registry_mismatch"] = String(preset.get("registry_hash", "")) != _gsp_tuning_registry_hash
+    classification["registry_hash"] = _gsp_tuning_registry_hash
+    classification["migration_id"] = migration_id
+    classification["expires_in_ms"] = GSP_MIGRATION_CAPABILITY_TTL_MS
+    return classification
+
+
+func gsp_apply_preset_migration(peer_id: int, connection_id: int, request_seq: int, name: String, migration_id: String, confirmed: bool) -> Dictionary:
+    var invalid_context := {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    if not confirmed:
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_confirmation_required"
+        return invalid_context
+    if migration_id.is_empty():
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_missing"
+        return invalid_context
+    if migration_id in _gsp_used_migration_ids:
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_reused"
+        return invalid_context
+    _prune_gsp_migration_capabilities()
+    var capability_index := -1
+    for index in _gsp_migration_capabilities.size():
+        if String(_gsp_migration_capabilities[index].get("id", "")) == migration_id:
+            capability_index = index
+            break
+    if capability_index < 0:
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_expired" if migration_id in _gsp_expired_migration_ids else "migration_wrong"
+        return invalid_context
+    var capability: Dictionary = _gsp_migration_capabilities[capability_index]
+    if String(capability.get("name", "")) != name or String(capability.get("registry_hash", "")) != _gsp_tuning_registry_hash:
+        _gsp_migration_capabilities.remove_at(capability_index)
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_stale"
+        return invalid_context
+    var loaded: Dictionary = gsp_retrieve_preset(name)
+    if not bool(loaded.get("ok", false)) or String(loaded.get("content_hash", "")) != String(capability.get("content_hash", "")):
+        _gsp_migration_capabilities.remove_at(capability_index)
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_stale"
+        return invalid_context
+    _gsp_migration_capabilities.remove_at(capability_index)
+    _gsp_used_migration_ids.append(migration_id)
+    _trim_gsp_migration_id_history(_gsp_used_migration_ids)
+    var changes: Array = []
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        changes.append({"parameter": key, "value": capability.values[key]})
+    var result := gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset", -1)
+    result["source"] = "preset"
+    return result
+
+
+func _new_gsp_migration_id() -> String:
+    var crypto := Crypto.new()
+    var migration_id := crypto.generate_random_bytes(32).hex_encode()
+    while migration_id in _gsp_used_migration_ids:
+        migration_id = crypto.generate_random_bytes(32).hex_encode()
+    return migration_id
+
+
+func _prune_gsp_migration_capabilities() -> void:
+    var now_ms := Time.get_ticks_msec()
+    for capability in _gsp_migration_capabilities.duplicate():
+        if now_ms >= int(capability.get("expires_at_ms", 0)):
+            _gsp_migration_capabilities.erase(capability)
+            _gsp_expired_migration_ids.append(String(capability.get("id", "")))
+    _trim_gsp_migration_id_history(_gsp_expired_migration_ids)
+
+
+func _trim_gsp_migration_id_history(history: Array[String]) -> void:
+    while history.size() > GSP_MIGRATION_CAPABILITY_LIMIT:
+        history.pop_front()
+
+
 func _gsp_preset_values_match_registry(values: Variant) -> bool:
     if typeof(values) != TYPE_DICTIONARY or values.size() != _gsp_tuning_registry.size():
         return false
@@ -5384,6 +5494,11 @@ func gsp_preset_request(peer_id: int, connection_id: int, request_seq: int, oper
             return gsp_retrieve_preset(String(data.get("name", "")))
         "load_preset":
             return gsp_load_preset(peer_id, connection_id, request_seq, String(data.get("name", "")))
+        "preview_preset_migration":
+            return gsp_preview_preset_migration(String(data.get("name", "")))
+        "apply_preset_migration":
+            return gsp_apply_preset_migration(peer_id, connection_id, request_seq, String(data.get("name", "")),
+                    String(data.get("migration_id", "")), bool(data.get("confirmed", false)))
         "compare_presets":
             return gsp_compare_presets(String(data.get("left", "")), String(data.get("right", "")))
     return {"ok": false, "error": "unsupported_preset_operation"}

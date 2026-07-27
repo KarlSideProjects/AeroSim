@@ -35,8 +35,23 @@ func _run() -> void:
 
     var baseline_name := _new_name("integration")
     var second_name := _new_name("integration-second")
-    _expect(not baseline_name.is_empty() and not second_name.is_empty() and baseline_name != second_name,
-            "integration allocates two distinct collision-safe preset names")
+    var migration_name := _new_name("integration-migration")
+    _expect(not baseline_name.is_empty() and not second_name.is_empty() and not migration_name.is_empty() and
+            baseline_name != second_name and baseline_name != migration_name and second_name != migration_name,
+            "integration allocates distinct collision-safe preset names")
+    var active_values: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var migration_values: Dictionary = {}
+    for descriptor_value in _runtime._gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        migration_values[key] = active_values.get(key, descriptor.get("default", 0.0))
+    migration_values.erase("simpleflight.rate_i")
+    migration_values["obsolete.parameter"] = 9.0
+    migration_values["simpleflight.rate_p"] = 99.0
+    var migration_saved := GspPresetStore.new().save_preset(migration_name, migration_values, "old-registry", "test-sim")
+    if bool(migration_saved.get("ok", false)):
+        _remember_created(migration_name)
+    _expect(bool(migration_saved.get("ok", false)), "mismatched preset fixture saves for migration preview")
     _server = GspServer.new()
     root.add_child(_server)
     _server.set_identity_provider(Callable(_runtime, "gsp_identity_snapshot"))
@@ -106,18 +121,83 @@ func _run() -> void:
             typeof(percentage) in [TYPE_INT, TYPE_FLOAT] and is_finite(float(percentage)),
             "real backend preset comparison returns an acknowledged changed-only finite percentage row")
     _runtime.paused = false
+    var before_preview: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "preview_preset_migration", "seq": 5,
+            "d": {"name": migration_name}})) == OK,
+            "migration preview request sends through the authenticated peer")
+    _server.poll()
+    var preview: Dictionary = await _next_message_type(_origin, "preset_ack", 240)
+    var preview_data: Dictionary = preview.get("d", {})
+    var after_preview: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(bool(preview_data.get("ok", false)) and String(preview_data.get("migration_id", "")).length() >= 64 and
+            preview_data.get("removed", []).size() == 1 and preview_data.get("missing", []).size() == 1 and
+            preview_data.get("out_of_range", []).size() == 1 and
+            float(preview_data.out_of_range[0].get("original_value", 0.0)) == 99.0 and
+            float(preview_data.out_of_range[0].get("corrected_value", 0.0)) == 2.0 and
+            int(after_preview.get("commit_id", -1)) == int(before_preview.get("commit_id", -2)) and
+            float(after_preview.get("simpleflight.rate_p", -1.0)) == float(before_preview.get("simpleflight.rate_p", -2.0)),
+            "migration preview classifies all changes without mutating native active memory")
+
+    var stale_values: Dictionary = migration_values.duplicate(true)
+    stale_values["simpleflight.rate_p"] = 1.1
+    _expect(bool(GspPresetStore.new().save_preset(migration_name, stale_values, "old-registry", "test-sim").get("ok", false)),
+            "migration fixture changes after preview")
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "apply_preset_migration", "seq": 6,
+            "d": {"name": migration_name, "migration_id": preview_data.get("migration_id", ""), "confirmed": true}})) == OK,
+            "stale migration apply request sends")
+    _server.poll()
+    var stale_apply: Dictionary = await _next_message_type(_origin, "tuning_ack", 240)
+    var after_stale_apply: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(stale_apply.get("d", {}).get("error", "") == "migration_stale" and
+            int(after_stale_apply.get("commit_id", -1)) == int(before_preview.get("commit_id", -2)),
+            "stale migration identifier is rejected without a commit")
+
+    var fresh_values: Dictionary = migration_values.duplicate(true)
+    fresh_values["simpleflight.rate_p"] = 99.0
+    _expect(bool(GspPresetStore.new().save_preset(migration_name, fresh_values, "old-registry", "test-sim").get("ok", false)),
+            "fresh migration fixture restores the previewed content")
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "preview_preset_migration", "seq": 7,
+            "d": {"name": migration_name}})) == OK,
+            "fresh migration preview request sends")
+    _server.poll()
+    var fresh_preview: Dictionary = await _next_message_type(_origin, "preset_ack", 240)
+    var fresh_preview_data: Dictionary = fresh_preview.get("d", {})
+    var before_apply: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "apply_preset_migration", "seq": 8,
+            "d": {"name": migration_name, "migration_id": fresh_preview_data.get("migration_id", ""), "confirmed": true}})) == OK,
+            "confirmed migration apply request sends")
+    _server.poll()
+    var early_migration_ack := await _next_message_type(_origin, "tuning_ack", 20)
+    _expect(early_migration_ack.is_empty() and
+            int(_runtime.native.call("flight_tuning_configuration").get("commit_id", -1)) == int(before_apply.get("commit_id", -2)),
+            "confirmed migration apply defers its atomic commit to the physics boundary")
+    _runtime._apply_gsp_tuning_requests(10)
+    _server.poll()
+    var migration_ack: Dictionary = await _next_message_type(_origin, "tuning_ack", 240)
+    var migration_commit: Dictionary = await _next_message_type(_origin, "tuning_commit", 240)
+    var observer_migration_commit: Dictionary = await _next_message_type(_observer, "tuning_commit", 240)
+    var migration_ack_data: Dictionary = migration_ack.get("d", {})
+    var migration_commit_data: Dictionary = migration_commit.get("d", {})
+    var observer_migration_commit_data: Dictionary = observer_migration_commit.get("d", {})
+    _expect(bool(migration_ack_data.get("ok", false)) and String(migration_ack_data.get("source", "")) == "preset" and
+            float(migration_ack_data.get("committed_values", {}).get("simpleflight.rate_p", 0.0)) == 2.0 and
+            float(migration_ack_data.get("committed_values", {}).get("simpleflight.rate_i", 0.0)) == 0.02 and
+            int(migration_commit_data.get("commit_id", -1)) == int(observer_migration_commit_data.get("commit_id", -2)) and
+            String(observer_migration_commit_data.get("source", "")) == "preset",
+            "confirmed migration applies the previewed corrected/default set atomically and broadcasts the authoritative preset commit")
+
     var before_load: Dictionary = _runtime.native.call("flight_tuning_configuration")
-    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "load_preset", "seq": 5,
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "load_preset", "seq": 9,
             "d": {"name": baseline_name}})) == OK,
             "active preset load request sends")
     _server.poll()
     var before_boundary: Dictionary = _runtime.native.call("flight_tuning_configuration")
     var early_ack := await _next_message_type(_origin, "tuning_ack", 20)
-    _expect(early_ack.is_empty() and float(before_boundary.get("simpleflight.rate_p", -1.0)) == 1.2 and
+    _expect(early_ack.is_empty() and float(before_boundary.get("simpleflight.rate_p", -1.0)) == 2.0 and
             int(before_boundary.get("commit_id", -1)) == int(before_load.get("commit_id", -2)),
             "active preset load has no immediate mutation or acknowledgement")
 
-    _runtime._apply_gsp_tuning_requests(9)
+    _runtime._apply_gsp_tuning_requests(11)
     _server.poll()
     var load_ack: Dictionary = await _next_message_type(_origin, "tuning_ack", 240)
     var origin_commit: Dictionary = await _next_message_type(_origin, "tuning_commit", 240)
@@ -125,7 +205,7 @@ func _run() -> void:
     var load_data: Dictionary = load_ack.get("d", {})
     var origin_commit_data: Dictionary = origin_commit.get("d", {})
     var observer_commit_data: Dictionary = observer_commit.get("d", {})
-    _expect(bool(load_data.get("ok", false)) and int(load_data.get("request_seq", -1)) == 5 and
+    _expect(bool(load_data.get("ok", false)) and int(load_data.get("request_seq", -1)) == 9 and
             String(load_data.get("source", "")) == "preset" and
             int(origin_commit_data.get("commit_id", -1)) > 0 and
             int(origin_commit_data.get("commit_id", -1)) == int(observer_commit_data.get("commit_id", -2)) and
@@ -134,7 +214,7 @@ func _run() -> void:
             float(_runtime.native.call("flight_tuning_configuration").get("simpleflight.rate_p", -1.0)) == 0.6,
             "active preset load correlates origin ACK and broadcasts one source-tagged commit to both peers")
 
-    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "list_presets", "seq": 6, "d": {}})) == OK,
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "list_presets", "seq": 10, "d": {}})) == OK,
             "preset list request sends")
     _server.poll()
     var listed: Dictionary = await _next_message_type(_origin, "preset_ack", 240)
