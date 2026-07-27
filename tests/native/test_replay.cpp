@@ -734,7 +734,7 @@ bool test_tuning_replay_contract() {
             !recorder.record_tuning(1000, "DroneA", 8, 3, "simpleflight.angle_p", 16.0, 16.0, false) ||
             !recorder.record_tuning(1000, "DroneA", 9, 3, "simpleflight.rate_i", 0.031, 0.031, false) ||
             !recorder.record_tuning(1000, "DroneA", 10, 3, "simpleflight.rate_d", 0.007, 0.007, false) ||
-            !recorder.record_tuning(1000, "DroneA", 11, 4, "simpleflight.rate_p", 2.2, 2.2, false, "preset") ||
+            !recorder.record_tuning(1000, "DroneA", 11, 4, "simpleflight.rate_p", 2.0, 2.0, false, "preset") ||
             !recorder.finish(2000, "completed")) {
         return false;
     }
