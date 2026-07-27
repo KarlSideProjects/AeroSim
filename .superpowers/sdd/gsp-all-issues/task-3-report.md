@@ -12,7 +12,7 @@ The implementation reuses the existing native `telemetry_snapshot()` and the exi
 
 1. The required behavior had no public telemetry seam. The RED test initially failed because `GspServer` lacked telemetry serialization and control validation methods. Added the smallest public seams for snapshot serialization, rate validation, and fresh-sample requests, then implemented the server path behind them.
 2. The existing native snapshot contains the 30 Hz publication metadata and motor/control telemetry but not runtime pose/rates. Added `FlightRuntime.gsp_telemetry_snapshot()` as a cached runtime adapter: it reuses the native publication count and converts the current body state through `AirSimCoordinateContract` into NED/FRD/SI payloads. This keeps serialization/sending out of `_physics_process` and avoids a parallel native producer.
-3. Telemetry needed different delivery semantics from #242’s reliable FIFO. Added one latest-wins telemetry slot per authenticated peer and sent it directly outside the reliable queue. Rate zero clears the slot; a fresh request marks the next enabled sample; stalled peers therefore receive the current sample rather than queued history.
+3. Telemetry needed different delivery semantics from #242’s reliable FIFO. Added one latest-wins telemetry slot per authenticated peer and sent it directly outside the reliable queue. Rate zero clears the slot; a fresh request marks the next enabled sample; stalled peers therefore retain a depth-one newest unsent application slot for current delivery, while already accepted transport frames remain unaffected.
 4. Returning from a hidden panel needed an explicit freshness boundary. The single-file panel sends rate zero while hidden, requests a fresh sample on visibility return, suppresses display until the fresh marker arrives, and then resumes 30 Hz live updates.
 5. A first parallel focused-test run had a shared-port collision between telemetry and transport integration tests. Re-running the tests serially passed; no production issue was present.
 6. The first full GUT run caught a GDScript indentation error from tabbed lines in the new runtime adapter. Replaced those lines with the repository’s four-space indentation and reran the suite successfully.
@@ -64,7 +64,7 @@ GSP telemetry contract: PASS
 GSP telemetry integration: PASS
 ```
 
-The integration test covers authentication, NED/FRD/SI fields, independent `sample_seq`, hidden rate zero, fresh recovery, latest/current delivery after a three-second stall, and always-process serialization/send diagnostics.
+The integration test covers authentication, NED/FRD/SI fields, independent `sample_seq`, hidden rate zero, fresh recovery, depth-one newest unsent application-slot recovery after a three-second stall, and always-process serialization/send diagnostics.
 
 ## Final Sol-high blocker addendum
 
