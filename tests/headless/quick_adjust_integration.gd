@@ -117,8 +117,29 @@ func _run() -> void:
         _expect(same_key_results.size() == 2 and int(same_key_change.get("request_seq", -1)) == 51 and
                 float(same_key_change.get("committed_value", 0.0)) == 1.0,
                 "same-key tuning winner is the last request")
+        _expect(hardware.apply_to_runtime(runtime, "res://config/drones/5_inch_6s.json"),
+                "Quick Adjust response controller uses the canonical hardware configuration")
+        var baseline_response_native = ClassDB.instantiate("AeroSimNative")
+        var baseline_response_runtime := FlightRuntime.new()
+        baseline_response_runtime.native = baseline_response_native
+        var initial_response_config: Dictionary = runtime.native.call("flight_tuning_configuration")
+        var baseline_initial_changes: Array = []
+        for descriptor_value in runtime._gsp_tuning_registry:
+            var descriptor: Dictionary = descriptor_value
+            var parameter := String(descriptor.get("key", ""))
+            var value := 0.6 if parameter == "simpleflight.rate_p" else float(initial_response_config.get(parameter, descriptor.get("default", 0.0)))
+            baseline_initial_changes.append({"parameter": parameter, "value": value})
+        _expect(bool(baseline_response_native.call("initialize_flight_tuning_batch", baseline_initial_changes).get("ok", false)) and
+                hardware.apply_to_runtime(baseline_response_runtime, "res://config/drones/5_inch_6s.json"),
+                "same-config baseline response controller uses the hardware configuration")
         runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", 0.6)
         runtime.native.call("commit_flight_tuning", 4)
+        runtime.native.call("reset_flight")
+        baseline_response_native.call("reset_flight")
+        _expect(is_equal_approx(float(runtime.native.call("flight_tuning_configuration").get("simpleflight.rate_p", 0.0)), 0.6),
+                "Quick Adjust response controller starts from the baseline parameter")
+        runtime.native.call("arm_flight_control", 0.0)
+        baseline_response_native.call("arm_flight_control", 0.0)
         var response_profile := profile.duplicate(true)
         response_profile.slots[0].mode = "absolute"
         _expect(bool(runtime.configure_quick_adjust(response_profile, false).get("ok", false)),
@@ -134,22 +155,8 @@ func _run() -> void:
         var after_boundary: Dictionary = runtime.native.call("flight_tuning_configuration")
         _expect(is_equal_approx(float(after_boundary.get("simpleflight.rate_p", 0.0)), 1.4),
                 "Quick Adjust commits its staged value at the next physics boundary")
-
-        var baseline_response_native = ClassDB.instantiate("AeroSimNative")
-        var adjusted_response_native = ClassDB.instantiate("AeroSimNative")
-        baseline_response_native.call("initialize_flight_tuning", "simpleflight.rate_p", 0.6)
-        adjusted_response_native.call("initialize_flight_tuning", "simpleflight.rate_p", 1.4)
-        var baseline_response_runtime := FlightRuntime.new()
-        var adjusted_response_runtime := FlightRuntime.new()
-        baseline_response_runtime.native = baseline_response_native
-        adjusted_response_runtime.native = adjusted_response_native
-        _expect(hardware.apply_to_runtime(baseline_response_runtime, "res://config/drones/5_inch_6s.json") and
-                hardware.apply_to_runtime(adjusted_response_runtime, "res://config/drones/5_inch_6s.json"),
-                "native response fixtures use the hardware configuration")
-        baseline_response_native.call("arm_flight_control", 0.0)
-        adjusted_response_native.call("arm_flight_control", 0.0)
         var baseline_response: PackedFloat64Array = baseline_response_native.call("step_acro_mode", 240, 1000, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 0.0)
-        var adjusted_response: PackedFloat64Array = adjusted_response_native.call("step_acro_mode", 240, 1000, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 0.0)
+        var adjusted_response: PackedFloat64Array = runtime.native.call("step_acro_mode", 240, 1000, 0.5, 0.5, 0.0, 0.0, 1.0, 1.0, 0.0)
         var response_difference := false
         for response_index in baseline_response.size():
             response_difference = response_difference or baseline_response[response_index] != adjusted_response[response_index]

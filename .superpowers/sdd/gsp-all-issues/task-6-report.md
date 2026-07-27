@@ -63,6 +63,8 @@ Thread: `019fa20f-e899-7993-9282-c2586d52c23d`
 
 17. While adding the emitted two-peer regression, a skipped client sequence (`3` after `1`) correctly caused the server to close that peer; the test was corrected to use each peer’s next sequence and later preserved the existing sequence assertions. The test also had to share the existing authenticated peers because this server seam intentionally caps active peers; it runs before the queue-saturation mutation and does not perturb later commit-ID checks.
 
+18. Sol’s follow-up review found that GS-045 still compared a separately initialized adjusted fixture. The test now builds a same-configuration baseline with matched reset/arm state and command, stages the real `runtime.native` Quick Adjust input, asserts that exact native remains at 0.6 before the boundary and reaches 1.4 only after the boundary, then runs `step_acro_mode` on that same adjusted native and compares its next response tick with the baseline. The isolated test now applies the canonical hardware preset to both controllers before stepping; no production or GPU-specific code changed.
+
 ## TDD evidence
 
 - RED: the new native replay contract failed to compile before `QuickAdjustBinding`, v4 fields, and tuning provenance existed.
