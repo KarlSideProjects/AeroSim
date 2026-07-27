@@ -392,7 +392,8 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("initialize_flight_tuning", "parameter", "value"), &AeroSimNative::initialize_flight_tuning);
     ClassDB::bind_method(D_METHOD("initialize_flight_tuning_batch", "changes"), &AeroSimNative::initialize_flight_tuning_batch);
     ClassDB::bind_method(D_METHOD("stage_flight_tuning", "parameter", "value"), &AeroSimNative::stage_flight_tuning);
-    ClassDB::bind_method(D_METHOD("stage_flight_tuning_batch", "changes"), &AeroSimNative::stage_flight_tuning_batch);
+    ClassDB::bind_method(D_METHOD("stage_flight_tuning_batch", "changes", "allow_out_of_contract"),
+            &AeroSimNative::stage_flight_tuning_batch, DEFVAL(false));
     ClassDB::bind_method(D_METHOD("commit_flight_tuning", "public_physics_tick"), &AeroSimNative::commit_flight_tuning);
     ClassDB::bind_method(D_METHOD("set_external_authority_active", "active"), &AeroSimNative::set_external_authority_active);
     ClassDB::bind_method(D_METHOD("flight_tuning_contract"), &AeroSimNative::flight_tuning_contract);
@@ -1619,7 +1620,7 @@ Dictionary AeroSimNative::stage_flight_tuning(const String &parameter, const Var
     return stage_flight_tuning_batch(changes);
 }
 
-Dictionary AeroSimNative::stage_flight_tuning_batch(const Array &changes) {
+Dictionary AeroSimNative::stage_flight_tuning_batch(const Array &changes, bool allow_out_of_contract) {
     Dictionary result;
     result["ok"] = false;
     if (external_authority_active_) {
@@ -1679,13 +1680,14 @@ Dictionary AeroSimNative::stage_flight_tuning_batch(const Array &changes) {
             result["parameter"] = parameter;
             return result;
         }
-        if (requested < minimum || requested > maximum) {
+        if (!allow_out_of_contract && (requested < minimum || requested > maximum)) {
             result["error"] = "out_of_contract";
             result["parameter"] = parameter;
             result["requested_value"] = requested;
             return result;
         }
-        const double committed = std::round(requested / step) * step;
+        const double bounded = std::clamp(requested, minimum, maximum);
+        const double committed = std::round(bounded / step) * step;
         StagedTuningEntry entry{parameter, requested, committed, committed != requested};
         bool replaced = false;
         for (StagedTuningEntry &existing : validated) {

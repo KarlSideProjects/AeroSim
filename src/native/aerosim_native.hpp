@@ -327,7 +327,7 @@ public:
     godot::Dictionary initialize_flight_tuning(const godot::String &parameter, const godot::Variant &value);
     godot::Dictionary initialize_flight_tuning_batch(const godot::Array &changes);
     godot::Dictionary stage_flight_tuning(const godot::String &parameter, const godot::Variant &value);
-    godot::Dictionary stage_flight_tuning_batch(const godot::Array &changes);
+    godot::Dictionary stage_flight_tuning_batch(const godot::Array &changes, bool allow_out_of_contract = false);
     godot::Dictionary commit_flight_tuning(std::int64_t public_physics_tick);
     void set_external_authority_active(bool active);
     godot::Dictionary flight_tuning_contract() const;

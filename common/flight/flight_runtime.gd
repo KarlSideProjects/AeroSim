@@ -4976,7 +4976,7 @@ func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, para
     return gsp_tuning_batch_request(peer_id, connection_id, request_seq, [{"parameter": parameter, "value": value}], source, quick_adjust_slot)
 
 
-func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array, source: String = "panel", quick_adjust_slot: int = -1) -> Dictionary:
+func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array, source: String = "panel", quick_adjust_slot: int = -1, atomic_barrier: bool = false) -> Dictionary:
     _sync_native_external_authority()
     if _gsp_external_authority_active():
         var result := {
@@ -5022,7 +5022,7 @@ func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int
                     "quick_adjust_slot": quick_adjust_slot,
                     "request_id": 0,
                 }
-        return _commit_gsp_tuning_batch(peer_id, connection_id, request_seq, changes, _gsp_public_physics_tick(), true, source, quick_adjust_slot, provenance)
+        return _commit_gsp_tuning_batch(peer_id, connection_id, request_seq, changes, _gsp_public_physics_tick(), true, source, quick_adjust_slot, provenance, atomic_barrier)
     _gsp_tuning_pending.append({
         "peer_id": peer_id,
         "connection_id": connection_id,
@@ -5030,6 +5030,7 @@ func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int
         "changes": changes.duplicate(true),
         "source": source,
         "quick_adjust_slot": quick_adjust_slot,
+        "atomic_barrier": atomic_barrier,
     })
     return {"ok": true, "pending": true, "apply_timing": apply_timing}
 
@@ -5045,6 +5046,56 @@ func _apply_gsp_tuning_requests(public_physics_tick: int) -> void:
         return
     var pending := _gsp_tuning_pending
     _gsp_tuning_pending = []
+    var ordinary_group: Array[Dictionary] = []
+    var deferred_group: Array[Dictionary] = []
+    var migration_keys: Dictionary = {}
+    for request in pending:
+        if bool(request.get("atomic_barrier", false)):
+            _commit_gsp_tuning_group(ordinary_group, public_physics_tick)
+            ordinary_group.clear()
+            var migration_changes: Array = request.get("changes", [])
+            var migration_provenance: Dictionary = {}
+            for change_value in migration_changes:
+                if typeof(change_value) == TYPE_DICTIONARY:
+                    var migration_change: Dictionary = change_value
+                    var migration_key := String(migration_change.get("parameter", ""))
+                    migration_keys[migration_key] = true
+                    migration_provenance[migration_key] = {
+                        "source": "preset",
+                        "request_seq": int(request.get("request_seq", -1)),
+                        "quick_adjust_slot": -1,
+                        "request_id": 0,
+                    }
+            var migration_commit := _commit_gsp_tuning_batch(
+                    -1, -1, -1, migration_changes, public_physics_tick, false, "preset", -1,
+                    migration_provenance, true)
+            var migration_ack := _gsp_tuning_request_ack(migration_commit, request)
+            migration_ack["commit_request_seq"] = int(migration_commit.get("request_seq", -1))
+            migration_ack["peer_id"] = int(request.get("peer_id", -1))
+            migration_ack["connection_id"] = int(request.get("connection_id", -1))
+            migration_ack["request_seq"] = int(request.get("request_seq", -1))
+            migration_ack["coalesced"] = false
+            _remember_gsp_tuning_result(migration_ack)
+            _gsp_tuning_completed.append(migration_ack)
+            continue
+        var conflicts_with_migration := false
+        for change_value in request.get("changes", []):
+            if typeof(change_value) == TYPE_DICTIONARY and migration_keys.has(String(change_value.get("parameter", ""))):
+                conflicts_with_migration = true
+                break
+        if conflicts_with_migration:
+            _commit_gsp_tuning_group(ordinary_group, public_physics_tick)
+            ordinary_group.clear()
+            deferred_group.append(request)
+        else:
+            ordinary_group.append(request)
+    _commit_gsp_tuning_group(ordinary_group, public_physics_tick)
+    _gsp_tuning_pending.append_array(deferred_group)
+
+
+func _commit_gsp_tuning_group(pending: Array[Dictionary], public_physics_tick: int) -> void:
+    if pending.is_empty():
+        return
     var coalesced: Dictionary = {}
     var provenance: Dictionary = {}
     var ordered_keys: Array[String] = []
@@ -5078,7 +5129,7 @@ func _apply_gsp_tuning_requests(public_physics_tick: int) -> void:
         _gsp_tuning_completed.append(acknowledged)
 
 
-func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int, changes: Array, public_physics_tick: int, remember_result: bool = true, source: String = "panel", quick_adjust_slot: int = -1, provenance: Dictionary = {}) -> Dictionary:
+func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int, changes: Array, public_physics_tick: int, remember_result: bool = true, source: String = "panel", quick_adjust_slot: int = -1, provenance: Dictionary = {}, allow_out_of_contract: bool = false) -> Dictionary:
     var result: Dictionary = {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
     _sync_native_external_authority()
     if _gsp_external_authority_active():
@@ -5109,7 +5160,7 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
         if remember_result:
             _remember_gsp_tuning_result(result)
         return result
-    var staged_result: Dictionary = native.call("stage_flight_tuning_batch", changes)
+    var staged_result: Dictionary = native.call("stage_flight_tuning_batch", changes, allow_out_of_contract)
     if not bool(staged_result.get("ok", false)):
         for key in staged_result:
             result[key] = staged_result[key]
@@ -5376,6 +5427,7 @@ func gsp_preview_preset_migration(name: String) -> Dictionary:
         "content_hash": String(loaded.get("content_hash", "")),
         "registry_hash": _gsp_tuning_registry_hash,
         "values": classification.values.duplicate(true),
+        "requested_values": classification.requested_values.duplicate(true),
         "created_at_ms": Time.get_ticks_msec(),
         "expires_at_ms": Time.get_ticks_msec() + GSP_MIGRATION_CAPABILITY_TTL_MS,
     })
@@ -5383,6 +5435,7 @@ func gsp_preview_preset_migration(name: String) -> Dictionary:
         _gsp_expired_migration_ids.append(String(_gsp_migration_capabilities.pop_front().id))
         _trim_gsp_migration_id_history(_gsp_expired_migration_ids)
     classification.erase("values")
+    classification.erase("requested_values")
     classification["ok"] = true
     classification["operation"] = "preview_preset_migration"
     classification["preset_name"] = name
@@ -5437,8 +5490,8 @@ func gsp_apply_preset_migration(peer_id: int, connection_id: int, request_seq: i
     for descriptor_value in _gsp_tuning_registry:
         var descriptor: Dictionary = descriptor_value
         var key := String(descriptor.get("key", ""))
-        changes.append({"parameter": key, "value": capability.values[key]})
-    var result := gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset", -1)
+        changes.append({"parameter": key, "value": capability.requested_values[key]})
+    var result := gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset", -1, true)
     result["source"] = "preset"
     return result
 

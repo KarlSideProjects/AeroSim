@@ -45,6 +45,12 @@ func _init() -> void:
             "preset metadata round-trips included values and note")
     _expect(int(retrieved.get("preset", {}).get("schema_version", -1)) == GspPresetStore.SCHEMA_VERSION,
             "preset metadata records the supported schema version")
+    var retrieved_file := FileAccess.open(GspPresetStore.preset_path(contract_name), FileAccess.READ)
+    var retrieved_content := retrieved_file.get_buffer(retrieved_file.get_length()) if retrieved_file != null else PackedByteArray()
+    if retrieved_file != null:
+        retrieved_file.close()
+    _expect(String(retrieved.get("content_hash", "")) == GspPresetStore._hash_content(retrieved_content),
+            "preset content hash matches the exact bytes returned by the single file read")
     var overwritten := store.save_preset(contract_name, {"simpleflight.rate_p": 1.3, "simpleflight.rate_i": 0.04},
             "registry-b", "test-sim-2", "updated note")
     var overwritten_result := store.retrieve_preset(contract_name)
@@ -137,8 +143,10 @@ func _init() -> void:
             float(migration_classification.out_of_range[0].get("corrected_value", -1.0)) == 10.0 and
             float(migration_classification.values.get("bounded.parameter", -1.0)) == 10.0 and
             float(migration_classification.values.get("missing.parameter", -1.0)) == 3.0 and
+            float(migration_classification.requested_values.get("bounded.parameter", -1.0)) == 99.0 and
+            float(migration_classification.requested_values.get("missing.parameter", -1.0)) == 3.0 and
             not migration_classification.values.has("removed.parameter"),
-            "migration classification removes obsolete keys, fills defaults, and clamps with both values visible")
+            "migration classification removes obsolete keys, fills defaults, and retains requested values beside corrected values")
 
     var changes := GspPresetStore.diff_values(
             {"zero": 0.0, "same": 1.0, "positive": 2.0, "negative": -2.0, "sign": 1.0, "target_zero": 2.0, "tiny": 1.0, "tiny_sign": 1e-308, "overflow": 1e-10, "delta_overflow": -1e308},
@@ -264,6 +272,19 @@ func _init() -> void:
         _expect(bool(capability_saved.get("ok", false)), "migration capability fixture saves")
         var capability_preview: Dictionary = runtime.gsp_preview_preset_migration(capability_name)
         var migration_id := String(capability_preview.get("migration_id", ""))
+        var pending_before_preview: Array = runtime._gsp_tuning_pending.duplicate(true)
+        var active_before_preview: Dictionary = runtime.native.call("flight_tuning_configuration")
+        var staged_probe: Dictionary = runtime.native.call("stage_flight_tuning_batch", [{
+            "parameter": "simpleflight.rate_p",
+            "value": active_before_preview.get("simpleflight.rate_p", 0.6),
+        }])
+        var preview_again := runtime.gsp_preview_preset_migration(capability_name)
+        var active_after_preview: Dictionary = runtime.native.call("flight_tuning_configuration")
+        var staged_survived := bool(runtime.native.call("commit_flight_tuning", 20).get("ok", false))
+        _expect(bool(staged_probe.get("ok", false)) and bool(preview_again.get("ok", false)) and
+                runtime._gsp_tuning_pending == pending_before_preview and
+                active_after_preview == active_before_preview and staged_survived,
+                "migration preview is read-only for pending, native active, and already staged state")
         var unchanged_before_invalid: Dictionary = runtime.native.call("flight_tuning_configuration")
         var wrong_apply := runtime.gsp_apply_preset_migration(-1, -1, 10, capability_name, "wrong-id", true)
         var missing_apply := runtime.gsp_apply_preset_migration(-1, -1, 11, capability_name, "", true)

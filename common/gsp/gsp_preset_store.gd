@@ -93,6 +93,7 @@ static func classify_migration(values: Variant, registry: Array) -> Dictionary:
         return {"ok": false, "error": "preset values must be a non-empty object"}
     var current_keys: Dictionary = {}
     var final_values: Dictionary = {}
+    var requested_values: Dictionary = {}
     var missing: Array = []
     var out_of_range: Array = []
     for descriptor_value in registry:
@@ -107,6 +108,7 @@ static func classify_migration(values: Variant, registry: Array) -> Dictionary:
         var maximum := float(descriptor.get("max", INF))
         if values.has(key):
             var original := float(values[key])
+            requested_values[key] = original
             var corrected := clampf(original, minimum, maximum)
             final_values[key] = corrected
             if original != corrected:
@@ -121,6 +123,7 @@ static func classify_migration(values: Variant, registry: Array) -> Dictionary:
         else:
             var default_value := clampf(float(descriptor.get("default", 0.0)), minimum, maximum)
             final_values[key] = default_value
+            requested_values[key] = default_value
             missing.append({
                 "classification": "missing",
                 "parameter": key,
@@ -143,6 +146,7 @@ static func classify_migration(values: Variant, registry: Array) -> Dictionary:
         "missing": missing,
         "out_of_range": out_of_range,
         "values": final_values,
+        "requested_values": requested_values,
     }
 
 
@@ -237,9 +241,8 @@ func _read_preset_file(path: String, expected_name: String = "") -> Dictionary:
         return {"ok": false, "error": "preset file is too large"}
     var content := file.get_buffer(file.get_length())
     var content_hash := _hash_content(content)
-    file.seek(0)
     var parser := JSON.new()
-    var parse_error := parser.parse(file.get_as_text())
+    var parse_error := parser.parse(content.get_string_from_utf8())
     file.close()
     if parse_error != OK:
         return {"ok": false, "error": "preset JSON is malformed"}

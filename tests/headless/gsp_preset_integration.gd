@@ -48,6 +48,12 @@ func _run() -> void:
     migration_values.erase("simpleflight.rate_i")
     migration_values["obsolete.parameter"] = 9.0
     migration_values["simpleflight.rate_p"] = 99.0
+    var expected_migration_values := {
+        "simpleflight.rate_p": 2.0,
+        "simpleflight.angle_p": 15.0,
+        "simpleflight.rate_i": 0.02,
+        "simpleflight.rate_d": 0.005,
+    }
     var migration_saved := GspPresetStore.new().save_preset(migration_name, migration_values, "old-registry", "test-sim")
     if bool(migration_saved.get("ok", false)):
         _remember_created(migration_name)
@@ -179,15 +185,102 @@ func _run() -> void:
     var migration_ack_data: Dictionary = migration_ack.get("d", {})
     var migration_commit_data: Dictionary = migration_commit.get("d", {})
     var observer_migration_commit_data: Dictionary = observer_migration_commit.get("d", {})
+    var migration_rate_p_change: Dictionary = {}
+    for change_value in migration_ack_data.get("changes", []):
+        if String(change_value.get("parameter", "")) == "simpleflight.rate_p":
+            migration_rate_p_change = change_value
+            break
     _expect(bool(migration_ack_data.get("ok", false)) and String(migration_ack_data.get("source", "")) == "preset" and
-            float(migration_ack_data.get("committed_values", {}).get("simpleflight.rate_p", 0.0)) == 2.0 and
-            float(migration_ack_data.get("committed_values", {}).get("simpleflight.rate_i", 0.0)) == 0.02 and
+            migration_ack_data.get("committed_values", {}) == expected_migration_values and
+            migration_commit_data.get("committed_values", {}) == expected_migration_values and
+            float(migration_rate_p_change.get("requested_value", 0.0)) == 99.0 and
+            float(migration_rate_p_change.get("committed_value", 0.0)) == 2.0 and
+            bool(migration_rate_p_change.get("clamped", false)) and
             int(migration_commit_data.get("commit_id", -1)) == int(observer_migration_commit_data.get("commit_id", -2)) and
             String(observer_migration_commit_data.get("source", "")) == "preset",
-            "confirmed migration applies the previewed corrected/default set atomically and broadcasts the authoritative preset commit")
+            "confirmed migration stages requested values, preserves clamp provenance, and broadcasts the authoritative preset commit")
+
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "apply_preset_migration", "seq": 9,
+            "d": {"name": migration_name, "migration_id": "wrong-migration-id", "confirmed": true}})) == OK,
+            "wrong migration identifier request sends on the existing peer")
+    _server.poll()
+    var wrong_migration_ack: Dictionary = await _next_message_type(_origin, "tuning_ack", 240)
+    _expect(String(wrong_migration_ack.get("d", {}).get("error", "")) == "migration_wrong" and
+            _origin.get_ready_state() == WebSocketPeer.STATE_OPEN,
+            "wrong migration identifier is a business error and keeps the peer connected")
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "apply_preset_migration", "seq": 10,
+            "d": {"name": migration_name, "migration_id": fresh_preview_data.get("migration_id", ""), "confirmed": true}})) == OK,
+            "reused migration identifier request sends on the existing peer")
+    _server.poll()
+    var reused_migration_ack: Dictionary = await _next_message_type(_origin, "tuning_ack", 240)
+    _expect(String(reused_migration_ack.get("d", {}).get("error", "")) == "migration_reused" and
+            _origin.get_ready_state() == WebSocketPeer.STATE_OPEN,
+            "reused migration identifier is a business error and keeps the peer connected")
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "retrieve_preset", "seq": 11,
+            "d": {"name": migration_name}})) == OK,
+            "peer accepts a subsequent preset request after migration business errors")
+    _server.poll()
+    var after_error_retrieve: Dictionary = await _next_message_type(_origin, "preset_ack", 240)
+    _expect(bool(after_error_retrieve.get("d", {}).get("ok", false)),
+            "peer remains usable after wrong and reused migration identifiers")
+
+    _runtime.paused = true
+    _expect(bool(_runtime.gsp_tuning_request(-1, -1, 20, "simpleflight.rate_p", 0.6).get("ok", false)),
+            "competition fixture moves active tuning away from the migration target")
+    _runtime.paused = false
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "preview_preset_migration", "seq": 12,
+            "d": {"name": migration_name}})) == OK,
+            "same-tick barrier migration preview sends")
+    _server.poll()
+    var barrier_preview: Dictionary = await _next_message_type(_origin, "preset_ack", 240)
+    var barrier_id := String(barrier_preview.get("d", {}).get("migration_id", ""))
+    var ordinary_descriptor: Dictionary = _runtime._gsp_tuning_registry[1]
+    var ordinary_key := String(ordinary_descriptor.get("key", ""))
+    var ordinary_before := float(_runtime.native.call("flight_tuning_configuration").get(ordinary_key, ordinary_descriptor.get("default", 0.0)))
+    var ordinary_step := float(ordinary_descriptor.get("step", 0.01))
+    var ordinary_value := ordinary_before + ordinary_step
+    if ordinary_value > float(ordinary_descriptor.get("max", ordinary_value)):
+        ordinary_value = ordinary_before - ordinary_step
+    _expect(_observer.send_text(JSON.stringify({"v": 2, "t": "set_tuning", "seq": 1,
+            "d": {"parameter": ordinary_key, "value": ordinary_value}})) == OK,
+            "same-tick ordinary tuning request sends from the observer peer")
+    _expect(_observer.send_text(JSON.stringify({"v": 2, "t": "set_tuning", "seq": 2,
+            "d": {"parameter": "simpleflight.rate_p", "value": 1.1}})) == OK,
+            "same-tick ordinary request for a previewed key sends from the observer peer")
+    _server.poll()
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "apply_preset_migration", "seq": 13,
+            "d": {"name": migration_name, "migration_id": barrier_id, "confirmed": true}})) == OK,
+            "same-tick migration barrier request sends from the origin peer")
+    _server.poll()
+    _runtime._apply_gsp_tuning_requests(12)
+    _server.poll()
+    var barrier_migration_ack: Dictionary = await _next_message_type(_origin, "tuning_ack", 240)
+    var ordinary_origin_commit: Dictionary = await _next_message_type(_origin, "tuning_commit", 240)
+    var barrier_origin_commit: Dictionary = await _next_message_type(_origin, "tuning_commit", 240)
+    var ordinary_ack_one: Dictionary = await _next_message_type(_observer, "tuning_ack", 240)
+    var ordinary_ack_two: Dictionary = await _next_message_type(_observer, "tuning_ack", 240)
+    var ordinary_observer_commit: Dictionary = await _next_message_type(_observer, "tuning_commit", 240)
+    var barrier_observer_commit: Dictionary = await _next_message_type(_observer, "tuning_commit", 240)
+    var barrier_migration_data: Dictionary = barrier_migration_ack.get("d", {})
+    var ordinary_origin_commit_data: Dictionary = ordinary_origin_commit.get("d", {})
+    var barrier_origin_commit_data: Dictionary = barrier_origin_commit.get("d", {})
+    var ordinary_observer_commit_data: Dictionary = ordinary_observer_commit.get("d", {})
+    var barrier_observer_commit_data: Dictionary = barrier_observer_commit.get("d", {})
+    _expect(bool(barrier_migration_data.get("ok", false)) and String(barrier_migration_data.get("source", "")) == "preset" and
+            barrier_migration_data.get("committed_values", {}) == expected_migration_values and
+            barrier_origin_commit_data.get("committed_values", {}) == expected_migration_values and
+            String(barrier_origin_commit_data.get("source", "")) == "preset" and
+            int(barrier_origin_commit_data.get("commit_id", -1)) == int(barrier_observer_commit_data.get("commit_id", -2)) and
+            int(barrier_origin_commit_data.get("commit_id", -1)) > int(ordinary_origin_commit_data.get("commit_id", -2)) and
+            int(barrier_origin_commit_data.get("commit_id", -1)) > 0 and
+            String(ordinary_origin_commit_data.get("source", "")) != "preset" and
+            String(ordinary_observer_commit_data.get("source", "")) != "preset" and
+            float(ordinary_observer_commit_data.get("committed_values", {}).get(ordinary_key, 0.0)) == ordinary_value and
+            bool(ordinary_ack_one.get("d", {}).get("ok", false)) and bool(ordinary_ack_two.get("d", {}).get("ok", false)),
+            "migration is a separate same-tick authoritative commit with exact preview values; ordinary requests flush separately before it")
 
     var before_load: Dictionary = _runtime.native.call("flight_tuning_configuration")
-    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "load_preset", "seq": 9,
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "load_preset", "seq": 14,
             "d": {"name": baseline_name}})) == OK,
             "active preset load request sends")
     _server.poll()
@@ -205,7 +298,7 @@ func _run() -> void:
     var load_data: Dictionary = load_ack.get("d", {})
     var origin_commit_data: Dictionary = origin_commit.get("d", {})
     var observer_commit_data: Dictionary = observer_commit.get("d", {})
-    _expect(bool(load_data.get("ok", false)) and int(load_data.get("request_seq", -1)) == 9 and
+    _expect(bool(load_data.get("ok", false)) and int(load_data.get("request_seq", -1)) == 14 and
             String(load_data.get("source", "")) == "preset" and
             int(origin_commit_data.get("commit_id", -1)) > 0 and
             int(origin_commit_data.get("commit_id", -1)) == int(observer_commit_data.get("commit_id", -2)) and
@@ -214,7 +307,7 @@ func _run() -> void:
             float(_runtime.native.call("flight_tuning_configuration").get("simpleflight.rate_p", -1.0)) == 0.6,
             "active preset load correlates origin ACK and broadcasts one source-tagged commit to both peers")
 
-    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "list_presets", "seq": 10, "d": {}})) == OK,
+    _expect(_origin.send_text(JSON.stringify({"v": 2, "t": "list_presets", "seq": 15, "d": {}})) == OK,
             "preset list request sends")
     _server.poll()
     var listed: Dictionary = await _next_message_type(_origin, "preset_ack", 240)

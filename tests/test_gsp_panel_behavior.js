@@ -60,10 +60,11 @@ class FakeWebSocket {
 }
 FakeWebSocket.OPEN = 1;
 
+let confirmResult = false;
 const window = {
     location: { hash: "#port=8765&token=0123456789abcdef0123456789abcdef" },
     __AEROSIM_PANEL_TEST__: {},
-    confirm: () => true,
+    confirm: () => confirmResult,
     addEventListener() {},
 };
 const context = {
@@ -166,9 +167,27 @@ socket.listeners.message({ data: JSON.stringify({
 assert.match(elements.get("migration-report").textContent, /old/);
 assert.match(elements.get("migration-report").textContent, /new/);
 assert.match(elements.get("migration-report").textContent, /99.*1\.4/);
+assert.equal(socket.sent.at(-1), previewRequest);
+confirmResult = true;
+elements.get("preset-preview").click();
+const confirmedPreviewRequest = socket.sent.at(-1);
+socket.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "preset_ack",
+    d: {
+        request_seq: confirmedPreviewRequest.seq,
+        ok: true,
+        operation: "preview_preset_migration",
+        preset_name: "race_01",
+        migration_id: "opaque-migration-id-2",
+        removed: [],
+        missing: [],
+        out_of_range: [],
+    },
+}) });
 const applyRequest = socket.sent.at(-1);
 assert.equal(applyRequest.t, "apply_preset_migration");
-assert.deepEqual(applyRequest.d, { name: "race_01", migration_id: "opaque-migration-id", confirmed: true });
+assert.deepEqual(applyRequest.d, { name: "race_01", migration_id: "opaque-migration-id-2", confirmed: true });
 
 elements.get("preset-compare-current").click();
 const compareRequest = socket.sent.at(-1);
