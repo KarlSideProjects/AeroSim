@@ -151,7 +151,7 @@ func _run() -> void:
             break
     _expect(int(disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {}).get("commit_id", -1)) == 2 and
             int(disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {}).get("commit_tick", -1)) == 1 and
-            float(disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {}).get("committed_value", 0.0)) == 1.35 and
+            float(disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {}).get("committed_values", {}).get("simpleflight.rate_p", 0.0)) == 1.35 and
             int(disconnect_match.get("commit_id", -1)) == 2 and int(disconnect_match.get("commit_tick", -1)) == 1 and
             float(disconnect_match.get("committed_value", 0.0)) == 1.35,
             "reconnect hello reconciles a disconnected request without reapplying it")
@@ -250,7 +250,7 @@ func _run() -> void:
     var reconnect_hello := await _next_message_type(reconnect_client, "hello", 240)
     var reconciled: Dictionary = reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {})
     _expect(int(reconciled.get("commit_id", -1)) == 4 and int(reconciled.get("commit_tick", -1)) == 2 and
-            float(reconciled.get("committed_value", 0.0)) == 1.23,
+            float(reconciled.get("committed_values", {}).get("simpleflight.rate_p", 0.0)) == 1.23,
             "reconnect hello reconciles latest active tuning state")
     _expect(not reconnect_hello.get("d", {}).get("registry", {}).get("tuning_recent_results", []).is_empty(),
             "reconnect hello carries bounded recent tuning results")
@@ -272,9 +272,14 @@ func _run() -> void:
     _expect(bool(environment_result.get("ok", false)),
             "runtime replay recorder accepts the atmosphere baseline: %s" % String(environment_result.get("diagnostic_message", "unknown")))
     _expect(reconnect_client.send_text(JSON.stringify({
-        "v": 2, "t": "set_tuning", "seq": 1,
-        "d": {"parameter": "simpleflight.rate_p", "value": 1.0}
-    })) == OK, "replay tuning request sends")
+        "v": 2, "t": "set_tuning_batch", "seq": 1,
+        "d": {"changes": [
+            {"parameter": "simpleflight.rate_p", "value": 1.0},
+            {"parameter": "simpleflight.angle_p", "value": 16.0},
+            {"parameter": "simpleflight.rate_i", "value": 0.031},
+            {"parameter": "simpleflight.rate_d", "value": 0.007}
+        ]}
+    })) == OK, "replay tuning batch sends every supported parameter")
     var replay_ack := await _next_message_type(reconnect_client, "tuning_ack", 240)
     _expect(bool(replay_ack.get("d", {}).get("changed", false)), "replay tuning request commits a real change")
     var finish: Dictionary = _runtime.native.call("finish_complete_replay_recording", 100000, "tuning-test")
@@ -286,6 +291,93 @@ func _run() -> void:
             "replay_complete_session", serialized, "tuning-settings", config_hash, config_hash,
             _runtime.native.call("replay_vehicle_config_manifest"), _runtime.native.call("replay_vehicle_config_manifest"))
     _expect(bool(replay.get("ok", false)), "recorded tuning replay applies successfully: %s" % String(replay.get("diagnostic_message", "unknown")))
+
+    _runtime.paused = false
+    _server.poll()
+    panel_client.poll()
+    _drain_messages(panel_client, "tuning_commit")
+    for index in 50:
+        var request_value := 1.4 + float(index) * 0.001
+        _expect(reconnect_client.send_text(JSON.stringify({
+            "v": 2, "t": "set_tuning", "seq": index + 2,
+            "d": {"parameter": "simpleflight.rate_p", "value": request_value}
+        })) == OK, "coalesce regression sends request %d" % index)
+    _server.poll()
+    _runtime._physics_process(1.0 / 240.0)
+    var coalesced_acks: Array = []
+    var coalesced_commits: Array = []
+    for _attempt in 120:
+        _server.poll()
+        reconnect_client.poll()
+        panel_client.poll()
+        coalesced_acks.append_array(_drain_messages(reconnect_client, "tuning_ack"))
+        coalesced_commits.append_array(_drain_messages(panel_client, "tuning_commit"))
+        if coalesced_acks.size() == 50 and coalesced_commits.size() == 1:
+            break
+        await process_frame
+    var first_coalesced_ack: Dictionary = coalesced_acks[0] if not coalesced_acks.is_empty() else {}
+    var last_coalesced_ack: Dictionary = coalesced_acks.back() if not coalesced_acks.is_empty() else {}
+    _expect(coalesced_acks.size() == 50, "coalesce server returns 50 ACKs (got %d)" % coalesced_acks.size())
+    _expect(coalesced_commits.size() == 1, "coalesce server broadcasts one commit (got %d)" % coalesced_commits.size())
+    _expect(float(first_coalesced_ack.get("d", {}).get("requested_value", 0.0)) == 1.4 and
+            float(last_coalesced_ack.get("d", {}).get("requested_value", 0.0)) == 1.449 and
+            float(first_coalesced_ack.get("d", {}).get("committed_value", 0.0)) == 1.45 and
+            float(last_coalesced_ack.get("d", {}).get("committed_value", 0.0)) == 1.45,
+            "coalesce server ACK values come from each request (first=%s last=%s/%s)" % [
+                JSON.stringify(first_coalesced_ack.get("d", {})),
+                JSON.stringify(last_coalesced_ack.get("d", {})),
+                coalesced_commits.size(),
+            ])
+
+    var timing_registry := _runtime._gsp_tuning_registry.duplicate(true)
+    for descriptor_value in _runtime._gsp_tuning_registry:
+        var timing_descriptor: Dictionary = descriptor_value
+        if String(timing_descriptor.get("key", "")) == "simpleflight.rate_p":
+            timing_descriptor["apply_timing"] = "immediate"
+    var immediate_before: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var immediate_result: Dictionary = _runtime.gsp_tuning_request(7, 7, 700, "simpleflight.rate_p", 1.6)
+    var immediate_after: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(bool(immediate_result.get("ok", false)) and not bool(immediate_result.get("pending", false)) and
+            float(immediate_after.get("simpleflight.rate_p", 0.0)) == 1.6 and
+            float(immediate_before.get("simpleflight.rate_p", 0.0)) != 1.6,
+            "runtime immediate timing commits at the request seam")
+    _runtime._gsp_tuning_registry = timing_registry.duplicate(true)
+    var next_result: Dictionary = _runtime.gsp_tuning_request(7, 7, 701, "simpleflight.rate_p", 1.61)
+    var next_before: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _runtime._physics_process(1.0 / 240.0)
+    _runtime.gsp_tuning_results()
+    var next_after: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(bool(next_result.get("pending", false)) and float(next_before.get("simpleflight.rate_p", 0.0)) == 1.6 and
+            float(next_after.get("simpleflight.rate_p", 0.0)) == 1.61,
+            "runtime next-physics timing stages until the real physics seam")
+    for required_timing in ["reset_required", "restart_required"]:
+        _runtime._gsp_tuning_registry = timing_registry.duplicate(true)
+        for descriptor_value in _runtime._gsp_tuning_registry:
+            var required_descriptor: Dictionary = descriptor_value
+            if String(required_descriptor.get("key", "")) == "simpleflight.rate_p":
+                required_descriptor["apply_timing"] = required_timing
+        var required_before: Dictionary = _runtime.native.call("flight_tuning_configuration")
+        var required_result: Dictionary = _runtime.gsp_tuning_request(7, 7, 702, "simpleflight.rate_p", 1.62)
+        var required_after: Dictionary = _runtime.native.call("flight_tuning_configuration")
+        _expect(String(required_result.get("error", "")) == required_timing and
+                float(required_after.get("simpleflight.rate_p", 0.0)) == float(required_before.get("simpleflight.rate_p", 0.0)),
+                "runtime %s timing is truthful and non-mutating" % required_timing)
+    _runtime._gsp_tuning_registry = timing_registry.duplicate(true)
+    for descriptor_value in _runtime._gsp_tuning_registry:
+        var mixed_descriptor: Dictionary = descriptor_value
+        if String(mixed_descriptor.get("key", "")) == "simpleflight.rate_p":
+            mixed_descriptor["apply_timing"] = "immediate"
+    var mixed_before: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var mixed_result: Dictionary = _runtime.gsp_tuning_batch_request(7, 7, 703, [
+        {"parameter": "simpleflight.rate_p", "value": 1.63},
+        {"parameter": "simpleflight.angle_p", "value": 17.0},
+    ])
+    var mixed_after: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(String(mixed_result.get("error", "")) == "mixed_apply_timing" and
+            float(mixed_after.get("simpleflight.rate_p", 0.0)) == float(mixed_before.get("simpleflight.rate_p", 0.0)) and
+            float(mixed_after.get("simpleflight.angle_p", 0.0)) == float(mixed_before.get("simpleflight.angle_p", 0.0)),
+            "mixed incompatible timing is rejected atomically")
+    _runtime._gsp_tuning_registry = timing_registry
 
     var disconnected_descriptor := {"key": "simpleflight.disconnected", "min": 0.0, "max": 1.0}
     _runtime._gsp_tuning_registry.append(disconnected_descriptor)
@@ -325,6 +417,18 @@ func _next_message_type(client: WebSocketPeer, message_type: String, attempts: i
                 return parsed
         await process_frame
     return {}
+
+
+func _drain_messages(client: WebSocketPeer, message_type: String) -> Array:
+    var messages: Array = []
+    while client.get_available_packet_count() > 0:
+        var packet := client.get_packet()
+        if not client.was_string_packet():
+            continue
+        var parsed = JSON.parse_string(packet.get_string_from_utf8())
+        if typeof(parsed) == TYPE_DICTIONARY and String(parsed.get("t", "")) == message_type:
+            messages.append(parsed)
+    return messages
 
 
 func _expect(condition: bool, message: String) -> void:

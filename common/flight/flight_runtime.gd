@@ -4808,7 +4808,18 @@ func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int
         }
         _remember_gsp_tuning_result(result)
         return result
-    var apply_timing := _gsp_tuning_descriptor_timing(String(changes[0].get("parameter", ""))) if not changes.is_empty() else "unknown"
+    var timing_result := _gsp_tuning_timings(changes)
+    if not bool(timing_result.get("ok", false)):
+        var invalid_timing := {
+            "peer_id": peer_id,
+            "connection_id": connection_id,
+            "request_seq": request_seq,
+            "ok": false,
+            "error": String(timing_result.get("error", "invalid_apply_timing")),
+        }
+        _remember_gsp_tuning_result(invalid_timing)
+        return invalid_timing
+    var apply_timing := String(timing_result.get("apply_timing", "unknown"))
     if apply_timing == "restart_required" or apply_timing == "reset_required":
         var deferred_result := {
             "peer_id": peer_id,
@@ -4820,7 +4831,7 @@ func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int
         }
         _remember_gsp_tuning_result(deferred_result)
         return deferred_result
-    if paused:
+    if apply_timing == "immediate" or paused:
         return _commit_gsp_tuning_batch(peer_id, connection_id, request_seq, changes, _gsp_public_physics_tick())
     _gsp_tuning_pending.append({
         "peer_id": peer_id,
@@ -4855,41 +4866,60 @@ func _apply_gsp_tuning_requests(public_physics_tick: int) -> void:
     for key in ordered_keys:
         changes.append(coalesced[key])
     var first: Dictionary = pending[0]
-    var commit := _commit_gsp_tuning_batch(int(first.get("peer_id", -1)), int(first.get("connection_id", -1)), int(first.get("request_seq", -1)), changes, public_physics_tick)
+    var commit := _commit_gsp_tuning_batch(int(first.get("peer_id", -1)), int(first.get("connection_id", -1)), int(first.get("request_seq", -1)), changes, public_physics_tick, false)
     for request in pending:
-        var acknowledged := commit.duplicate(true)
+        var acknowledged := _gsp_tuning_request_ack(commit, request)
         acknowledged["peer_id"] = int(request.get("peer_id", -1))
         acknowledged["connection_id"] = int(request.get("connection_id", -1))
         acknowledged["request_seq"] = int(request.get("request_seq", -1))
         acknowledged["coalesced"] = pending.size() > 1
+        _remember_gsp_tuning_result(acknowledged)
         _gsp_tuning_completed.append(acknowledged)
 
 
-func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int, changes: Array, public_physics_tick: int) -> Dictionary:
+func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int, changes: Array, public_physics_tick: int, remember_result: bool = true) -> Dictionary:
     var result: Dictionary = {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
     _sync_native_external_authority()
     if _gsp_external_authority_active():
         result["ok"] = false
         result["error"] = "external_authority"
         result["authority"] = "px4"
-        _remember_gsp_tuning_result(result)
+        if remember_result:
+            _remember_gsp_tuning_result(result)
+        return result
+    var timing_result := _gsp_tuning_timings(changes)
+    if not bool(timing_result.get("ok", false)):
+        result["ok"] = false
+        result["error"] = String(timing_result.get("error", "invalid_apply_timing"))
+        if remember_result:
+            _remember_gsp_tuning_result(result)
+        return result
+    var timing := String(timing_result.get("apply_timing", "unknown"))
+    if timing == "reset_required" or timing == "restart_required":
+        result["ok"] = false
+        result["error"] = timing
+        result["apply_timing"] = timing
+        if remember_result:
+            _remember_gsp_tuning_result(result)
         return result
     if native == null or not native.has_method("stage_flight_tuning_batch") or not native.has_method("commit_flight_tuning"):
         result["ok"] = false
         result["error"] = "tuning_unavailable"
-        _remember_gsp_tuning_result(result)
+        if remember_result:
+            _remember_gsp_tuning_result(result)
         return result
     var staged_result: Dictionary = native.call("stage_flight_tuning_batch", changes)
     if not bool(staged_result.get("ok", false)):
         for key in staged_result:
             result[key] = staged_result[key]
-        _remember_gsp_tuning_result(result)
+        if remember_result:
+            _remember_gsp_tuning_result(result)
         return result
     var native_result: Dictionary = native.call("commit_flight_tuning", public_physics_tick)
     for key in native_result:
         result[key] = native_result[key]
     if bool(native_result.get("ok", false)):
-        result["apply_timing"] = _gsp_tuning_descriptor_timing(String(changes[0].get("parameter", "")))
+        result["apply_timing"] = _gsp_tuning_timings(changes).get("apply_timing", "unknown")
         if bool(native_result.get("changed", false)) and _replay_recording_active and native.has_method("record_replay_tuning"):
             for change_value in native_result.get("changes", []):
                 var change: Dictionary = change_value
@@ -4905,8 +4935,83 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
                         bool(change.get("clamped", false)))
                 if not bool(replay_result.get("ok", false)):
                     push_error("Complete replay tuning recording failed: %s" % String(replay_result.get("diagnostic_message", "unknown error")))
-    _remember_gsp_tuning_result(result)
-    return result
+    var acknowledged := _gsp_tuning_request_ack(result, {"changes": changes})
+    if remember_result:
+        _remember_gsp_tuning_result(acknowledged)
+    return acknowledged
+
+
+func _gsp_tuning_timings(changes: Array) -> Dictionary:
+    if changes.is_empty():
+        return {"ok": false, "error": "empty_tuning_batch"}
+    var timings: Array[String] = []
+    for change_value in changes:
+        if typeof(change_value) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "malformed_tuning_batch"}
+        var change: Dictionary = change_value
+        var parameter := String(change.get("parameter", ""))
+        var timing := _gsp_tuning_descriptor_timing(parameter)
+        if timing == "unknown":
+            return {"ok": false, "error": "unknown_parameter"}
+        if timing not in timings:
+            timings.append(timing)
+    if timings.size() != 1:
+        return {"ok": false, "error": "mixed_apply_timing"}
+    var timing := timings[0]
+    if timing not in ["immediate", "next_physics_step", "reset_required", "restart_required"]:
+        return {"ok": false, "error": "invalid_apply_timing"}
+    return {"ok": true, "apply_timing": timing}
+
+
+func _gsp_tuning_request_ack(commit: Dictionary, request: Dictionary) -> Dictionary:
+    var acknowledged := commit.duplicate(true)
+    var requested_values: Dictionary = {}
+    var keys: Array[String] = []
+    for change_value in request.get("changes", []):
+        if typeof(change_value) != TYPE_DICTIONARY:
+            continue
+        var change: Dictionary = change_value
+        var key := String(change.get("parameter", ""))
+        if key not in keys:
+            keys.append(key)
+        requested_values[key] = change.get("value", null)
+    var committed_values: Dictionary = commit.get("committed_values", commit.get("values", {}))
+    var request_changes: Array = []
+    for key in keys:
+        if not committed_values.has(key):
+            continue
+        var committed_change: Dictionary = {}
+        for change_value in commit.get("changes", []):
+            if typeof(change_value) == TYPE_DICTIONARY and String(change_value.get("parameter", "")) == key:
+                committed_change = change_value.duplicate(true)
+                break
+        if committed_change.is_empty():
+            committed_change = {"parameter": key, "committed_value": committed_values[key], "changed": true}
+        if requested_values.has(key):
+            committed_change["requested_value"] = requested_values[key]
+        request_changes.append(committed_change)
+    var request_values: Dictionary = {}
+    for key in keys:
+        if committed_values.has(key):
+            request_values[key] = committed_values[key]
+    acknowledged["changes"] = request_changes
+    acknowledged["values"] = request_values
+    acknowledged["committed_values"] = request_values
+    acknowledged["commit_changes"] = commit.get("changes", []).duplicate(true)
+    acknowledged["commit_values"] = committed_values.duplicate(true)
+    var changed := false
+    for change_value in request_changes:
+        changed = changed or bool(change_value.get("changed", true))
+    acknowledged["changed"] = changed
+    if request_changes.size() == 1:
+        var scalar: Dictionary = request_changes[0]
+        for key in ["parameter", "requested_value", "committed_value", "clamped"]:
+            if scalar.has(key):
+                acknowledged[key] = scalar[key]
+    else:
+        for key in ["parameter", "requested_value", "committed_value", "clamped"]:
+            acknowledged.erase(key)
+    return acknowledged
 
 
 func _gsp_tuning_descriptor_timing(parameter: String) -> String:

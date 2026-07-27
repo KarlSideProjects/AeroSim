@@ -49,6 +49,10 @@ func _init() -> void:
     _expect(panel_text.contains(".type = \"range\""), "panel renders schema-driven sliders")
     _expect(panel_text.contains("set_tuning_batch"), "panel supports schema-driven tuning batches")
     _expect(panel_text.contains("set_tuning"), "panel sends generic tuning requests")
+    _expect(panel_text.contains("function cancelTransient") and panel_text.contains("cancelTransient(controls)"),
+            "panel final sends cancel an outstanding transient timer")
+    _expect(panel_text.contains("function rawTuningValue") and not panel_text.contains("function tuningValue"),
+            "panel sends finite raw input for native clamp and quantization")
     _expect(not panel_text.contains("var parameterKey"), "panel does not introduce a hard-coded parameter key")
     if _failures.is_empty():
         print("GSP tuning contract: PASS")

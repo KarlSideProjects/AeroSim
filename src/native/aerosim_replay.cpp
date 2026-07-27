@@ -2879,8 +2879,17 @@ ReplayRunResult replay_session(
             break;
         case ReplayEventType::Tuning: {
             const int vehicle = vehicle_index(event.vehicle_name);
-            if (vehicle < 0 || event.tuning_parameter != kSimpleFlightRatePParameter ||
-                    !controllers[vehicle].set_rate_p(event.tuning_committed_value)) {
+            bool applied = false;
+            if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightRatePParameter) {
+                applied = controllers[vehicle].set_rate_p(event.tuning_committed_value);
+            } else if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightAnglePParameter) {
+                applied = controllers[vehicle].set_angle_p(event.tuning_committed_value);
+            } else if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightRateIParameter) {
+                applied = controllers[vehicle].set_rate_i(event.tuning_committed_value);
+            } else if (vehicle >= 0 && event.tuning_parameter == kSimpleFlightRateDParameter) {
+                applied = controllers[vehicle].set_rate_d(event.tuning_committed_value);
+            }
+            if (!applied) {
                 return failed_run(invalid(ReplayDiagnosticCode::InvalidSession, "replay tuning input is unsupported"));
             }
             break;

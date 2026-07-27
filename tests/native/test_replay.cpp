@@ -727,18 +727,27 @@ bool test_first_divergence_report() {
 
 bool test_tuning_replay_contract() {
     aerosim::ReplaySessionRecorder recorder(31, "manifest");
-    if (!recorder.add_vehicle("DroneA", "hash-a", "{}") ||
-            !recorder.add_vehicle("DroneB", "hash-b", "{}") ||
+    if (!recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
             !recorder.record_environment(0, complete_atmosphere(31)) ||
             !recorder.record_tuning(1000, "DroneA", 7, 3, "simpleflight.rate_p", 3.0, 2.0, true) ||
+            !recorder.record_tuning(1000, "DroneA", 8, 3, "simpleflight.angle_p", 16.0, 16.0, false) ||
+            !recorder.record_tuning(1000, "DroneA", 9, 3, "simpleflight.rate_i", 0.031, 0.031, false) ||
+            !recorder.record_tuning(1000, "DroneA", 10, 3, "simpleflight.rate_d", 0.007, 0.007, false) ||
             !recorder.finish(2000, "completed")) {
         return false;
     }
     const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(recorder.serialize(), "manifest");
-    if (!loaded.ok || loaded.session.events.size() != 2 || loaded.session.events[1].type != aerosim::ReplayEventType::Tuning ||
+    if (!loaded.ok || loaded.session.events.size() != 5 || loaded.session.events[1].type != aerosim::ReplayEventType::Tuning ||
             loaded.session.events[1].tuning_request_seq != 7 || loaded.session.events[1].tuning_commit_id != 3 ||
             loaded.session.events[1].tuning_parameter != "simpleflight.rate_p" ||
             loaded.session.events[1].tuning_committed_value != 2.0 || !loaded.session.events[1].tuning_clamped) {
+        return false;
+    }
+    const aerosim::SimulationConfig tuning_config = replay_test_config();
+    const aerosim::ReplayRunResult tuning_run = aerosim::replay_session(
+            loaded.session, {tuning_config, tuning_config}, "manifest", {{"hash-a", "hash-b"}});
+    if (!tuning_run.ok) {
         return false;
     }
     aerosim::ReplaySession changed = loaded.session;

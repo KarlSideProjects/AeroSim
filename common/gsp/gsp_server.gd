@@ -45,6 +45,7 @@ var _token := ""
 var _port := 0
 var _next_peer_id := 1
 var _running := false
+var _last_broadcast_tuning_commit_id := 0
 
 
 func _ready() -> void:
@@ -97,6 +98,7 @@ func stop() -> void:
     _closing_peers.clear()
     _running = false
     _port = 0
+    _last_broadcast_tuning_commit_id = 0
     set_process(false)
 
 
@@ -581,6 +583,9 @@ func _poll_authenticated_peers() -> void:
                     failed = true
                     break
                 if not bool(response.get("pending", false)) and bool(response.get("ok", false)) and bool(response.get("changed", false)):
+                    if not _flush_reliable(record):
+                        failed = true
+                        break
                     _broadcast_tuning_commit(response, int(tuning_result.sequence))
             elif message_type == "set_tuning_batch":
                 var tuning_batch_result := validate_set_tuning_batch_message(message, int(record.get("client_sequence", -1)))
@@ -594,6 +599,9 @@ func _poll_authenticated_peers() -> void:
                     failed = true
                     break
                 if not bool(batch_response.get("pending", false)) and bool(batch_response.get("ok", false)) and bool(batch_response.get("changed", false)):
+                    if not _flush_reliable(record):
+                        failed = true
+                        break
                     _broadcast_tuning_commit(batch_response, int(tuning_batch_result.sequence))
             else:
                 failed = true
@@ -629,15 +637,34 @@ func _queue_tuning_ack(record: Dictionary, request_seq: int, result: Dictionary)
     return _queue_identity_message(record, "tuning_ack", data)
 
 
-func _broadcast_tuning_commit(result: Dictionary, request_seq: int) -> void:
+func _broadcast_tuning_commit(result: Dictionary, request_seq: int) -> bool:
+    var commit_id := int(result.get("commit_id", 0))
+    if commit_id <= 0 or commit_id <= _last_broadcast_tuning_commit_id:
+        return true
     var data := result.duplicate(true)
     data.erase("peer_id")
     data.erase("connection_id")
+    if data.has("commit_values"):
+        data["committed_values"] = data.commit_values
+        data["values"] = data.commit_values
+        data.erase("commit_values")
+    if data.has("commit_changes"):
+        data["changes"] = data.commit_changes
+        data.erase("commit_changes")
     data["request_seq"] = request_seq
-    for record in _authenticated_peers.duplicate():
+    var peers := _authenticated_peers.duplicate()
+    for record in peers:
+        var queue: Array = record.get("reliable_queue", [])
+        var queued_bytes := int(record.get("reliable_bytes", 0))
+        var peer: WebSocketPeer = record.get("peer")
+        var native_buffered_bytes := maxi(0, peer.get_current_outbound_buffered_amount()) if peer != null else 0
+        if queue.size() >= MAX_RELIABLE_MESSAGES - 1 or queued_bytes + native_buffered_bytes + MAX_MESSAGE_BYTES > MAX_RELIABLE_BYTES:
+            return false
+    for record in peers:
         if not _queue_identity_message(record, "tuning_commit", data):
-            _authenticated_peers.erase(record)
-            _begin_close(record, "reliable send failed")
+            return false
+    _last_broadcast_tuning_commit_id = commit_id
+    return true
 
 
 func _poll_tuning_results() -> void:
@@ -652,15 +679,18 @@ func _poll_tuning_results() -> void:
         var result: Dictionary = result_value
         var peer_id := int(result.get("peer_id", -1))
         var connection_id := int(result.get("connection_id", -1))
-        if bool(result.get("ok", false)) and bool(result.get("changed", false)):
-            _broadcast_tuning_commit(result, int(result.get("request_seq", -1)))
+        var origin_acknowledged := false
         for record in _authenticated_peers.duplicate():
             if int(record.get("id", -1)) != peer_id or int(record.get("connection_id", -1)) != connection_id:
                 continue
             if not _queue_tuning_ack(record, int(result.get("request_seq", -1)), result):
                 _authenticated_peers.erase(record)
                 _begin_close(record, "reliable send failed")
+            elif _flush_reliable(record):
+                origin_acknowledged = true
             break
+        if origin_acknowledged and bool(result.get("ok", false)) and bool(result.get("changed", false)):
+            _broadcast_tuning_commit(result, int(result.get("request_seq", -1)))
 
 
 func _queue_identity_message(record: Dictionary, message_type: String, data: Dictionary) -> bool:

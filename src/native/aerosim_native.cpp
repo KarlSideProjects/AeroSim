@@ -1773,12 +1773,14 @@ Dictionary AeroSimNative::commit_flight_tuning(std::int64_t public_physics_tick)
     result["ok"] = true;
     Array committed_changes;
     Dictionary values;
-    for (const StagedTuningEntry &entry : staged_tuning_batch_) {
+    for (std::size_t index = 0; index < staged_tuning_batch_.size(); ++index) {
+        const StagedTuningEntry &entry = staged_tuning_batch_[index];
         Dictionary item;
         item["parameter"] = entry.parameter;
         item["requested_value"] = entry.requested_value;
         item["committed_value"] = entry.committed_value;
         item["clamped"] = entry.clamped;
+        item["changed"] = previous[index] != entry.committed_value;
         committed_changes.append(item);
         values[entry.parameter] = entry.committed_value;
     }
@@ -1884,10 +1886,12 @@ Dictionary AeroSimNative::flight_tuning_configuration() const {
     result[aerosim::kSimpleFlightRateDParameter] = flight_controller_.rate_d();
     result["commit_id"] = static_cast<std::int64_t>(tuning_commit_id_);
     result["commit_tick"] = static_cast<std::int64_t>(tuning_commit_tick_);
-    result["requested_value"] = tuning_last_requested_value_;
-    result["committed_value"] = flight_controller_.rate_p();
-    result["changed"] = tuning_last_changed_;
-    result["clamped"] = tuning_last_clamped_;
+    Dictionary values;
+    values[aerosim::kSimpleFlightRatePParameter] = flight_controller_.rate_p();
+    values[aerosim::kSimpleFlightAnglePParameter] = flight_controller_.angle_p();
+    values[aerosim::kSimpleFlightRateIParameter] = flight_controller_.rate_i();
+    values[aerosim::kSimpleFlightRateDParameter] = flight_controller_.rate_d();
+    result["committed_values"] = values;
     return result;
 }
 
