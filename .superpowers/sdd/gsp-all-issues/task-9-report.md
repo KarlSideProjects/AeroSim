@@ -23,7 +23,8 @@ Implemented only the GSP panel lifecycle recovery work for #249. The existing #2
 - Reset stale session request maps, sequence state, telemetry freshness, and control readiness on replacement.
 - Extended the real GSP boundary harness with pre-stop probe snapshots containing timestamp, live/authenticated/closing counts, and process/physics ticks. Added coverage for graceful replacement, abrupt reclaim, same-process token reuse, and restart token rejection/acceptance.
 - Kept launcher shell-open failures URL/fragment-free while preserving the single explicit printed launch URL. Added a headless launcher harness with injected display/opener seams so restart evidence captures the real printed `file://...#port=...&token=...` URL without opening a browser.
-- Made a missed 250 ms probe publication retryable inside the five-second abrupt-reclaim deadline; process exit and total deadline remain fatal.
+- Made a missed 250 ms probe publication retryable inside the five-second abrupt-reclaim deadline using the same expected sequence; process exit and total deadline remain fatal.
+- Removed display/opener test injection from production launch options. Production uses `get_display_name()` and `open_panel()`; only the harness subclass overrides those methods and records the opener call.
 - Added the recovery test to `scripts/verify_issue_11.sh` while preserving the existing server port fallback tests.
 
 ## TDD evidence
@@ -45,6 +46,13 @@ Implemented only the GSP panel lifecycle recovery work for #249. The existing #2
 2. RED: the new second-process launcher harness printed no URL because headless display detection rejected the requested-open test path. GREEN: `GspLauncher.launch` uses the minimum injected display/opener seams; the real restart test now reports `fresh_printed_url=true` and authenticates that printed token while rejecting the first process token.
 3. RED: the deterministic probe retry test initially failed at the missing retry helper. GREEN: a delayed first probe is retried with the next sequence and succeeds (`delayed_timeout_retry=true`); the real abrupt-reclaim loop catches only publication timeouts and still fails on process exit or total deadline.
 
+### Final review-fix round 2
+
+1. RED: with the old timeout behavior restored, the real delayed-consumption harness timed out after the harness published sequence 1 because the client had advanced to sequence 2. GREEN: timeout retries retain sequence 1; only successful publication advances it, and the real test reports `same_sequence=true`.
+2. GREEN: the launch contract independently stores the raw token and rejects it, the URL, `file://`, `#`, and `token=` from the shell-open error. Complete launcher stdout is retained through shutdown and requires exactly one `GSP panel URL:` record.
+3. GREEN: the restart harness subclass overrides the display and opener methods without production option injection, records the opener invocation, and authenticates the fresh printed URL token while rejecting the stale token.
+4. GREEN: launcher URL-capture failure cleanup uses bounded `communicate(timeout=2)` and a bounded kill/communicate fallback; it never performs an unbounded stdout read. New harness GDScript uses four-space indentation.
+
 ## Real transport evidence
 
 `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 python3 scripts/test_gsp_transport_boundary.py` passed:
@@ -55,11 +63,11 @@ Implemented only the GSP panel lifecycle recovery work for #249. The existing #2
 - same-process replacement with exact pre-stop counts `1/1/0`, reclaimed counts `0/0/0` before replacement, and replacement/observer counts `2/2/0`;
 - abrupt RST with pre-loss counts, polling diagnostics, timestamp/tick deltas, reclaim within five seconds, and replacement/observer counts `2/2/0`;
 - server restart with stale-token rejection and fresh authentication from the newly printed launcher URL;
-- deterministic delayed-probe retry regression.
+- deterministic delayed-consumption retry with the same probe sequence.
 
 ## Full gate
 
-Implementation commits: `3f0b0756a367219b1b171c20b214164d672f7940` (`Fix GSP panel lifecycle recovery`), `b49b448` (`Fix GSP hidden reconnect and lifecycle evidence`), `5572d9c` (`Keep hidden GSP sessions inactive`), and `facd36a` (`Fix final GSP review findings`).
+Implementation commits: `3f0b0756a367219b1b171c20b214164d672f7940` (`Fix GSP panel lifecycle recovery`), `b49b448` (`Fix GSP hidden reconnect and lifecycle evidence`), `5572d9c` (`Keep hidden GSP sessions inactive`), `facd36a` (`Fix final GSP review findings`), and `4fe4528` (`Fix GSP review round two findings`).
 
 Ran the exact required command from the final committed HEAD (`facd36a`):
 
@@ -69,7 +77,7 @@ GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
 scripts/verify_issue_11.sh
 ```
 
-Result: exit 0. The captured final gate passed native tests, license scan, panel tests, probe retry and real GSP boundary tests, GDExtension build, terrain dependency, GUT (277/277), native atomic boundary, preset contract/integration, tuning integration/stress, quick-adjust integration, headed acceptance, replay integration, and headless smoke (`completed: true`, `simulated_frames: 5`). The focused launcher contract also passed.
+Validation result from implementation HEAD `4fe4528`: exit 0. The gate passed native tests, license scan, panel tests, same-sequence probe retry and real GSP boundary tests, GDExtension build, terrain dependency, GUT (277/277), native atomic boundary, preset contract/integration, tuning integration/stress, quick-adjust integration, headed acceptance, replay integration, and headless smoke (`completed: true`, `simulated_frames: 5`). The focused launcher contract also passed. This report is committed before the required exact rerun from the report-bearing final HEAD.
 
 ## Problems and exact resolutions
 
@@ -82,10 +90,15 @@ Result: exit 0. The captured final gate passed native tests, license scan, panel
 - Final review found shell-open errors duplicated token-bearing launch URLs: removed URL data from the error while retaining the explicit printed URL and added a focused contract assertion.
 - Final review required restart evidence from the launcher seam: added only test display/opener injection and a headless harness that captures the printed URL, without a browser or secondary credential channel.
 - Final review found a single missed probe publication could falsely fail abrupt reclaim: introduced a typed publication-timeout retry path and deterministic delayed-probe regression.
+- Final review round 2 found timeout retries advanced the expected sequence: added a real delayed-consumption harness and kept the sequence unchanged on timeout.
+- Final review round 2 found raw-token and exact-log-count assertions were missing: retained full launcher stdout, asserted one URL record, and rejected the independently stored raw token.
+- Final review round 2 found production launch options were carrying test injection: moved the seam to a harness-only subclass overriding display and opener methods.
+- Final review round 2 found launcher URL-capture failure cleanup could block on stdout: bounded stop/kill and `communicate` cleanup.
 - First real harness run found mixed space/tab GDScript indentation in the newly added status fields: converted only the new lines to the repository’s tab indentation; boundary tests then passed.
 - One chained boundary invocation reported a transient executable lookup error despite the configured Godot binary existing; a direct rerun with the exact binary passed all six boundary cases. No code change was made for that environmental transient.
 - One focused rerun initially used a malformed `GODOT_BIN` path; rerunning with `/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64` passed. No code change was made.
 - One focused launcher-contract command initially expanded an environment variable before assignment and did not invoke Godot; the corrected direct binary invocation passed. No code change was made.
+- One direct Python import of the boundary helper omitted its `scripts` module path; rerunning with `PYTHONPATH=scripts` produced the intended RED and GREEN evidence. No code change was made.
 - The first streamed full-gate observation was interrupted before its late lanes were visible; a second exact committed-HEAD run captured its exit code and completed with exit 0.
 - The full gate emitted known non-fatal diagnostics: generated missing `.uid`/`.import`/translation artifacts, existing Terrain3D mipmap warnings, expected negative-path native error logs, existing GUT orphan/leak warnings, and the environment’s NVIDIA Vulkan headed lane. The command still exited 0 and no #249 failure was observed.
 
