@@ -53,6 +53,22 @@ Implemented only the GSP panel lifecycle recovery work for #249. The existing #2
 3. GREEN: the restart harness subclass overrides the display and opener methods without production option injection, records the opener invocation, and authenticates the fresh printed URL token while rejecting the stale token.
 4. GREEN: launcher URL-capture failure cleanup uses bounded `communicate(timeout=2)` and a bounded kill/communicate fallback; it never performs an unbounded stdout read. New harness GDScript uses four-space indentation.
 
+### Final review-fix round 3
+
+1. RED: the strengthened recovery fixture failed because the panel exposed no
+   complete readiness inventory. GREEN: the existing control inventory is now
+   the single source for enable/disable transitions and its test seam exposes
+   static, tuning-row, group-apply, and Quick Adjust categories.
+2. GREEN: the fixture covers two tuning rows in two groups and all eight Quick
+   Adjust slots. The recovery test asserts exact inventory sizes of
+   `11/6/2/104`, keeps every category disabled after hello, hidden reconnect,
+   disconnect, and hidden fresh telemetry, and enables every element only
+   after the visible matching fresh snapshot.
+3. GREEN: `tests/headless/gsp_launch_contract.gd` and the task-touched
+   `gsp_server_harness.gd` blocks use four-space indentation without behavior
+   changes. The launch contract and real transport boundary focused tests
+   both pass.
+
 ## Real transport evidence
 
 `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 python3 scripts/test_gsp_transport_boundary.py` passed:
@@ -67,9 +83,9 @@ Implemented only the GSP panel lifecycle recovery work for #249. The existing #2
 
 ## Full gate
 
-Implementation commits: `3f0b0756a367219b1b171c20b214164d672f7940` (`Fix GSP panel lifecycle recovery`), `b49b448` (`Fix GSP hidden reconnect and lifecycle evidence`), `5572d9c` (`Keep hidden GSP sessions inactive`), `facd36a` (`Fix final GSP review findings`), and `4fe4528` (`Fix GSP review round two findings`).
+Implementation commits: `3f0b0756a367219b1b171c20b214164d672f7940` (`Fix GSP panel lifecycle recovery`), `b49b448` (`Fix GSP hidden reconnect and lifecycle evidence`), `5572d9c` (`Keep hidden GSP sessions inactive`), `facd36a` (`Fix final GSP review findings`), and `4fe4528` (`Fix GSP review round two findings`). This round's implementation/test/report commit is the new report-bearing HEAD.
 
-Ran the exact required command from the final committed HEAD (`facd36a`):
+The exact required command completed from the preceding report-bearing final HEAD `8026343c2d66cb2e21470d3b8d2ed3e1bd1cf531` with exit 0:
 
 ```text
 RUNNER_TEMP=/tmp/aerosim-gsp-249 \
@@ -77,7 +93,7 @@ GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
 scripts/verify_issue_11.sh
 ```
 
-Validation result from implementation HEAD `4fe4528`: exit 0. The gate passed native tests, license scan, panel tests, same-sequence probe retry and real GSP boundary tests, GDExtension build, terrain dependency, GUT (277/277), native atomic boundary, preset contract/integration, tuning integration/stress, quick-adjust integration, headed acceptance, replay integration, and headless smoke (`completed: true`, `simulated_frames: 5`). The focused launcher contract also passed. This report is committed before the required exact rerun from the report-bearing final HEAD.
+Validation result from `8026343`: exit 0. The gate passed native tests, license scan, panel tests, same-sequence probe retry and real GSP boundary tests, GDExtension build, terrain dependency, GUT (277/277), native atomic boundary, preset contract/integration, tuning integration/stress, quick-adjust integration, headed acceptance, replay integration, and headless smoke (`completed: true`, `simulated_frames: 5`). The focused launcher contract also passed. The exact same gate command is run again after this round's report-bearing commit; its exit/result is returned with the final handoff without editing tracked files afterward.
 
 ## Problems and exact resolutions
 
@@ -100,7 +116,9 @@ Validation result from implementation HEAD `4fe4528`: exit 0. The gate passed na
 - One focused launcher-contract command initially expanded an environment variable before assignment and did not invoke Godot; the corrected direct binary invocation passed. No code change was made.
 - One direct Python import of the boundary helper omitted its `scripts` module path; rerunning with `PYTHONPATH=scripts` produced the intended RED and GREEN evidence. No code change was made.
 - The first streamed full-gate observation was interrupted before its late lanes were visible; a second exact committed-HEAD run captured its exit code and completed with exit 0.
-- The full gate emitted known non-fatal diagnostics: generated missing `.uid`/`.import`/translation artifacts, existing Terrain3D mipmap warnings, expected negative-path native error logs, existing GUT orphan/leak warnings, and the environment’s NVIDIA Vulkan headed lane. The command still exited 0 and no #249 failure was observed.
+- The review-fix-3 readiness test initially failed at the missing production inventory seam; the panel now derives both readiness toggling and its test inventory from the same four categories.
+- The review-fix-3 style check found the two named GDScript files still used tab indentation in task-touched blocks; only those files' task-touched code blocks were mechanically converted to four spaces and the launch/boundary checks passed.
+- The full gate emitted known non-fatal diagnostics: generated missing `.uid`/`.import`/translation artifacts, existing Terrain3D mipmap warnings, expected negative-path native error logs, existing GUT orphan/leak warnings, and the environment's NVIDIA Vulkan headed lane. The command still exited 0 and no #249 failure was observed.
 
 ## Concerns
 

@@ -111,15 +111,22 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 
   function text(id, value) { $(id).textContent = value; }
   function panelReady() { return helloReady && snapshotReady; }
-  function setControlsEnabled(enabled) {
-    staticControls.forEach(function (control) { control.disabled = !enabled; });
+  function readinessControls() {
+    var tuning = [];
     Object.keys(tuningControls).forEach(function (key) {
       var controls = tuningControls[key];
-      [controls.slider, controls.number, controls.button].forEach(function (control) { control.disabled = !enabled; });
+      tuning.push(controls.slider, controls.number, controls.button);
     });
-    tuningGroupControls.forEach(function (control) { control.disabled = !enabled; });
+    var quick = [];
     quickAdjustControls.forEach(function (controls) {
-      [controls.parameter, controls.type, controls.mode, controls.subsetMin, controls.subsetMax, controls.deadzone, controls.step, controls.rate, controls.device, controls.axis, controls.negative, controls.positive, controls.apply].forEach(function (control) { control.disabled = !enabled; });
+      quick.push(controls.parameter, controls.type, controls.mode, controls.subsetMin, controls.subsetMax, controls.deadzone, controls.step, controls.rate, controls.device, controls.axis, controls.negative, controls.positive, controls.apply);
+    });
+    return { static: staticControls.slice(), tuning: tuning, groups: tuningGroupControls.slice(), quick: quick };
+  }
+  function setControlsEnabled(enabled) {
+    var inventory = readinessControls();
+    Object.keys(inventory).forEach(function (category) {
+      inventory[category].forEach(function (control) { control.disabled = !enabled; });
     });
   }
   function resetSessionReadiness() {
@@ -519,6 +526,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   if (window.__AEROSIM_PANEL_TEST__) {
     window.__AEROSIM_PANEL_TEST__.renderQuickAdjust = renderQuickAdjust;
     window.__AEROSIM_PANEL_TEST__.quickAdjustControls = function () { return quickAdjustControls; };
+    window.__AEROSIM_PANEL_TEST__.readinessControls = readinessControls;
     window.__AEROSIM_PANEL_TEST__.renderPresets = renderPresets;
     window.__AEROSIM_PANEL_TEST__.renderPresetDiff = renderPresetDiff;
     window.__AEROSIM_PANEL_TEST__.renderMigrationReport = renderMigrationReport;

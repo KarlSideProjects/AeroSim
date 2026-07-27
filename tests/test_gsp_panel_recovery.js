@@ -170,6 +170,22 @@ function message(socket, value) {
     socket.emit("message", { data: JSON.stringify(value) });
 }
 
+const readinessCategories = ["static", "tuning", "groups", "quick"];
+function assertReadinessControls(inventory, disabled) {
+    for (const category of readinessCategories) {
+        assert.ok(Array.isArray(inventory[category]), `${category} readiness inventory missing`);
+        assert.ok(inventory[category].length > 0, `${category} readiness inventory empty`);
+        assert.ok(inventory[category].every((control) => control.disabled === disabled), `${category} controls readiness mismatch`);
+    }
+}
+
+function assertFixtureInventory(inventory) {
+    assert.deepEqual(
+        Object.fromEntries(readinessCategories.map((category) => [category, inventory[category].length])),
+        { static: 11, tuning: 6, groups: 2, quick: 104 },
+    );
+}
+
 function ready(socket) {
     socket.emit("open");
     message(socket, {
@@ -177,7 +193,10 @@ function ready(socket) {
         t: "hello",
         d: {
             registry: {
-                parameters: [{ key: "simpleflight.rate_p", quick_adjust_eligible: true, min: 0.6, max: 1.4, step: 0.01 }],
+                parameters: [
+                    { key: "simpleflight.rate_p", group: "Tuning", quick_adjust_eligible: true, min: 0.6, max: 1.4, step: 0.01 },
+                    { key: "simpleflight.rate_i", group: "Rates", quick_adjust_eligible: true, min: 0.0, max: 0.8, step: 0.01 },
+                ],
                 quick_adjust: { slots: Array(8).fill(null) },
                 presets: [],
             },
@@ -197,20 +216,21 @@ function fresh(socket, requestSequence) {
 const first = FakeWebSocket.instances[0];
 assert.deepEqual(FakeWebSocket.instances.map((socket) => socket.url), ["ws://127.0.0.1:8765"]);
 assert.equal(elements.get("preset-save").disabled, true);
+assert.ok(window.__AEROSIM_PANEL_TEST__.readinessControls().static.every((control) => control.disabled));
 const firstRequest = ready(first);
-const controlsBeforeSnapshot = window.__AEROSIM_PANEL_TEST__.quickAdjustControls();
-assert.equal(controlsBeforeSnapshot.length, 8);
-assert.equal(controlsBeforeSnapshot[0].apply.disabled, true);
+const controlsBeforeSnapshot = window.__AEROSIM_PANEL_TEST__.readinessControls();
+assertFixtureInventory(controlsBeforeSnapshot);
+assertReadinessControls(controlsBeforeSnapshot, true);
 assert.equal(elements.get("preset-save").disabled, true);
 fresh(first, firstRequest);
-assert.equal(controlsBeforeSnapshot[0].apply.disabled, false);
-assert.equal(elements.get("preset-save").disabled, false);
-let groupApply = elements.get("tuning-rows").children[0].children[1];
+assertReadinessControls(window.__AEROSIM_PANEL_TEST__.readinessControls(), false);
+let groupApply = window.__AEROSIM_PANEL_TEST__.readinessControls().groups[0];
 assert.equal(groupApply.disabled, false);
 
 context.document.hidden = true;
 first.emit("close");
 assert.equal(elements.get("preset-save").disabled, true);
+assertReadinessControls(window.__AEROSIM_PANEL_TEST__.readinessControls(), true);
 assert.equal(groupApply.disabled, true);
 assert.equal(clock.nextDelay(), 250);
 clock.advance(249);
@@ -220,14 +240,14 @@ assert.equal(FakeWebSocket.instances.length, 2);
 
 const hiddenSocket = FakeWebSocket.instances.at(-1);
 const hiddenRequest = ready(hiddenSocket);
-groupApply = elements.get("tuning-rows").children.at(-1).children[1];
+groupApply = window.__AEROSIM_PANEL_TEST__.readinessControls().groups[0];
 const hiddenQuickApply = window.__AEROSIM_PANEL_TEST__.quickAdjustControls()[0].apply;
 const hiddenRates = hiddenSocket.sent.filter((item) => item.t === "set_telemetry");
 assert.equal(hiddenRates.at(-1).d.hz, 0);
 assert.equal(hiddenSocket.sent.filter((item) => item.t === "request_snapshot").at(-1).seq, hiddenRequest);
 fresh(hiddenSocket, hiddenRequest);
 assert.notEqual(elements.get("connection").textContent, "Connected");
-assert.equal(elements.get("preset-save").disabled, true);
+assertReadinessControls(window.__AEROSIM_PANEL_TEST__.readinessControls(), true);
 assert.equal(groupApply.disabled, true);
 assert.equal(hiddenQuickApply.disabled, true);
 hiddenSocket.emit("close");
@@ -237,18 +257,18 @@ clock.advance(500);
 context.document.hidden = false;
 const visibleSocket = FakeWebSocket.instances.at(-1);
 const visibleRequest = ready(visibleSocket);
-groupApply = elements.get("tuning-rows").children.at(-1).children[1];
+groupApply = window.__AEROSIM_PANEL_TEST__.readinessControls().groups[0];
 const visibleQuickApply = window.__AEROSIM_PANEL_TEST__.quickAdjustControls()[0].apply;
 assert.equal(visibleSocket.sent.filter((item) => item.t === "set_telemetry").at(-1).d.hz, 30);
 assert.equal(visibleRequest > 0, true);
 context.document.listeners.visibilitychange();
 const restoredRequest = visibleSocket.sent.filter((item) => item.t === "request_snapshot").at(-1).seq;
 assert.equal(visibleSocket.sent.filter((item) => item.t === "set_telemetry").at(-1).d.hz, 30);
-assert.equal(elements.get("preset-save").disabled, true);
+assertReadinessControls(window.__AEROSIM_PANEL_TEST__.readinessControls(), true);
 assert.equal(groupApply.disabled, true);
 assert.equal(visibleQuickApply.disabled, true);
 fresh(visibleSocket, restoredRequest);
-assert.equal(elements.get("preset-save").disabled, false);
+assertReadinessControls(window.__AEROSIM_PANEL_TEST__.readinessControls(), false);
 assert.equal(groupApply.disabled, false);
 assert.equal(visibleQuickApply.disabled, false);
 visibleSocket.emit("close");
@@ -268,6 +288,7 @@ assert.ok(FakeWebSocket.instances.every((socket) => socket.url === "ws://127.0.0
 
 const notReady = FakeWebSocket.instances.at(-1);
 const notReadyRequest = ready(notReady);
+assertFixtureInventory(window.__AEROSIM_PANEL_TEST__.readinessControls());
 notReady.emit("close");
 assert.equal(clock.nextDelay(), 5000);
 clock.advance(5000);
