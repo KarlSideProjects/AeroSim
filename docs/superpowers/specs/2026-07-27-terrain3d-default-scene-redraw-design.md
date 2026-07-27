@@ -126,7 +126,7 @@ assets/maps/terrain3d_range/data/              作業層輸出，場景 data_dir
 
 2. **作業筆刷必須清除 auto bit。** `auto_shader` 開啟時，shader 與 `Terrain3DData.get_texture_id()` 都依坡度推導地表、忽略手繪 id。所有作業像素都要先 `set_control_auto(position, false)`，手繪才會生效。
 
-3. **Kenney 建物改引用 `.glb` 而非 `.scn`。** 專案內既有的 `Models/GLB/*.scn` 是預烘焙 PackedScene，其材質的 `albedo_texture` 為 null，渲染為白模。`.glb` 匯入版本才正確帶有 `Textures/colormap.png`。**`levels/free_flight/industrial_yard.tscn` 仍引用 `.scn`，因此該地圖的建物目前也是白模；本次未修改，留待決定。**
+3. **Kenney 建物改引用 `.glb` 而非 `.scn`。** 專案內既有的 `Models/GLB/*.scn` 是預烘焙 PackedScene，其材質的 `albedo_texture` 為 null，渲染為白模。`.glb` 匯入版本才正確帶有 `Textures/colormap.png`。`levels/free_flight/industrial_yard.tscn` 原本也踩到同一個坑，已一併改為 `.glb`；五個 `.scn` 至此無任何引用，直接刪除，避免同名誘餌再次被選中。兩張地圖的 headless gate 各補上一個檢查：可見資產的每個 surface 都必須帶 albedo texture。這個缺陷之所以長期存在，正是因為原本所有斷言都只驗結構、不驗材質。
 
 4. **地被需要專案自有的參數。** 上游範例的葉片高度約 1.8 m，會淹沒停在坪上的無人機。新增 `assets/maps/terrain3d_range/grass_process_material.tres` 沿用上游 shader 但降到腳踝高度並放慢風速，於場景中覆蓋 `process_material` 與 `mesh`，不修改 addon。
 

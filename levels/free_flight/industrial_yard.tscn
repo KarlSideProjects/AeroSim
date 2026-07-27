@@ -1,10 +1,10 @@
 [gd_scene load_steps=22 format=3]
 
-[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-a.scn" id="1_building_a"]
-[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-f.scn" id="2_building_f"]
-[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-l.scn" id="3_building_l"]
-[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-q.scn" id="4_building_q"]
-[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/detail-tank.scn" id="5_detail_tank"]
+[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-a.glb" id="1_building_a"]
+[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-f.glb" id="2_building_f"]
+[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-l.glb" id="3_building_l"]
+[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-q.glb" id="4_building_q"]
+[ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/detail-tank.glb" id="5_detail_tank"]
 
 [sub_resource type="StandardMaterial3D" id="MaterialGround"]
 albedo_color = Color(0.16, 0.19, 0.18, 1)

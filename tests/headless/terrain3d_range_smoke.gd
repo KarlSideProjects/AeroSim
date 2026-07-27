@@ -162,7 +162,38 @@ func _run() -> void:
         push_error("Terrain3D range landmarks must not introduce rigid bodies")
         quit(1)
         return
+    var landmarks := scene.get_node_or_null("Landmarks") as Node3D
+    var landmark_meshes := landmarks.find_children("*", "MeshInstance3D", true, false) if landmarks != null else []
+    if landmark_meshes.size() < 5:
+        push_error("Terrain3D range must load its Kenney landmark set")
+        quit(1)
+        return
+    for mesh_instance in landmark_meshes:
+        var untextured := _untextured_surface(mesh_instance as MeshInstance3D)
+        if untextured >= 0:
+            push_error("Terrain3D range landmark %s surface %d renders untextured" % [mesh_instance.name, untextured])
+            quit(1)
+            return
     scene.queue_free()
     camera.queue_free()
     await process_frame
     quit(0)
+
+## Returns the index of the first surface that would render as a white model,
+## or -1 when every surface carries an albedo texture.
+##
+## The Kenney kit ships both `.glb` sources and pre-baked `.scn` scenes; the
+## latter lost their albedo textures, so a scene that referenced them rendered
+## solid white while every structural assertion still passed.
+func _untextured_surface(mesh_instance: MeshInstance3D) -> int:
+    var mesh := mesh_instance.mesh if mesh_instance != null else null
+    if mesh == null:
+        return 0
+    for surface in mesh.get_surface_count():
+        var material := mesh_instance.get_surface_override_material(surface)
+        if material == null:
+            material = mesh.surface_get_material(surface)
+        var base_material := material as BaseMaterial3D
+        if base_material == null or base_material.albedo_texture == null:
+            return surface
+    return -1
