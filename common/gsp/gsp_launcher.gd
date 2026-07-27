@@ -53,7 +53,7 @@ func launch(options: Dictionary = {}) -> Dictionary:
     if not bool(launch_options.get("enabled", false)):
         return {"ok": true, "enabled": false}
 
-    var display_name := DisplayServer.get_name()
+    var display_name := String(launch_options.get("display_name", DisplayServer.get_name()))
     if not is_native_wayland(display_name):
         return {"ok": false, "enabled": true, "error": "native Wayland required; detected %s" % display_name}
 
@@ -87,7 +87,8 @@ func launch(options: Dictionary = {}) -> Dictionary:
     var open_requested := bool(launch_options.get("open", false))
     var opened := true
     if open_requested:
-        opened = open_panel(url)
+        var open_panel_override: Callable = launch_options.get("open_panel", Callable())
+        opened = bool(open_panel_override.call(url)) if open_panel_override.is_valid() else open_panel(url)
     var shell_result: Dictionary = shell_open_result(open_requested, opened, url)
     var result := {
         "ok": bool(shell_result.get("ok", false)),
@@ -116,9 +117,9 @@ func open_panel(url: String) -> bool:
     return OS.shell_open(url) == OK
 
 
-static func shell_open_result(open_requested: bool, opened: bool, url: String) -> Dictionary:
+static func shell_open_result(open_requested: bool, opened: bool, _url: String) -> Dictionary:
     if open_requested and not opened:
-        return {"ok": false, "error": "OS.shell_open failed for panel URL: %s" % url}
+        return {"ok": false, "error": "OS.shell_open failed; panel was not opened"}
     return {"ok": true}
 
 

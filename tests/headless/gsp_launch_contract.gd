@@ -23,8 +23,10 @@ func _init() -> void:
 		failures.append("file URI is not correctly encoded: %s" % uri)
 	if not GspLauncher.is_native_wayland("Wayland") or GspLauncher.is_native_wayland("X11"):
 		failures.append("native Wayland detection accepts the wrong display backend")
-	var shell_open_failure := GspLauncher.shell_open_result(true, false, "file:///tmp/panel.html")
-	if bool(shell_open_failure.get("ok", true)) or not String(shell_open_failure.get("error", "")).contains("OS.shell_open"):
+	var token_url := GspLauncher.panel_url("file:///tmp/panel.html", 8765, "0123456789abcdef0123456789abcdef")
+	var shell_open_failure := GspLauncher.shell_open_result(true, false, token_url)
+	var shell_error := String(shell_open_failure.get("error", ""))
+	if bool(shell_open_failure.get("ok", true)) or not shell_error.contains("OS.shell_open") or shell_error.contains(token_url) or shell_error.contains("file://") or shell_error.contains("#") or shell_error.contains("token="):
 		failures.append("requested shell-open failure must fail launch with an actionable error")
 	var suppressed_open := GspLauncher.shell_open_result(false, false, "file:///tmp/panel.html")
 	if not bool(suppressed_open.get("ok", false)):

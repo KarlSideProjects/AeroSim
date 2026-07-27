@@ -4,18 +4,25 @@
 from __future__ import annotations
 
 import json
+import re
 import select
 import socket
 import subprocess
 import struct
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from test_gsp_transport import GODOT, receive_frame, read_ready, send_text, websocket_connect
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LAUNCHER_URL = re.compile(r"GSP panel URL: (?P<url>file://[^\s]+#port=(?P<port>\d+)&token=(?P<token>[0-9a-f]{32}))")
+
+
+class ProbePublicationTimeout(RuntimeError):
+    pass
 
 
 def wait_for_eof(sock: socket.socket, timeout: float) -> bool:
@@ -97,6 +104,96 @@ def finish_harness(process: subprocess.Popen[bytes], stop: Path, status: Path) -
     return json.loads(status.read_text(encoding="utf-8"))
 
 
+def launcher_command(stop: Path) -> list[str]:
+    return [
+        GODOT,
+        "--headless",
+        "--path",
+        str(ROOT),
+        "--script",
+        "res://tests/headless/gsp_launcher_harness.gd",
+        "--",
+        "--stop-file",
+        str(stop),
+    ]
+
+
+def start_launcher_harness(temp: Path) -> tuple[subprocess.Popen[bytes], dict[str, object], Path]:
+    stop = temp / "stop"
+    process = subprocess.Popen(
+        launcher_command(stop),
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if process.stdout is None:
+        raise RuntimeError("GSP launcher harness did not expose stdout")
+    deadline = time.monotonic() + 5.0
+    output: list[str] = []
+    while time.monotonic() < deadline:
+        readable, _, _ = select.select([process.stdout], [], [], 0.1)
+        if not readable:
+            if process.poll() is not None:
+                break
+            continue
+        line = process.stdout.readline().decode(errors="replace")
+        output.append(line)
+        match = LAUNCHER_URL.search(line)
+        if match:
+            return process, {"port": int(match["port"]), "token": match["token"], "url": match["url"]}, stop
+    output.extend(process.stdout.read().decode(errors="replace").splitlines(keepends=True))
+    raise RuntimeError(f"GSP launcher harness did not print a launch URL: {''.join(output)}")
+
+
+def finish_launcher_harness(process: subprocess.Popen[bytes], stop: Path) -> None:
+    if process.poll() is None:
+        stop.touch()
+    try:
+        output, _ = process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        output, _ = process.communicate()
+        raise RuntimeError("GSP launcher harness did not stop")
+    if process.returncode not in (0, None):
+        raise RuntimeError(f"GSP launcher harness failed: {output.decode(errors='replace')}")
+
+
+def poll_until_reclaimed(
+    probe: Callable[[int, float], dict[str, object]],
+    process_exited: Callable[[], bool],
+    deadline: float,
+    sequence: int,
+) -> tuple[dict[str, object], int]:
+    while time.monotonic() < deadline:
+        if process_exited():
+            raise RuntimeError("GSP boundary harness exited during abrupt reclaim")
+        remaining = deadline - time.monotonic()
+        try:
+            snapshot = probe(sequence, min(0.25, remaining))
+        except ProbePublicationTimeout:
+            sequence += 1
+            continue
+        if (snapshot["live_peer_count"], snapshot["authenticated_peer_count"], snapshot["closing_peer_count"]) == (0, 0, 0):
+            return snapshot, sequence + 1
+        sequence += 1
+    raise RuntimeError("abruptly lost peer was not reclaimed within five seconds")
+
+
+def run_probe_retry_regression() -> None:
+    attempts: list[tuple[int, float]] = []
+
+    def delayed_probe(sequence: int, timeout: float) -> dict[str, object]:
+        attempts.append((sequence, timeout))
+        if len(attempts) == 1:
+            raise ProbePublicationTimeout("delayed probe")
+        return {"live_peer_count": 0, "authenticated_peer_count": 0, "closing_peer_count": 0}
+
+    snapshot, next_sequence = poll_until_reclaimed(delayed_probe, lambda: False, time.monotonic() + 5.0, 2)
+    if snapshot["live_peer_count"] != 0 or len(attempts) != 2 or attempts[0][0] != 2 or attempts[1][0] != 3 or next_sequence != 4:
+        raise RuntimeError(f"probe timeout retry regression failed: attempts={attempts!r}, snapshot={snapshot!r}, next={next_sequence!r}")
+    print("GSP probe retry regression: PASS delayed_timeout_retry=true")
+
+
 def probe_status(process: subprocess.Popen[bytes], probe: Path, status: Path, sequence: int, timeout: float = 5.0) -> dict[str, object]:
     probe.touch()
     deadline = time.monotonic() + timeout
@@ -111,7 +208,7 @@ def probe_status(process: subprocess.Popen[bytes], probe: Path, status: Path, se
             if snapshot is not None and int(snapshot.get("probe_sequence", 0)) >= sequence:
                 return snapshot
         time.sleep(0.05)
-    raise RuntimeError(f"GSP boundary harness did not publish probe status {sequence}")
+    raise ProbePublicationTimeout(f"GSP boundary harness did not publish probe status {sequence}")
 
 
 def run_pending_handshake_boundary(temp: Path) -> None:
@@ -218,17 +315,12 @@ def run_abrupt_reclaim_case(temp: Path) -> None:
         loss_started = time.monotonic()
         lost.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
         lost.close()
-        reclaimed = None
-        sequence = 2
-        while time.monotonic() - loss_started <= 5.0:
-            remaining = 5.0 - (time.monotonic() - loss_started)
-            snapshot = probe_status(process, probe, status, sequence, min(0.25, remaining))
-            sequence += 1
-            if (snapshot["live_peer_count"], snapshot["authenticated_peer_count"], snapshot["closing_peer_count"]) == (0, 0, 0):
-                reclaimed = snapshot
-                break
-        if reclaimed is None:
-            raise RuntimeError("abruptly lost peer was not reclaimed within five seconds")
+        reclaimed, sequence = poll_until_reclaimed(
+            lambda current_sequence, timeout: probe_status(process, probe, status, current_sequence, timeout),
+            lambda: process.poll() is not None,
+            loss_started + 5.0,
+            2,
+        )
         if time.monotonic() - loss_started > 5.0:
             raise RuntimeError("abruptly lost peer was reclaimed after five seconds")
         if reclaimed["timestamp_ms"] <= before_loss["timestamp_ms"]:
@@ -266,7 +358,7 @@ def run_restart_token_case(temp: Path) -> None:
     first_process, first_identity, first_stop, first_status, _, _ = start_harness(first_dir, False)
     first_stop.touch()
     finish_harness(first_process, first_stop, first_status)
-    second_process, second_identity, second_stop, second_status, _, _ = start_harness(second_dir, False)
+    second_process, second_identity, second_stop = start_launcher_harness(second_dir)
     stale = None
     fresh = None
     try:
@@ -277,14 +369,13 @@ def run_restart_token_case(temp: Path) -> None:
         authenticate_rejected(stale, str(first_identity["token"]))
         fresh = websocket_connect("127.0.0.1", int(second_identity["port"]))
         authenticate(fresh, second_identity)
-        print("GSP restart token: PASS stale_rejected=true fresh_token_authenticated=true")
+        print("GSP restart token: PASS stale_rejected=true fresh_printed_url=true fresh_token_authenticated=true")
     finally:
         if stale is not None:
             stale.close()
         if fresh is not None:
             fresh.close()
-        second_stop.touch()
-        finish_harness(second_process, second_stop, second_status)
+        finish_launcher_harness(second_process, second_stop)
 
 
 def run_graceful_case(temp: Path) -> None:
@@ -355,6 +446,7 @@ def run_forced_case(temp: Path) -> None:
 
 
 def main() -> int:
+    run_probe_retry_regression()
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-pending-") as temp_dir:
         run_pending_handshake_boundary(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-graceful-") as temp_dir:
