@@ -283,3 +283,27 @@ The contract’s deliberate `1e999` non-finite fixture still produces Godot’s 
 ### Fix-round files and commit
 
 Implementation: `common/gsp/gsp_preset_store.gd`, `common/flight/flight_runtime.gd`. Coverage: `tests/headless/gsp_preset_contract.gd`, `tests/headless/gsp_preset_integration.gd`. The existing GSP server path and panel behavior were preserved and exercised; no GPU vendor/type restriction was introduced.
+
+### Fix-round exact full gate
+
+Command:
+
+```text
+RUNNER_TEMP=/tmp/aerosim-gsp-247 \
+GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
+scripts/verify_issue_11.sh
+```
+
+Result: exit `0` on committed HEAD `38f3a33`.
+
+Observed results:
+
+- native build and provenance completed;
+- license scan passed for 11 dependencies, including the expected GPL fixture rejection;
+- GUT: 277 tests, 0 failures, 0 errors;
+- panel behavior, preset contract, preset two-peer integration, existing GSP tuning integration, Quick Adjust integration, and GSP tuning stress passed;
+- headed acceptance passed on the available NVIDIA Vulkan environment;
+- complete-session replay integration passed;
+- headless smoke passed with `native_probe=47`, `physics_ticks_per_second=240`, and `simulated_frames=5`.
+
+The gate emitted only known non-fatal repository diagnostics: negative-path native errors, Terrain3D mipmap warnings, editor/import warnings, existing GUT orphans/leaks, and the deliberate non-finite preset fixture’s `Exponent too high` parser warning. GPU behavior remains vendor/type neutral; the NVIDIA device appears only as the test environment.
