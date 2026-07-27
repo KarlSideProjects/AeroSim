@@ -59,11 +59,11 @@ artifact.write_text(json.dumps({
 }, separators=(",", ":")) + "\n", encoding="utf-8")
 PY
 export AEROSIM_NATIVE_PROVENANCE="$native_provenance"
-"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_preset_contract.gd
-"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_preset_integration.gd
 scripts/test_terrain3d_dependency.sh
 scripts/run_gut_tests.sh
 scripts/test_native_atomic_boundary.sh
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_preset_contract.gd
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_preset_integration.gd
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/quick_adjust_integration.gd
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_tuning_stress.gd
