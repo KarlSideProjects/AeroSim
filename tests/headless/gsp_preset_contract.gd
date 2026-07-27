@@ -188,11 +188,20 @@ func _init() -> void:
     runtime._gsp_tuning_registry_hash = hardware.tuning_registry_hash()
     _expect(runtime.native != null and hardware.initialize_tuning(runtime), "preset runtime uses canonical tuning registry")
     if runtime.native != null:
+        var inactive_value := float(runtime.native.call("flight_tuning_configuration").get("simpleflight.rate_p", 0.6))
+        var inactive_tuning := runtime.gsp_tuning_request(-1, -1, 0, "simpleflight.rate_p", inactive_value)
+        _expect(bool(inactive_tuning.get("ok", false)),
+                "normal tuning commit succeeds when replay recording is inactive")
         var runtime_saved: Dictionary = runtime.gsp_save_preset(runtime_name)
         if bool(runtime_saved.get("ok", false)):
             _remember_created(runtime_name)
         _expect(bool(runtime_saved.get("ok", false)),
                 "runtime saves active registry values %s: %s" % [runtime_name, JSON.stringify(runtime_saved)])
+        runtime.paused = true
+        var inactive_preset := runtime.gsp_load_preset(-1, -1, 0, runtime_name)
+        _expect(bool(inactive_preset.get("ok", false)),
+                "normal preset commit succeeds when replay recording is inactive")
+        runtime.paused = false
         var mismatch_values: Dictionary = runtime_saved.get("preset", {}).get("values", {}).duplicate(true)
         var mismatch_saved := store.save_preset(mismatch_name, mismatch_values, "different-registry", "test-sim")
         if bool(mismatch_saved.get("ok", false)):

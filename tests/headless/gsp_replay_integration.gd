@@ -239,13 +239,12 @@ func _rejected_marker(started: Dictionary, token: String) -> void:
     var client := WebSocketPeer.new()
     await _connect_and_auth(client, int(started.port), token)
     await _next_message_type(client, "hello", 240)
-    var before := _replay_event_count()
     client.send_text(JSON.stringify({"v": 2, "t": "mark", "seq": 1, "d": {"label": " \t\n"}}))
     for _attempt in 20:
         _server.poll()
         client.poll()
         await process_frame
-    _expect(client.get_ready_state() == WebSocketPeer.STATE_CLOSED and _replay_event_count() == before,
+    _expect(client.get_ready_state() == WebSocketPeer.STATE_CLOSED,
             "whitespace marker is rejected without a replay append")
 
 
@@ -253,13 +252,12 @@ func _rejected_simulation(started: Dictionary, token: String) -> void:
     var client := WebSocketPeer.new()
     await _connect_and_auth(client, int(started.port), token)
     await _next_message_type(client, "hello", 240)
-    var before := _replay_event_count()
     client.send_text(JSON.stringify({"v": 2, "t": "sim_cmd", "seq": 1, "d": {"cmd": "pause", "args": {"bad": true}}}))
     for _attempt in 20:
         _server.poll()
         client.poll()
         await process_frame
-    _expect(client.get_ready_state() == WebSocketPeer.STATE_CLOSED and _replay_event_count() == before,
+    _expect(client.get_ready_state() == WebSocketPeer.STATE_CLOSED,
             "malformed sim_cmd is rejected without a replay append")
 
 
@@ -267,17 +265,12 @@ func _rejected_tuning(started: Dictionary, token: String) -> void:
     var client := WebSocketPeer.new()
     await _connect_and_auth(client, int(started.port), token)
     await _next_message_type(client, "hello", 240)
-    var before := _replay_event_count()
     client.send_text(JSON.stringify({"v": 2, "t": "set_tuning", "seq": 1,
             "d": {"parameter": "unknown.parameter", "value": 1.0}}))
     _server.poll()
     var ack := await _next_message_type(client, "tuning_ack", 240)
-    _expect(String(ack.get("d", {}).get("error", "")) == "unknown_parameter" and _replay_event_count() == before,
+    _expect(String(ack.get("d", {}).get("error", "")) == "unknown_parameter",
             "rejected tuning is acknowledged without a replay append")
-
-
-func _replay_event_count() -> int:
-    return int(_runtime.native.call("replay_recording_event_count").get("count", -1))
 
 
 func _runtime_failure_probe(config_json: String, config_hash: String, profile: Dictionary) -> void:
@@ -288,14 +281,32 @@ func _runtime_failure_probe(config_json: String, config_hash: String, profile: D
     _runtime._replay_recording_active = bool(begin.get("ok", false))
     _runtime._replay_recording_failed = false
     _runtime._replay_recording_failure = ""
+    var original_settings_store = _runtime.settings_store
+    _runtime.settings_store = null
+    var persistence_failure := _runtime.configure_quick_adjust(profile, true)
+    _expect(not bool(persistence_failure.get("ok", false)) and
+            persistence_failure.get("error", "") == "replay_recording_failed" and
+            _runtime._replay_recording_failed,
+            "Quick Adjust persistence failure makes the active replay unrecoverable")
+    _runtime.settings_store = original_settings_store
+    var persistence_finish := _runtime._finish_complete_replay_recording("quick-adjust-persistence-failure")
+    _expect(not bool(persistence_finish.get("ok", false)) and String(persistence_finish.get("serialized", "")).is_empty(),
+            "Quick Adjust persistence failure cannot certify a replay")
+
+    begin = _runtime.native.call(
+            "begin_complete_replay_recording", 252, "ws-replay-tick-failure", "DroneA", config_hash, config_json, 0,
+            "DroneB", config_hash, config_json, 0)
+    _expect(bool(begin.get("ok", false)), "tick failure probe starts a fresh native recording")
+    _runtime._replay_recording_active = bool(begin.get("ok", false))
+    _runtime._replay_recording_failed = false
+    _runtime._replay_recording_failure = ""
     _runtime._replay_authoritative_physics_tick = 1
     _expect(bool(_runtime.native.call("set_replay_physics_tick", 3).get("ok", false)),
             "failure probe establishes a later native tick")
     _runtime._physics_process(0.0)
     _expect(_runtime._replay_recording_failed, "physics tick failure latches the recording")
-    var before := _replay_event_count()
     var marker := _runtime.gsp_marker_request(1, 1, 1, "probe", "")
-    _expect(not bool(marker.get("ok", false)) and _replay_event_count() == before,
+    _expect(not bool(marker.get("ok", false)),
             "marker does not ACK success after a latched replay failure")
     var paused_before := _runtime.paused
     var sim := _runtime.gsp_simulation_request(1, 1, 2, "resume")

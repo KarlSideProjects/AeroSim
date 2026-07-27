@@ -4936,13 +4936,22 @@ func configure_quick_adjust(candidate: Variant, persist: bool = true) -> Diction
             return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
     if persist:
         if settings_store == null:
+            if _replay_recording_active:
+                _fail_replay_recording("Quick Adjust settings persistence is unavailable")
+                return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
             return {"ok": false, "error": "settings_unavailable"}
         var loaded: Dictionary = settings_store.load_document()
         if not bool(loaded.get("ok", false)):
+            if _replay_recording_active:
+                _fail_replay_recording("Quick Adjust settings could not be loaded")
+                return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
             return {"ok": false, "error": "settings_unavailable", "detail": loaded.get("error", "")}
         loaded.document["quick_adjust"] = profile.duplicate(true)
         var saved: Dictionary = settings_store.save_document(loaded.document)
         if not bool(saved.get("ok", false)):
+            if _replay_recording_active:
+                _fail_replay_recording("Quick Adjust settings could not be saved")
+                return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
             return {"ok": false, "error": "settings_save_failed", "detail": saved.get("error", "")}
     _quick_adjust_profile = profile.duplicate(true)
     _reset_quick_adjust_rate_limits()
@@ -5291,7 +5300,7 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
     for key in native_result:
         result[key] = native_result[key]
     if bool(native_result.get("ok", false)):
-        if not _set_replay_physics_tick():
+        if _replay_recording_active and not _set_replay_physics_tick():
             result["ok"] = false
             result["error"] = "replay_recording_failed"
             result["diagnostic_message"] = _replay_recording_failure
