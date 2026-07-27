@@ -31,7 +31,9 @@ class Element {
 }
 
 const elements = new Map();
-for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state", "sparkline", "focus-state"]) {
+for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state", "sparkline", "focus-state",
+    "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
+    "preset-retrieve", "preset-load", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff"]) {
     elements.set(id, new Element(id === "sparkline" ? "canvas" : "div"));
 }
 elements.get("sparkline").width = 840;

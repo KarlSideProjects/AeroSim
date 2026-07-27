@@ -1,6 +1,7 @@
 extends Node
 class_name GspServer
 
+const GspPresetStore = preload("res://common/gsp/gsp_preset_store.gd")
 const BIND_ADDRESS := "127.0.0.1"
 const PORT_RANGE: Array[int] = [8765, 8766, 8767, 8768, 8769]
 const PROTOCOL_VERSION := 2
@@ -39,6 +40,7 @@ var _telemetry_provider: Callable
 var _tuning_request_provider: Callable
 var _tuning_result_provider: Callable
 var _quick_adjust_request_provider: Callable
+var _preset_request_provider: Callable
 var _latest_telemetry_payload: Dictionary = {}
 var _last_telemetry_source_seq := -1
 var _telemetry_sample_seq := 0
@@ -175,6 +177,10 @@ func set_tuning_result_provider(provider: Callable) -> void:
 
 func set_quick_adjust_request_provider(provider: Callable) -> void:
     _quick_adjust_request_provider = provider
+
+
+func set_preset_request_provider(provider: Callable) -> void:
+    _preset_request_provider = provider
 
 
 func get_telemetry_processing_diagnostics() -> Dictionary:
@@ -325,6 +331,65 @@ static func validate_set_quick_adjust_message(message: String, previous_sequence
     if data.size() != 1 or typeof(data.get("profile")) != TYPE_DICTIONARY:
         return {"ok": false, "error": "malformed quick_adjust data"}
     return {"ok": true, "envelope": envelope, "sequence": sequence, "profile": data.profile.duplicate(true)}
+
+
+static func validate_preset_message(message: String, previous_sequence: int, expected_type: String) -> Dictionary:
+    var envelope_result := _parse_envelope(message, expected_type)
+    if not bool(envelope_result.get("ok", false)):
+        return envelope_result
+    var envelope: Dictionary = envelope_result.envelope
+    var sequence := _integer_value(envelope.seq)
+    if sequence != previous_sequence + 1:
+        return {"ok": false, "error": "invalid preset sequence"}
+    var data: Dictionary = envelope.d
+    if expected_type == "list_presets":
+        if not data.is_empty():
+            return {"ok": false, "error": "list presets data must be empty"}
+    elif expected_type in ["retrieve_preset", "load_preset"]:
+        if data.size() != 1 or typeof(data.get("name")) != TYPE_STRING:
+            return {"ok": false, "error": "malformed preset name data"}
+        var name_result := GspPresetStore.validate_name(data.name)
+        if not bool(name_result.get("ok", false)):
+            return name_result
+    elif expected_type == "save_preset":
+        if (data.size() != 1 and data.size() != 2) or typeof(data.get("name")) != TYPE_STRING:
+            return {"ok": false, "error": "malformed save preset data"}
+        var save_name_result := GspPresetStore.validate_name(data.name)
+        if not bool(save_name_result.get("ok", false)):
+            return save_name_result
+        if data.has("note") and (typeof(data.note) != TYPE_STRING or String(data.note).length() > GspPresetStore.NOTE_MAX_LENGTH):
+            return {"ok": false, "error": "invalid preset note"}
+    elif expected_type == "compare_presets":
+        if data.size() != 2 or typeof(data.get("left")) != TYPE_STRING or typeof(data.get("right")) != TYPE_STRING:
+            return {"ok": false, "error": "malformed compare preset data"}
+        for name in [String(data.left), String(data.right)]:
+            if not name.is_empty():
+                var compare_name_result := GspPresetStore.validate_name(name)
+                if not bool(compare_name_result.get("ok", false)):
+                    return compare_name_result
+    else:
+        return {"ok": false, "error": "unsupported preset message"}
+    return {"ok": true, "envelope": envelope, "sequence": sequence, "operation": expected_type, "data": data.duplicate(true)}
+
+
+static func validate_list_presets_message(message: String, previous_sequence: int) -> Dictionary:
+    return validate_preset_message(message, previous_sequence, "list_presets")
+
+
+static func validate_save_preset_message(message: String, previous_sequence: int) -> Dictionary:
+    return validate_preset_message(message, previous_sequence, "save_preset")
+
+
+static func validate_retrieve_preset_message(message: String, previous_sequence: int) -> Dictionary:
+    return validate_preset_message(message, previous_sequence, "retrieve_preset")
+
+
+static func validate_load_preset_message(message: String, previous_sequence: int) -> Dictionary:
+    return validate_preset_message(message, previous_sequence, "load_preset")
+
+
+static func validate_compare_presets_message(message: String, previous_sequence: int) -> Dictionary:
+    return validate_preset_message(message, previous_sequence, "compare_presets")
 
 
 static func apply_timing_contract(timing: String, paused: bool, at_physics_boundary: bool) -> Dictionary:
@@ -641,6 +706,34 @@ func _poll_authenticated_peers() -> void:
                 if not _queue_identity_message(record, "quick_adjust_ack", quick_data):
                     failed = true
                     break
+            elif message_type in ["list_presets", "save_preset", "retrieve_preset", "load_preset", "compare_presets"]:
+                var preset_result := validate_preset_message(message, int(record.get("client_sequence", -1)), message_type)
+                if not bool(preset_result.get("ok", false)):
+                    failed = true
+                    break
+                record["client_sequence"] = int(preset_result.sequence)
+                var preset_response := _submit_preset_request(
+                        int(record.id), int(record.connection_id), int(preset_result.sequence), message_type, preset_result.data)
+                if bool(preset_response.get("pending", false)):
+                    continue
+                var preset_response_ack_failed := false
+                if message_type == "load_preset":
+                    preset_response_ack_failed = not _queue_tuning_ack(record, int(preset_result.sequence), preset_response)
+                else:
+                    var preset_data := preset_response.duplicate(true)
+                    preset_data.erase("peer_id")
+                    preset_data.erase("connection_id")
+                    preset_data["request_seq"] = int(preset_result.sequence)
+                    preset_data["operation"] = message_type
+                    preset_response_ack_failed = not _queue_identity_message(record, "preset_ack", preset_data)
+                if preset_response_ack_failed:
+                    failed = true
+                    break
+                if message_type == "load_preset" and bool(preset_response.get("ok", false)) and bool(preset_response.get("changed", false)):
+                    if not _flush_reliable(record):
+                        failed = true
+                        break
+                    _broadcast_tuning_commit(preset_response, int(preset_result.sequence))
             else:
                 failed = true
                 break
@@ -672,6 +765,13 @@ func _submit_quick_adjust_request(peer_id: int, connection_id: int, request_seq:
         return {"ok": false, "error": "quick_adjust_unavailable"}
     var result = _quick_adjust_request_provider.call(peer_id, connection_id, request_seq, profile)
     return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_quick_adjust_response"}
+
+
+func _submit_preset_request(peer_id: int, connection_id: int, request_seq: int, operation: String, data: Dictionary) -> Dictionary:
+    if not _preset_request_provider.is_valid():
+        return {"ok": false, "error": "presets_unavailable"}
+    var result = _preset_request_provider.call(peer_id, connection_id, request_seq, operation, data)
+    return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_preset_response"}
 
 
 func _queue_tuning_ack(record: Dictionary, request_seq: int, result: Dictionary) -> bool:

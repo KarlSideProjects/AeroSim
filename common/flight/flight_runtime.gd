@@ -10,6 +10,7 @@ const QualityProfile = preload("res://common/flight/quality_profile.gd")
 const CameraProfile = preload("res://common/flight/camera_profile.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
+const GspPresetStore = preload("res://common/gsp/gsp_preset_store.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const RotorTelemetryPanel = preload("res://common/flight/rotor_telemetry_panel.gd")
 const GamepadTelemetryPanel = preload("res://common/flight/gamepad_telemetry_panel.gd")
@@ -5267,6 +5268,102 @@ func _gsp_tuning_descriptor_timing(parameter: String) -> String:
     return "unknown"
 
 
+func _gsp_active_tuning_values() -> Dictionary:
+    var active: Dictionary = native.call("flight_tuning_configuration") if native != null and native.has_method("flight_tuning_configuration") else {}
+    var values: Dictionary = {}
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        if active.has(key):
+            values[key] = float(active[key])
+    return values
+
+
+func gsp_list_presets() -> Dictionary:
+    return GspPresetStore.new().list_presets()
+
+
+func gsp_save_preset(name: String, note: String = "") -> Dictionary:
+    var values := _gsp_active_tuning_values()
+    if values.is_empty():
+        return {"ok": false, "error": "tuning_unavailable"}
+    var sim_version := String(ProjectSettings.get_setting("application/config/version", "")).strip_edges()
+    if sim_version.is_empty():
+        sim_version = "unavailable"
+    return GspPresetStore.new().save_preset(
+            name,
+            values,
+            _gsp_tuning_registry_hash,
+            sim_version,
+            note)
+
+
+func gsp_retrieve_preset(name: String) -> Dictionary:
+    return GspPresetStore.new().retrieve_preset(name)
+
+
+func gsp_compare_presets(left_name: String, right_name: String) -> Dictionary:
+    var store := GspPresetStore.new()
+    var left_values := _gsp_active_tuning_values() if left_name.is_empty() else {}
+    if not left_name.is_empty():
+        var left_result: Dictionary = store.retrieve_preset(left_name)
+        if not bool(left_result.get("ok", false)):
+            return left_result
+        var left_preset: Dictionary = left_result.preset
+        if String(left_preset.get("registry_hash", "")) != _gsp_tuning_registry_hash:
+            return {"ok": false, "error": "registry_mismatch"}
+        left_values = left_preset.values
+    var right_values := _gsp_active_tuning_values() if right_name.is_empty() else {}
+    if not right_name.is_empty():
+        var right_result: Dictionary = store.retrieve_preset(right_name)
+        if not bool(right_result.get("ok", false)):
+            return right_result
+        var right_preset: Dictionary = right_result.preset
+        if String(right_preset.get("registry_hash", "")) != _gsp_tuning_registry_hash:
+            return {"ok": false, "error": "registry_mismatch"}
+        right_values = right_preset.values
+    return {
+        "ok": true,
+        "left": left_name if not left_name.is_empty() else "current",
+        "right": right_name if not right_name.is_empty() else "current",
+        "changes": GspPresetStore.diff_values(left_values, right_values),
+    }
+
+
+func gsp_load_preset(peer_id: int, connection_id: int, request_seq: int, name: String) -> Dictionary:
+    var loaded: Dictionary = gsp_retrieve_preset(name)
+    if not bool(loaded.get("ok", false)):
+        loaded["peer_id"] = peer_id
+        loaded["connection_id"] = connection_id
+        loaded["request_seq"] = request_seq
+        return loaded
+    var preset: Dictionary = loaded.preset
+    if String(preset.get("registry_hash", "")) != _gsp_tuning_registry_hash:
+        return {"ok": false, "error": "registry_mismatch", "peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    var changes: Array = []
+    for key in preset.values:
+        changes.append({"parameter": String(key), "value": preset.values[key]})
+    return gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset")
+
+
+func gsp_preset_request(peer_id: int, connection_id: int, request_seq: int, operation: String, data: Dictionary) -> Dictionary:
+    match operation:
+        "list_presets":
+            return gsp_list_presets()
+        "save_preset":
+            var saved: Dictionary = gsp_save_preset(String(data.get("name", "")), String(data.get("note", "")))
+            if bool(saved.get("ok", false)):
+                saved["presets"] = gsp_list_presets().get("presets", [])
+            return saved
+        "retrieve_preset":
+            return gsp_retrieve_preset(String(data.get("name", "")))
+        "load_preset":
+            return gsp_load_preset(peer_id, connection_id, request_seq, String(data.get("name", "")))
+        "compare_presets":
+            return gsp_compare_presets(String(data.get("left", "")), String(data.get("right", "")))
+    return {"ok": false, "error": "unsupported_preset_operation"}
+
+
 func gsp_validate_all() -> Dictionary:
     var active: Dictionary = native.call("flight_tuning_configuration") if native != null and native.has_method("flight_tuning_configuration") else {}
     var mismatches: Array[Dictionary] = []
@@ -5311,6 +5408,7 @@ func gsp_identity_snapshot() -> Dictionary:
         var descriptor: Dictionary = descriptor_value
         if active_tuning.has(String(descriptor.get("key", ""))):
             descriptor["active_value"] = active_tuning[String(descriptor.get("key", ""))]
+    var preset_listing: Dictionary = gsp_list_presets()
     return {
         "sim_version": String(ProjectSettings.get_setting("application/config/version", "unavailable")),
         "proto_v": 2,
@@ -5325,6 +5423,7 @@ func gsp_identity_snapshot() -> Dictionary:
             "tuning": active_tuning,
             "tuning_recent_results": _gsp_tuning_recent_results.duplicate(true),
             "quick_adjust": _quick_adjust_profile.duplicate(true),
+            "presets": preset_listing.get("presets", []),
         },
         "registry_hash": _gsp_tuning_registry_hash,
         "tick": airsim_session.frame_index if airsim_session != null else 0,

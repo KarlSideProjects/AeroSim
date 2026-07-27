@@ -31,6 +31,10 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 .tuning-row button { background: #244d67; color: #dce7f5; border: 0; border-radius: 4px; padding: 6px 10px; }
 .quick-adjust-row { display: grid; grid-template-columns: repeat(5, minmax(7rem, 1fr)); gap: 6px; align-items: center; margin-top: 8px; }
 .quick-adjust-row input, .quick-adjust-row select { box-sizing: border-box; width: 100%; background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
+.preset-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.preset-row input, .preset-row select, .preset-row button { background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
+.preset-row input, .preset-row select { flex: 1 1 10rem; }
+#preset-diff { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -53,6 +57,12 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 <section class="card"><strong>Motor order: rear_right, front_right, rear_left, front_left</strong><p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas></section>
 <section class="card"><strong>Quick Adjust</strong><div id="tuning-rows" class="muted">Waiting for registry.</div></section>
 <section class="card"><strong>In-flight Quick Adjust</strong><div id="quick-adjust-rows" class="muted">Waiting for registry.</div></section>
+<section class="card"><strong>Presets</strong>
+  <div class="preset-row"><input id="preset-name" placeholder="preset name" maxlength="64"><input id="preset-note" placeholder="optional note" maxlength="512"><button id="preset-save">Save</button><button id="preset-refresh">Refresh</button></div>
+  <div class="preset-row"><select id="preset-source"><option value="">Current</option></select><button id="preset-retrieve">Retrieve</button><button id="preset-load">Load</button><button id="preset-compare-current">Compare current</button></div>
+  <div class="preset-row"><select id="preset-target"><option value="">Current</option></select><button id="preset-compare-two">Compare presets</button></div>
+  <div id="preset-status" class="muted">No presets loaded.</div><pre id="preset-diff" class="muted">No changes.</pre>
+</section>
 </div>
 </main>
 <script>
@@ -81,6 +91,13 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   var quickAdjustRows = $("quick-adjust-rows");
   var pendingQuickAdjust = {};
   var quickAdjustControls = [];
+  var pendingPresets = {};
+  var presetName = $("preset-name");
+  var presetNote = $("preset-note");
+  var presetSource = $("preset-source");
+  var presetTarget = $("preset-target");
+  var presetStatus = $("preset-status");
+  var presetDiff = $("preset-diff");
 
   function text(id, value) { $(id).textContent = value; }
   function vector(value, unit) {
@@ -98,6 +115,31 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     return sequence;
   }
   function sendTelemetryRate(rate) { send("set_telemetry", { hz: rate, extra: [] }); }
+  function sendPreset(type, data) {
+    var sequence = send(type, data || {});
+    if (sequence == null) { presetStatus.textContent = "Disconnected"; return null; }
+    pendingPresets[sequence] = type;
+    presetStatus.textContent = "Waiting for preset acknowledgement…";
+    return sequence;
+  }
+  function renderPresets(presets) {
+    [presetSource, presetTarget].forEach(function (select) {
+      select.textContent = "";
+      select.appendChild(new Option("Current", ""));
+      (Array.isArray(presets) ? presets : []).forEach(function (preset) {
+        select.appendChild(new Option(preset.name + " — " + (preset.sim_version || "unavailable") + " — " + (preset.created_at || "unknown time"), preset.name));
+      });
+    });
+    presetStatus.textContent = (presets || []).length + " preset(s) available.";
+  }
+  function renderPresetDiff(result) {
+    var changes = result && Array.isArray(result.changes) ? result.changes : [];
+    if (!changes.length) { presetDiff.textContent = "No changes."; return; }
+    presetDiff.textContent = changes.map(function (change) {
+      var percentage = change.percentage_status === "finite" ? Number(change.percentage).toFixed(2) + "%" : "n/a (" + change.percentage_status + ")";
+      return change.parameter + ": " + Number(change.before).toFixed(6) + " → " + Number(change.after).toFixed(6) + " (" + percentage + ")";
+    }).join("\n");
+  }
   function requestFreshSnapshot() {
     waitingForFresh = true;
     freshState.textContent = "Waiting for fresh telemetry…";
@@ -302,6 +344,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         connection.textContent = "Connected";
         renderTuning(message.d.registry || {});
         renderQuickAdjust((message.d.registry || {}).quick_adjust || {}, message.d.registry || {});
+        renderPresets((message.d.registry || {}).presets || []);
         rateStartedAt = performance.now(); rateSamples = 0;
         sendTelemetryRate(30); requestFreshSnapshot();
         sendPing();
@@ -312,7 +355,13 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
       } else if (message.t === "tuning_ack") {
         var ack = message.d;
         var pending = pendingTuning[Number(ack.request_seq)];
-        if (!pending) return;
+        if (!pending) {
+          if (pendingPresets[Number(ack.request_seq)] === "load_preset") {
+            delete pendingPresets[Number(ack.request_seq)];
+            presetStatus.textContent = ack.ok ? "Preset load committed." : String(ack.error || "Preset load rejected");
+          }
+          return;
+        }
         delete pendingTuning[Number(ack.request_seq)];
         pending.controls.status.textContent = ack.ok ? (ack.clamped ? "Clamped to " : "Committed ") + (ack.committed_value == null ? "" : Number(ack.committed_value).toFixed(3)) : String(ack.error || "Rejected");
         if (ack.ok && ack.committed_value != null) { pending.controls.slider.value = ack.committed_value; pending.controls.number.value = ack.committed_value; }
@@ -328,6 +377,14 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         if (!quickStatus) return;
         delete pendingQuickAdjust[Number(message.d.request_seq)];
         quickStatus.textContent = message.d.ok ? "Saved" : String(message.d.error || "Rejected");
+      } else if (message.t === "preset_ack") {
+        var presetAck = message.d;
+        var operation = pendingPresets[Number(presetAck.request_seq)];
+        delete pendingPresets[Number(presetAck.request_seq)];
+        if (!presetAck.ok) { presetStatus.textContent = String(presetAck.error || "Preset request rejected"); return; }
+        if (operation === "list_presets" || operation === "save_preset") renderPresets(presetAck.presets || []);
+        if (operation === "retrieve_preset" && presetAck.preset) presetStatus.textContent = presetAck.preset.name + " — " + (presetAck.preset.note || "no note");
+        if (operation === "compare_presets") { presetStatus.textContent = "Comparison ready."; renderPresetDiff(presetAck); }
       }
     });
     socket.addEventListener("close", function () { disconnect("GSP session closed"); });
@@ -339,9 +396,17 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   });
   window.addEventListener("focus", function () { $("focus-state").textContent = "panel focus"; });
   window.addEventListener("blur", function () { $("focus-state").textContent = "panel unfocused"; });
+  $("preset-save").addEventListener("click", function () { sendPreset("save_preset", { name: presetName.value, note: presetNote.value }); });
+  $("preset-refresh").addEventListener("click", function () { sendPreset("list_presets", {}); });
+  $("preset-retrieve").addEventListener("click", function () { if (presetSource.value) sendPreset("retrieve_preset", { name: presetSource.value }); });
+  $("preset-load").addEventListener("click", function () { if (presetSource.value) sendPreset("load_preset", { name: presetSource.value }); });
+  $("preset-compare-current").addEventListener("click", function () { if (presetSource.value) sendPreset("compare_presets", { left: "", right: presetSource.value }); });
+  $("preset-compare-two").addEventListener("click", function () { if (presetSource.value && presetTarget.value) sendPreset("compare_presets", { left: presetSource.value, right: presetTarget.value }); });
   if (window.__AEROSIM_PANEL_TEST__) {
     window.__AEROSIM_PANEL_TEST__.renderQuickAdjust = renderQuickAdjust;
     window.__AEROSIM_PANEL_TEST__.quickAdjustControls = function () { return quickAdjustControls; };
+    window.__AEROSIM_PANEL_TEST__.renderPresets = renderPresets;
+    window.__AEROSIM_PANEL_TEST__.renderPresetDiff = renderPresetDiff;
   }
   connect(); drawSparkline();
 }());
