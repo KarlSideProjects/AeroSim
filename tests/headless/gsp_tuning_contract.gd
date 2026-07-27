@@ -3,6 +3,8 @@ extends SceneTree
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const GspServer = preload("res://common/gsp/gsp_server.gd")
 const InputProfiles = preload("res://common/flight/input_profiles.gd")
+const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
 
 var _failures: Array[String] = []
 
@@ -54,6 +56,35 @@ func _init() -> void:
         "v": 2, "t": "set_quick_adjust", "seq": 1, "d": {"profile": quick_profile}
     }), 0)
     _expect(bool(quick_message.get("ok", false)), "valid Quick Adjust profile is accepted")
+    var marker_message := GspServer.validate_mark_message(JSON.stringify({
+        "v": 2, "t": "mark", "seq": 1, "d": {"label": "run-start", "note": "panel commit"}
+    }), 0)
+    _expect(bool(marker_message.get("ok", false)) and marker_message.get("label", "") == "run-start" and
+            marker_message.get("note", "") == "panel commit", "valid marker request is accepted")
+    _expect(not bool(GspServer.validate_mark_message(JSON.stringify({
+        "v": 2, "t": "mark", "seq": 1, "d": {"label": ""}
+    }), 0).get("ok", false)), "empty marker label is rejected")
+    var simulation_pause := GspServer.validate_simulation_message(JSON.stringify({
+        "v": 2, "t": "simulation", "seq": 1, "d": {"operation": "pause"}
+    }), 0)
+    var simulation_shell := GspServer.validate_simulation_message(JSON.stringify({
+        "v": 2, "t": "simulation", "seq": 1, "d": {"operation": "shell"}
+    }), 0)
+    _expect(bool(simulation_pause.get("ok", false)) and not bool(simulation_shell.get("ok", false)),
+            "simulation validation keeps the allowlist narrow")
+    var replay_runtime := FlightRuntime.new()
+    replay_runtime.airsim_session = AirSimSession.new(240)
+    replay_runtime._replay_recording_active = true
+    replay_runtime._replay_authoritative_physics_tick = 7
+    replay_runtime.reset_hold_frames = 1
+    replay_runtime._physics_process(0.0)
+    var tick_before_reset := replay_runtime._replay_authoritative_physics_tick
+    replay_runtime.airsim_session.reset()
+    replay_runtime.reset_hold_frames = 1
+    replay_runtime._physics_process(0.0)
+    _expect(replay_runtime._replay_authoritative_physics_tick > tick_before_reset and
+            replay_runtime._replay_authoritative_physics_tick > replay_runtime.airsim_session.frame_index,
+            "authoritative replay tick remains monotonic across an AirSim session reset")
     quick_profile.slots.resize(7)
     _expect(not bool(InputProfiles.QuickAdjustProfile.validate_profile(quick_profile).get("ok", false)), "Quick Adjust rejects non-eight-slot profiles")
     var panel := FileAccess.open("res://common/gsp/gsp_panel.html", FileAccess.READ)

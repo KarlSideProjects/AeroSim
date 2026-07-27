@@ -16,6 +16,8 @@ const OPEN_UNAUTHENTICATED_TIMEOUT_MS := 2_000
 const CLOSING_PEER_TIMEOUT_MS := 1_000
 const MAX_MESSAGE_BYTES := 16_384
 const MAX_STRING_BYTES := 2_048
+const MAX_MARKER_LABEL_BYTES := 256
+const MAX_MARKER_NOTE_BYTES := 2_048
 const MAX_VALUE_DEPTH := 32
 const MAX_EXTRA_FIELDS := 16
 const MAX_RELIABLE_MESSAGES := 64
@@ -41,6 +43,8 @@ var _tuning_request_provider: Callable
 var _tuning_result_provider: Callable
 var _quick_adjust_request_provider: Callable
 var _preset_request_provider: Callable
+var _marker_request_provider: Callable
+var _simulation_request_provider: Callable
 var _latest_telemetry_payload: Dictionary = {}
 var _last_telemetry_source_seq := -1
 var _telemetry_sample_seq := 0
@@ -181,6 +185,14 @@ func set_quick_adjust_request_provider(provider: Callable) -> void:
 
 func set_preset_request_provider(provider: Callable) -> void:
     _preset_request_provider = provider
+
+
+func set_marker_request_provider(provider: Callable) -> void:
+    _marker_request_provider = provider
+
+
+func set_simulation_request_provider(provider: Callable) -> void:
+    _simulation_request_provider = provider
 
 
 func get_telemetry_processing_diagnostics() -> Dictionary:
@@ -331,6 +343,42 @@ static func validate_set_quick_adjust_message(message: String, previous_sequence
     if data.size() != 1 or typeof(data.get("profile")) != TYPE_DICTIONARY:
         return {"ok": false, "error": "malformed quick_adjust data"}
     return {"ok": true, "envelope": envelope, "sequence": sequence, "profile": data.profile.duplicate(true)}
+
+
+static func validate_mark_message(message: String, previous_sequence: int) -> Dictionary:
+    var envelope_result := _parse_envelope(message, "mark")
+    if not bool(envelope_result.get("ok", false)):
+        return envelope_result
+    var envelope: Dictionary = envelope_result.envelope
+    var sequence := _integer_value(envelope.seq)
+    if sequence != previous_sequence + 1:
+        return {"ok": false, "error": "invalid marker sequence"}
+    var data: Dictionary = envelope.d
+    if (data.size() != 1 and data.size() != 2) or typeof(data.get("label")) != TYPE_STRING:
+        return {"ok": false, "error": "malformed marker data"}
+    var label := String(data.label)
+    if label.is_empty() or label.to_utf8_buffer().size() > MAX_MARKER_LABEL_BYTES:
+        return {"ok": false, "error": "marker label is invalid"}
+    var note := ""
+    if data.has("note"):
+        if typeof(data.note) != TYPE_STRING or String(data.note).to_utf8_buffer().size() > MAX_MARKER_NOTE_BYTES:
+            return {"ok": false, "error": "marker note is invalid"}
+        note = String(data.note)
+    return {"ok": true, "envelope": envelope, "sequence": sequence, "label": label, "note": note}
+
+
+static func validate_simulation_message(message: String, previous_sequence: int, expected_type: String = "simulation") -> Dictionary:
+    var envelope_result := _parse_envelope(message, expected_type)
+    if not bool(envelope_result.get("ok", false)):
+        return envelope_result
+    var envelope: Dictionary = envelope_result.envelope
+    var sequence := _integer_value(envelope.seq)
+    if sequence != previous_sequence + 1:
+        return {"ok": false, "error": "invalid simulation sequence"}
+    var data: Dictionary = envelope.d
+    if data.size() != 1 or typeof(data.get("operation")) != TYPE_STRING or String(data.operation) not in ["pause", "resume"]:
+        return {"ok": false, "error": "unsupported simulation operation"}
+    return {"ok": true, "envelope": envelope, "sequence": sequence, "operation": String(data.operation)}
 
 
 static func validate_preset_message(message: String, previous_sequence: int, expected_type: String) -> Dictionary:
@@ -671,6 +719,39 @@ func _poll_authenticated_peers() -> void:
                 record["telemetry_force_snapshot"] = true
                 record["telemetry_request_seq"] = int(request_result.sequence)
                 record["telemetry_next_due_usec"] = 0
+            elif message_type == "mark":
+                var marker_result := validate_mark_message(message, int(record.get("client_sequence", -1)))
+                if not bool(marker_result.get("ok", false)):
+                    failed = true
+                    break
+                record["client_sequence"] = int(marker_result.sequence)
+                var marker_response := _submit_marker_request(
+                        int(record.id), int(record.connection_id), int(marker_result.sequence),
+                        String(marker_result.label), String(marker_result.note))
+                var marker_data := marker_response.duplicate(true)
+                marker_data.erase("peer_id")
+                marker_data.erase("connection_id")
+                marker_data["request_seq"] = int(marker_result.sequence)
+                if not _queue_identity_message(record, "mark_ack", marker_data):
+                    failed = true
+                    break
+            elif message_type in ["simulation", "simulation_command"]:
+                var simulation_result := validate_simulation_message(
+                        message, int(record.get("client_sequence", -1)), message_type)
+                if not bool(simulation_result.get("ok", false)):
+                    failed = true
+                    break
+                record["client_sequence"] = int(simulation_result.sequence)
+                var simulation_response := _submit_simulation_request(
+                        int(record.id), int(record.connection_id), int(simulation_result.sequence),
+                        String(simulation_result.operation))
+                var simulation_data := simulation_response.duplicate(true)
+                simulation_data.erase("peer_id")
+                simulation_data.erase("connection_id")
+                simulation_data["request_seq"] = int(simulation_result.sequence)
+                if not _queue_identity_message(record, "simulation_ack", simulation_data):
+                    failed = true
+                    break
             elif message_type == "set_tuning":
                 var tuning_result := validate_set_tuning_message(message, int(record.get("client_sequence", -1)))
                 if not bool(tuning_result.get("ok", false)):
@@ -788,6 +869,20 @@ func _submit_preset_request(peer_id: int, connection_id: int, request_seq: int, 
         return {"ok": false, "error": "presets_unavailable"}
     var result = _preset_request_provider.call(peer_id, connection_id, request_seq, operation, data)
     return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_preset_response"}
+
+
+func _submit_marker_request(peer_id: int, connection_id: int, request_seq: int, label: String, note: String) -> Dictionary:
+    if not _marker_request_provider.is_valid():
+        return {"ok": false, "error": "marker_unavailable"}
+    var result = _marker_request_provider.call(peer_id, connection_id, request_seq, label, note)
+    return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_marker_response"}
+
+
+func _submit_simulation_request(peer_id: int, connection_id: int, request_seq: int, operation: String) -> Dictionary:
+    if not _simulation_request_provider.is_valid():
+        return {"ok": false, "error": "simulation_unavailable"}
+    var result = _simulation_request_provider.call(peer_id, connection_id, request_seq, operation)
+    return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_simulation_response"}
 
 
 func _queue_tuning_ack(record: Dictionary, request_seq: int, result: Dictionary) -> bool:

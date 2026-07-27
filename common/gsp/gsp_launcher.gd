@@ -73,6 +73,10 @@ func launch(options: Dictionary = {}) -> Dictionary:
         _server.set_quick_adjust_request_provider(Callable(get_parent(), "gsp_quick_adjust_request"))
     if get_parent() != null and get_parent().has_method("gsp_preset_request"):
         _server.set_preset_request_provider(Callable(get_parent(), "gsp_preset_request"))
+    if get_parent() != null and get_parent().has_method("gsp_marker_request"):
+        _server.set_marker_request_provider(Callable(get_parent(), "gsp_marker_request"))
+    if get_parent() != null and get_parent().has_method("gsp_simulation_request"):
+        _server.set_simulation_request_provider(Callable(get_parent(), "gsp_simulation_request"))
     var server_result := _server.start()
     if not bool(server_result.get("ok", false)):
         print("GSP unavailable: %s" % String(server_result.get("error", "listener failed")))

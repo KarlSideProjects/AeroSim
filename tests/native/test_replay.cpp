@@ -402,7 +402,7 @@ bool test_complete_session_schema() {
     }
 
     const std::string serialized = recorder.serialize();
-    if (serialized.empty() || serialized.find("\"schema_version\":4") == std::string::npos ||
+    if (serialized.empty() || serialized.find("\"schema_version\":5") == std::string::npos ||
             serialized.find("\"seed\":42") == std::string::npos ||
             serialized.find("\"settings_manifest_hash\":\"settings-manifest-v1\"") == std::string::npos ||
             serialized.find("\"vehicles\"") == std::string::npos ||
@@ -429,12 +429,12 @@ bool test_complete_session_schema() {
         return false;
     }
     const aerosim::ReplayLoadResult unsupported = aerosim::load_replay_session(
-        replace_once(serialized, "\"schema_version\":4", "\"schema_version\":99"));
+        replace_once(serialized, "\"schema_version\":5", "\"schema_version\":99"));
     if (unsupported.ok || unsupported.diagnostic.code != aerosim::ReplayDiagnosticCode::UnsupportedSchema) {
         return false;
     }
     const aerosim::ReplayLoadResult schema_v2 = aerosim::load_replay_session(
-        replace_once(serialized, "\"schema_version\":4", "\"schema_version\":2"));
+        replace_once(serialized, "\"schema_version\":5", "\"schema_version\":2"));
     if (schema_v2.ok || schema_v2.diagnostic.code != aerosim::ReplayDiagnosticCode::UnsupportedSchema) {
         return false;
     }
@@ -734,11 +734,12 @@ bool test_tuning_replay_contract() {
             !recorder.record_tuning(1000, "DroneA", 8, 3, "simpleflight.angle_p", 16.0, 16.0, false) ||
             !recorder.record_tuning(1000, "DroneA", 9, 3, "simpleflight.rate_i", 0.031, 0.031, false) ||
             !recorder.record_tuning(1000, "DroneA", 10, 3, "simpleflight.rate_d", 0.007, 0.007, false) ||
+            !recorder.record_tuning(1000, "DroneA", 11, 4, "simpleflight.rate_p", 2.2, 2.2, false, "preset") ||
             !recorder.finish(2000, "completed")) {
         return false;
     }
     const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(recorder.serialize(), "manifest");
-    if (!loaded.ok || loaded.session.events.size() != 5 || loaded.session.events[1].type != aerosim::ReplayEventType::Tuning ||
+    if (!loaded.ok || loaded.session.events.size() != 6 || loaded.session.events[1].type != aerosim::ReplayEventType::Tuning ||
             loaded.session.events[1].tuning_request_seq != 7 || loaded.session.events[1].tuning_commit_id != 3 ||
             loaded.session.events[1].tuning_parameter != "simpleflight.rate_p" ||
             loaded.session.events[1].tuning_committed_value != 2.0 || !loaded.session.events[1].tuning_clamped) {
@@ -772,13 +773,18 @@ bool test_tuning_replay_contract() {
     }
     aerosim::ReplaySession reversed = ordered_recorder.session();
     std::swap(reversed.events[2], reversed.events[3]);
+    reversed.events[2].event_order = 2;
+    reversed.events[3].event_order = 3;
     const aerosim::SimulationConfig config = replay_test_config();
     const aerosim::ReplayRunResult ordered_run = aerosim::replay_session(
             ordered_recorder.session(), {config, config}, "manifest", {{"hash-a", "hash-b"}});
     const aerosim::ReplayRunResult reversed_run = aerosim::replay_session(
             reversed, {config, config}, "manifest", {{"hash-a", "hash-b"}});
     const aerosim::ReplayDivergence order_divergence = aerosim::compare_replay_runs(ordered_run, reversed_run);
-    return ordered_run.ok && reversed_run.ok && order_divergence.diverged;
+    aerosim::ReplaySession invalid_order = ordered_recorder.session();
+    invalid_order.events[2].event_order = invalid_order.events[3].event_order;
+    return ordered_run.ok && reversed_run.ok && order_divergence.diverged &&
+            !aerosim::load_replay_session(aerosim::serialize_replay_session(invalid_order), "manifest").ok;
 }
 
 bool test_quick_adjust_binding_replay_contract() {
@@ -796,7 +802,7 @@ bool test_quick_adjust_binding_replay_contract() {
         return false;
     }
     const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(recorder.serialize(), "manifest");
-    if (!loaded.ok || loaded.session.schema_version != 4 || loaded.session.events.size() != 5 ||
+    if (!loaded.ok || loaded.session.schema_version != 5 || loaded.session.events.size() != 5 ||
             loaded.session.events[1].type != aerosim::ReplayEventType::QuickAdjustBinding ||
             loaded.session.events[1].quick_adjust_profile_json != bound_profile ||
             loaded.session.events[2].quick_adjust_profile_json != empty_profile ||
@@ -894,7 +900,7 @@ bool test_schema_v3_controller_snapshot_divergence() {
         return false;
     }
     const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(checkpoint_recorder.serialize(), "manifest");
-    if (!loaded.ok || loaded.session.schema_version != 4 ||
+    if (!loaded.ok || loaded.session.schema_version != 5 ||
             loaded.session.checkpoints[0].controllers[0].rate_integral[1] != 0.5 ||
             !loaded.session.checkpoints[0].controllers[0].motor_saturation_latched[2]) {
         return false;
@@ -1017,6 +1023,88 @@ bool test_checked_replay_batch_samples_configured_wind_each_frame() {
     }
     return actual.status == aerosim::StepStatus::Ok && actual.rows.size() == expected.size() &&
             std::equal(actual.rows.begin(), actual.rows.end(), expected.begin(), same_sample_bits);
+}
+
+bool test_authoritative_tuning_session_order_and_markers() {
+    aerosim::ReplaySessionRecorder recorder(250, "manifest");
+    const std::string atmosphere = complete_atmosphere(250);
+    if (!recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !recorder.record_environment(0, atmosphere)) {
+        return false;
+    }
+    recorder.set_physics_tick(17);
+    if (recorder.record_marker(1000, "") ||
+            !recorder.record_tuning(1000, "DroneA", 4, 8, "simpleflight.rate_p", 2.0, 1.5, true, "panel") ||
+            !recorder.record_simulation_operation(1000, aerosim::ReplaySimulationOperation::Pause) ||
+            !recorder.record_marker(1000, "run-start", "panel commit") ||
+            !recorder.record_marker(1000, "run-end") ) {
+        return false;
+    }
+    recorder.set_physics_tick(18);
+    if (!recorder.record_marker(1100, "next-tick", "" ) || !recorder.finish(2000, "completed")) {
+        return false;
+    }
+    const aerosim::ReplaySession &session = recorder.session();
+    if (session.schema_version != aerosim::kCompleteReplaySchemaVersion || session.events.size() != 6) {
+        return false;
+    }
+    if (!session.events[0].has_authoritative_order || session.events[0].physics_tick != 0 ||
+            session.events[0].event_order != 0) {
+        return false;
+    }
+    for (std::size_t index = 1; index < 5; ++index) {
+        if (!session.events[index].has_authoritative_order || session.events[index].physics_tick != 17 ||
+                session.events[index].event_order != index - 1) {
+            return false;
+        }
+    }
+    if (session.events[5].physics_tick != 18 || session.events[5].event_order != 0 ||
+            session.events[3].marker_label != "run-start" || session.events[3].marker_note != "panel commit" ||
+            session.events[4].marker_label != "run-end" || !session.events[4].marker_note.empty()) {
+        return false;
+    }
+    const std::string serialized = recorder.serialize();
+    const aerosim::ReplayLoadResult loaded = aerosim::load_replay_session(serialized, "manifest");
+    if (!loaded.ok || aerosim::compare_replay_sessions(session, loaded.session).diverged) {
+        return false;
+    }
+    const std::string jsonl = aerosim::derive_replay_session_jsonl(serialized, "manifest");
+    if (jsonl.empty() || jsonl != aerosim::derive_replay_session_jsonl(serialized, "manifest") ||
+            jsonl.find("\"schema_version\":5") == std::string::npos ||
+            jsonl.find("\"physics_tick\":17") == std::string::npos ||
+            jsonl.find("\"event_order\":2") == std::string::npos) {
+        return false;
+    }
+    aerosim::ReplaySessionRecorder legacy_recorder(251, "manifest");
+    if (!legacy_recorder.add_vehicle("DroneA", "hash-a", "{\"mass_kg\":1.0}") ||
+            !legacy_recorder.add_vehicle("DroneB", "hash-b", "{\"mass_kg\":1.0}") ||
+            !legacy_recorder.record_environment(0, complete_atmosphere(251)) ||
+            !legacy_recorder.record_command(1000, "DroneA", aerosim::FlightCommand{}, aerosim::ReplayControllerAuthority::FlightCore) ||
+            !legacy_recorder.finish(2000, "completed")) {
+        return false;
+    }
+    auto strip_ordering = [](std::string value) {
+        std::size_t start = 0;
+        while ((start = value.find(",\"physics_tick\":", start)) != std::string::npos) {
+            const std::size_t before_order = value.find(',', start + 1);
+            const std::size_t after_order = value.find_first_of(",}", before_order + 1);
+            value.erase(start, after_order - start);
+        }
+        return value;
+    };
+    const std::string legacy_serialized = strip_ordering(
+            replace_once(legacy_recorder.serialize(), "\"schema_version\":5", "\"schema_version\":4"));
+    const aerosim::ReplayLoadResult legacy_loaded = aerosim::load_replay_session(legacy_serialized, "manifest");
+    const std::string legacy_jsonl = aerosim::derive_replay_session_jsonl(legacy_serialized, "manifest");
+    const aerosim::ReplayLoadResult v4_with_ordering = aerosim::load_replay_session(
+            replace_once(legacy_recorder.serialize(), "\"schema_version\":5", "\"schema_version\":4"), "manifest");
+    return legacy_loaded.ok && !legacy_loaded.session.events[0].has_authoritative_order &&
+            legacy_loaded.session.events[1].physics_tick == 0 &&
+            legacy_jsonl.find("\"schema_version\":4") != std::string::npos &&
+            legacy_jsonl.find("timestamp_file_order") != std::string::npos &&
+            legacy_jsonl.find("physics_tick") == std::string::npos && !v4_with_ordering.ok &&
+            aerosim::derive_replay_session_jsonl("not-json", "manifest").empty();
 }
 
 } // namespace
@@ -1202,6 +1290,9 @@ int main() {
     }
     if (!test_sparse_checkpoint_schedule()) {
         return fail("replay v3 must preserve and compare the recorded sparse checkpoint schedule");
+    }
+    if (!test_authoritative_tuning_session_order_and_markers()) {
+        return fail("replay tuning sessions must preserve authoritative order and marker metadata");
     }
 
     return EXIT_SUCCESS;

@@ -23,7 +23,8 @@ struct ReplayDelta {
     double position_meters = 0.0;
 };
 
-constexpr std::int32_t kCompleteReplaySchemaVersion = 4;
+constexpr std::int32_t kLegacyReplaySchemaVersion = 4;
+constexpr std::int32_t kCompleteReplaySchemaVersion = 5;
 constexpr std::size_t kMaxBatchTrajectoryFrames = 1'000'000;
 constexpr std::size_t kNoFailedReplayFrame = std::numeric_limits<std::size_t>::max();
 
@@ -85,10 +86,14 @@ enum class ReplayEventType {
     Environment,
     Tuning,
     QuickAdjustBinding,
+    Marker,
 };
 
 struct ReplayEvent {
     std::uint64_t timestamp_us = 0;
+    std::uint64_t physics_tick = 0;
+    std::uint64_t event_order = 0;
+    bool has_authoritative_order = false;
     ReplayEventType type = ReplayEventType::Command;
     std::string vehicle_name;
     ReplayControllerAuthority controller_authority = ReplayControllerAuthority::FlightCore;
@@ -118,6 +123,8 @@ struct ReplayEvent {
     std::string tuning_source = "panel";
     std::int32_t tuning_quick_adjust_slot = -1;
     std::string quick_adjust_profile_json;
+    std::string marker_label;
+    std::string marker_note;
 };
 
 struct ReplaySceneObjectState {
@@ -210,13 +217,18 @@ private:
     std::string environment_json_;
     std::array<ReplayCollision, 2> checkpoint_collisions_;
     std::vector<ReplaySceneObjectState> checkpoint_scene_objects_;
+    std::uint64_t physics_tick_ = 0;
+    std::uint64_t next_event_order_ = 0;
     bool finished_ = false;
 
     bool fail(ReplayDiagnosticCode code, std::string message);
     bool has_vehicle(const std::string &vehicle_name) const;
+    bool append_event(ReplayEvent event);
 
 public:
     ReplaySessionRecorder(std::uint64_t seed, std::string settings_manifest_hash);
+
+    void set_physics_tick(std::uint64_t physics_tick);
 
     bool add_vehicle(
             std::string vehicle_name,
@@ -278,6 +290,10 @@ public:
             bool clamped,
             const std::string &source = "panel",
             std::int32_t quick_adjust_slot = -1);
+    bool record_marker(
+            std::uint64_t timestamp_us,
+            std::string label,
+            std::string note = {});
     bool record_checkpoint(std::uint64_t timestamp_us, const DualAircraftState &state);
     bool record_checkpoint(std::uint64_t timestamp_us, ReplayRunCheckpoint checkpoint);
     bool finish(std::uint64_t timestamp_us, std::string reason);
@@ -289,6 +305,10 @@ public:
 
 std::string serialize_replay_session(const ReplaySession &session);
 ReplayLoadResult load_replay_session(
+        const std::string &serialized,
+        const std::string &expected_settings_manifest_hash = {});
+std::string serialize_replay_session_jsonl(const ReplaySession &session);
+std::string derive_replay_session_jsonl(
         const std::string &serialized,
         const std::string &expected_settings_manifest_hash = {});
 ReplayDivergence compare_replay_sessions(

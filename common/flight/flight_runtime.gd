@@ -218,6 +218,7 @@ var _airsim_ready_file_pending := ""
 var _dashboard_vehicle_name := ""
 var _airsim_secondary_native: Object
 var _replay_recording_active := false
+var _replay_authoritative_physics_tick := 0
 var _replay_settings_manifest_hash := ""
 var _replay_upper_config_manifest_hash := ""
 var _replay_lower_config_manifest_hash := ""
@@ -692,6 +693,12 @@ func _replay_timestamp_us() -> int:
     return _replay_timestamp_for_simulation_us(simulation_timestamp_us)
 
 
+func _set_replay_physics_tick(physics_tick: int = -1) -> void:
+    if not _replay_recording_active or native == null or not native.has_method("set_replay_physics_tick"):
+        return
+    native.call("set_replay_physics_tick", _replay_authoritative_physics_tick if physics_tick < 0 else physics_tick)
+
+
 func _replay_frame_timestamp_us() -> int:
     if airsim_session == null or airsim_session.physics_hz <= 0:
         return _replay_timestamp_us()
@@ -736,6 +743,7 @@ func _replay_canonical_json(value: Variant) -> String:
 
 func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     _replay_recording_active = false
+    _replay_authoritative_physics_tick = 0
     _replay_last_timestamp_us = 0
     _replay_epoch_offset_us = 0
     _replay_last_simulation_timestamp_us = 0
@@ -772,6 +780,7 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     if _airsim_secondary_native.has_method("begin_replay_checkpoint_capture"):
         _airsim_secondary_native.call("begin_replay_checkpoint_capture")
     _replay_recording_active = true
+    _set_replay_physics_tick(0)
     if not _record_replay_environment({}):
         _replay_recording_active = false
 
@@ -1407,6 +1416,9 @@ func _process(_delta: float) -> void:
     _refresh_flight_hud()
 
 func _physics_process(delta: float) -> void:
+    if _replay_recording_active:
+        _replay_authoritative_physics_tick += 1
+        _set_replay_physics_tick()
     if _reset_pending_token != 0:
         _advance_reset_pending()
         return
@@ -4893,6 +4905,7 @@ func configure_quick_adjust(candidate: Variant, persist: bool = true) -> Diction
     _quick_adjust_profile = profile.duplicate(true)
     _reset_quick_adjust_rate_limits()
     if _replay_recording_active and native != null and native.has_method("record_replay_quick_adjust_binding"):
+        _set_replay_physics_tick()
         var replay_result: Dictionary = native.call(
                 "record_replay_quick_adjust_binding", _replay_timestamp_us(), _replay_canonical_json(profile))
         if not bool(replay_result.get("ok", false)):
@@ -4905,6 +4918,32 @@ func gsp_quick_adjust_request(peer_id: int, connection_id: int, request_seq: int
     result["peer_id"] = peer_id
     result["connection_id"] = connection_id
     result["request_seq"] = request_seq
+    return result
+
+
+func gsp_marker_request(peer_id: int, connection_id: int, request_seq: int, label: String, note: String = "") -> Dictionary:
+    var result := {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    if not _replay_recording_active or native == null or not native.has_method("record_replay_marker"):
+        result["ok"] = false
+        result["error"] = "replay_unavailable"
+        return result
+    _set_replay_physics_tick()
+    var recorded: Dictionary = native.call("record_replay_marker", _replay_timestamp_us(), label, note)
+    for key in recorded:
+        result[key] = recorded[key]
+    return result
+
+
+func gsp_simulation_request(peer_id: int, connection_id: int, request_seq: int, operation: String) -> Dictionary:
+    var result := {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq, "operation": operation}
+    if operation not in ["pause", "resume"]:
+        result["ok"] = false
+        result["error"] = "unsupported_simulation_operation"
+        return result
+    var was_paused := paused
+    set_paused(operation == "pause")
+    result["ok"] = true
+    result["changed"] = was_paused != paused
     return result
 
 
@@ -5208,6 +5247,7 @@ func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int
     for key in native_result:
         result[key] = native_result[key]
     if bool(native_result.get("ok", false)):
+        _set_replay_physics_tick()
         result["apply_timing"] = _gsp_tuning_timings(changes).get("apply_timing", "unknown")
         var winners: Array = []
         var enriched_changes: Array = []

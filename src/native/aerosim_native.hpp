@@ -173,6 +173,7 @@ public:
             const godot::String &lower_config_manifest_hash,
             const godot::String &lower_config_json,
             std::int32_t lower_controller_authority);
+    godot::Dictionary set_replay_physics_tick(std::int64_t physics_tick);
     void begin_replay_checkpoint_capture();
     void capture_replay_recorded_response(bool non_neutral);
     godot::Dictionary record_replay_command(
@@ -266,6 +267,13 @@ public:
             bool clamped,
             const godot::String &source = "panel",
             std::int32_t quick_adjust_slot = -1);
+    godot::Dictionary record_replay_marker(
+            std::int64_t timestamp_us,
+            const godot::String &label,
+            const godot::String &note = {});
+    godot::String derive_replay_session_jsonl(
+            const godot::String &serialized,
+            const godot::String &expected_settings_manifest_hash);
     godot::Dictionary finish_complete_replay_recording(
             std::int64_t timestamp_us,
             const godot::String &reason);

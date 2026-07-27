@@ -324,6 +324,7 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("begin_complete_replay_recording", "seed", "settings_manifest_hash", "upper_name", "upper_config_manifest_hash", "upper_config_json", "upper_controller_authority", "lower_name", "lower_config_manifest_hash", "lower_config_json", "lower_controller_authority"),
             &AeroSimNative::begin_complete_replay_recording);
+    ClassDB::bind_method(D_METHOD("set_replay_physics_tick", "physics_tick"), &AeroSimNative::set_replay_physics_tick);
     ClassDB::bind_method(D_METHOD("begin_replay_checkpoint_capture"), &AeroSimNative::begin_replay_checkpoint_capture);
     ClassDB::bind_method(D_METHOD("capture_replay_recorded_response", "non_neutral"), &AeroSimNative::capture_replay_recorded_response);
     ClassDB::bind_method(
@@ -359,6 +360,12 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(
             D_METHOD("record_replay_tuning", "timestamp_us", "vehicle_name", "request_seq", "commit_id", "parameter", "requested_value", "committed_value", "clamped", "source", "quick_adjust_slot"),
             &AeroSimNative::record_replay_tuning, DEFVAL(String("panel")), DEFVAL(-1));
+    ClassDB::bind_method(
+            D_METHOD("record_replay_marker", "timestamp_us", "label", "note"),
+            &AeroSimNative::record_replay_marker, DEFVAL(String()));
+    ClassDB::bind_method(
+            D_METHOD("derive_replay_session_jsonl", "serialized", "expected_settings_manifest_hash"),
+            &AeroSimNative::derive_replay_session_jsonl);
     ClassDB::bind_method(
             D_METHOD("finish_complete_replay_recording", "timestamp_us", "reason"),
             &AeroSimNative::finish_complete_replay_recording);
@@ -1193,6 +1200,39 @@ Dictionary AeroSimNative::record_replay_tuning(
             static_cast<std::uint64_t>(commit_id), std::string(parameter.utf8().get_data()),
             requested_value, committed_value, clamped, std::string(source.utf8().get_data()), quick_adjust_slot);
     return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+Dictionary AeroSimNative::set_replay_physics_tick(std::int64_t physics_tick) {
+    if (replay_recorder_ == nullptr || physics_tick < 0) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay physics tick is invalid or recording is inactive"};
+        return replay_status(false, &diagnostic);
+    }
+    replay_recorder_->set_physics_tick(static_cast<std::uint64_t>(physics_tick));
+    return replay_status(true);
+}
+
+Dictionary AeroSimNative::record_replay_marker(
+        std::int64_t timestamp_us,
+        const String &label,
+        const String &note) {
+    if (replay_recorder_ == nullptr || timestamp_us < 0) {
+        const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay marker recording is inactive or timestamp is invalid"};
+        return replay_status(false, &diagnostic);
+    }
+    const bool ok = replay_recorder_->record_marker(
+            static_cast<std::uint64_t>(timestamp_us),
+            std::string(label.utf8().get_data()),
+            std::string(note.utf8().get_data()));
+    return replay_status(ok, &replay_recorder_->diagnostic());
+}
+
+String AeroSimNative::derive_replay_session_jsonl(
+        const String &serialized,
+        const String &expected_settings_manifest_hash) {
+    const std::string jsonl = aerosim::derive_replay_session_jsonl(
+            std::string(serialized.utf8().get_data()),
+            std::string(expected_settings_manifest_hash.utf8().get_data()));
+    return String(jsonl.c_str());
 }
 
 Dictionary AeroSimNative::record_replay_quick_adjust_binding(
