@@ -5,7 +5,10 @@ const PRESET_DIRECTORY := "user://gsp/presets"
 const NAME_MIN_LENGTH := 1
 const NAME_MAX_LENGTH := 64
 const NOTE_MAX_LENGTH := 512
-const REQUIRED_FIELDS := ["name", "created_at", "registry_hash", "sim_version", "values"]
+const MAX_FILE_BYTES := 64 * 1024
+const SCHEMA_VERSION := 1
+const REQUIRED_FIELDS := ["schema_version", "name", "created_at", "registry_hash", "sim_version", "values"]
+const OPTIONAL_FIELDS := ["note"]
 
 
 static func validate_name(candidate: Variant) -> Dictionary:
@@ -21,9 +24,6 @@ static func validate_name(candidate: Variant) -> Dictionary:
         var alphanumeric := codepoint >= 48 and codepoint <= 57 or codepoint >= 65 and codepoint <= 90 or codepoint >= 97 and codepoint <= 122
         if not alphanumeric and codepoint != 45 and codepoint != 95:
             return {"ok": false, "error": "preset name may contain only ASCII letters, digits, hyphens, and underscores"}
-    var first := name.unicode_at(0)
-    if not (first >= 48 and first <= 57 or first >= 65 and first <= 90 or first >= 97 and first <= 122):
-        return {"ok": false, "error": "preset name must start with an ASCII letter or digit"}
     return {"ok": true, "name": name}
 
 
@@ -47,18 +47,23 @@ static func diff_values(left: Dictionary, right: Dictionary) -> Array:
             continue
         var before := float(left[key])
         var after := float(right[key])
-        if not is_finite(before) or not is_finite(after) or is_equal_approx(before, after):
+        if not is_finite(before) or not is_finite(after) or before == after:
             continue
         var change := {"parameter": key, "before": before, "after": after, "absolute": after - before}
-        if is_zero_approx(before):
+        if before == 0.0:
             change["percentage"] = null
             change["percentage_status"] = "zero_baseline"
         elif before * after < 0.0:
             change["percentage"] = null
             change["percentage_status"] = "sign_change"
         else:
-            change["percentage"] = (after - before) / absf(before) * 100.0
-            change["percentage_status"] = "finite"
+            var percentage := (after - before) / absf(before) * 100.0
+            if is_finite(percentage):
+                change["percentage"] = percentage
+                change["percentage_status"] = "finite"
+            else:
+                change["percentage"] = null
+                change["percentage_status"] = "unrepresentable"
         changes.append(change)
     return changes
 
@@ -70,9 +75,12 @@ func save_preset(name: String, values: Dictionary, registry_hash: String, sim_ve
     var values_result := _validate_values(values)
     if not bool(values_result.get("ok", false)):
         return values_result
-    if note.length() > NOTE_MAX_LENGTH:
+    if registry_hash.is_empty() or sim_version.is_empty():
+        return {"ok": false, "error": "preset metadata is invalid"}
+    if note.to_utf8_buffer().size() > NOTE_MAX_LENGTH:
         return {"ok": false, "error": "preset note is too long"}
     var preset := {
+        "schema_version": SCHEMA_VERSION,
         "name": name,
         "created_at": Time.get_datetime_string_from_system(true),
         "registry_hash": registry_hash,
@@ -146,6 +154,9 @@ func _read_preset_file(path: String, expected_name: String = "") -> Dictionary:
     var file := FileAccess.open(path, FileAccess.READ)
     if file == null:
         return {"ok": false, "error": "preset could not be opened"}
+    if file.get_length() > MAX_FILE_BYTES:
+        file.close()
+        return {"ok": false, "error": "preset file is too large"}
     var parser := JSON.new()
     var parse_error := parser.parse(file.get_as_text())
     file.close()
@@ -161,9 +172,14 @@ static func _validate_preset(candidate: Variant, expected_name: String = "") -> 
     if typeof(candidate) != TYPE_DICTIONARY:
         return {"ok": false, "error": "preset document must be an object"}
     var preset: Dictionary = candidate.duplicate(true)
+    for field in preset.keys():
+        if typeof(field) != TYPE_STRING or (field not in REQUIRED_FIELDS and field not in OPTIONAL_FIELDS):
+            return {"ok": false, "error": "preset contains an unknown field"}
     for field in REQUIRED_FIELDS:
         if not preset.has(field):
             return {"ok": false, "error": "preset missing field: %s" % field}
+    if (typeof(preset.schema_version) != TYPE_INT and typeof(preset.schema_version) != TYPE_FLOAT) or int(preset.schema_version) != SCHEMA_VERSION:
+        return {"ok": false, "error": "unsupported preset schema version"}
     var name_result := validate_name(preset.name)
     if not bool(name_result.get("ok", false)):
         return name_result
@@ -172,7 +188,7 @@ static func _validate_preset(candidate: Variant, expected_name: String = "") -> 
     for field in ["created_at", "registry_hash", "sim_version"]:
         if typeof(preset[field]) != TYPE_STRING or String(preset[field]).is_empty():
             return {"ok": false, "error": "preset %s must be a non-empty string" % field}
-    if preset.has("note") and (typeof(preset.note) != TYPE_STRING or String(preset.note).length() > NOTE_MAX_LENGTH):
+    if preset.has("note") and (typeof(preset.note) != TYPE_STRING or String(preset.note).to_utf8_buffer().size() > NOTE_MAX_LENGTH):
         return {"ok": false, "error": "preset note is invalid"}
     var values_result := _validate_values(preset.values)
     if not bool(values_result.get("ok", false)):

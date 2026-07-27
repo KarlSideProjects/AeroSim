@@ -22,7 +22,7 @@ class Element {
     }
 
     click() {
-        this.listeners.click();
+        if (this.listeners.click) this.listeners.click();
     }
 
     getContext() {
@@ -45,6 +45,7 @@ class FakeWebSocket {
     constructor() {
         this.readyState = FakeWebSocket.OPEN;
         this.listeners = {};
+        this.sent = [];
         FakeWebSocket.instance = this;
     }
 
@@ -52,7 +53,9 @@ class FakeWebSocket {
         this.listeners[type] = callback;
     }
 
-    send() {}
+    send(payload) {
+        this.sent.push(JSON.parse(payload));
+    }
     close() {}
 }
 FakeWebSocket.OPEN = 1;
@@ -114,4 +117,73 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
 }) });
 assert.equal(controls[0].status.textContent, "Saved");
 assert.notEqual(controls[7].status.textContent, "Saved");
+
+const socket = FakeWebSocket.instance;
+elements.get("preset-name").value = "race_01";
+elements.get("preset-note").value = "panel note";
+elements.get("preset-save").click();
+const saveRequest = socket.sent.at(-1);
+assert.equal(saveRequest.t, "save_preset");
+assert.deepEqual(saveRequest.d, { name: "race_01", note: "panel note" });
+socket.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "preset_ack",
+    d: { request_seq: saveRequest.seq, ok: true, presets: [{ name: "race_01", sim_version: "test", created_at: "now" }] },
+}) });
+assert.equal(elements.get("preset-source").children.length, 2);
+elements.get("preset-source").value = "race_01";
+
+elements.get("preset-retrieve").click();
+const retrieveRequest = socket.sent.at(-1);
+assert.equal(retrieveRequest.t, "retrieve_preset");
+assert.deepEqual(retrieveRequest.d, { name: "race_01" });
+socket.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "preset_ack",
+    d: { request_seq: retrieveRequest.seq, ok: true, preset: { name: "race_01", note: "panel note" } },
+}) });
+assert.match(elements.get("preset-status").textContent, /panel note/);
+
+elements.get("preset-compare-current").click();
+const compareRequest = socket.sent.at(-1);
+assert.equal(compareRequest.t, "compare_presets");
+assert.deepEqual(compareRequest.d, { left: "", right: "race_01" });
+socket.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "preset_ack",
+    d: {
+        request_seq: compareRequest.seq,
+        ok: true,
+        changes: [
+            { parameter: "simpleflight.rate_p", before: 1, after: 2, percentage: 100, percentage_status: "finite" },
+            { parameter: "simpleflight.rate_i", before: 0, after: 1, percentage: null, percentage_status: "zero_baseline" },
+        ],
+    },
+}) });
+assert.match(elements.get("preset-diff").textContent, /simpleflight\.rate_p/);
+assert.match(elements.get("preset-diff").textContent, /zero_baseline/);
+assert.doesNotMatch(elements.get("preset-diff").textContent, /unchanged/);
+
+elements.get("preset-target").value = "race_01";
+elements.get("preset-compare-two").click();
+const compareTwoRequest = socket.sent.at(-1);
+assert.equal(compareTwoRequest.t, "compare_presets");
+assert.deepEqual(compareTwoRequest.d, { left: "race_01", right: "race_01" });
+socket.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "preset_ack",
+    d: { request_seq: compareTwoRequest.seq, ok: true, changes: [] },
+}) });
+assert.equal(elements.get("preset-diff").textContent, "No changes.");
+
+elements.get("preset-load").click();
+const loadRequest = socket.sent.at(-1);
+assert.equal(loadRequest.t, "load_preset");
+assert.deepEqual(loadRequest.d, { name: "race_01" });
+socket.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "tuning_ack",
+    d: { request_seq: loadRequest.seq, ok: true },
+}) });
+assert.equal(elements.get("preset-status").textContent, "Preset load committed.");
 console.log("GSP panel row behavior passed");

@@ -357,7 +357,7 @@ static func validate_preset_message(message: String, previous_sequence: int, exp
         var save_name_result := GspPresetStore.validate_name(data.name)
         if not bool(save_name_result.get("ok", false)):
             return save_name_result
-        if data.has("note") and (typeof(data.note) != TYPE_STRING or String(data.note).length() > GspPresetStore.NOTE_MAX_LENGTH):
+        if data.has("note") and (typeof(data.note) != TYPE_STRING or String(data.note).to_utf8_buffer().size() > GspPresetStore.NOTE_MAX_LENGTH):
             return {"ok": false, "error": "invalid preset note"}
     elif expected_type == "compare_presets":
         if data.size() != 2 or typeof(data.get("left")) != TYPE_STRING or typeof(data.get("right")) != TYPE_STRING:

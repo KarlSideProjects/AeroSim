@@ -5341,9 +5341,12 @@ func gsp_load_preset(peer_id: int, connection_id: int, request_seq: int, name: S
     if String(preset.get("registry_hash", "")) != _gsp_tuning_registry_hash:
         return {"ok": false, "error": "registry_mismatch", "peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
     var changes: Array = []
-    for key in preset.values:
-        changes.append({"parameter": String(key), "value": preset.values[key]})
-    return gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset")
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        if preset.values.has(key):
+            changes.append({"parameter": key, "value": preset.values[key]})
+    return gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset", -1)
 
 
 func gsp_preset_request(peer_id: int, connection_id: int, request_seq: int, operation: String, data: Dictionary) -> Dictionary:

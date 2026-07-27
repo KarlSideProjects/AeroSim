@@ -137,3 +137,69 @@ Expected negative-path native error logs, terrain texture mipmap warnings, and t
 - No new dependency, Hardware configuration authority, SettingsStore path, or replay authority was introduced.
 - No AirSim source was adapted.
 - GPU qualification is vendor/type neutral. No vendor, device, adapter, renderer, or GPU allowlist/restriction was added; the NVIDIA Vulkan device appeared only as the environment used by the existing headed gate.
+
+## Post-review Sol-high reconciliation
+
+This section records the independent read-only Sol-high recommendation supplied after the initial implementation commits `612803f..bde7480`. The recommendation was verified against the current seams and implemented in the same #247 scope. Agent/thread identity remains `CODEX_THREAD_ID=019fa267-1d99-72d1-8dce-b6423951d468`; this was the same implementation thread continuing after review. No GitHub issue or progress ledger was edited.
+
+### Discovery and findings
+
+The required codebase-memory discovery was retried with the exact available project name `home-karl-Workspace-Toys-AeroSim-.worktrees-gsp-all-issues`; `index_status` returned `status: ready`, `nodes: 7050`, and `edges: 27416`. Graph search and caller tracing confirmed that `gsp_load_preset` reaches tuning only through `gsp_tuning_batch_request`, while `GspPresetStore` owns the fixed `user://gsp/presets` directory. The earlier indexing transport failure (`Transport closed`) is recorded above.
+
+The review found these concrete gaps in `bde7480`:
+
+1. `validate_name` added an unapproved first-character alphanumeric restriction. It rejected valid leading `-` and `_` names. The restriction was removed; tests now cover exact 1/64 valid boundaries, leading hyphen/underscore, 0/65 invalid lengths, traversal, absolute paths, separators, `.`, `..`, and a Unicode lookalike.
+2. `_read_preset_file` called `get_as_text()` without a byte bound. A single `MAX_FILE_BYTES = 64 * 1024` limit now rejects oversized files before parsing. Save still uses temporary write, readback, and atomic rename.
+3. Preset documents had no schema marker or strict root shape. `schema_version: 1` is now written and validated; unknown root fields, wrong schema, malformed JSON, non-finite values, empty metadata strings, and oversized input reject. Note limits use UTF-8 bytes in both the store and GSP request validator. Existing valid preset overwrite is covered.
+4. `diff_values` used approximate equality and approximate zero. It now uses exact equality and exact zero, computes `delta / abs(left) * 100`, explicitly reports `zero_baseline` and `sign_change`, and returns `unrepresentable` with `null` for non-finite arithmetic. Tests cover positive, same-sign negative, zero baseline, sign change, target zero, tiny real differences, and overflow arithmetic; no NaN or Infinity is emitted.
+5. `gsp_load_preset` iterated Dictionary order. It now iterates `_gsp_tuning_registry` order and calls only `gsp_tuning_batch_request(..., "preset", -1)`. Tests cover mismatched registry rejection without native state/commit mutation, unchanged active state before the next boundary, one atomic boundary commit, paused immediate commit, and reverse-ordered input producing canonical registry order.
+6. The Node panel test only covered Quick Adjust. It now drives save, preset ACK/list refresh, retrieve, current comparison, preset-to-preset comparison, changed-only diff rendering including zero-baseline status, and load via `tuning_ack` over the fake WebSocket. The existing current-vs-preset and preset-vs-preset UI behavior remains intact.
+
+### Reconciliation TDD evidence
+
+RED after adding the focused assertions, before implementation:
+
+```text
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_preset_contract.gd
+# failed at parse time: Cannot find member "SCHEMA_VERSION" in base "GspPresetStore"
+# failed at parse time: Cannot find member "MAX_FILE_BYTES" in base "GspPresetStore"
+```
+
+The new executable Node panel test passed immediately because the existing panel implementation already had the requested behavior; the missing coverage, rather than a panel defect, was the review gap.
+
+GREEN focused checks:
+
+```text
+node tests/test_gsp_panel_behavior.js
+# GSP panel row behavior passed
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_preset_contract.gd
+# GSP preset contract: PASS
+# Godot emitted two expected "Exponent too high" warnings while parsing the deliberate 1e999 non-finite fixture.
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_preset_integration.gd
+# GSP preset integration: PASS
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/gsp_tuning_integration.gd
+# GSP tuning integration: PASS
+
+/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 --headless --path . \
+  --script res://tests/headless/quick_adjust_integration.gd
+# Quick Adjust integration: PASS
+```
+
+The initial focused contract run also exposed two test-fixture problems: Godot parses JSON numeric literals as `float` variants, and the paused-load assertion attempted to prove a new commit without first changing the active value. The schema check now accepts the parser’s exact numeric representation while requiring value `1`; the paused test mutates back to `1.2` before loading. Both were corrected before GREEN.
+
+### Changes and commits
+
+The post-review implementation changes are in `common/gsp/gsp_preset_store.gd`, `common/gsp/gsp_server.gd`, and `common/flight/flight_runtime.gd`; focused coverage is in `tests/headless/gsp_preset_contract.gd` and `tests/test_gsp_panel_behavior.js`. The final commit identifiers and full-gate result are appended after the committed gate run below.
+
+### Consultation and scope
+
+The separate configured read-only Sol-high recommendation was supplied by the user/controller and verified against the indexed code seams. No additional Sol consultation was needed in this reconciliation. No registry migration (#248), lifecycle recovery (#249), expanded replay/session markers (#250), dependency, Hardware configuration/SettingsStore authority, replay authority, or GPU restriction was added.
+
+GPU qualification remains vendor/type neutral: no vendor, device, adapter, renderer, or GPU allowlist/restriction exists in the #247 changes. Any GPU named in headed-gate output is only the test environment, not a product qualification rule.

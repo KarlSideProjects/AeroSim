@@ -10,9 +10,12 @@ var _failures: Array[String] = []
 
 func _init() -> void:
     var store := GspPresetStore.new()
-    _remove_known(["contract", "runtime_contract"])
+    _remove_known(["contract", "runtime_contract", "tampered", "wrong_schema", "oversized", "malformed", "nonfinite", "mismatch", "ordered"])
     _expect(GspPresetStore.validate_name("race_01").get("ok", false), "ASCII preset names are accepted")
-    for invalid_name in ["", ".", "..", "../escape", "race/name", "race\\name", "rаce", "x".repeat(65)]:
+    for valid_name in ["-", "_", "-leading", "_leading", "x".repeat(64)]:
+        _expect(bool(GspPresetStore.validate_name(valid_name).get("ok", false)),
+                "valid ASCII preset name is accepted: %s" % valid_name)
+    for invalid_name in ["", ".", "..", "../escape", "/absolute", "race/name", "race\\name", "rаce", "x".repeat(65)]:
         _expect(not bool(GspPresetStore.validate_name(invalid_name).get("ok", false)),
                 "invalid preset name is rejected: %s" % invalid_name)
 
@@ -24,6 +27,47 @@ func _init() -> void:
             retrieved.get("preset", {}).get("values", {}).get("simpleflight.rate_p", 0.0) == 1.2 and
             retrieved.get("preset", {}).get("note", "") == "contract note",
             "preset metadata round-trips included values and note")
+    _expect(int(retrieved.get("preset", {}).get("schema_version", -1)) == GspPresetStore.SCHEMA_VERSION,
+            "preset metadata records the supported schema version")
+    var overwritten := store.save_preset("contract", {"simpleflight.rate_p": 1.3, "simpleflight.rate_i": 0.04},
+            "registry-b", "test-sim-2", "updated note")
+    var overwritten_result := store.retrieve_preset("contract")
+    _expect(bool(overwritten.get("ok", false)) and bool(overwritten_result.get("ok", false)) and
+            float(overwritten_result.preset.values.get("simpleflight.rate_p", 0.0)) == 1.3 and
+            overwritten_result.preset.note == "updated note",
+            "saving an existing preset atomically overwrites its valid contents")
+    _write_preset("tampered", JSON.stringify({
+        "schema_version": 1,
+        "name": "tampered",
+        "created_at": "now",
+        "registry_hash": "registry-a",
+        "sim_version": "test-sim",
+        "values": {"simpleflight.rate_p": 1.0},
+        "unexpected": true,
+    }))
+    _expect(not bool(store.retrieve_preset("tampered").get("ok", false)),
+            "tampered preset with an unknown root field is rejected")
+    _write_preset("wrong_schema", JSON.stringify({
+        "schema_version": 2,
+        "name": "wrong_schema",
+        "created_at": "now",
+        "registry_hash": "registry-a",
+        "sim_version": "test-sim",
+        "values": {"simpleflight.rate_p": 1.0},
+    }))
+    _expect(not bool(store.retrieve_preset("wrong_schema").get("ok", false)),
+            "unsupported preset schema is rejected")
+    _write_preset("oversized", "x".repeat(GspPresetStore.MAX_FILE_BYTES + 1))
+    _expect(not bool(store.retrieve_preset("oversized").get("ok", false)),
+            "oversized preset input is rejected before parsing")
+    _write_preset("malformed", "{not-json")
+    _expect(not bool(store.retrieve_preset("malformed").get("ok", false)),
+            "malformed preset JSON is rejected")
+    _write_preset("nonfinite", "{\"schema_version\":1,\"name\":\"nonfinite\",\"created_at\":\"now\",\"registry_hash\":\"registry-a\",\"sim_version\":\"test-sim\",\"values\":{\"simpleflight.rate_p\":1e999}}")
+    _expect(not bool(store.retrieve_preset("nonfinite").get("ok", false)),
+            "non-finite preset values are rejected")
+    _expect(not bool(store.save_preset("contract", {"simpleflight.rate_p": 1.0}, "registry-a", "test-sim", "你".repeat(200)).get("ok", false)),
+            "preset notes are bounded by UTF-8 bytes")
     var listed_names: Array = []
     for preset_value in store.list_presets().get("presets", []):
         listed_names.append(String(preset_value.get("name", "")))
@@ -36,16 +80,22 @@ func _init() -> void:
             "GSP rejects Unicode lookalike names at the trust boundary")
 
     var changes := GspPresetStore.diff_values(
-            {"zero": 0.0, "same": 1.0, "positive": 2.0, "sign": 1.0},
-            {"zero": 1.0, "same": 1.0, "positive": 3.0, "sign": -1.0})
-    _expect(changes.size() == 3, "diff contains changes only")
+            {"zero": 0.0, "same": 1.0, "positive": 2.0, "negative": -2.0, "sign": 1.0, "target_zero": 2.0, "tiny": 1.0, "overflow": 1e-10},
+            {"zero": 1.0, "same": 1.0, "positive": 3.0, "negative": -3.0, "sign": -1.0, "target_zero": 0.0, "tiny": 1.0 + 1e-12, "overflow": 1e308})
+    _expect(changes.size() == 7, "diff contains exact changes only, including tiny real changes")
     var by_key := {}
     for change_value in changes:
         by_key[change_value.parameter] = change_value
+    var tiny_change: Dictionary = by_key.get("tiny", {})
     _expect(by_key.zero.percentage == null and by_key.zero.percentage_status == "zero_baseline" and
             by_key.sign.percentage == null and by_key.sign.percentage_status == "sign_change" and
-            is_equal_approx(float(by_key.positive.percentage), 50.0),
-            "zero and sign-changing percentage baselines stay explicit and finite")
+            is_equal_approx(float(by_key.positive.percentage), 50.0) and
+            is_equal_approx(float(by_key.negative.percentage), -50.0) and
+            is_equal_approx(float(by_key.target_zero.percentage), -100.0) and
+            tiny_change.has("percentage") and tiny_change.percentage_status == "finite" and
+            is_finite(float(tiny_change.percentage)) and
+            by_key.get("overflow", {}).get("percentage", 0.0) == null and by_key.get("overflow", {}).get("percentage_status", "") == "unrepresentable",
+            "zero, sign-changing, negative, target-zero, tiny, and overflow percentage cases stay explicit and finite")
 
     var runtime := FlightRuntime.new()
     runtime.native = ClassDB.instantiate("AeroSimNative")
@@ -57,16 +107,56 @@ func _init() -> void:
         var runtime_saved: Dictionary = runtime.gsp_save_preset("runtime_contract")
         _expect(bool(runtime_saved.get("ok", false)),
                 "runtime saves active registry values: %s" % JSON.stringify(runtime_saved))
+        var mismatch_values: Dictionary = runtime_saved.get("preset", {}).get("values", {}).duplicate(true)
+        _expect(bool(store.save_preset("mismatch", mismatch_values, "different-registry", "test-sim").get("ok", false)),
+                "mismatched-registry preset fixture saves")
+        var mismatch_before: Dictionary = runtime.native.call("flight_tuning_configuration")
+        var mismatch_load: Dictionary = runtime.gsp_load_preset(-1, -1, 1, "mismatch")
+        var mismatch_after: Dictionary = runtime.native.call("flight_tuning_configuration")
+        _expect(not bool(mismatch_load.get("ok", false)) and mismatch_load.get("error", "") == "registry_mismatch" and
+                int(mismatch_after.get("commit_id", -1)) == int(mismatch_before.get("commit_id", -2)) and
+                float(mismatch_after.get("simpleflight.rate_p", -1.0)) == float(mismatch_before.get("simpleflight.rate_p", -2.0)),
+                "registry-mismatched load rejects without state or commit mutation")
         runtime.paused = true
         _expect(bool(runtime.gsp_tuning_request(-1, -1, 1, "simpleflight.rate_p", 1.2).get("ok", false)),
                 "test mutation uses normal GSP tuning request")
+        runtime.paused = false
         var before_load: Dictionary = runtime.native.call("flight_tuning_configuration")
         var loaded: Dictionary = runtime.gsp_load_preset(-1, -1, 2, "runtime_contract")
-        var after_load: Dictionary = runtime.native.call("flight_tuning_configuration")
-        _expect(bool(loaded.get("ok", false)) and float(after_load.get("simpleflight.rate_p", -1.0)) == 0.6 and
-                int(after_load.get("commit_id", -1)) > int(before_load.get("commit_id", -2)),
-                "preset load commits through the native tuning path: %s" % JSON.stringify(loaded))
-        _expect(bool(runtime.gsp_tuning_request(-1, -1, 3, "simpleflight.rate_p", 1.2).get("ok", false)) and
+        var before_boundary: Dictionary = runtime.native.call("flight_tuning_configuration")
+        runtime._apply_gsp_tuning_requests(9)
+        var after_boundary: Dictionary = runtime.native.call("flight_tuning_configuration")
+        _expect(bool(loaded.get("ok", false)) and bool(loaded.get("pending", false)) and
+                float(before_boundary.get("simpleflight.rate_p", -1.0)) == 1.2 and
+                float(after_boundary.get("simpleflight.rate_p", -1.0)) == 0.6 and
+                int(after_boundary.get("commit_id", -1)) == int(before_load.get("commit_id", -2)) + 1,
+                "active preset load remains unchanged until one atomic next-boundary commit: %s" % JSON.stringify(loaded))
+        runtime.paused = true
+        _expect(bool(runtime.gsp_tuning_request(-1, -1, 3, "simpleflight.rate_p", 1.2).get("ok", false)),
+                "paused test mutation restores a changed active value")
+        var immediate_before: Dictionary = runtime.native.call("flight_tuning_configuration")
+        var immediate_load: Dictionary = runtime.gsp_load_preset(-1, -1, 4, "runtime_contract")
+        var immediate_after: Dictionary = runtime.native.call("flight_tuning_configuration")
+        _expect(bool(immediate_load.get("ok", false)) and not bool(immediate_load.get("pending", false)) and
+                float(immediate_after.get("simpleflight.rate_p", -1.0)) == 0.6 and
+                int(immediate_after.get("commit_id", -1)) == int(immediate_before.get("commit_id", -2)) + 1,
+                "paused preset load commits immediately")
+        var ordered_values := {}
+        for index in range(runtime._gsp_tuning_registry.size() - 1, -1, -1):
+            var descriptor: Dictionary = runtime._gsp_tuning_registry[index]
+            var key := String(descriptor.get("key", ""))
+            ordered_values[key] = float(immediate_after.get(key, 0.0))
+        _expect(bool(GspPresetStore.new().save_preset("ordered", ordered_values,
+                runtime._gsp_tuning_registry_hash, "test-sim").get("ok", false)),
+                "reverse-ordered preset fixture saves")
+        var ordered_load: Dictionary = runtime.gsp_load_preset(-1, -1, 5, "ordered")
+        var ordered_changes: Array = ordered_load.get("changes", [])
+        var registry_ordered := true
+        for index in ordered_changes.size():
+            if String(ordered_changes[index].get("parameter", "")) != String(runtime._gsp_tuning_registry[index].get("key", "")):
+                registry_ordered = false
+        _expect(registry_ordered, "preset load stages changes in canonical registry order")
+        _expect(bool(runtime.gsp_tuning_request(-1, -1, 6, "simpleflight.rate_p", 1.2).get("ok", false)) and
                 runtime.gsp_compare_presets("", "runtime_contract").get("changes", []).size() == 1,
                 "current-versus-preset diff reports changed values only")
 
@@ -93,7 +183,7 @@ func _expect(condition: bool, message: String) -> void:
 
 
 func _cleanup() -> void:
-    _remove_known(["contract", "runtime_contract"])
+    _remove_known(["contract", "runtime_contract", "tampered", "wrong_schema", "oversized", "malformed", "nonfinite", "mismatch", "ordered"])
 
 
 func _remove_known(names: Array) -> void:
@@ -101,3 +191,11 @@ func _remove_known(names: Array) -> void:
         var path := GspPresetStore.preset_path(String(name))
         if not path.is_empty():
             DirAccess.remove_absolute(path)
+
+
+func _write_preset(name: String, contents: String) -> void:
+    var path := GspPresetStore.preset_path(name)
+    var file := FileAccess.open(path, FileAccess.WRITE)
+    if file != null:
+        file.store_string(contents)
+        file.close()
