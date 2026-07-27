@@ -22,6 +22,8 @@ Implemented only the GSP panel lifecycle recovery work for #249. The existing #2
 - Tracked dynamically created tuning-group apply buttons in the same readiness inventory. A hidden-session fresh telemetry frame is ignored while `document.hidden`; visibility restoration requests a new matching snapshot and sends 30 Hz before readiness can return.
 - Reset stale session request maps, sequence state, telemetry freshness, and control readiness on replacement.
 - Extended the real GSP boundary harness with pre-stop probe snapshots containing timestamp, live/authenticated/closing counts, and process/physics ticks. Added coverage for graceful replacement, abrupt reclaim, same-process token reuse, and restart token rejection/acceptance.
+- Kept launcher shell-open failures URL/fragment-free while preserving the single explicit printed launch URL. Added a headless launcher harness with injected display/opener seams so restart evidence captures the real printed `file://...#port=...&token=...` URL without opening a browser.
+- Made a missed 250 ms probe publication retryable inside the five-second abrupt-reclaim deadline; process exit and total deadline remain fatal.
 - Added the recovery test to `scripts/verify_issue_11.sh` while preserving the existing server port fallback tests.
 
 ## TDD evidence
@@ -37,6 +39,12 @@ Implemented only the GSP panel lifecycle recovery work for #249. The existing #2
 3. GREEN: `node tests/test_gsp_panel_recovery.js` and `node tests/test_gsp_panel_behavior.js` passed after adding the hidden telemetry guard, visibility re-snapshot assertion, group-button inventory, quick-control assertions, and preserved reconnect backoff assertion (`500 ms` after an unready hidden loss).
 4. GREEN: the focused boundary run passed with live/authenticated/closing snapshots `1/1/0 → 0/0/0 → 2/2/0`; abrupt reclaim passed in `0.101s` with positive process/physics tick delta `4965/4965` in one run.
 
+### Final review-fix round
+
+1. RED: `gsp_launch_contract.gd` failed when a token-bearing URL was passed to `shell_open_result`; the returned error contained the full URL. GREEN: the error is now `OS.shell_open failed; panel was not opened`, and the test asserts no URL, fragment, or token text appears.
+2. RED: the new second-process launcher harness printed no URL because headless display detection rejected the requested-open test path. GREEN: `GspLauncher.launch` uses the minimum injected display/opener seams; the real restart test now reports `fresh_printed_url=true` and authenticates that printed token while rejecting the first process token.
+3. RED: the deterministic probe retry test initially failed at the missing retry helper. GREEN: a delayed first probe is retried with the next sequence and succeeds (`delayed_timeout_retry=true`); the real abrupt-reclaim loop catches only publication timeouts and still fails on process exit or total deadline.
+
 ## Real transport evidence
 
 `GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 python3 scripts/test_gsp_transport_boundary.py` passed:
@@ -46,13 +54,14 @@ Implemented only the GSP panel lifecycle recovery work for #249. The existing #2
 - forced reliable-close cleanup;
 - same-process replacement with exact pre-stop counts `1/1/0`, reclaimed counts `0/0/0` before replacement, and replacement/observer counts `2/2/0`;
 - abrupt RST with pre-loss counts, polling diagnostics, timestamp/tick deltas, reclaim within five seconds, and replacement/observer counts `2/2/0`;
-- server restart with stale-token rejection and fresh-token authentication.
+- server restart with stale-token rejection and fresh authentication from the newly printed launcher URL;
+- deterministic delayed-probe retry regression.
 
 ## Full gate
 
-Implementation commits: `3f0b0756a367219b1b171c20b214164d672f7940` (`Fix GSP panel lifecycle recovery`), `b49b448` (`Fix GSP hidden reconnect and lifecycle evidence`), and `5572d9c` (`Keep hidden GSP sessions inactive`).
+Implementation commits: `3f0b0756a367219b1b171c20b214164d672f7940` (`Fix GSP panel lifecycle recovery`), `b49b448` (`Fix GSP hidden reconnect and lifecycle evidence`), `5572d9c` (`Keep hidden GSP sessions inactive`), and `facd36a` (`Fix final GSP review findings`).
 
-Ran the exact required command from the final committed HEAD (`5572d9c`):
+Ran the exact required command from the final committed HEAD (`facd36a`):
 
 ```text
 RUNNER_TEMP=/tmp/aerosim-gsp-249 \
@@ -60,7 +69,7 @@ GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 \
 scripts/verify_issue_11.sh
 ```
 
-Result: exit 0. The captured final gate passed native tests, license scan, panel tests, real GSP boundary tests, GDExtension build, terrain dependency, GUT (277/277), native atomic boundary, preset contract/integration, tuning integration/stress, quick-adjust integration, headed acceptance (`report.json` passed), replay integration, and headless smoke (`completed: true`, `simulated_frames: 5`).
+Result: exit 0. The captured final gate passed native tests, license scan, panel tests, probe retry and real GSP boundary tests, GDExtension build, terrain dependency, GUT (277/277), native atomic boundary, preset contract/integration, tuning integration/stress, quick-adjust integration, headed acceptance, replay integration, and headless smoke (`completed: true`, `simulated_frames: 5`). The focused launcher contract also passed.
 
 ## Problems and exact resolutions
 
@@ -70,9 +79,13 @@ Result: exit 0. The captured final gate passed native tests, license scan, panel
 - Review found dynamically created group apply buttons were outside the tracked inventory: added the existing group buttons to that inventory and asserted disabled/enabled state directly.
 - Review found a hidden reconnect could become active from its matching snapshot: ignored telemetry while hidden, retaining the existing visibility handler as the sole visible reactivation path.
 - Review found the real evidence only inspected final stop state: added harness probe snapshots and polling assertions for exact pre-stop counts, timestamps, and process/physics progress.
+- Final review found shell-open errors duplicated token-bearing launch URLs: removed URL data from the error while retaining the explicit printed URL and added a focused contract assertion.
+- Final review required restart evidence from the launcher seam: added only test display/opener injection and a headless harness that captures the printed URL, without a browser or secondary credential channel.
+- Final review found a single missed probe publication could falsely fail abrupt reclaim: introduced a typed publication-timeout retry path and deterministic delayed-probe regression.
 - First real harness run found mixed space/tab GDScript indentation in the newly added status fields: converted only the new lines to the repository’s tab indentation; boundary tests then passed.
 - One chained boundary invocation reported a transient executable lookup error despite the configured Godot binary existing; a direct rerun with the exact binary passed all six boundary cases. No code change was made for that environmental transient.
 - One focused rerun initially used a malformed `GODOT_BIN` path; rerunning with `/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64` passed. No code change was made.
+- One focused launcher-contract command initially expanded an environment variable before assignment and did not invoke Godot; the corrected direct binary invocation passed. No code change was made.
 - The first streamed full-gate observation was interrupted before its late lanes were visible; a second exact committed-HEAD run captured its exit code and completed with exit 0.
 - The full gate emitted known non-fatal diagnostics: generated missing `.uid`/`.import`/translation artifacts, existing Terrain3D mipmap warnings, expected negative-path native error logs, existing GUT orphan/leak warnings, and the environment’s NVIDIA Vulkan headed lane. The command still exited 0 and no #249 failure was observed.
 
