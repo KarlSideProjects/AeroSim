@@ -128,9 +128,10 @@ tool call error: tool call failed for codebase-memory-mcp/index_repository
 Caused by: Transport closed
 ```
 
-Targeted `rg`/`sed` discovery was used afterward. No high-value ambiguity
-remained; Sol-high was not invoked because the rejection supplied the confirmed
-decisions and the existing runtime/native seams were sufficient.
+Targeted `rg`/`sed` discovery was used afterward. Sol-high performed the
+independent review rounds documented above; after each review supplied exact
+findings, the existing runtime/native seams were sufficient to implement the
+minimum fixes without a separate design-advice query.
 
 ## Parameter set and active consumers
 
