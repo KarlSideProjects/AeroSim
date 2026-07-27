@@ -144,6 +144,8 @@ var _effects := "off"
 var _benchmark_mode := "gate"
 var _gsp_mode := "none"
 var _commit_sha := ""
+var _gsp_ready_path := ""
+var _gsp_external_client := false
 var _required_adapter := "NVIDIA"
 var _godot_version := ""
 var _godot_sha256 := ""
@@ -151,10 +153,7 @@ var _godot_cpp_revision := ""
 var _gdextension_sha256 := ""
 var _native_source_sha256 := ""
 var _gsp_server: GspServer
-var _gsp_client := WebSocketPeer.new()
-var _gsp_pair_order := "disabled,authenticated-idle"
-var _gsp_pair_label := "pair"
-var _gsp_output_dir := "build/gsp-idle-benchmark"
+var _gsp_evidence_samples: Array[Dictionary] = []
 
 
 func _initialize() -> void:
@@ -325,11 +324,11 @@ func _configure_effects(native: Object) -> bool:
 
 
 func _run_gsp_mode() -> void:
-    if _gsp_mode == "paired":
-        await _run_gsp_paired()
-        return
     if _gsp_mode != "disabled" and _gsp_mode != "authenticated-idle":
-        _fail("GSP benchmark mode must be disabled, authenticated-idle, or paired")
+        _fail("GSP benchmark mode must be disabled or authenticated-idle")
+        return
+    if _gsp_mode == "authenticated-idle" and not _gsp_external_client:
+        _fail("authenticated-idle requires the external client runner")
         return
     var setup := await _prepare_gsp_runtime()
     if setup.is_empty():
@@ -345,30 +344,7 @@ func _run_gsp_mode() -> void:
     if samples.size() != ceili(_seconds * Engine.physics_ticks_per_second):
         _fail("PhysicsFrameProfiler captured %d of %d GSP measurement frames" % [samples.size(), ceili(_seconds * Engine.physics_ticks_per_second)])
         return
-    _write_gsp_raw(_output_path, _gsp_mode, samples, [_gsp_mode])
-    runtime.queue_free()
-    quit(0)
-
-
-func _run_gsp_paired() -> void:
-    var order := _gsp_pair_order.split(",")
-    if order.size() != 2 or order[0] == order[1] or (order[0] not in ["disabled", "authenticated-idle"]) or (order[1] not in ["disabled", "authenticated-idle"]):
-        _fail("GSP paired benchmark order must be disabled,authenticated-idle or its reverse")
-        return
-    var setup := await _prepare_gsp_runtime()
-    if setup.is_empty():
-        return
-    var runtime: Node = setup.runtime
-    var effect_workload: EffectWorkload = setup.effect_workload
-    var profiler := PhysicsFrameProfiler.new()
-    EngineDebugger.register_profiler("aerosim_physics_frame", profiler)
-    EngineDebugger.profiler_enable("aerosim_physics_frame", true)
-    for phase in order:
-        var samples: Array[float] = await _run_gsp_phase(phase, runtime, effect_workload, profiler)
-        var output_path := "%s/%s-%s.raw.json" % [_gsp_output_dir, _gsp_pair_label, phase]
-        _write_gsp_raw(output_path, phase, samples, order)
-    EngineDebugger.profiler_enable("aerosim_physics_frame", false)
-    EngineDebugger.unregister_profiler("aerosim_physics_frame")
+    _write_gsp_raw(_output_path, _gsp_mode, samples)
     runtime.queue_free()
     quit(0)
 
@@ -393,33 +369,30 @@ func _prepare_gsp_runtime() -> Dictionary:
     return {"runtime": runtime, "effect_workload": effect_workload}
 
 
-func _run_gsp_phase(mode: String, runtime: Node, effect_workload: EffectWorkload, profiler: PhysicsFrameProfiler) -> Array[float]:
-    if mode == "authenticated-idle" and not await _connect_authenticated_idle(runtime):
-        _fail("authenticated idle GSP client could not connect")
+func _run_gsp_phase(mode: String, runtime: Node, _effect_workload: EffectWorkload, profiler: PhysicsFrameProfiler) -> Array[float]:
+    _gsp_evidence_samples.clear()
+    if mode == "authenticated-idle" and not await _start_external_gsp(runtime):
+        _fail("authenticated idle GSP server could not start or external client did not authenticate")
         return []
-    if mode == "disabled" and _gsp_server != null:
-        _stop_authenticated_idle()
 
     var warmup_frames := maxi(0, ceili(_warmup_seconds * Engine.physics_ticks_per_second))
     for _frame in warmup_frames:
         await physics_frame
+        _sample_gsp_evidence()
     profiler.frame_ids.clear()
     profiler.samples_ms.clear()
-    effect_workload.reset_effect_evidence()
     var measurement_frames := maxi(1, ceili(_seconds * Engine.physics_ticks_per_second))
     for _frame in measurement_frames:
         await physics_frame
+        _sample_gsp_evidence()
     await process_frame
     if profiler.samples_ms.size() != measurement_frames:
         _fail("PhysicsFrameProfiler captured %d of %d GSP measurement frames" % [profiler.samples_ms.size(), measurement_frames])
         return []
-    var samples: Array[float] = profiler.samples_ms.duplicate()
-    if mode == "authenticated-idle":
-        _stop_authenticated_idle()
-    return samples
+    return profiler.samples_ms.duplicate()
 
 
-func _write_gsp_raw(output_path: String, mode: String, samples: Array[float], phase_order: Array) -> void:
+func _write_gsp_raw(output_path: String, mode: String, samples: Array[float]) -> void:
     DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output_path.get_base_dir()))
     var output := FileAccess.open(output_path, FileAccess.WRITE)
     if output == null:
@@ -436,22 +409,13 @@ func _write_gsp_raw(output_path: String, mode: String, samples: Array[float], ph
         "physics_ticks_per_second": Engine.physics_ticks_per_second,
         "warmup_seconds": _warmup_seconds,
         "measured_seconds": _seconds,
-        "phase_order": phase_order,
+        "workload_initialization": "fresh Godot process; EffectWorkload.configure once before warmup",
+        "gsp_server_evidence": _gsp_server_evidence(),
     }))
     output.close()
 
 
-func _stop_authenticated_idle() -> void:
-    if _gsp_client.get_ready_state() != WebSocketPeer.STATE_CLOSED:
-        _gsp_client.close()
-    _gsp_client = WebSocketPeer.new()
-    if _gsp_server != null:
-        _gsp_server.stop()
-        _gsp_server.queue_free()
-        _gsp_server = null
-
-
-func _connect_authenticated_idle(runtime: Node) -> bool:
+func _start_external_gsp(runtime: Node) -> bool:
     _gsp_server = GspServer.new()
     root.add_child(_gsp_server)
     _gsp_server.set_identity_provider(Callable(runtime, "gsp_identity_snapshot"))
@@ -459,28 +423,75 @@ func _connect_authenticated_idle(runtime: Node) -> bool:
     var started := _gsp_server.start()
     if not bool(started.get("ok", false)):
         return false
-    _gsp_client.handshake_headers = PackedStringArray(["Origin: null"])
-    _gsp_client.connect_to_url("ws://127.0.0.1:%d" % int(started.get("port", 0)))
-    for _attempt in 240:
-        _gsp_client.poll()
-        if _gsp_client.get_ready_state() == WebSocketPeer.STATE_OPEN:
-            _gsp_client.send_text(JSON.stringify({"v": 2, "t": "auth", "seq": 0, "d": {"token": started.token}}))
-            break
-        await process_frame
-    if _gsp_client.get_ready_state() != WebSocketPeer.STATE_OPEN:
+    if _gsp_ready_path.is_empty():
+        return false
+    DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_gsp_ready_path.get_base_dir()))
+    var temporary_path := "%s.tmp-%d" % [_gsp_ready_path, Time.get_ticks_usec()]
+    var ready := FileAccess.open(temporary_path, FileAccess.WRITE)
+    if ready == null:
+        return false
+    ready.store_string(JSON.stringify({
+        "port": started.port,
+        "token": started.token,
+        "mode": "authenticated-idle",
+        "listening": _gsp_server.is_listening(),
+        "physics_ticks_per_second": Engine.physics_ticks_per_second,
+    }))
+    ready.flush()
+    ready.close()
+    if DirAccess.rename_absolute(temporary_path, _gsp_ready_path) != OK:
+        DirAccess.remove_absolute(temporary_path)
         return false
     for _attempt in 240:
-        _gsp_client.poll()
-        while _gsp_client.get_available_packet_count() > 0:
-            var packet := _gsp_client.get_packet()
-            if not _gsp_client.was_string_packet():
-                continue
-            var message = JSON.parse_string(packet.get_string_from_utf8())
-            if typeof(message) == TYPE_DICTIONARY and String(message.get("t", "")) == "hello":
-                _gsp_client.send_text(JSON.stringify({"v": 2, "t": "set_telemetry", "seq": 1, "d": {"hz": 30, "extra": []}}))
-                return true
+        if _gsp_server.get_authenticated_peer_count() == 1:
+            return true
         await process_frame
     return false
+
+
+func _sample_gsp_evidence() -> void:
+    if _gsp_server == null:
+        return
+    var diagnostics := _gsp_server.get_peer_transport_diagnostics()
+    var open := _gsp_server.get_authenticated_peer_count() == 1
+    var max_buffered_bytes := 0
+    var suppressed := false
+    for diagnostic in diagnostics:
+        var buffered_bytes := int(diagnostic.get("outbound_buffered_bytes", 0))
+        max_buffered_bytes = maxi(max_buffered_bytes, buffered_bytes)
+        suppressed = suppressed or buffered_bytes >= GspServer.TELEMETRY_SUPPRESSION_THRESHOLD_BYTES
+    _gsp_evidence_samples.append({
+        "open": open,
+        "suppressed": suppressed,
+        "max_outbound_buffered_bytes": max_buffered_bytes,
+    })
+
+
+func _gsp_server_evidence() -> Dictionary:
+    if _gsp_server == null:
+        return {"server_started": false, "external_client": false}
+    var not_open_count := 0
+    var suppression_observed := false
+    var max_buffered_bytes := 0
+    for sample in _gsp_evidence_samples:
+        if not bool(sample.get("open", false)):
+            not_open_count += 1
+        suppression_observed = suppression_observed or bool(sample.get("suppressed", false))
+        max_buffered_bytes = maxi(max_buffered_bytes, int(sample.get("max_outbound_buffered_bytes", 0)))
+    return {
+        "server_started": true,
+        "external_client": true,
+        "expected_phase_samples": ceili((_warmup_seconds + _seconds) * Engine.physics_ticks_per_second),
+        "sample_count": _gsp_evidence_samples.size(),
+        "open_samples": _gsp_evidence_samples.size() - not_open_count,
+        "not_open_samples": not_open_count,
+        "suppression_observed": suppression_observed,
+        "max_outbound_buffered_bytes": max_buffered_bytes,
+        "telemetry_send_count": _gsp_server.telemetry_send_count,
+        "telemetry_processing": _gsp_server.get_telemetry_processing_diagnostics(),
+        "reliable_overflow_count": _gsp_server.reliable_overflow_count,
+        "hard_close_count": _gsp_server.hard_close_count,
+    }
 
 
 func _install_deterministic_valid_license(runtime: Node) -> void:
@@ -495,6 +506,7 @@ func _install_deterministic_valid_license(runtime: Node) -> void:
 
 func _parse_args() -> void:
     var args := OS.get_cmdline_user_args()
+    _gsp_external_client = args.has("--external-client")
     for index in range(args.size() - 1):
         match args[index]:
             "--output":
@@ -509,12 +521,10 @@ func _parse_args() -> void:
                 _benchmark_mode = args[index + 1]
             "--gsp-mode":
                 _gsp_mode = args[index + 1]
-            "--gsp-pair-order":
-                _gsp_pair_order = args[index + 1]
-            "--gsp-pair-label":
-                _gsp_pair_label = args[index + 1]
-            "--gsp-output-dir":
-                _gsp_output_dir = args[index + 1]
+            "--ready-file":
+                _gsp_ready_path = args[index + 1]
+            "--external-client":
+                _gsp_external_client = true
             "--commit-sha":
                 _commit_sha = args[index + 1]
             "--godot-version":
