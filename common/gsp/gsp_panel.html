@@ -21,7 +21,12 @@ dt { color: #9fb0c5; } dd { margin: 0; font-variant-numeric: tabular-nums; }
 code { color: #b9d8ff; overflow-wrap: anywhere; }
 canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 .muted { color: #9fb0c5; }
-.tuning-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; margin-top: 8px; }
+.tuning-group { border-top: 1px solid #24364c; padding-top: 8px; margin-top: 10px; }
+.tuning-group:first-child { border-top: 0; margin-top: 0; }
+.tuning-row { display: grid; grid-template-columns: 1fr minmax(8rem, 1fr) 7rem auto; gap: 8px; align-items: center; margin-top: 8px; }
+.tuning-row input[type="number"] { width: 7rem; }
+.tuning-row input { box-sizing: border-box; background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
+.tuning-row input[type="range"] { width: 100%; accent-color: #67d5ff; }
 .tuning-row input { width: 8rem; box-sizing: border-box; background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
 .tuning-row button { background: #244d67; color: #dce7f5; border: 0; border-radius: 4px; padding: 6px 10px; }
 </style>
@@ -68,6 +73,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   var freshState = $("fresh-state");
   var canvas = $("sparkline");
   var context = canvas.getContext("2d");
+  var pendingTuning = {};
+  var tuningControls = {};
 
   function text(id, value) { $(id).textContent = value; }
   function vector(value, unit) {
@@ -91,24 +98,68 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     pendingFreshRequestSequence = send("request_snapshot", {});
   }
   function sendPing() { send("ping", { sent_at_perf_ms: performance.now() }); }
+  function tuningValue(descriptor, controls) {
+    var value = Number(controls.number.value);
+    return Number.isFinite(value) ? Math.min(Number(descriptor.max), Math.max(Number(descriptor.min), value)) : null;
+  }
+  function sendTuning(descriptor, controls, finalValue, batch) {
+    var value = tuningValue(descriptor, controls);
+    if (value == null) { controls.status.textContent = "Invalid number"; return; }
+    var sequence = send(batch ? "set_tuning_batch" : "set_tuning", batch ? { changes: batch } : { parameter: descriptor.key, value: value });
+    if (sequence == null) { controls.status.textContent = "Disconnected"; return; }
+    controls.status.textContent = finalValue ? "Waiting for acknowledgement…" : "Preview " + value.toFixed(3);
+    pendingTuning[sequence] = { controls: controls, descriptor: descriptor, final: finalValue, started: performance.now() };
+    setTimeout(function () {
+      if (!pendingTuning[sequence]) return;
+      delete pendingTuning[sequence];
+      controls.status.textContent = "Timeout; committed value unknown";
+    }, 1500);
+  }
+  function scheduleTransient(descriptor, controls) {
+    var elapsed = performance.now() - controls.lastTransientAt;
+    if (controls.transientTimer) clearTimeout(controls.transientTimer);
+    controls.transientTimer = setTimeout(function () {
+      controls.lastTransientAt = performance.now();
+      sendTuning(descriptor, controls, false, null);
+      controls.transientTimer = null;
+    }, Math.max(0, 50 - elapsed));
+  }
   function renderTuning(registry) {
     tuningRows.textContent = "";
     var parameters = registry && Array.isArray(registry.parameters) ? registry.parameters : [];
+    var groups = {};
     parameters.forEach(function (descriptor) {
-      var row = document.createElement("div"); row.className = "tuning-row";
-      var label = document.createElement("label"); label.textContent = (descriptor.group || "Tuning") + " · " + (descriptor.key || "parameter");
-      var input = document.createElement("input"); input.type = "number"; input.min = descriptor.min; input.max = descriptor.max; input.step = descriptor.step;
-      input.value = descriptor.active_value == null ? descriptor.default : descriptor.active_value;
+      var groupName = descriptor.group || "Tuning";
+      if (!groups[groupName]) {
+        var group = document.createElement("section"); group.className = "tuning-group";
+        var heading = document.createElement("strong"); heading.textContent = groupName;
+        var applyGroup = document.createElement("button"); applyGroup.textContent = "Apply group";
+        var rows = document.createElement("div");
+        applyGroup.addEventListener("click", function () {
+          var changes = Array.prototype.map.call(rows.querySelectorAll(".tuning-row"), function (row) {
+            var item = tuningControls[row.dataset.key];
+            return { parameter: item.descriptor.key, value: tuningValue(item.descriptor, item) };
+          }).filter(function (item) { return item.value != null; });
+          if (changes.length) sendTuning(descriptor, tuningControls[changes[0].parameter], true, changes);
+        });
+        group.appendChild(heading); group.appendChild(applyGroup); group.appendChild(rows); tuningRows.appendChild(group);
+        groups[groupName] = rows;
+      }
+      var row = document.createElement("div"); row.className = "tuning-row"; row.dataset.key = descriptor.key;
+      var label = document.createElement("label"); label.textContent = descriptor.key || "parameter";
+      var slider = document.createElement("input"); slider.type = "range"; slider.min = descriptor.min; slider.max = descriptor.max; slider.step = descriptor.step;
+      var number = document.createElement("input"); number.type = "number"; number.min = descriptor.min; number.max = descriptor.max; number.step = descriptor.step;
+      var initial = descriptor.active_value == null ? descriptor.default : descriptor.active_value; slider.value = initial; number.value = initial;
       var button = document.createElement("button"); button.textContent = "Apply";
       var status = document.createElement("span"); status.className = "muted";
-      button.addEventListener("click", function () {
-        var value = Number(input.value);
-        if (!Number.isFinite(value)) { status.textContent = "Invalid number"; return; }
-        var sequence = send("set_tuning", { parameter: descriptor.key, value: value });
-        status.textContent = sequence == null ? "Disconnected" : "Waiting…";
-        button.dataset.requestSeq = sequence;
-      });
-      row.appendChild(label); row.appendChild(input); row.appendChild(button); row.appendChild(status); tuningRows.appendChild(row);
+      var controls = { descriptor: descriptor, slider: slider, number: number, status: status, lastTransientAt: 0, transientTimer: null };
+      tuningControls[descriptor.key] = controls;
+      function preview() { number.value = slider.value; scheduleTransient(descriptor, controls); }
+      slider.addEventListener("input", preview); slider.addEventListener("change", function () { sendTuning(descriptor, controls, true, null); });
+      number.addEventListener("input", function () { slider.value = number.value; scheduleTransient(descriptor, controls); });
+      number.addEventListener("change", function () { sendTuning(descriptor, controls, true, null); });
+      button.addEventListener("click", function () { sendTuning(descriptor, controls, true, null); });
+      row.appendChild(label); row.appendChild(slider); row.appendChild(number); row.appendChild(button); row.appendChild(status); groups[descriptor.group || "Tuning"].appendChild(row);
     });
     if (!parameters.length) tuningRows.textContent = "No tunable parameters.";
   }
@@ -187,11 +238,17 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         text("latency", Math.max(0, performance.now() - Number(message.d.echo.sent_at_perf_ms)).toFixed(1) + " ms");
       } else if (message.t === "tuning_ack") {
         var ack = message.d;
-        var controls = tuningRows.querySelectorAll("button");
-        Array.prototype.forEach.call(controls, function (button) {
-          if (Number(button.dataset.requestSeq) !== Number(ack.request_seq)) return;
-          var status = button.parentElement.lastElementChild;
-          status.textContent = ack.ok ? (ack.clamped ? "Clamped to " : "Committed ") + Number(ack.committed_value).toFixed(3) : String(ack.error || "Rejected");
+        var pending = pendingTuning[Number(ack.request_seq)];
+        if (!pending) return;
+        delete pendingTuning[Number(ack.request_seq)];
+        pending.controls.status.textContent = ack.ok ? (ack.clamped ? "Clamped to " : "Committed ") + Number(ack.committed_value).toFixed(3) : String(ack.error || "Rejected");
+        if (ack.ok && ack.committed_value != null) { pending.controls.slider.value = ack.committed_value; pending.controls.number.value = ack.committed_value; }
+      } else if (message.t === "tuning_commit") {
+        var values = message.d.committed_values || message.d.values || {};
+        Object.keys(values).forEach(function (key) {
+          if (!tuningControls[key]) return;
+          tuningControls[key].slider.value = values[key]; tuningControls[key].number.value = values[key];
+          tuningControls[key].status.textContent = "Committed by session";
         });
       }
     });

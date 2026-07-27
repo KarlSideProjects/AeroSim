@@ -4789,7 +4789,13 @@ func _on_dashboard_vehicle_selected(vehicle_name: String) -> void:
         _dashboard_vehicle_name = vehicle_name
 
 
-func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, parameter: String, value: Variant) -> Dictionary:
+func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, parameter: Variant, value: Variant = null) -> Dictionary:
+    if typeof(parameter) == TYPE_ARRAY:
+        return gsp_tuning_batch_request(peer_id, connection_id, request_seq, parameter)
+    return gsp_tuning_batch_request(peer_id, connection_id, request_seq, [{"parameter": parameter, "value": value}])
+
+
+func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array) -> Dictionary:
     _sync_native_external_authority()
     if _gsp_external_authority_active():
         var result := {
@@ -4802,16 +4808,27 @@ func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, para
         }
         _remember_gsp_tuning_result(result)
         return result
+    var apply_timing := _gsp_tuning_descriptor_timing(String(changes[0].get("parameter", ""))) if not changes.is_empty() else "unknown"
+    if apply_timing == "restart_required" or apply_timing == "reset_required":
+        var deferred_result := {
+            "peer_id": peer_id,
+            "connection_id": connection_id,
+            "request_seq": request_seq,
+            "ok": false,
+            "error": apply_timing,
+            "apply_timing": apply_timing,
+        }
+        _remember_gsp_tuning_result(deferred_result)
+        return deferred_result
     if paused:
-        return _commit_gsp_tuning(peer_id, connection_id, request_seq, parameter, value, _gsp_public_physics_tick())
+        return _commit_gsp_tuning_batch(peer_id, connection_id, request_seq, changes, _gsp_public_physics_tick())
     _gsp_tuning_pending.append({
         "peer_id": peer_id,
         "connection_id": connection_id,
         "request_seq": request_seq,
-        "parameter": parameter,
-        "value": value,
+        "changes": changes.duplicate(true),
     })
-    return {"ok": true, "pending": true}
+    return {"ok": true, "pending": true, "apply_timing": apply_timing}
 
 
 func gsp_tuning_results() -> Array:
@@ -4825,17 +4842,30 @@ func _apply_gsp_tuning_requests(public_physics_tick: int) -> void:
         return
     var pending := _gsp_tuning_pending
     _gsp_tuning_pending = []
+    var coalesced: Dictionary = {}
+    var ordered_keys: Array[String] = []
     for request in pending:
-        _gsp_tuning_completed.append(_commit_gsp_tuning(
-                int(request.get("peer_id", -1)),
-                int(request.get("connection_id", -1)),
-                int(request.get("request_seq", -1)),
-                String(request.get("parameter", "")),
-                request.get("value"),
-                public_physics_tick))
+        for change_value in request.get("changes", []):
+            var change: Dictionary = change_value
+            var key := String(change.get("parameter", ""))
+            if not coalesced.has(key):
+                ordered_keys.append(key)
+            coalesced[key] = change.duplicate(true)
+    var changes: Array = []
+    for key in ordered_keys:
+        changes.append(coalesced[key])
+    var first: Dictionary = pending[0]
+    var commit := _commit_gsp_tuning_batch(int(first.get("peer_id", -1)), int(first.get("connection_id", -1)), int(first.get("request_seq", -1)), changes, public_physics_tick)
+    for request in pending:
+        var acknowledged := commit.duplicate(true)
+        acknowledged["peer_id"] = int(request.get("peer_id", -1))
+        acknowledged["connection_id"] = int(request.get("connection_id", -1))
+        acknowledged["request_seq"] = int(request.get("request_seq", -1))
+        acknowledged["coalesced"] = pending.size() > 1
+        _gsp_tuning_completed.append(acknowledged)
 
 
-func _commit_gsp_tuning(peer_id: int, connection_id: int, request_seq: int, parameter: String, value: Variant, public_physics_tick: int) -> Dictionary:
+func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int, changes: Array, public_physics_tick: int) -> Dictionary:
     var result: Dictionary = {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
     _sync_native_external_authority()
     if _gsp_external_authority_active():
@@ -4844,12 +4874,12 @@ func _commit_gsp_tuning(peer_id: int, connection_id: int, request_seq: int, para
         result["authority"] = "px4"
         _remember_gsp_tuning_result(result)
         return result
-    if native == null or not native.has_method("stage_flight_tuning") or not native.has_method("commit_flight_tuning"):
+    if native == null or not native.has_method("stage_flight_tuning_batch") or not native.has_method("commit_flight_tuning"):
         result["ok"] = false
         result["error"] = "tuning_unavailable"
         _remember_gsp_tuning_result(result)
         return result
-    var staged_result: Dictionary = native.call("stage_flight_tuning", parameter, value)
+    var staged_result: Dictionary = native.call("stage_flight_tuning_batch", changes)
     if not bool(staged_result.get("ok", false)):
         for key in staged_result:
             result[key] = staged_result[key]
@@ -4859,21 +4889,47 @@ func _commit_gsp_tuning(peer_id: int, connection_id: int, request_seq: int, para
     for key in native_result:
         result[key] = native_result[key]
     if bool(native_result.get("ok", false)):
+        result["apply_timing"] = _gsp_tuning_descriptor_timing(String(changes[0].get("parameter", "")))
         if bool(native_result.get("changed", false)) and _replay_recording_active and native.has_method("record_replay_tuning"):
-            var replay_result: Dictionary = native.call(
-                    "record_replay_tuning",
-                    _replay_timestamp_us(),
-                    _airsim_vehicle_name,
-                    request_seq,
-                    int(native_result.get("commit_id", 0)),
-                    parameter,
-                    float(native_result.get("requested_value", 0.0)),
-                    float(native_result.get("committed_value", 0.0)),
-                    bool(native_result.get("clamped", false)))
-            if not bool(replay_result.get("ok", false)):
-                push_error("Complete replay tuning recording failed: %s" % String(replay_result.get("diagnostic_message", "unknown error")))
+            for change_value in native_result.get("changes", []):
+                var change: Dictionary = change_value
+                var replay_result: Dictionary = native.call(
+                        "record_replay_tuning",
+                        _replay_timestamp_us(),
+                        _airsim_vehicle_name,
+                        request_seq,
+                        int(native_result.get("commit_id", 0)),
+                        String(change.get("parameter", "")),
+                        float(change.get("requested_value", 0.0)),
+                        float(change.get("committed_value", 0.0)),
+                        bool(change.get("clamped", false)))
+                if not bool(replay_result.get("ok", false)):
+                    push_error("Complete replay tuning recording failed: %s" % String(replay_result.get("diagnostic_message", "unknown error")))
     _remember_gsp_tuning_result(result)
     return result
+
+
+func _gsp_tuning_descriptor_timing(parameter: String) -> String:
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        if String(descriptor.get("key", "")) == parameter:
+            return String(descriptor.get("apply_timing", "unknown"))
+    return "unknown"
+
+
+func gsp_validate_all() -> Dictionary:
+    var active: Dictionary = native.call("flight_tuning_configuration") if native != null and native.has_method("flight_tuning_configuration") else {}
+    var mismatches: Array[Dictionary] = []
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        if not active.has(key):
+            mismatches.append({"key": key, "error": "active_memory_missing"})
+            continue
+        var value := float(active[key])
+        if not is_finite(value) or value < float(descriptor.get("min", -INF)) or value > float(descriptor.get("max", INF)):
+            mismatches.append({"key": key, "error": "active_memory_out_of_range", "value": value})
+    return {"ok": mismatches.is_empty(), "mismatches": mismatches, "registry_hash": _gsp_tuning_registry_hash}
 
 
 func _remember_gsp_tuning_result(result: Dictionary) -> void:

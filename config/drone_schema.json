@@ -33,6 +33,45 @@
       "owner": "native.simpleflight",
       "apply_timing": "next_physics_step",
       "quick_adjust_eligible": true
+    },
+    {
+      "key": "simpleflight.angle_p",
+      "type": "float",
+      "default": 15.0,
+      "min": 0.0,
+      "max": 40.0,
+      "step": 0.1,
+      "unit": "gain",
+      "group": "SimpleFlight angle controller",
+      "owner": "native.simpleflight",
+      "apply_timing": "next_physics_step",
+      "quick_adjust_eligible": false
+    },
+    {
+      "key": "simpleflight.rate_i",
+      "type": "float",
+      "default": 0.02,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.001,
+      "unit": "gain",
+      "group": "SimpleFlight rate controller",
+      "owner": "native.simpleflight",
+      "apply_timing": "next_physics_step",
+      "quick_adjust_eligible": false
+    },
+    {
+      "key": "simpleflight.rate_d",
+      "type": "float",
+      "default": 0.005,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.001,
+      "unit": "gain",
+      "group": "SimpleFlight rate controller",
+      "owner": "native.simpleflight",
+      "apply_timing": "next_physics_step",
+      "quick_adjust_eligible": false
     }
   ],
   "boolean_paths": ["aerodynamics.a3.enabled", "aerodynamics.body_drag.enabled", "aerodynamics.a6.enabled", "aerodynamics.a5.enabled"],

@@ -27,10 +27,7 @@ Vec3 world_to_body(const Quat &attitude, const Vec3 &world) {
     const Quat rotated = multiply(multiply(conjugate, vector), attitude);
     return {rotated.x, rotated.y, rotated.z};
 }
-constexpr double kAngleP = 15.0;
 constexpr double kRatePFeedForward = 0.0;
-constexpr double kRateI = 0.020;
-constexpr double kRateD = 0.005;
 constexpr double kMaxRateRadS = 16.0;
 constexpr double kTargetRateAccelerationRadS2 = 120.0;
 constexpr double kRateIntegralLimitNm = 0.20;
@@ -468,6 +465,42 @@ double FlightController::rate_p() const {
     return rate_p_;
 }
 
+bool FlightController::set_angle_p(double value) {
+    if (!std::isfinite(value) || value < kSimpleFlightAnglePMin || value > kSimpleFlightAnglePMax) {
+        return false;
+    }
+    angle_p_ = value;
+    return true;
+}
+
+double FlightController::angle_p() const {
+    return angle_p_;
+}
+
+bool FlightController::set_rate_i(double value) {
+    if (!std::isfinite(value) || value < kSimpleFlightRateIMin || value > kSimpleFlightRateIMax) {
+        return false;
+    }
+    rate_i_ = value;
+    return true;
+}
+
+double FlightController::rate_i() const {
+    return rate_i_;
+}
+
+bool FlightController::set_rate_d(double value) {
+    if (!std::isfinite(value) || value < kSimpleFlightRateDMin || value > kSimpleFlightRateDMax) {
+        return false;
+    }
+    rate_d_ = value;
+    return true;
+}
+
+double FlightController::rate_d() const {
+    return rate_d_;
+}
+
 void FlightController::capture_altitude_hold(double target_altitude_m) {
     if (!armed_) {
         return;
@@ -564,8 +597,8 @@ MotorCommands FlightController::control_substep(
     const Vec3 attitude_error = mode_family == ModeFamily::Angle
             ? shortest_attitude_error_frd(estimated_attitude, target_angle_frd_) : Vec3{};
     const Vec3 rate_setpoint{
-            target_rate_frd_.x + attitude_error.x * kAngleP,
-            target_rate_frd_.y + attitude_error.y * kAngleP,
+            target_rate_frd_.x + attitude_error.x * angle_p_,
+            target_rate_frd_.y + attitude_error.y * angle_p_,
             target_rate_frd_.z,
     };
     const std::array<double, 3> errors = {
@@ -595,9 +628,9 @@ MotorCommands FlightController::control_substep(
     filtered_rate_derivative_frd_ = {filtered_derivative[0], filtered_derivative[1], filtered_derivative[2]};
     auto torque_for = [&](const std::array<double, 3> &integral) {
         return Vec3{
-                errors[0] * rate_p_ + target_rate_frd_.x * kRatePFeedForward + integral[0] + derivative[0] * kRateD,
-                errors[1] * rate_p_ + target_rate_frd_.y * kRatePFeedForward + integral[1] + derivative[1] * kRateD,
-                errors[2] * rate_p_ + target_rate_frd_.z * kRatePFeedForward + integral[2] + derivative[2] * kRateD,
+                errors[0] * rate_p_ + target_rate_frd_.x * kRatePFeedForward + integral[0] + derivative[0] * rate_d_,
+                errors[1] * rate_p_ + target_rate_frd_.y * kRatePFeedForward + integral[1] + derivative[1] * rate_d_,
+                errors[2] * rate_p_ + target_rate_frd_.z * kRatePFeedForward + integral[2] + derivative[2] * rate_d_,
         };
     };
     Vec3 target_torque_frd = torque_for(rate_integral_);
@@ -616,7 +649,7 @@ MotorCommands FlightController::control_substep(
     }
     for (std::size_t index = 0; index < rate_integral_.size(); ++index) {
         const double candidate = std::clamp(
-                rate_integral_[index] + errors[index] * kRateI * std::max(dt, 0.0),
+                rate_integral_[index] + errors[index] * rate_i_ * std::max(dt, 0.0),
                 -kRateIntegralLimitNm,
                 kRateIntegralLimitNm);
         if (!saturated || std::abs(candidate) <= std::abs(rate_integral_[index])) {

@@ -387,7 +387,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("sample_wind", "time_seconds", "position_x", "position_y", "position_z"), &AeroSimNative::sample_wind);
     ClassDB::bind_method(D_METHOD("flight_control_diagnostics"), &AeroSimNative::flight_control_diagnostics);
     ClassDB::bind_method(D_METHOD("initialize_flight_tuning", "parameter", "value"), &AeroSimNative::initialize_flight_tuning);
+    ClassDB::bind_method(D_METHOD("initialize_flight_tuning_batch", "changes"), &AeroSimNative::initialize_flight_tuning_batch);
     ClassDB::bind_method(D_METHOD("stage_flight_tuning", "parameter", "value"), &AeroSimNative::stage_flight_tuning);
+    ClassDB::bind_method(D_METHOD("stage_flight_tuning_batch", "changes"), &AeroSimNative::stage_flight_tuning_batch);
     ClassDB::bind_method(D_METHOD("commit_flight_tuning", "public_physics_tick"), &AeroSimNative::commit_flight_tuning);
     ClassDB::bind_method(D_METHOD("set_external_authority_active", "active"), &AeroSimNative::set_external_authority_active);
     ClassDB::bind_method(D_METHOD("flight_tuning_contract"), &AeroSimNative::flight_tuning_contract);
@@ -1592,41 +1594,119 @@ Dictionary AeroSimNative::flight_control_diagnostics() const {
 }
 
 Dictionary AeroSimNative::stage_flight_tuning(const String &parameter, const Variant &value) {
+    Array changes;
+    Dictionary change;
+    change["parameter"] = parameter;
+    change["value"] = value;
+    changes.append(change);
+    return stage_flight_tuning_batch(changes);
+}
+
+Dictionary AeroSimNative::stage_flight_tuning_batch(const Array &changes) {
     Dictionary result;
     result["ok"] = false;
-    result["parameter"] = parameter;
     if (external_authority_active_) {
         result["error"] = "external_authority";
         return result;
     }
-    if (parameter != aerosim::kSimpleFlightRatePParameter) {
-        result["error"] = "unknown_parameter";
+    if (changes.is_empty()) {
+        result["error"] = "empty_tuning_batch";
         return result;
     }
-    if (value.get_type() != Variant::FLOAT && value.get_type() != Variant::INT) {
-        result["error"] = "wrong_type";
-        return result;
+    staged_tuning_batch_.clear();
+    staged_tuning_.valid = false;
+    std::vector<StagedTuningEntry> validated;
+    const auto contract = [](const String &parameter, double &minimum, double &maximum, double &step) {
+        if (parameter == aerosim::kSimpleFlightRatePParameter) {
+            minimum = aerosim::kSimpleFlightRatePMin; maximum = aerosim::kSimpleFlightRatePMax; step = aerosim::kSimpleFlightRatePStep; return true;
+        }
+        if (parameter == aerosim::kSimpleFlightAnglePParameter) {
+            minimum = aerosim::kSimpleFlightAnglePMin; maximum = aerosim::kSimpleFlightAnglePMax; step = aerosim::kSimpleFlightAnglePStep; return true;
+        }
+        if (parameter == aerosim::kSimpleFlightRateIParameter) {
+            minimum = aerosim::kSimpleFlightRateIMin; maximum = aerosim::kSimpleFlightRateIMax; step = aerosim::kSimpleFlightRateIStep; return true;
+        }
+        if (parameter == aerosim::kSimpleFlightRateDParameter) {
+            minimum = aerosim::kSimpleFlightRateDMin; maximum = aerosim::kSimpleFlightRateDMax; step = aerosim::kSimpleFlightRateDStep; return true;
+        }
+        return false;
+    };
+    for (int index = 0; index < changes.size(); ++index) {
+        if (changes[index].get_type() != Variant::DICTIONARY) {
+            result["error"] = "malformed_tuning_batch";
+            return result;
+        }
+        const Dictionary change = changes[index];
+        if (change.get("parameter", Variant()).get_type() != Variant::STRING || !change.has("value")) {
+            result["error"] = "malformed_tuning_batch";
+            return result;
+        }
+        const String parameter = change.get("parameter", "");
+        double minimum = 0.0;
+        double maximum = 0.0;
+        double step = 0.0;
+        if (!contract(parameter, minimum, maximum, step)) {
+            result["error"] = "unknown_parameter";
+            result["parameter"] = parameter;
+            return result;
+        }
+        const Variant value = change.get("value", Variant());
+        if (value.get_type() != Variant::FLOAT && value.get_type() != Variant::INT) {
+            result["error"] = "wrong_type";
+            result["parameter"] = parameter;
+            return result;
+        }
+        const double requested = static_cast<double>(value);
+        if (!std::isfinite(requested)) {
+            result["error"] = "non_finite";
+            result["parameter"] = parameter;
+            return result;
+        }
+        if (requested < minimum || requested > maximum) {
+            result["error"] = "out_of_contract";
+            result["parameter"] = parameter;
+            result["requested_value"] = requested;
+            return result;
+        }
+        const double committed = std::round(requested / step) * step;
+        StagedTuningEntry entry{parameter, requested, committed, committed != requested};
+        bool replaced = false;
+        for (StagedTuningEntry &existing : validated) {
+            if (existing.parameter == parameter) {
+                existing = entry;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) {
+            validated.push_back(entry);
+        }
     }
-    const double requested = static_cast<double>(value);
-    if (!std::isfinite(requested)) {
-        result["error"] = "non_finite";
-        return result;
+    staged_tuning_batch_ = validated;
+    staged_tuning_.valid = validated.size() == 1;
+    if (staged_tuning_.valid) {
+        staged_tuning_.parameter = validated[0].parameter;
+        staged_tuning_.requested_value = validated[0].requested_value;
+        staged_tuning_.committed_value = validated[0].committed_value;
+        staged_tuning_.clamped = validated[0].clamped;
     }
-    result["requested_value"] = requested;
-    if (requested < aerosim::kSimpleFlightRatePMin || requested > aerosim::kSimpleFlightRatePMax) {
-        result["error"] = "out_of_contract";
-        return result;
-    }
-    const double committed = std::round(requested / aerosim::kSimpleFlightRatePStep) * aerosim::kSimpleFlightRatePStep;
-    staged_tuning_.valid = true;
-    staged_tuning_.parameter = parameter;
-    staged_tuning_.requested_value = requested;
-    staged_tuning_.committed_value = committed;
-    staged_tuning_.clamped = committed != requested;
     result["ok"] = true;
-    result["requested_value"] = requested;
-    result["committed_value"] = committed;
-    result["clamped"] = staged_tuning_.clamped;
+    Array staged;
+    for (const StagedTuningEntry &entry : staged_tuning_batch_) {
+        Dictionary item;
+        item["parameter"] = entry.parameter;
+        item["requested_value"] = entry.requested_value;
+        item["committed_value"] = entry.committed_value;
+        item["clamped"] = entry.clamped;
+        staged.append(item);
+    }
+    result["changes"] = staged;
+    if (validated.size() == 1) {
+        result["parameter"] = validated[0].parameter;
+        result["requested_value"] = validated[0].requested_value;
+        result["committed_value"] = validated[0].committed_value;
+        result["clamped"] = validated[0].clamped;
+    }
     return result;
 }
 
@@ -1645,48 +1725,92 @@ Dictionary AeroSimNative::commit_flight_tuning(std::int64_t public_physics_tick)
         result["authority"] = "px4";
         return result;
     }
-    if (!staged_tuning_.valid) {
+    if (staged_tuning_batch_.empty()) {
         Dictionary result;
         result["ok"] = false;
         result["error"] = "no_staged_tuning";
         return result;
     }
-    const bool changed = flight_controller_.rate_p() != staged_tuning_.committed_value;
-    if (changed && !flight_controller_.set_rate_p(staged_tuning_.committed_value)) {
-        staged_tuning_.valid = false;
-        Dictionary result;
-        result["ok"] = false;
-        result["error"] = "native_safety_rejection";
-        return result;
+    const auto get_value = [&](const String &parameter) {
+        if (parameter == aerosim::kSimpleFlightRatePParameter) return flight_controller_.rate_p();
+        if (parameter == aerosim::kSimpleFlightAnglePParameter) return flight_controller_.angle_p();
+        if (parameter == aerosim::kSimpleFlightRateIParameter) return flight_controller_.rate_i();
+        return flight_controller_.rate_d();
+    };
+    const auto set_value = [&](const String &parameter, double value) {
+        if (parameter == aerosim::kSimpleFlightRatePParameter) return flight_controller_.set_rate_p(value);
+        if (parameter == aerosim::kSimpleFlightAnglePParameter) return flight_controller_.set_angle_p(value);
+        if (parameter == aerosim::kSimpleFlightRateIParameter) return flight_controller_.set_rate_i(value);
+        return flight_controller_.set_rate_d(value);
+    };
+    std::vector<double> previous;
+    bool changed = false;
+    for (const StagedTuningEntry &entry : staged_tuning_batch_) {
+        previous.push_back(get_value(entry.parameter));
+        changed = changed || previous.back() != entry.committed_value;
     }
     if (changed) {
+        for (std::size_t index = 0; index < staged_tuning_batch_.size(); ++index) {
+            if (!set_value(staged_tuning_batch_[index].parameter, staged_tuning_batch_[index].committed_value)) {
+                for (std::size_t rollback = 0; rollback < index; ++rollback) {
+                    set_value(staged_tuning_batch_[rollback].parameter, previous[rollback]);
+                }
+                staged_tuning_batch_.clear();
+                staged_tuning_.valid = false;
+                Dictionary rejected;
+                rejected["ok"] = false;
+                rejected["error"] = "native_safety_rejection";
+                return rejected;
+            }
+        }
         ++tuning_commit_id_;
         tuning_commit_tick_ = static_cast<std::uint64_t>(public_physics_tick);
     }
-    tuning_last_requested_value_ = staged_tuning_.requested_value;
+    tuning_last_requested_value_ = staged_tuning_batch_.front().requested_value;
     tuning_last_changed_ = changed;
-    tuning_last_clamped_ = staged_tuning_.clamped;
+    tuning_last_clamped_ = staged_tuning_batch_.front().clamped;
     Dictionary result;
     result["ok"] = true;
-    result["parameter"] = staged_tuning_.parameter;
-    result["requested_value"] = staged_tuning_.requested_value;
-    result["committed_value"] = staged_tuning_.committed_value;
-    result["clamped"] = staged_tuning_.clamped;
+    Array committed_changes;
+    Dictionary values;
+    for (const StagedTuningEntry &entry : staged_tuning_batch_) {
+        Dictionary item;
+        item["parameter"] = entry.parameter;
+        item["requested_value"] = entry.requested_value;
+        item["committed_value"] = entry.committed_value;
+        item["clamped"] = entry.clamped;
+        committed_changes.append(item);
+        values[entry.parameter] = entry.committed_value;
+    }
+    result["changes"] = committed_changes;
+    result["values"] = values;
+    result["parameter"] = staged_tuning_batch_.front().parameter;
+    result["requested_value"] = staged_tuning_batch_.front().requested_value;
+    result["committed_value"] = staged_tuning_batch_.front().committed_value;
+    result["clamped"] = staged_tuning_batch_.front().clamped;
     result["changed"] = changed;
     result["commit_id"] = static_cast<std::int64_t>(tuning_commit_id_);
     result["commit_tick"] = static_cast<std::int64_t>(tuning_commit_tick_);
+    result["apply_timing"] = "next_physics_step";
+    result["committed_values"] = values;
+    staged_tuning_batch_.clear();
     staged_tuning_.valid = false;
     return result;
 }
 
 Dictionary AeroSimNative::initialize_flight_tuning(const String &parameter, const Variant &value) {
-    if (tuning_initialized_ || tuning_commit_id_ != 0 || simulation_clock_.total_substeps != 0 || staged_tuning_.valid) {
+    if (tuning_initialized_ || tuning_commit_id_ != 0 || simulation_clock_.total_substeps != 0 || !staged_tuning_batch_.empty()) {
         Dictionary result;
         result["ok"] = false;
         result["error"] = "tuning_already_initialized";
         return result;
     }
-    Dictionary staged = stage_flight_tuning(parameter, value);
+    Array changes;
+    Dictionary change;
+    change["parameter"] = parameter;
+    change["value"] = value;
+    changes.append(change);
+    Dictionary staged = stage_flight_tuning_batch(changes);
     if (!static_cast<bool>(staged.get("ok", false))) {
         return staged;
     }
@@ -1699,9 +1823,28 @@ Dictionary AeroSimNative::initialize_flight_tuning(const String &parameter, cons
     return committed;
 }
 
+Dictionary AeroSimNative::initialize_flight_tuning_batch(const Array &changes) {
+    if (tuning_initialized_ || tuning_commit_id_ != 0 || simulation_clock_.total_substeps != 0 || !staged_tuning_batch_.empty()) {
+        Dictionary result;
+        result["ok"] = false;
+        result["error"] = "tuning_already_initialized";
+        return result;
+    }
+    Dictionary staged = stage_flight_tuning_batch(changes);
+    if (!static_cast<bool>(staged.get("ok", false))) return staged;
+    Dictionary committed = commit_flight_tuning(0);
+    if (static_cast<bool>(committed.get("ok", false))) {
+        tuning_commit_id_ = 0;
+        tuning_commit_tick_ = 0;
+        tuning_initialized_ = true;
+    }
+    return committed;
+}
+
 void AeroSimNative::set_external_authority_active(bool active) {
     external_authority_active_ = active;
     if (active) {
+        staged_tuning_batch_.clear();
         staged_tuning_.valid = false;
     }
 }
@@ -1714,12 +1857,31 @@ Dictionary AeroSimNative::flight_tuning_contract() const {
     result["min"] = aerosim::kSimpleFlightRatePMin;
     result["max"] = aerosim::kSimpleFlightRatePMax;
     result["step"] = aerosim::kSimpleFlightRatePStep;
+    Array parameters;
+    const auto add = [&](const char *key, double default_value, double minimum, double maximum, double step) {
+        Dictionary descriptor;
+        descriptor["key"] = key;
+        descriptor["type"] = "float";
+        descriptor["default"] = default_value;
+        descriptor["min"] = minimum;
+        descriptor["max"] = maximum;
+        descriptor["step"] = step;
+        parameters.append(descriptor);
+    };
+    add(aerosim::kSimpleFlightRatePParameter, aerosim::kSimpleFlightRatePDefault, aerosim::kSimpleFlightRatePMin, aerosim::kSimpleFlightRatePMax, aerosim::kSimpleFlightRatePStep);
+    add(aerosim::kSimpleFlightAnglePParameter, aerosim::kSimpleFlightAnglePDefault, aerosim::kSimpleFlightAnglePMin, aerosim::kSimpleFlightAnglePMax, aerosim::kSimpleFlightAnglePStep);
+    add(aerosim::kSimpleFlightRateIParameter, aerosim::kSimpleFlightRateIDefault, aerosim::kSimpleFlightRateIMin, aerosim::kSimpleFlightRateIMax, aerosim::kSimpleFlightRateIStep);
+    add(aerosim::kSimpleFlightRateDParameter, aerosim::kSimpleFlightRateDDefault, aerosim::kSimpleFlightRateDMin, aerosim::kSimpleFlightRateDMax, aerosim::kSimpleFlightRateDStep);
+    result["parameters"] = parameters;
     return result;
 }
 
 Dictionary AeroSimNative::flight_tuning_configuration() const {
     Dictionary result;
-    result["simpleflight.rate_p"] = flight_controller_.rate_p();
+    result[aerosim::kSimpleFlightRatePParameter] = flight_controller_.rate_p();
+    result[aerosim::kSimpleFlightAnglePParameter] = flight_controller_.angle_p();
+    result[aerosim::kSimpleFlightRateIParameter] = flight_controller_.rate_i();
+    result[aerosim::kSimpleFlightRateDParameter] = flight_controller_.rate_d();
     result["commit_id"] = static_cast<std::int64_t>(tuning_commit_id_);
     result["commit_tick"] = static_cast<std::int64_t>(tuning_commit_tick_);
     result["requested_value"] = tuning_last_requested_value_;

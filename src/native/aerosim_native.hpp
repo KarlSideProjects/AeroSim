@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "aerosim_collision.hpp"
 #include "aerosim_flight_control.hpp"
@@ -12,6 +13,7 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/packed_float64_array.hpp>
 #include <godot_cpp/variant/quaternion.hpp>
 #include <godot_cpp/variant/variant.hpp>
@@ -84,6 +86,13 @@ private:
         double committed_value = 0.0;
         bool clamped = false;
     } staged_tuning_;
+    struct StagedTuningEntry {
+        godot::String parameter;
+        double requested_value = 0.0;
+        double committed_value = 0.0;
+        bool clamped = false;
+    };
+    std::vector<StagedTuningEntry> staged_tuning_batch_;
     aerosim::ImuSample sample_imu();
     void apply_downwash_provider(aerosim::SimulationConfig &config) const;
     StepSnapshot snapshot_step() const;
@@ -311,7 +320,9 @@ public:
     godot::Vector3 sample_wind(double time_seconds, double position_x, double position_y, double position_z) const;
     godot::Dictionary flight_control_diagnostics() const;
     godot::Dictionary initialize_flight_tuning(const godot::String &parameter, const godot::Variant &value);
+    godot::Dictionary initialize_flight_tuning_batch(const godot::Array &changes);
     godot::Dictionary stage_flight_tuning(const godot::String &parameter, const godot::Variant &value);
+    godot::Dictionary stage_flight_tuning_batch(const godot::Array &changes);
     godot::Dictionary commit_flight_tuning(std::int64_t public_physics_tick);
     void set_external_authority_active(bool active);
     godot::Dictionary flight_tuning_contract() const;

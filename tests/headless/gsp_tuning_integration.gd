@@ -49,6 +49,36 @@ func _run() -> void:
     for key in ["key", "type", "default", "min", "max", "step"]:
         _expect(native_contract.get(key) == descriptor.get(key), "schema/native tuning contract agrees on %s" % key)
 
+    var batch_native = ClassDB.instantiate("AeroSimNative")
+    var batch_defaults: Array = []
+    for item_value in _runtime._gsp_tuning_registry:
+        var item: Dictionary = item_value
+        batch_defaults.append({"parameter": item.key, "value": item.default})
+    var batch_init: Dictionary = batch_native.call("initialize_flight_tuning_batch", batch_defaults)
+    _expect(bool(batch_init.get("ok", false)), "native initializes the complete tuning registry atomically")
+    var batch_before: Dictionary = batch_native.call("flight_tuning_configuration")
+    var invalid_batch: Dictionary = batch_native.call("stage_flight_tuning_batch", [
+        {"parameter": "simpleflight.rate_p", "value": 1.1},
+        {"parameter": "disconnected.descriptor", "value": 1.0},
+    ])
+    var batch_after_invalid: Dictionary = batch_native.call("flight_tuning_configuration")
+    _expect(String(invalid_batch.get("error", "")) == "unknown_parameter" and
+            batch_after_invalid.get("simpleflight.rate_p", -1.0) == batch_before.get("simpleflight.rate_p", -2.0) and
+            int(batch_after_invalid.get("commit_id", -1)) == int(batch_before.get("commit_id", -2)),
+            "invalid batch member leaves every active value unchanged")
+    _expect(bool(batch_native.call("stage_flight_tuning_batch", [
+        {"parameter": "simpleflight.rate_p", "value": 1.1},
+        {"parameter": "simpleflight.rate_i", "value": 0.031},
+        {"parameter": "simpleflight.rate_p", "value": 1.2},
+    ]).get("ok", false)), "valid batch coalesces repeated keys before commit")
+    var batch_commit: Dictionary = batch_native.call("commit_flight_tuning", 7)
+    var batch_values: Dictionary = batch_native.call("flight_tuning_configuration")
+    _expect(bool(batch_commit.get("changed", false)) and int(batch_commit.get("commit_id", -1)) == 1 and
+            float(batch_values.get("simpleflight.rate_p", 0.0)) == 1.2 and
+            float(batch_values.get("simpleflight.rate_i", 0.0)) == 0.031 and
+            int(batch_values.get("commit_tick", -1)) == 7,
+            "one native batch swaps all final values under one commit identity")
+
     _server = GspServer.new()
     root.add_child(_server)
     _server.set_identity_provider(Callable(_runtime, "gsp_identity_snapshot"))
@@ -65,25 +95,37 @@ func _run() -> void:
     var hello_data: Dictionary = hello.get("d", {})
     _expect(typeof(hello_data.get("registry", {}).get("tuning", {})) == TYPE_DICTIONARY,
             "hello carries active tuning reconciliation metadata")
+    var panel_client := WebSocketPeer.new()
+    await _connect_and_auth(panel_client, int(started.port), String(started.token))
+    var panel_hello := await _next_message_type(panel_client, "hello", 240)
+    _expect(not panel_hello.is_empty(), "second authenticated panel receives hello")
 
     _runtime.paused = false
     _expect(_client.send_text(JSON.stringify({
-        "v": 2, "t": "set_tuning", "seq": 1,
-        "d": {"parameter": "simpleflight.rate_p", "value": 1.25}
+        "v": 2, "t": "set_tuning_batch", "seq": 1,
+        "d": {"changes": [
+            {"parameter": "simpleflight.rate_p", "value": 1.25},
+            {"parameter": "simpleflight.rate_i", "value": 0.03}
+        ]}
     })) == OK, "active tuning request sends")
     _server.poll()
     _client.poll()
     var before_active: Dictionary = _runtime.native.call("flight_tuning_configuration")
-    _expect(before_active.get("simpleflight.rate_p", 0.0) == 0.6 and _client.get_available_packet_count() == 0,
+    _expect(before_active.get("simpleflight.rate_p", 0.0) == 0.6 and before_active.get("simpleflight.rate_i", 0.0) == 0.02 and _client.get_available_packet_count() == 0,
             "active tuning remains staged until the next physics boundary")
     _runtime._physics_process(1.0 / 240.0)
     var after_active: Dictionary = _runtime.native.call("flight_tuning_configuration")
-    _expect(after_active.get("simpleflight.rate_p", 0.0) == 1.25 and int(after_active.get("commit_id", 0)) == 1,
+    _expect(after_active.get("simpleflight.rate_p", 0.0) == 1.25 and after_active.get("simpleflight.rate_i", 0.0) == 0.03 and int(after_active.get("commit_id", 0)) == 1,
             "active tuning commits through native active memory")
     _expect(int(after_active.get("commit_tick", -1)) == 0, "active tuning reports public frame tick zero")
     var active_ack := await _next_message_type(_client, "tuning_ack", 240)
     _expect(int(active_ack.get("d", {}).get("request_seq", -1)) == 1 and bool(active_ack.get("d", {}).get("changed", false)),
             "active tuning ack preserves request correlation and changed outcome")
+    var panel_commit := await _next_message_type(panel_client, "tuning_commit", 240)
+    _expect(int(panel_commit.get("d", {}).get("commit_id", -1)) == 1 and
+            float(panel_commit.get("d", {}).get("committed_values", {}).get("simpleflight.rate_p", 0.0)) == 1.25 and
+            float(panel_commit.get("d", {}).get("committed_values", {}).get("simpleflight.rate_i", 0.0)) == 0.03,
+            "second panel receives the same batch commit identity and values")
 
     _expect(_client.send_text(JSON.stringify({
         "v": 2, "t": "set_tuning", "seq": 2,
@@ -245,7 +287,15 @@ func _run() -> void:
             _runtime.native.call("replay_vehicle_config_manifest"), _runtime.native.call("replay_vehicle_config_manifest"))
     _expect(bool(replay.get("ok", false)), "recorded tuning replay applies successfully: %s" % String(replay.get("diagnostic_message", "unknown")))
 
+    var disconnected_descriptor := {"key": "simpleflight.disconnected", "min": 0.0, "max": 1.0}
+    _runtime._gsp_tuning_registry.append(disconnected_descriptor)
+    var validation := _runtime.gsp_validate_all()
+    _runtime._gsp_tuning_registry.pop_back()
+    _expect(not bool(validation.get("ok", true)) and not validation.get("mismatches", []).is_empty(),
+            "validate-all exposes a disconnected native descriptor read-back mismatch")
+
     reconnect_client.close()
+    panel_client.close()
     _server.stop()
     _finish()
 

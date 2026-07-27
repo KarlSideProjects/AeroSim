@@ -161,6 +161,16 @@ int main() {
             !near(tuning_controller.rate_p(), 1.25, 1e-12)) {
         return fail("SimpleFlight rate P must validate and read back active controller memory");
     }
+    if (!near(tuning_controller.angle_p(), 15.0, 1e-12) ||
+            !near(tuning_controller.rate_i(), 0.020, 1e-12) ||
+            !near(tuning_controller.rate_d(), 0.005, 1e-12) ||
+            !tuning_controller.set_angle_p(20.0) || !tuning_controller.set_rate_i(0.031) || !tuning_controller.set_rate_d(0.007) ||
+            !near(tuning_controller.angle_p(), 20.0, 1e-12) ||
+            !near(tuning_controller.rate_i(), 0.031, 1e-12) ||
+            !near(tuning_controller.rate_d(), 0.007, 1e-12) ||
+            tuning_controller.set_angle_p(40.01) || tuning_controller.set_rate_i(-0.01) || tuning_controller.set_rate_d(NAN)) {
+        return fail("SimpleFlight angle P and rate I/D must validate and read back active controller memory");
+    }
 
     if (std::string(aerosim::step_status_code(aerosim::StepStatus::Ok)) != "Ok" ||
             std::string(aerosim::step_status_code(aerosim::StepStatus::InvalidConfig)) != "InvalidConfig" ||

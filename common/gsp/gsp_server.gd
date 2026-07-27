@@ -285,6 +285,40 @@ static func validate_set_tuning_message(message: String, previous_sequence: int)
     }
 
 
+static func validate_set_tuning_batch_message(message: String, previous_sequence: int) -> Dictionary:
+    var envelope_result := _parse_envelope(message, "set_tuning_batch")
+    if not bool(envelope_result.get("ok", false)):
+        return envelope_result
+    var envelope: Dictionary = envelope_result.envelope
+    var sequence := _integer_value(envelope.seq)
+    if sequence != previous_sequence + 1:
+        return {"ok": false, "error": "invalid tuning sequence"}
+    var data: Dictionary = envelope.d
+    if data.size() != 1 or typeof(data.get("changes")) != TYPE_ARRAY or data.changes.is_empty():
+        return {"ok": false, "error": "malformed tuning batch"}
+    var changes: Array = []
+    for item in data.changes:
+        if typeof(item) != TYPE_DICTIONARY or item.size() != 2 or typeof(item.get("parameter")) != TYPE_STRING or not item.has("value"):
+            return {"ok": false, "error": "malformed tuning batch"}
+        if typeof(item.value) != TYPE_INT and typeof(item.value) != TYPE_FLOAT:
+            return {"ok": false, "error": "wrong tuning value type"}
+        changes.append({"parameter": String(item.parameter), "value": item.value})
+    return {"ok": true, "envelope": envelope, "sequence": sequence, "changes": changes}
+
+
+static func apply_timing_contract(timing: String, paused: bool, at_physics_boundary: bool) -> Dictionary:
+    match timing:
+        "immediate":
+            return {"state": "committed", "mutates_now": true}
+        "next_physics_step":
+            return {"state": "committed" if paused or at_physics_boundary else "pending", "mutates_now": paused or at_physics_boundary}
+        "reset_required":
+            return {"state": "reset_required", "mutates_now": false}
+        "restart_required":
+            return {"state": "restart_required", "mutates_now": false}
+    return {"state": "unsupported", "mutates_now": false}
+
+
 static func serialize_telemetry_snapshot(snapshot: Dictionary, sample_sequence: int, tick: int, sender_sequence: int = 0) -> Dictionary:
     var data: Dictionary = _json_safe(snapshot)
     data.erase("tick")
@@ -546,6 +580,21 @@ func _poll_authenticated_peers() -> void:
                 if not bool(response.get("pending", false)) and not _queue_tuning_ack(record, int(tuning_result.sequence), response):
                     failed = true
                     break
+                if not bool(response.get("pending", false)) and bool(response.get("ok", false)) and bool(response.get("changed", false)):
+                    _broadcast_tuning_commit(response, int(tuning_result.sequence))
+            elif message_type == "set_tuning_batch":
+                var tuning_batch_result := validate_set_tuning_batch_message(message, int(record.get("client_sequence", -1)))
+                if not bool(tuning_batch_result.get("ok", false)):
+                    failed = true
+                    break
+                record["client_sequence"] = int(tuning_batch_result.sequence)
+                var batch_response := _submit_tuning_batch_request(
+                        int(record.id), int(record.connection_id), int(tuning_batch_result.sequence), tuning_batch_result.changes)
+                if not bool(batch_response.get("pending", false)) and not _queue_tuning_ack(record, int(tuning_batch_result.sequence), batch_response):
+                    failed = true
+                    break
+                if not bool(batch_response.get("pending", false)) and bool(batch_response.get("ok", false)) and bool(batch_response.get("changed", false)):
+                    _broadcast_tuning_commit(batch_response, int(tuning_batch_result.sequence))
             else:
                 failed = true
                 break
@@ -565,12 +614,30 @@ func _submit_tuning_request(peer_id: int, connection_id: int, request_seq: int, 
     return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_tuning_response"}
 
 
+func _submit_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array) -> Dictionary:
+    if not _tuning_request_provider.is_valid():
+        return {"ok": false, "error": "tuning_unavailable"}
+    var result = _tuning_request_provider.call(peer_id, connection_id, request_seq, changes)
+    return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_tuning_response"}
+
+
 func _queue_tuning_ack(record: Dictionary, request_seq: int, result: Dictionary) -> bool:
     var data := result.duplicate(true)
     data.erase("peer_id")
     data.erase("connection_id")
     data["request_seq"] = request_seq
     return _queue_identity_message(record, "tuning_ack", data)
+
+
+func _broadcast_tuning_commit(result: Dictionary, request_seq: int) -> void:
+    var data := result.duplicate(true)
+    data.erase("peer_id")
+    data.erase("connection_id")
+    data["request_seq"] = request_seq
+    for record in _authenticated_peers.duplicate():
+        if not _queue_identity_message(record, "tuning_commit", data):
+            _authenticated_peers.erase(record)
+            _begin_close(record, "reliable send failed")
 
 
 func _poll_tuning_results() -> void:
@@ -585,6 +652,8 @@ func _poll_tuning_results() -> void:
         var result: Dictionary = result_value
         var peer_id := int(result.get("peer_id", -1))
         var connection_id := int(result.get("connection_id", -1))
+        if bool(result.get("ok", false)) and bool(result.get("changed", false)):
+            _broadcast_tuning_commit(result, int(result.get("request_seq", -1)))
         for record in _authenticated_peers.duplicate():
             if int(record.get("id", -1)) != peer_id or int(record.get("connection_id", -1)) != connection_id:
                 continue

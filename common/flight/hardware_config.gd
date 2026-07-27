@@ -123,8 +123,11 @@ func tuning_registry() -> Array:
 func tuning_registry_hash() -> String:
     var context := HashingContext.new()
     context.start(HashingContext.HASH_SHA256)
-    context.update(JSON.stringify(tuning_registry()).to_utf8_buffer())
+    context.update(tuning_registry_serialization().to_utf8_buffer())
     return context.finish().hex_encode()
+
+func tuning_registry_serialization() -> String:
+    return _canonical_json(tuning_registry())
 
 func apply_to_runtime(runtime: Object, path: String) -> bool:
     var preset := load_preset(path)
@@ -133,22 +136,41 @@ func apply_to_runtime(runtime: Object, path: String) -> bool:
     return ok and apply_ok
 
 func initialize_tuning(runtime: Object) -> bool:
-    if runtime.get("native") == null or not runtime.native.has_method("initialize_flight_tuning"):
+    if runtime.get("native") == null or not runtime.native.has_method("initialize_flight_tuning_batch"):
         last_ok = false
         last_error = "native runtime missing tuning initialization"
         return false
+    var changes: Array = []
     for descriptor_value in tuning_registry():
         var descriptor: Dictionary = descriptor_value
-        var result: Dictionary = runtime.native.call(
-                "initialize_flight_tuning", String(descriptor.get("key", "")), float(descriptor.get("default", 0.0)))
-        if not bool(result.get("ok", false)):
-            last_ok = false
-            last_error = "native runtime rejected tuning initialization"
-            push_error(last_error)
-            return false
+        changes.append({"parameter": String(descriptor.get("key", "")), "value": float(descriptor.get("default", 0.0))})
+    var result: Dictionary = runtime.native.call("initialize_flight_tuning_batch", changes)
+    if not bool(result.get("ok", false)):
+        last_ok = false
+        last_error = "native runtime rejected tuning initialization"
+        push_error(last_error)
+        return false
     last_ok = true
     last_error = ""
     return true
+
+func _canonical_json(value: Variant) -> String:
+    match typeof(value):
+        TYPE_ARRAY:
+            var items: Array[String] = []
+            for item in value:
+                items.append(_canonical_json(item))
+            return "[" + ",".join(items) + "]"
+        TYPE_DICTIONARY:
+            var keys: Array[String] = []
+            for key in value.keys():
+                keys.append(String(key))
+            keys.sort()
+            var fields: Array[String] = []
+            for key in keys:
+                fields.append(JSON.stringify(key) + ":" + _canonical_json(value[key]))
+            return "{" + ",".join(fields) + "}"
+    return JSON.stringify(value)
 
 func prop_sample_at_rpm(config: Dictionary, rpm: float) -> Dictionary:
     var table: Array = config.get("propeller", {}).get("table", [])
