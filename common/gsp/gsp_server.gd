@@ -20,10 +20,13 @@ const MAX_RELIABLE_MESSAGES := 64
 const MAX_RELIABLE_BYTES := 65_536
 const NATIVE_OUTBOUND_BUFFER_BYTES := MAX_RELIABLE_BYTES + MAX_MESSAGE_BYTES
 const MAX_NATIVE_QUEUED_PACKETS := MAX_RELIABLE_MESSAGES + 16
+const TELEMETRY_DEFAULT_RATE_HZ := 30
 
 var reliable_overflow_count := 0
 var reliable_send_failure_count := 0
 var last_reliable_error := ""
+var telemetry_snapshot_serialization_count := 0
+var telemetry_send_count := 0
 
 var _tcp_server := TCPServer.new()
 var _pending_handshakes: Array[Dictionary] = []
@@ -31,6 +34,10 @@ var _unauthenticated_peers: Array[Dictionary] = []
 var _authenticated_peers: Array[Dictionary] = []
 var _closing_peers: Array[Dictionary] = []
 var _identity_provider: Callable
+var _telemetry_provider: Callable
+var _latest_telemetry_payload: Dictionary = {}
+var _last_telemetry_source_seq := -1
+var _telemetry_sample_seq := 0
 var _token := ""
 var _port := 0
 var _next_peer_id := 1
@@ -137,12 +144,26 @@ func get_peer_transport_diagnostics() -> Array[Dictionary]:
 			"outbound_buffered_bytes": peer.get_current_outbound_buffered_amount(),
 			"reliable_queue_count": record.get("reliable_queue", []).size(),
 			"reliable_queue_bytes": int(record.get("reliable_bytes", 0)),
+			"telemetry_rate_hz": int(record.get("telemetry_rate_hz", 0)),
+			"telemetry_slot_sample_seq": int(record.get("telemetry_slot", {}).get("sample_seq", 0)),
 		})
 	return diagnostics
 
 
 func set_identity_provider(provider: Callable) -> void:
 	_identity_provider = provider
+
+
+func set_telemetry_provider(provider: Callable) -> void:
+	_telemetry_provider = provider
+
+
+func get_telemetry_processing_diagnostics() -> Dictionary:
+	return {
+		"path": "always_process",
+		"snapshot_serialization_count": telemetry_snapshot_serialization_count,
+		"send_count": telemetry_send_count,
+	}
 
 
 func poll() -> void:
@@ -152,6 +173,7 @@ func poll() -> void:
 	_poll_pending_handshakes()
 	_poll_unauthenticated_peers()
 	_poll_authenticated_peers()
+	_poll_telemetry()
 	_poll_closing_peers()
 
 
@@ -190,6 +212,68 @@ static func validate_ping_message(message: String) -> Dictionary:
 		return envelope_result
 	var envelope: Dictionary = envelope_result.envelope
 	return {"ok": true, "envelope": envelope}
+
+
+static func validate_telemetry_rate_message(message: String, previous_sequence: int) -> Dictionary:
+	var envelope_result := _parse_envelope(message, "telemetry_rate")
+	if not bool(envelope_result.get("ok", false)):
+		return envelope_result
+	var envelope: Dictionary = envelope_result.envelope
+	var sequence := _integer_value(envelope.seq)
+	if sequence != previous_sequence + 1:
+		return {"ok": false, "error": "invalid telemetry rate sequence"}
+	var data: Dictionary = envelope.d
+	if data.size() != 1 or not data.has("rate_hz"):
+		return {"ok": false, "error": "malformed telemetry rate data"}
+	var rate := _integer_value(data.rate_hz)
+	if rate < 0 or rate > TELEMETRY_DEFAULT_RATE_HZ:
+		return {"ok": false, "error": "telemetry rate must be between zero and 30 Hz"}
+	return {"ok": true, "envelope": envelope, "sequence": sequence, "rate_hz": rate}
+
+
+static func validate_telemetry_request(message: String, previous_sequence: int) -> Dictionary:
+	var envelope_result := _parse_envelope(message, "telemetry_request")
+	if not bool(envelope_result.get("ok", false)):
+		return envelope_result
+	var envelope: Dictionary = envelope_result.envelope
+	var sequence := _integer_value(envelope.seq)
+	if sequence != previous_sequence + 1:
+		return {"ok": false, "error": "invalid telemetry request sequence"}
+	var data: Dictionary = envelope.d
+	if data.size() != 1 or data.get("fresh") != true:
+		return {"ok": false, "error": "fresh telemetry request required"}
+	return {"ok": true, "envelope": envelope, "sequence": sequence, "fresh": true}
+
+
+static func serialize_telemetry_snapshot(snapshot: Dictionary, sample_sequence: int, tick: int) -> Dictionary:
+	var payload: Dictionary = _json_safe(snapshot)
+	payload["v"] = PROTOCOL_VERSION
+	payload["t"] = "telemetry"
+	payload["sample_seq"] = sample_sequence
+	payload["tick"] = tick
+	payload["telemetry"] = true
+	return payload
+
+
+static func _json_safe(value: Variant) -> Variant:
+	match typeof(value):
+		TYPE_VECTOR3:
+			var vector: Vector3 = value
+			return {"x_val": vector.x, "y_val": vector.y, "z_val": vector.z}
+		TYPE_QUATERNION:
+			var quaternion: Quaternion = value
+			return {"w_val": quaternion.w, "x_val": quaternion.x, "y_val": quaternion.y, "z_val": quaternion.z}
+		TYPE_ARRAY:
+			var array: Array = []
+			for item in value:
+				array.append(_json_safe(item))
+			return array
+		TYPE_DICTIONARY:
+			var dictionary: Dictionary = {}
+			for key in value:
+				dictionary[String(key)] = _json_safe(value[key])
+			return dictionary
+	return value
 
 
 static func _parse_envelope(message: String, expected_type: String) -> Dictionary:
@@ -328,6 +412,10 @@ func _poll_unauthenticated_peers() -> void:
 		record["reliable_bytes"] = 0
 		record["sequence"] = 0
 		record["client_sequence"] = int(auth_result.get("seq", -1))
+		record["telemetry_rate_hz"] = TELEMETRY_DEFAULT_RATE_HZ
+		record["telemetry_slot"] = {}
+		record["telemetry_last_sample_seq"] = 0
+		record["telemetry_force_snapshot"] = true
 		_authenticated_peers.append(record)
 		if not _queue_identity_message(record, "hello", {}):
 			_authenticated_peers.erase(record)
@@ -353,17 +441,45 @@ func _poll_authenticated_peers() -> void:
 			if not peer.was_string_packet() or packet.size() > MAX_MESSAGE_BYTES:
 				failed = true
 				break
-			var ping_result := validate_ping_message(packet.get_string_from_utf8())
-			if not bool(ping_result.get("ok", false)):
+			var message := packet.get_string_from_utf8()
+			var parsed = JSON.parse_string(message)
+			if typeof(parsed) != TYPE_DICTIONARY or not parsed.has("t"):
 				failed = true
 				break
-			var ping_envelope: Dictionary = ping_result.envelope
-			var client_sequence := _integer_value(ping_envelope.seq)
-			if client_sequence != int(record.get("client_sequence", -1)) + 1:
-				failed = true
-				break
-			record["client_sequence"] = client_sequence
-			if not _queue_identity_message(record, "pong", {"echo": ping_envelope.d}):
+			var message_type := String(parsed.t)
+			if message_type == "ping":
+				var ping_result := validate_ping_message(message)
+				if not bool(ping_result.get("ok", false)):
+					failed = true
+					break
+				var ping_envelope: Dictionary = ping_result.envelope
+				var client_sequence := _integer_value(ping_envelope.seq)
+				if client_sequence != int(record.get("client_sequence", -1)) + 1:
+					failed = true
+					break
+				record["client_sequence"] = client_sequence
+				if not _queue_identity_message(record, "pong", {"echo": ping_envelope.d}):
+					failed = true
+					break
+			elif message_type == "telemetry_rate":
+				var rate_result := validate_telemetry_rate_message(message, int(record.get("client_sequence", -1)))
+				if not bool(rate_result.get("ok", false)):
+					failed = true
+					break
+				record["client_sequence"] = int(rate_result.sequence)
+				record["telemetry_rate_hz"] = int(rate_result.rate_hz)
+				if int(rate_result.rate_hz) == 0:
+					record["telemetry_slot"] = {}
+				else:
+					record["telemetry_force_snapshot"] = true
+			elif message_type == "telemetry_request":
+				var request_result := validate_telemetry_request(message, int(record.get("client_sequence", -1)))
+				if not bool(request_result.get("ok", false)):
+					failed = true
+					break
+				record["client_sequence"] = int(request_result.sequence)
+				record["telemetry_force_snapshot"] = true
+			else:
 				failed = true
 				break
 		if failed:
@@ -494,7 +610,51 @@ func _poll_closing_peers() -> void:
 				continue
 		if peer.get_ready_state() == WebSocketPeer.STATE_OPEN and record.get("reliable_queue", []).is_empty():
 			peer.close(1008, String(record.get("close_reason", "closing")).substr(0, 120))
+
+
+func _poll_telemetry() -> void:
+	if not _telemetry_provider.is_valid() or _authenticated_peers.is_empty():
+		return
+	var source: Variant = _telemetry_provider.call()
+	if typeof(source) != TYPE_DICTIONARY or source.is_empty():
+		return
+	var source_sequence := int(source.get("publish_count", source.get("timestamp_us", -1)))
+	if source_sequence != _last_telemetry_source_seq:
+		_last_telemetry_source_seq = source_sequence
+		_telemetry_sample_seq += 1
+		_latest_telemetry_payload = serialize_telemetry_snapshot(
+			source,
+			_telemetry_sample_seq,
+			int(source.get("tick", 0)))
+		telemetry_snapshot_serialization_count += 1
+	if _latest_telemetry_payload.is_empty():
+		return
+	for record in _authenticated_peers.duplicate():
+		if int(record.get("telemetry_rate_hz", 0)) <= 0:
 			continue
+		var force_snapshot := bool(record.get("telemetry_force_snapshot", false))
+		if force_snapshot or (
+				record.get("telemetry_slot", {}).is_empty() and
+				int(record.get("telemetry_last_sample_seq", 0)) < int(_latest_telemetry_payload.get("sample_seq", 0))):
+			record["telemetry_slot"] = _latest_telemetry_payload.duplicate(true)
+			if force_snapshot:
+				record["telemetry_slot"]["fresh"] = true
+			record["telemetry_last_sample_seq"] = int(_latest_telemetry_payload.get("sample_seq", 0))
+			record["telemetry_force_snapshot"] = false
+		_flush_telemetry(record)
+
+
+func _flush_telemetry(record: Dictionary) -> void:
+	var slot: Dictionary = record.get("telemetry_slot", {})
+	var peer: WebSocketPeer = record.get("peer")
+	if slot.is_empty() or peer == null or peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		return
+	if peer.get_current_outbound_buffered_amount() > 0:
+		return
+	slot["sent_at_unix_ms"] = Time.get_unix_time_from_system() * 1000.0
+	if peer.send_text(JSON.stringify(slot)) == OK:
+		record["telemetry_slot"] = {}
+		telemetry_send_count += 1
 
 
 func _exit_tree() -> void:

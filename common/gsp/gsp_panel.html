@@ -7,88 +7,153 @@
 <style>
 :root { color-scheme: dark; font-family: system-ui, sans-serif; }
 body { margin: 0; min-width: 320px; background: #111820; color: #dce7f5; }
-main { max-width: 720px; margin: 0 auto; padding: 24px; }
-header { display: flex; justify-content: space-between; gap: 16px; align-items: start; }
+main { max-width: 900px; margin: 0 auto; padding: 20px; }
+header, .state, .grid { display: flex; gap: 12px; align-items: start; }
+header { justify-content: space-between; }
 h1 { margin: 0; font-size: 1.25rem; }
-p { color: #9fb0c5; line-height: 1.5; }
-.status { border: 1px solid #31445d; border-radius: 8px; padding: 16px; margin-top: 24px; }
 .badge { color: #9ee6b1; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; }
+.state, .card { border: 1px solid #31445d; border-radius: 8px; padding: 12px; margin-top: 14px; }
+.state { justify-content: space-between; flex-wrap: wrap; }
+.grid { flex-wrap: wrap; }
+.card { flex: 1 1 260px; margin-top: 0; }
+dl { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; margin: 0; }
+dt { color: #9fb0c5; } dd { margin: 0; font-variant-numeric: tabular-nums; }
 code { color: #b9d8ff; overflow-wrap: anywhere; }
+canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
+.muted { color: #9fb0c5; }
 </style>
 </head>
 <body>
 <main>
-<header>
-<h1>AeroSim Ground Station Panel</h1>
-<span class="badge" id="focus-state">panel focus</span>
-</header>
-<section class="status" aria-live="polite">
-<strong>Launch qualified</strong>
-<p>This dependency-free panel is running as an independent native Wayland client.</p>
-<p id="session">No session fragment was supplied.</p>
+<header><h1>AeroSim Ground Station Panel</h1><span class="badge" id="focus-state">panel focus</span></header>
+<section class="state" aria-live="polite">
+  <strong id="connection">Disconnected</strong>
+  <span id="fresh-state" class="muted">Waiting for session fragment.</span>
 </section>
+<div class="grid">
+<section class="card"><dl>
+  <dt>Vehicle Instance</dt><dd id="vehicle">—</dd>
+  <dt>Authority</dt><dd id="authority">—</dd>
+  <dt>Tick</dt><dd id="tick">—</dd>
+  <dt>Actual telemetry rate</dt><dd id="rate">0 Hz</dd>
+  <dt>Latency</dt><dd id="latency">—</dd>
+  <dt>Registry hash</dt><dd id="registry">—</dd>
+</dl></section>
+<section class="card"><strong>Position / velocity (NED, SI)</strong><p id="position" class="muted">—</p><p id="velocity" class="muted">—</p><strong>Attitude / rates (FRD, SI)</strong><p id="attitude" class="muted">—</p><p id="rates" class="muted">—</p></section>
+<section class="card"><strong>Motor order: rear_right, front_right, rear_left, front_left</strong><p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas></section>
+</div>
 </main>
 <script>
 (function () {
-  var session = document.getElementById("session");
-  var focusState = document.getElementById("focus-state");
   var protocolVersion = 2;
   var fragment = new URLSearchParams(window.location.hash.slice(1));
   var port = Number(fragment.get("port"));
   var token = fragment.get("token") || "";
   var socket = null;
-  var pingSequence = 1;
-  var pingTimer = null;
-  function setSession(value) {
-    session.textContent = value;
+  var clientSequence = 1;
+  var lastSampleSequence = 0;
+  var waitingForFresh = false;
+  var rateStartedAt = 0;
+  var rateSamples = 0;
+  var sparkValues = [];
+  var $ = function (id) { return document.getElementById(id); };
+  var connection = $("connection");
+  var freshState = $("fresh-state");
+  var canvas = $("sparkline");
+  var context = canvas.getContext("2d");
+
+  function text(id, value) { $(id).textContent = value; }
+  function vector(value, unit) {
+    if (!value) return "—";
+    return "[" + Number(value.x_val).toFixed(3) + ", " + Number(value.y_val).toFixed(3) + ", " + Number(value.z_val).toFixed(3) + "] " + unit;
   }
-  function closeSession() {
-    if (pingTimer !== null) window.clearInterval(pingTimer);
-    pingTimer = null;
+  function quaternion(value) {
+    if (!value) return "—";
+    return "[w " + Number(value.w_val).toFixed(3) + ", x " + Number(value.x_val).toFixed(3) + ", y " + Number(value.y_val).toFixed(3) + ", z " + Number(value.z_val).toFixed(3) + "]";
+  }
+  function send(type, data) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ v: protocolVersion, t: type, seq: clientSequence++, d: data }));
+  }
+  function sendTelemetryRate(rate) { send("telemetry_rate", { rate_hz: rate }); }
+  function requestFreshSnapshot() { waitingForFresh = true; freshState.textContent = "Waiting for fresh telemetry…"; send("telemetry_request", { fresh: true }); }
+  function disconnect(message) {
+    if (socket) socket.close();
     socket = null;
+    waitingForFresh = true;
+    connection.textContent = message;
+    freshState.textContent = "Live display disabled.";
+    text("rate", "0 Hz");
   }
-  function sendPing() {
-    if (socket === null || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({
-      v: protocolVersion,
-      t: "ping",
-      seq: pingSequence++,
-      d: { client_timestamp_ms: performance.now(), request: "panel" }
-    }));
+  function drawSparkline() {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = "#31445d";
+    context.beginPath(); context.moveTo(0, 50); context.lineTo(canvas.width, 50); context.stroke();
+    if (sparkValues.length < 2) return;
+    context.strokeStyle = "#67d5ff"; context.beginPath();
+    sparkValues.forEach(function (value, index) {
+      var x = index * canvas.width / Math.max(sparkValues.length - 1, 1);
+      var y = 90 - Math.min(Math.max(value, 0), 1) * 80;
+      if (index === 0) context.moveTo(x, y); else context.lineTo(x, y);
+    });
+    context.stroke();
   }
-  if (port < 8765 || port > 8769 || !/^[0-9a-f]{32}$/i.test(token)) {
-    setSession("No valid GSP session fragment was supplied.");
-  } else {
+  function displayTelemetry(message) {
+    var sample = message.d || message;
+    if (!sample.sample_seq || Number(sample.sample_seq) <= lastSampleSequence) return;
+    if (waitingForFresh && !sample.fresh) return;
+    lastSampleSequence = Number(sample.sample_seq);
+    waitingForFresh = false;
+    connection.textContent = "Connected";
+    freshState.textContent = "Live telemetry";
+    text("vehicle", sample.vehicle_instance || "—");
+    text("authority", sample.authority || sample.control_authority || "—");
+    text("tick", sample.tick == null ? "—" : sample.tick);
+    rateSamples += 1;
+    var elapsed = performance.now() - rateStartedAt;
+    text("rate", elapsed > 0 ? (rateSamples * 1000 / elapsed).toFixed(1) + " Hz" : "—");
+    text("latency", sample.sent_at_unix_ms ? Math.max(0, Date.now() - Number(sample.sent_at_unix_ms)).toFixed(1) + " ms" : "—");
+    text("registry", sample.registry_hash || "unavailable");
+    text("position", "position: " + vector(sample.position_ned || sample.position, "m NED"));
+    text("velocity", "velocity: " + vector(sample.velocity_ned_mps || sample.velocity, "m/s NED"));
+    text("attitude", "attitude: " + quaternion(sample.attitude_ned || sample.attitude));
+    text("rates", "rates: " + vector(sample.rates_frd_rad_s || sample.rates, "rad/s FRD"));
+    var motors = sample.motors || [];
+    text("motors", motors.map(function (motor) { return Number(motor.thrust_newtons).toFixed(2) + " N"; }).join(" | ") || "—");
+    sparkValues.push(motors.reduce(function (sum, motor) { return sum + Number(motor.thrust_newtons || 0); }, 0) / 40);
+    if (sparkValues.length > 80) sparkValues.shift();
+    drawSparkline();
+  }
+  function connect() {
+    if (port < 8765 || port > 8769 || !/^[0-9a-f]{32}$/i.test(token)) {
+      connection.textContent = "No valid GSP session fragment"; return;
+    }
     socket = new WebSocket("ws://127.0.0.1:" + port);
     socket.addEventListener("open", function () {
-      setSession("Authenticating GSP session…");
+      connection.textContent = "Authenticating…";
       socket.send(JSON.stringify({ v: protocolVersion, t: "auth", seq: 0, d: { token: token } }));
     });
     socket.addEventListener("message", function (event) {
-      var envelope;
-      try { envelope = JSON.parse(event.data); } catch (_error) { closeSession(); setSession("Invalid GSP response."); return; }
-      if (envelope.v !== protocolVersion || typeof envelope.t !== "string" || !envelope.d) {
-        closeSession();
-        setSession("Invalid GSP protocol response.");
-        return;
-      }
-      if (envelope.t === "hello") {
-        setSession("Authenticated: " + (envelope.d.vehicle_instance || "session"));
-        pingTimer = window.setInterval(sendPing, 250);
-        sendPing();
-      } else if (envelope.t === "pong") {
-        setSession("Connected: pong from " + (envelope.d.peer || "AeroSim"));
+      var message;
+      try { message = JSON.parse(event.data); } catch (_error) { disconnect("Invalid GSP response"); return; }
+      if (message.t === "telemetry") { displayTelemetry(message); return; }
+      if (message.v !== protocolVersion || typeof message.t !== "string" || !message.d) { disconnect("Invalid GSP protocol response"); return; }
+      if (message.t === "hello") {
+        connection.textContent = "Connected";
+        rateStartedAt = performance.now(); rateSamples = 0;
+        sendTelemetryRate(30); requestFreshSnapshot();
       }
     });
-    socket.addEventListener("close", function () { closeSession(); setSession("GSP session closed."); });
-    socket.addEventListener("error", function () { closeSession(); setSession("GSP session unavailable."); });
+    socket.addEventListener("close", function () { disconnect("GSP session closed"); });
+    socket.addEventListener("error", function () { disconnect("GSP session unavailable"); });
   }
-  function setFocusState(value) {
-    focusState.textContent = value;
-    document.title = "AeroSim GSP — " + value;
-  }
-  window.addEventListener("focus", function () { setFocusState("panel focus"); });
-  window.addEventListener("blur", function () { setFocusState("panel unfocused"); });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) { waitingForFresh = true; sendTelemetryRate(0); freshState.textContent = "Panel hidden; telemetry stopped."; return; }
+    if (socket && socket.readyState === WebSocket.OPEN) { requestFreshSnapshot(); sendTelemetryRate(30); }
+  });
+  window.addEventListener("focus", function () { $("focus-state").textContent = "panel focus"; });
+  window.addEventListener("blur", function () { $("focus-state").textContent = "panel unfocused"; });
+  connect(); drawSparkline();
 }());
 </script>
 </body>

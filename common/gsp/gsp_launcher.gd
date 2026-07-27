@@ -63,6 +63,8 @@ func launch(options: Dictionary = {}) -> Dictionary:
 	add_child(_server)
 	if get_parent() != null and get_parent().has_method("gsp_identity_snapshot"):
 		_server.set_identity_provider(Callable(get_parent(), "gsp_identity_snapshot"))
+	if get_parent() != null and get_parent().has_method("gsp_telemetry_snapshot"):
+		_server.set_telemetry_provider(Callable(get_parent(), "gsp_telemetry_snapshot"))
 	var server_result := _server.start()
 	if not bool(server_result.get("ok", false)):
 		print("GSP unavailable: %s" % String(server_result.get("error", "listener failed")))

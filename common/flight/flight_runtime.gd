@@ -226,6 +226,8 @@ var _replay_epoch_pending := false
 var _last_complete_replay_serialized := ""
 var _replay_secondary_row := PackedFloat64Array()
 var _airsim_vehicle_contexts: Dictionary = {}
+var _gsp_telemetry_cache: Dictionary = {}
+var _gsp_telemetry_publish_count := -1
 var _airsim_secondary_a5_configuration: Dictionary = {}
 var _secondary_collision_state_captured := false
 var _secondary_collision_layer := 1
@@ -4789,6 +4791,43 @@ func gsp_identity_snapshot() -> Dictionary:
         "registry_hash": "unavailable",
         "tick": airsim_session.frame_index if airsim_session != null else 0,
     }
+
+
+func gsp_telemetry_snapshot() -> Dictionary:
+    if native == null or not native.has_method("telemetry_snapshot"):
+        return {}
+    var snapshot: Dictionary = native.call("telemetry_snapshot")
+    var publish_count := int(snapshot.get("publish_count", -1))
+    if publish_count == _gsp_telemetry_publish_count and not _gsp_telemetry_cache.is_empty():
+        return _gsp_telemetry_cache.duplicate(true)
+    var position: Vector3 = drone_body.global_position if drone_body != null else _spawn_position()
+    var orientation: Quaternion = drone_body.global_transform.basis.get_rotation_quaternion() if drone_body != null else Quaternion.IDENTITY
+    var velocity: Vector3 = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
+    var angular_velocity: Vector3 = _jolt_angular_velocity_body_y_up(drone_body) if drone_body != null else Vector3.ZERO
+    var position_ned: Vector3 = AirSimCoordinateContract.godot_world_to_ned(position, _spawn_position())
+    var velocity_ned: Vector3 = AirSimCoordinateContract.godot_direction_to_ned(velocity)
+    var attitude_ned: Quaternion = AirSimCoordinateContract.godot_orientation_to_ned(orientation)
+    var rates_frd: Vector3 = AirSimCoordinateContract.godot_body_to_frd(angular_velocity)
+    var tick: int = airsim_session.frame_index if airsim_session != null else 0
+    var position_payload := _airsim_vector3(position_ned)
+    var velocity_payload := _airsim_vector3(velocity_ned)
+    var attitude_payload := _airsim_quaternion(attitude_ned)
+    var rates_payload := _airsim_vector3(rates_frd)
+    snapshot["position_ned"] = position_payload
+    snapshot["velocity_ned_mps"] = velocity_payload
+    snapshot["attitude_ned"] = attitude_payload
+    snapshot["rates_frd_rad_s"] = rates_payload
+    snapshot["position"] = position_payload
+    snapshot["velocity"] = velocity_payload
+    snapshot["attitude"] = attitude_payload
+    snapshot["rates"] = rates_payload
+    snapshot["vehicle_instance"] = _airsim_vehicle_name
+    snapshot["authority"] = String(snapshot.get("control_authority", "unavailable"))
+    snapshot["registry_hash"] = "unavailable"
+    snapshot["tick"] = tick
+    _gsp_telemetry_publish_count = publish_count
+    _gsp_telemetry_cache = snapshot.duplicate(true)
+    return _gsp_telemetry_cache.duplicate(true)
 
 func _update_status_diagram() -> void:
     if status_diagram == null or native == null or not native.has_method("telemetry_snapshot"):
