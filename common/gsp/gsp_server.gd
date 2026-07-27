@@ -345,7 +345,9 @@ static func validate_set_tuning_message(message: String, previous_sequence: int)
         return {"ok": false, "error": "malformed tuning data"}
     if typeof(data.value) != TYPE_INT and typeof(data.value) != TYPE_FLOAT:
         return {"ok": false, "error": "wrong tuning value type"}
-    if data.has("client_sent_at_unix_ms") and (typeof(data.client_sent_at_unix_ms) != TYPE_INT and typeof(data.client_sent_at_unix_ms) != TYPE_FLOAT or not is_finite(float(data.client_sent_at_unix_ms)) or float(data.client_sent_at_unix_ms) < 0.0):
+    if data.has("client_sent_at_unix_ms"):
+        return {"ok": false, "error": "wall-clock tuning timestamp is not accepted"}
+    if data.has("client_sent_at_perf_ms") and (typeof(data.client_sent_at_perf_ms) != TYPE_INT and typeof(data.client_sent_at_perf_ms) != TYPE_FLOAT or not is_finite(float(data.client_sent_at_perf_ms)) or float(data.client_sent_at_perf_ms) < 0.0):
         return {"ok": false, "error": "invalid tuning client timestamp"}
     return {
         "ok": true,
@@ -353,7 +355,7 @@ static func validate_set_tuning_message(message: String, previous_sequence: int)
         "sequence": sequence,
         "parameter": String(data.parameter),
         "value": data.value,
-        "client_sent_at_unix_ms": float(data.get("client_sent_at_unix_ms", -1.0)),
+        "client_sent_at_perf_ms": float(data.get("client_sent_at_perf_ms", -1.0)),
     }
 
 
@@ -375,9 +377,11 @@ static func validate_set_tuning_batch_message(message: String, previous_sequence
         if typeof(item.value) != TYPE_INT and typeof(item.value) != TYPE_FLOAT:
             return {"ok": false, "error": "wrong tuning value type"}
         changes.append({"parameter": String(item.parameter), "value": item.value})
-    if data.has("client_sent_at_unix_ms") and (typeof(data.client_sent_at_unix_ms) != TYPE_INT and typeof(data.client_sent_at_unix_ms) != TYPE_FLOAT or not is_finite(float(data.client_sent_at_unix_ms)) or float(data.client_sent_at_unix_ms) < 0.0):
+    if data.has("client_sent_at_unix_ms"):
+        return {"ok": false, "error": "wall-clock tuning timestamp is not accepted"}
+    if data.has("client_sent_at_perf_ms") and (typeof(data.client_sent_at_perf_ms) != TYPE_INT and typeof(data.client_sent_at_perf_ms) != TYPE_FLOAT or not is_finite(float(data.client_sent_at_perf_ms)) or float(data.client_sent_at_perf_ms) < 0.0):
         return {"ok": false, "error": "invalid tuning client timestamp"}
-    return {"ok": true, "envelope": envelope, "sequence": sequence, "changes": changes, "client_sent_at_unix_ms": float(data.get("client_sent_at_unix_ms", -1.0))}
+    return {"ok": true, "envelope": envelope, "sequence": sequence, "changes": changes, "client_sent_at_perf_ms": float(data.get("client_sent_at_perf_ms", -1.0))}
 
 
 static func validate_set_quick_adjust_message(message: String, previous_sequence: int) -> Dictionary:
@@ -709,7 +713,7 @@ func _poll_unauthenticated_peers() -> void:
         record["telemetry_force_snapshot"] = true
         record["telemetry_request_seq"] = -1
         record["telemetry_next_due_usec"] = 0
-        record["tuning_client_sent_at_unix_ms"] = {}
+        record["tuning_client_sent_at_perf_ms"] = {}
         _authenticated_peers.append(record)
         if not _queue_identity_message(record, "hello", {}):
             _authenticated_peers.erase(record)
@@ -752,7 +756,13 @@ func _poll_authenticated_peers() -> void:
                     failed = true
                     break
                 record["client_sequence"] = client_sequence
-                if not _queue_identity_message(record, "pong", {"echo": ping_envelope.d}):
+                var server_receive_usec := Time.get_ticks_usec()
+                var pong_data := {
+                    "echo": ping_envelope.d,
+                    "server_receive_usec": server_receive_usec,
+                    "server_send_usec": Time.get_ticks_usec(),
+                }
+                if not _queue_identity_message(record, "pong", pong_data):
                     failed = true
                     break
             elif message_type == "set_telemetry":
@@ -814,10 +824,10 @@ func _poll_authenticated_peers() -> void:
                 record["client_sequence"] = int(tuning_result.sequence)
                 var response := _submit_tuning_request(
                         int(record.id), int(record.connection_id), int(tuning_result.sequence), String(tuning_result.parameter), tuning_result.value)
-                var client_sent_at_unix_ms := float(tuning_result.get("client_sent_at_unix_ms", -1.0))
-                if client_sent_at_unix_ms >= 0.0:
-                    record["tuning_client_sent_at_unix_ms"][int(tuning_result.sequence)] = client_sent_at_unix_ms
-                    response["client_sent_at_unix_ms"] = client_sent_at_unix_ms
+                var client_sent_at_perf_ms := float(tuning_result.get("client_sent_at_perf_ms", -1.0))
+                if client_sent_at_perf_ms >= 0.0:
+                    record["tuning_client_sent_at_perf_ms"][int(tuning_result.sequence)] = client_sent_at_perf_ms
+                    response["client_sent_at_perf_ms"] = client_sent_at_perf_ms
                 var response_ack_failed := false
                 if not bool(response.get("pending", false)):
                     response_ack_failed = not _queue_tuning_ack(record, int(tuning_result.sequence), response)
@@ -836,10 +846,10 @@ func _poll_authenticated_peers() -> void:
                 record["client_sequence"] = int(tuning_batch_result.sequence)
                 var batch_response := _submit_tuning_batch_request(
                         int(record.id), int(record.connection_id), int(tuning_batch_result.sequence), tuning_batch_result.changes)
-                var batch_client_sent_at_unix_ms := float(tuning_batch_result.get("client_sent_at_unix_ms", -1.0))
-                if batch_client_sent_at_unix_ms >= 0.0:
-                    record["tuning_client_sent_at_unix_ms"][int(tuning_batch_result.sequence)] = batch_client_sent_at_unix_ms
-                    batch_response["client_sent_at_unix_ms"] = batch_client_sent_at_unix_ms
+                var batch_client_sent_at_perf_ms := float(tuning_batch_result.get("client_sent_at_perf_ms", -1.0))
+                if batch_client_sent_at_perf_ms >= 0.0:
+                    record["tuning_client_sent_at_perf_ms"][int(tuning_batch_result.sequence)] = batch_client_sent_at_perf_ms
+                    batch_response["client_sent_at_perf_ms"] = batch_client_sent_at_perf_ms
                 var batch_ack_failed := false
                 if not bool(batch_response.get("pending", false)):
                     batch_ack_failed = not _queue_tuning_ack(record, int(tuning_batch_result.sequence), batch_response)
@@ -998,12 +1008,12 @@ func _poll_tuning_results() -> void:
             if int(record.get("id", -1)) != peer_id or int(record.get("connection_id", -1)) != connection_id:
                 continue
             var request_seq := int(result.get("request_seq", -1))
-            var client_sent_times: Dictionary = record.get("tuning_client_sent_at_unix_ms", {})
-            if not result.has("client_sent_at_unix_ms") and client_sent_times.has(request_seq):
+            var client_sent_times: Dictionary = record.get("tuning_client_sent_at_perf_ms", {})
+            if not result.has("client_sent_at_perf_ms") and client_sent_times.has(request_seq):
                 result = result.duplicate(true)
-                result["client_sent_at_unix_ms"] = float(client_sent_times[request_seq])
+                result["client_sent_at_perf_ms"] = float(client_sent_times[request_seq])
             client_sent_times.erase(request_seq)
-            record["tuning_client_sent_at_unix_ms"] = client_sent_times
+            record["tuning_client_sent_at_perf_ms"] = client_sent_times
             if not _queue_tuning_ack(record, int(result.get("request_seq", -1)), result):
                 _authenticated_peers.erase(record)
                 _begin_close(record, "reliable send failed")

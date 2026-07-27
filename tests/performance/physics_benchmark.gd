@@ -1,6 +1,7 @@
 extends SceneTree
 
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const GspServer = preload("res://common/gsp/gsp_server.gd")
 const G3_7_WORKLOAD_ATTESTATION := {
     "workload_id": "G3.7-A3-A6-public-native-v1",
     "effect_paths": {
@@ -141,6 +142,7 @@ var _warmup_seconds := 10.0
 var _seconds := 60.0
 var _effects := "off"
 var _benchmark_mode := "gate"
+var _gsp_mode := "none"
 var _commit_sha := ""
 var _required_adapter := "NVIDIA"
 var _godot_version := ""
@@ -148,6 +150,8 @@ var _godot_sha256 := ""
 var _godot_cpp_revision := ""
 var _gdextension_sha256 := ""
 var _native_source_sha256 := ""
+var _gsp_server: GspServer
+var _gsp_client := WebSocketPeer.new()
 
 
 func _initialize() -> void:
@@ -168,7 +172,13 @@ func _run() -> void:
     if _benchmark_mode != "smoke" and (_warmup_seconds != 10.0 or _seconds != 60.0):
         _fail("gate and reference modes require exactly 10s warmup and 60s measurement")
         return
-    if _commit_sha.length() != 40 or _godot_version.is_empty() or _godot_sha256.length() != 64 or _godot_cpp_revision.length() != 40 or _gdextension_sha256.length() != 64 or _native_source_sha256.length() != 64:
+    if _commit_sha.length() != 40:
+        _fail("commit provenance is required")
+        return
+    if _gsp_mode != "none":
+        await _run_gsp_mode()
+        return
+    if _godot_version.is_empty() or _godot_sha256.length() != 64 or _godot_cpp_revision.length() != 40 or _gdextension_sha256.length() != 64 or _native_source_sha256.length() != 64:
         _fail("complete Godot, godot-cpp, GDExtension, and native source provenance is required")
         return
     var adapter := RenderingServer.get_video_adapter_name()
@@ -311,6 +321,104 @@ func _configure_effects(native: Object) -> bool:
     return true
 
 
+func _run_gsp_mode() -> void:
+    if _gsp_mode != "disabled" and _gsp_mode != "authenticated-idle":
+        _fail("GSP benchmark mode must be disabled or authenticated-idle")
+        return
+    var runtime: Node = SmokeScene.instantiate()
+    root.add_child(runtime)
+    await process_frame
+    if runtime.native == null:
+        _fail("AeroSimNative is not registered")
+        return
+    _install_deterministic_valid_license(runtime)
+    _effects = "off"
+    if not _configure_effects(runtime.native):
+        return
+    var effect_workload := EffectWorkload.new()
+    if not effect_workload.configure(runtime.native, false):
+        _fail("GSP benchmark could not configure the production EffectWorkload")
+        return
+    effect_workload.process_physics_priority = 100
+    root.add_child(effect_workload)
+    if _gsp_mode == "authenticated-idle" and not await _connect_authenticated_idle(runtime):
+        _fail("authenticated idle GSP client could not connect")
+        return
+
+    var profiler := PhysicsFrameProfiler.new()
+    EngineDebugger.register_profiler("aerosim_physics_frame", profiler)
+    EngineDebugger.profiler_enable("aerosim_physics_frame", true)
+    var warmup_frames := maxi(0, ceili(_warmup_seconds * Engine.physics_ticks_per_second))
+    for _frame in warmup_frames:
+        await physics_frame
+    profiler.frame_ids.clear()
+    profiler.samples_ms.clear()
+    effect_workload.reset_effect_evidence()
+    var measurement_frames := maxi(1, ceili(_seconds * Engine.physics_ticks_per_second))
+    for _frame in measurement_frames:
+        await physics_frame
+    await process_frame
+    EngineDebugger.profiler_enable("aerosim_physics_frame", false)
+    EngineDebugger.unregister_profiler("aerosim_physics_frame")
+    if profiler.samples_ms.size() != measurement_frames:
+        _fail("PhysicsFrameProfiler captured %d of %d GSP measurement frames" % [profiler.samples_ms.size(), measurement_frames])
+        return
+    var output := FileAccess.open(_output_path, FileAccess.WRITE)
+    if output == null:
+        _fail("Cannot write GSP benchmark output: %s" % _output_path)
+        return
+    output.store_string(JSON.stringify({
+        "samples_ms": profiler.samples_ms,
+        "sample_count": profiler.samples_ms.size(),
+        "sampling_source": "PhysicsFrameProfiler._tick",
+        "workload_source": "EffectWorkload on the production SmokeScene",
+        "gsp_mode": _gsp_mode,
+        "authenticated_idle": _gsp_mode == "authenticated-idle",
+        "commit_sha": _commit_sha,
+        "physics_ticks_per_second": Engine.physics_ticks_per_second,
+        "warmup_seconds": _warmup_seconds,
+        "measured_seconds": _seconds,
+        "run_order_contract": "runner records disabled then authenticated-idle",
+    }))
+    output.close()
+    if _gsp_server != null:
+        _gsp_server.stop()
+    runtime.queue_free()
+    quit(0)
+
+
+func _connect_authenticated_idle(runtime: Node) -> bool:
+    _gsp_server = GspServer.new()
+    root.add_child(_gsp_server)
+    _gsp_server.set_identity_provider(Callable(runtime, "gsp_identity_snapshot"))
+    _gsp_server.set_telemetry_provider(Callable(runtime, "gsp_telemetry_snapshot"))
+    var started := _gsp_server.start()
+    if not bool(started.get("ok", false)):
+        return false
+    _gsp_client.handshake_headers = PackedStringArray(["Origin: null"])
+    _gsp_client.connect_to_url("ws://127.0.0.1:%d" % int(started.get("port", 0)))
+    for _attempt in 240:
+        _gsp_client.poll()
+        if _gsp_client.get_ready_state() == WebSocketPeer.STATE_OPEN:
+            _gsp_client.send_text(JSON.stringify({"v": 2, "t": "auth", "seq": 0, "d": {"token": started.token}}))
+            break
+        await process_frame
+    if _gsp_client.get_ready_state() != WebSocketPeer.STATE_OPEN:
+        return false
+    for _attempt in 240:
+        _gsp_client.poll()
+        while _gsp_client.get_available_packet_count() > 0:
+            var packet := _gsp_client.get_packet()
+            if not _gsp_client.was_string_packet():
+                continue
+            var message = JSON.parse_string(packet.get_string_from_utf8())
+            if typeof(message) == TYPE_DICTIONARY and String(message.get("t", "")) == "hello":
+                _gsp_client.send_text(JSON.stringify({"v": 2, "t": "set_telemetry", "seq": 1, "d": {"hz": 30, "extra": []}}))
+                return true
+        await process_frame
+    return false
+
+
 func _install_deterministic_valid_license(runtime: Node) -> void:
     if runtime.license_provider != null:
         runtime.remove_child(runtime.license_provider)
@@ -335,6 +443,8 @@ func _parse_args() -> void:
                 _effects = args[index + 1]
             "--benchmark-mode":
                 _benchmark_mode = args[index + 1]
+            "--gsp-mode":
+                _gsp_mode = args[index + 1]
             "--commit-sha":
                 _commit_sha = args[index + 1]
             "--godot-version":

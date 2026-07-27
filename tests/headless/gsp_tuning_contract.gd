@@ -30,6 +30,14 @@ func _init() -> void:
         "v": 2, "t": "set_tuning", "seq": 1,
         "d": {"parameter": "simpleflight.rate_p", "value": 1.25}
     }), 0).get("ok", false), "valid tuning request is accepted")
+    _expect(GspServer.validate_set_tuning_message(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 1,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.25, "client_sent_at_perf_ms": 12.5}
+    }), 0).get("ok", false), "monotonic tuning send time is accepted")
+    _expect(not GspServer.validate_set_tuning_message(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 1,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.25, "client_sent_at_unix_ms": 12.5}
+    }), 0).get("ok", false), "wall-clock tuning send time is rejected")
     var batch := GspServer.validate_set_tuning_batch_message(JSON.stringify({
         "v": 2, "t": "set_tuning_batch", "seq": 1,
         "d": {"changes": [

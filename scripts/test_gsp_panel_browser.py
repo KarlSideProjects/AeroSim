@@ -61,6 +61,7 @@ class Cdp:
         expected = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")).digest()).decode("ascii")
         if f"Sec-WebSocket-Accept: {expected}".encode("ascii") not in response:
             raise RuntimeError("Chrome CDP accept key did not match")
+        self.sock.settimeout(30.0)
         self.command_id = 0
 
     def command(self, method: str, params: dict | None = None) -> dict:
@@ -154,22 +155,29 @@ def main() -> int:
             cdp = Cdp(str(target["webSocketDebuggerUrl"]))
             cdp.command("Page.enable")
             cdp.command("Runtime.enable")
+            cdp.command("Page.bringToFront")
             cdp.command("Page.navigate", {"url": panel_url})
             samples = cdp.evaluate(
                 """(async () => {
                     const deadline = performance.now() + 15000;
                     while (performance.now() < deadline) {
                       const button = document.querySelector('.tuning-row button');
+                      const input = document.querySelector('.tuning-row input[type="number"]');
                       const perf = window.__AEROSIM_GSP_PERF__;
-                      if (button && perf && document.querySelector('#connection').textContent === 'Connected') {
-                        button.click();
-                        const sampleDeadline = performance.now() + 5000;
-                        while (performance.now() < sampleDeadline) {
-                          const snapshot = perf.snapshot();
-                          if (snapshot.request_to_native_commit_ms.length > 0 && snapshot.native_commit_to_rendered_ack_ms.length > 0) return snapshot;
-                          await new Promise(requestAnimationFrame);
+                      if (button && input && perf && document.querySelector('#connection').textContent === 'Connected') {
+                        for (let sampleIndex = 0; sampleIndex < 100; sampleIndex += 1) {
+                          input.value = String(0.61 + (sampleIndex % 4) * 0.01);
+                          button.click();
+                          const sampleDeadline = performance.now() + 5000;
+                          while (performance.now() < sampleDeadline) {
+                            const snapshot = perf.snapshot();
+                            if (snapshot.request_to_native_commit_ms.length > sampleIndex && snapshot.native_commit_to_rendered_ack_ms.length > sampleIndex) break;
+                            await new Promise(requestAnimationFrame);
+                          }
+                          const completed = perf.snapshot();
+                          if (completed.request_to_native_commit_ms.length <= sampleIndex || completed.native_commit_to_rendered_ack_ms.length <= sampleIndex) throw new Error('production panel did not produce a correlated timing sample');
                         }
-                        throw new Error('production panel did not produce a correlated timing sample');
+                        return perf.snapshot();
                       }
                       await new Promise(requestAnimationFrame);
                     }
@@ -178,7 +186,27 @@ def main() -> int:
             )
             if not isinstance(samples, dict):
                 raise RuntimeError(f"production panel returned invalid performance payload: {samples!r}")
-            result.update({"status": "qualified", "panel_url": panel_url, "browser": "Google Chrome", "browser_version": cdp.command("Browser.getVersion").get("product", ""), "performance": samples})
+            request_samples = samples.get("request_to_native_commit_ms", [])
+            rendered_samples = samples.get("native_commit_to_rendered_ack_ms", [])
+            if len(request_samples) < 100 or len(rendered_samples) < 100:
+                result.update({"panel_url": panel_url, "browser": "Google Chrome", "browser_version": cdp.command("Browser.getVersion").get("product", ""), "performance": samples, "sample_counts": {"request_to_native_commit": len(request_samples), "native_commit_to_rendered_ack": len(rendered_samples)}})
+                raise RuntimeError("production panel returned fewer than 100 correlated samples")
+            clock_sync = samples.get("clock_sync", {})
+            if not isinstance(clock_sync, dict) or not isinstance(clock_sync.get("samples"), (int, float)) or clock_sync.get("samples", 0) < 1 or not all(isinstance(clock_sync.get(key), (int, float)) and clock_sync.get(key) >= 0 for key in ("best_rtt_ms", "error_bound_ms")):
+                raise RuntimeError("production panel returned invalid monotonic clock-sync evidence")
+
+            def percentile(values: list[float], fraction: float) -> float:
+                ordered = sorted(values)
+                return ordered[min(len(ordered) - 1, max(0, int((len(ordered) * fraction + 0.999999999) // 1) - 1))]
+
+            timing_stats = {}
+            for name, values in (("request_to_native_commit", request_samples), ("native_commit_to_rendered_ack", rendered_samples)):
+                timing_stats[name] = {"p50_ms": percentile(values, 0.50), "p95_ms": percentile(values, 0.95), "p99_ms": percentile(values, 0.99)}
+            request_p99 = timing_stats["request_to_native_commit"]["p99_ms"]
+            rendered_p99 = timing_stats["native_commit_to_rendered_ack"]["p99_ms"]
+            result.update({"status": "qualified" if request_p99 < 50.0 and rendered_p99 < 50.0 else "fail", "panel_url": panel_url, "browser": "Google Chrome", "browser_version": cdp.command("Browser.getVersion").get("product", ""), "performance": samples, "timing_stats": timing_stats, "p99_ms": {"request_to_native_commit": request_p99, "native_commit_to_rendered_ack": rendered_p99}})
+            if result["status"] != "qualified":
+                result["reason"] = "one or more production panel timing p99 values reached 50 ms"
     except Exception as error:
         result["reason"] = str(error)
         result["environment"] = {"DISPLAY": bool(os.environ.get("DISPLAY")), "WAYLAND_DISPLAY": bool(os.environ.get("WAYLAND_DISPLAY")), "chrome": CHROME}
@@ -199,7 +227,7 @@ def main() -> int:
                 game.kill()
         output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result, sort_keys=True))
-    return 0 if result["status"] == "qualified" else 2
+    return 0 if result["status"] == "qualified" else 1
 
 
 if __name__ == "__main__":

@@ -70,7 +70,7 @@ class FakeWebSocket {
 FakeWebSocket.OPEN = 1;
 
 let confirmResult = false;
-let wallClockMs = 1000;
+let perfNow = 1;
 let rafCallbacks = [];
 const window = {
     location: { hash: "#port=8765&token=0123456789abcdef0123456789abcdef" },
@@ -104,7 +104,7 @@ const context = {
     String,
     Boolean,
     Date: { now: () => wallClockMs },
-    performance: { now: () => 1, timeOrigin: 1000 },
+    performance: { now: () => perfNow },
     setTimeout: () => 1,
     clearTimeout() {},
     setInterval: () => 1,
@@ -128,25 +128,35 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     tick: 1,
     d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1 },
 }) });
+const pingRequest = FakeWebSocket.instance.sent.find((item) => item.t === "ping");
+perfNow = 3;
+FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "pong",
+    d: { echo: pingRequest.d, server_receive_usec: 2000, server_send_usec: 2000 },
+}) });
 
 const tuning = context.window.__AEROSIM_PANEL_TEST__.tuningControls()["simpleflight.rate_p"];
 tuning.number.value = "1.0";
 tuning.button.click();
 const tuningRequest = FakeWebSocket.instance.sent.at(-1);
+assert.equal(tuningRequest.d.client_sent_at_perf_ms, 3);
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     v: 2,
     t: "tuning_ack",
-    d: { request_seq: tuningRequest.seq, ok: true, commit_id: 1, committed_value: 1.0, native_commit_timestamp_unix_ms: 1011 },
+    d: { request_seq: tuningRequest.seq, ok: true, commit_id: 1, committed_value: 1.0, native_commit_monotonic_usec: 13000 },
 }) });
 assert.equal(rafCallbacks.length, 1);
-rafCallbacks.shift()(1013);
+rafCallbacks.shift()(5);
 assert.equal(rafCallbacks.length, 1);
-rafCallbacks.shift()(21);
+rafCallbacks.shift()(23);
 const timing = context.window.__AEROSIM_GSP_PERF__.snapshot();
 assert.equal(timing.request_to_native_commit_ms.length, 1);
 assert.equal(timing.native_commit_to_rendered_ack_ms.length, 1);
 assert.equal(timing.request_to_native_commit_ms[0], 10);
 assert.equal(timing.native_commit_to_rendered_ack_ms[0], 10);
+assert.equal(timing.clock_sync.samples, 1);
+assert.equal(timing.clock_sync.best_rtt_ms, 2);
 assert.equal(timing.request_to_commit_ms, undefined);
 assert.equal(timing.commit_to_rendered_ack_ms, undefined);
 

@@ -109,6 +109,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   var presetDiff = $("preset-diff");
   var staticControls = [presetName, presetNote, presetSource, presetTarget, $("preset-save"), $("preset-refresh"), $("preset-retrieve"), $("preset-load"), $("preset-preview"), $("preset-compare-current"), $("preset-compare-two")];
   var gspPerformance = { request_to_native_commit_ms: [], native_commit_to_rendered_ack_ms: [] };
+  var clockSync = { samples: 0, best_rtt_ms: null, offset_ms: null, error_bound_ms: null };
   var maxPerformanceSamples = 512;
   var requestAnimationFrame = window.requestAnimationFrame || function (callback) { callback(performance.now()); return 0; };
 
@@ -119,11 +120,12 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     if (samples.length > maxPerformanceSamples) samples.shift();
   }
   window.__AEROSIM_GSP_PERF__ = {
-    reset: function () { gspPerformance.request_to_native_commit_ms = []; gspPerformance.native_commit_to_rendered_ack_ms = []; },
+    reset: function () { gspPerformance.request_to_native_commit_ms = []; gspPerformance.native_commit_to_rendered_ack_ms = []; clockSync = { samples: 0, best_rtt_ms: null, offset_ms: null, error_bound_ms: null }; },
     snapshot: function () {
       return {
         request_to_native_commit_ms: gspPerformance.request_to_native_commit_ms.slice(),
         native_commit_to_rendered_ack_ms: gspPerformance.native_commit_to_rendered_ack_ms.slice(),
+        clock_sync: Object.assign({}, clockSync),
       };
     },
   };
@@ -151,6 +153,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   function resetSessionReadiness() {
     helloReady = false;
     snapshotReady = false;
+    clockSync = { samples: 0, best_rtt_ms: null, offset_ms: null, error_bound_ms: null };
     setControlsEnabled(false);
   }
   function reconnectDelay() {
@@ -225,7 +228,32 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     freshState.textContent = "Waiting for fresh telemetry…";
     pendingFreshRequestSequence = send("request_snapshot", {});
   }
-  function sendPing() { send("ping", { sent_at_perf_ms: performance.now() }); }
+  function updateClockSync(message) {
+    var data = message && message.d ? message.d : {};
+    var echo = data.echo || {};
+    var t0 = Number(echo.client_send_perf_ms);
+    var t1 = Number(data.server_receive_usec);
+    var t2 = Number(data.server_send_usec);
+    var t3 = performance.now();
+    var rtt = t3 - t0;
+    if (!Number.isFinite(t0) || !Number.isFinite(t1) || !Number.isFinite(t2) || !Number.isFinite(t3) || !Number.isFinite(rtt) || rtt < 0 || t2 < t1) return false;
+    var offset = (t0 + t3) / 2 - (t1 + t2) / 2000;
+    var errorBound = rtt / 2;
+    if (!Number.isFinite(offset) || !Number.isFinite(errorBound)) return false;
+    clockSync.samples += 1;
+    if (clockSync.best_rtt_ms == null || rtt < clockSync.best_rtt_ms) {
+      clockSync.best_rtt_ms = rtt;
+      clockSync.offset_ms = offset;
+      clockSync.error_bound_ms = errorBound;
+    }
+    return true;
+  }
+  function serverMonotonicToClientPerf(serverUsec) {
+    if (clockSync.samples < 1 || clockSync.offset_ms == null || clockSync.error_bound_ms == null) return NaN;
+    var value = Number(serverUsec) / 1000 + clockSync.offset_ms;
+    return Number.isFinite(value) ? value : NaN;
+  }
+  function sendPing() { send("ping", { client_send_perf_ms: performance.now() }); }
   function rawTuningValue(controls) {
     var value = Number(controls.number.value);
     return Number.isFinite(value) ? value : null;
@@ -240,12 +268,12 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     var value = rawTuningValue(controls);
     if (value == null) { controls.status.textContent = "Invalid number"; return; }
     var tuningData = batch ? { changes: batch } : { parameter: descriptor.key, value: value };
-    tuningData.client_sent_at_unix_ms = Number(performance.timeOrigin) + performance.now();
+    tuningData.client_sent_at_perf_ms = performance.now();
     var sequence = send(batch ? "set_tuning_batch" : "set_tuning", tuningData);
     if (sequence == null) { controls.status.textContent = "Disconnected"; return; }
     controls.status.textContent = finalValue ? "Waiting for acknowledgement…" : "Preview " + value.toFixed(3);
     var generation = socketGeneration;
-    pendingTuning[sequence] = { controls: controls, descriptor: descriptor, final: finalValue, started: performance.now(), startedClientEpochMs: tuningData.client_sent_at_unix_ms, generation: generation };
+    pendingTuning[sequence] = { controls: controls, descriptor: descriptor, final: finalValue, started: performance.now(), startedClientPerfMs: tuningData.client_sent_at_perf_ms, generation: generation };
     setTimeout(function () {
       if (!pendingTuning[sequence] || pendingTuning[sequence].generation !== generation) return;
       delete pendingTuning[sequence];
@@ -484,8 +512,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         sendPing();
         if (pingTimer) clearInterval(pingTimer);
         pingTimer = setInterval(sendPing, 1000);
-      } else if (message.t === "pong" && message.d.echo && typeof message.d.echo.sent_at_perf_ms === "number") {
-        text("latency", Math.max(0, performance.now() - Number(message.d.echo.sent_at_perf_ms)).toFixed(1) + " ms");
+      } else if (message.t === "pong" && message.d.echo && updateClockSync(message)) {
+        text("latency", Number(clockSync.best_rtt_ms).toFixed(1) + " ms");
       } else if (message.t === "tuning_ack") {
         var ack = message.d;
         var pending = pendingTuning[Number(ack.request_seq)];
@@ -499,12 +527,13 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
         delete pendingTuning[Number(ack.request_seq)];
         pending.controls.status.textContent = ack.ok ? (ack.clamped ? "Clamped to " : "Committed ") + (ack.committed_value == null ? "" : Number(ack.committed_value).toFixed(3)) : String(ack.error || "Rejected");
         if (ack.ok && ack.committed_value != null) { pending.controls.slider.value = ack.committed_value; pending.controls.number.value = ack.committed_value; }
-        if (ack.ok && pending.final && Number(ack.commit_id) > 0 && Number.isFinite(Number(ack.native_commit_timestamp_unix_ms))) {
-          var nativeCommitEpochMs = Number(ack.native_commit_timestamp_unix_ms);
-          recordPerformanceSample("request_to_native_commit_ms", nativeCommitEpochMs - pending.startedClientEpochMs);
+        if (ack.ok && pending.final && Number(ack.commit_id) > 0 && Number.isFinite(Number(ack.native_commit_monotonic_usec))) {
+          var nativeCommitPerfMs = serverMonotonicToClientPerf(ack.native_commit_monotonic_usec);
+          if (Number.isFinite(nativeCommitPerfMs) && Number.isFinite(pending.startedClientPerfMs)) recordPerformanceSample("request_to_native_commit_ms", nativeCommitPerfMs - pending.startedClientPerfMs);
           requestAnimationFrame(function () {
             requestAnimationFrame(function (renderedAt) {
-              recordPerformanceSample("native_commit_to_rendered_ack_ms", Number(performance.timeOrigin) + Number(renderedAt) - nativeCommitEpochMs);
+              var renderedPerfMs = Number(renderedAt);
+              if (Number.isFinite(nativeCommitPerfMs) && Number.isFinite(renderedPerfMs)) recordPerformanceSample("native_commit_to_rendered_ack_ms", renderedPerfMs - nativeCommitPerfMs);
             });
           });
         }
