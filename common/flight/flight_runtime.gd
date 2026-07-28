@@ -38,6 +38,8 @@ const MAP_SCENE_PATHS := {
 }
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const AIRSIM_GROUND_BODY_CLEARANCE_M := 0.25
+## Altitude the AirSim `takeoff` command climbs to, above the spawn origin.
+const AIRSIM_TAKEOFF_ALTITUDE_M := 3.0
 const KEYBOARD_FLIGHT_THROTTLE := 0.75
 const TAKEOFF_ASSIST_ALTITUDE_M := 1.0
 const TAKEOFF_ASSIST_VERTICAL_SPEED_MPS := 0.75
@@ -1937,21 +1939,22 @@ func _airsim_secondary_controls(context: Dictionary, body) -> Dictionary:
         return context.get("hold_controls", _airsim_neutral_controls()).duplicate(true)
     var method := String(command_state.get("method", ""))
     var args: Array = command_state.get("args", [])
+    var altitude_m := _airsim_altitude_above_origin(body)
     match method:
         "takeoff":
-            return _airsim_velocity_controls(Vector3(0.0, clampf((3.0 - body.global_position.y) * 1.5, -3.0, 3.0), 0.0), 0.0, null, body)
+            return _airsim_velocity_controls(Vector3(0.0, clampf((AIRSIM_TAKEOFF_ALTITUDE_M - altitude_m) * 1.5, -3.0, 3.0), 0.0), 0.0, null, body)
         "land":
-            return _airsim_velocity_controls(Vector3(0.0, clampf(-body.global_position.y * 1.5, -3.0, 3.0), 0.0), 0.0, null, body)
+            return _airsim_velocity_controls(Vector3(0.0, clampf(-altitude_m * 1.5, -3.0, 3.0), 0.0), 0.0, null, body)
         "hover":
             return _airsim_velocity_controls(Vector3.ZERO, 0.0, null, body)
         "moveByVelocity":
             return _airsim_velocity_controls(AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), float(args[2]))), 0.0, args[5], body)
         "moveByVelocityZ":
-            return _airsim_velocity_controls(AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - body.global_position.y) * 4.0, args[5], body)
+            return _airsim_velocity_controls(AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - altitude_m) * 4.0, args[5], body)
         "moveByVelocityBodyFrame":
             return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), float(args[2]))), 0.0, args[5], body)
         "moveByVelocityZBodyFrame":
-            return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - body.global_position.y) * 4.0, args[5], body)
+            return _airsim_velocity_controls(body.global_transform.basis * AirSimCoordinateContract.frd_to_godot_body(Vector3(float(args[0]), float(args[1]), 0.0)), (-float(args[2]) - altitude_m) * 4.0, args[5], body)
         "goHome":
             var home_delta: Vector3 = _spawn_position() - body.global_position
             var home_horizontal := Vector3(home_delta.x, 0.0, home_delta.z)
@@ -2785,6 +2788,20 @@ func _reset_secondary_kinematic_contexts() -> void:
         context["last_body_angular_velocity"] = Vector3.ZERO
         context["angular_acceleration"] = Vector3.ZERO
         _airsim_vehicle_contexts[name] = context
+
+## Height of a vehicle above the AirSim origin, in metres.
+##
+## AirSim addresses altitude as NED z relative to the spawn origin, which is
+## what `_airsim_task_complete` and the landed-state reporting already measure.
+## The vertical velocity commands must resolve their targets in that same frame:
+## reading `global_position.y` directly only agrees with it while the spawn
+## happens to sit at world height zero, and silently commands a descent on any
+## map whose spawn is above it.
+func _airsim_altitude_above_origin(body) -> float:
+    if body == null:
+        return 0.0
+    return body.global_position.y - _spawn_position().y
+
 
 func _spawn_position() -> Vector3:
     var spawn := _current_spawn_marker()
@@ -6924,10 +6941,10 @@ func _airsim_controls_for_frame() -> Dictionary:
         return {}
     match method:
         "takeoff":
-            var takeoff_velocity := clampf((3.0 - drone_body.global_position.y) * 1.5, -3.0, 3.0)
+            var takeoff_velocity := clampf((AIRSIM_TAKEOFF_ALTITUDE_M - _airsim_altitude_above_origin(drone_body)) * 1.5, -3.0, 3.0)
             return _airsim_velocity_controls(Vector3(0.0, takeoff_velocity, 0.0), 0.0)
         "land":
-            var landing_velocity := clampf((0.0 - drone_body.global_position.y) * 1.5, -3.0, 3.0)
+            var landing_velocity := clampf(-_airsim_altitude_above_origin(drone_body) * 1.5, -3.0, 3.0)
             return _airsim_velocity_controls(Vector3(0.0, landing_velocity, 0.0), 0.0)
         "hover":
             return _airsim_velocity_controls(Vector3.ZERO, 0.0)
@@ -6941,7 +6958,7 @@ func _airsim_controls_for_frame() -> Dictionary:
             return _airsim_velocity_controls(AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), float(args[2]))), 0.0, args[5])
         "moveByVelocityZ":
             var horizontal := AirSimCoordinateContract.ned_direction_to_godot(Vector3(float(args[0]), float(args[1]), 0.0))
-            return _airsim_velocity_controls(horizontal, (-float(args[2]) - drone_body.global_position.y) * 4.0, args[5])
+            return _airsim_velocity_controls(horizontal, (-float(args[2]) - _airsim_altitude_above_origin(drone_body)) * 4.0, args[5])
         "moveByVelocityBodyFrame":
             var body_frd := Vector3(float(args[0]), float(args[1]), float(args[2]))
             var local_godot := AirSimCoordinateContract.frd_to_godot_body(body_frd)
