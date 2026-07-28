@@ -20,6 +20,7 @@ dl { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; margin: 0; }
 dt { color: #9fb0c5; } dd { margin: 0; font-variant-numeric: tabular-nums; }
 code { color: #b9d8ff; overflow-wrap: anywhere; }
 canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
+#airframe-3d { height: 260px; border: 1px solid #263a47; }
 .muted { color: #9fb0c5; }
 .tuning-group { border-top: 1px solid #24364c; padding-top: 8px; margin-top: 10px; }
 .tuning-group:first-child { border-top: 0; margin-top: 0; }
@@ -55,7 +56,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   <dt>Registry hash</dt><dd id="registry">—</dd>
 </dl></section>
 <section class="card"><strong>Position / velocity (NED, SI)</strong><p id="position" class="muted">—</p><p id="velocity" class="muted">—</p><strong>Attitude / rates (FRD, SI)</strong><p id="attitude" class="muted">—</p><p id="rates" class="muted">—</p></section>
-<section class="card"><strong>Motor order: rear_right, front_right, rear_left, front_left</strong><p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas></section>
+<section class="card"><strong>機體／馬達／氣流</strong><p class="muted">程序化 Quad-X 視圖；NED／FRD／SI 即時遙測。</p><canvas id="airframe-3d" aria-label="Quad-X telemetry visualization"></canvas><p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas></section>
 <section class="card"><strong>Quick Adjust</strong><div id="tuning-rows" class="muted">Waiting for registry.</div></section>
 <section class="card"><strong>In-flight Quick Adjust</strong><div id="quick-adjust-rows" class="muted">Waiting for registry.</div></section>
 <section class="card"><strong>Presets</strong>
@@ -462,6 +463,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     text("rates", "rates: " + vector(sample.gyro_body, "rad/s FRD"));
     var motors = sample.motors || [];
     text("motors", motors.map(function (motor) { return Number(motor.thrust_newtons).toFixed(2) + " N"; }).join(" | ") || "—");
+    window.__AEROSIM_GSP_TELEMETRY__ = sample;
+    if (typeof CustomEvent === "function" && window.dispatchEvent) window.dispatchEvent(new CustomEvent("aerosim-gsp-telemetry", { detail: sample }));
     sparkValues.push((sample.rpm || []).reduce(function (sum, rpm) { return sum + Number(rpm || 0); }, 0) / 60000);
     if (sparkValues.length > 80) sparkValues.shift();
     drawSparkline();
@@ -594,5 +597,6 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   connect(); drawSparkline();
 }());
 </script>
+<script type="module" src="assets/gsp_visual.js"></script>
 </body>
 </html>
