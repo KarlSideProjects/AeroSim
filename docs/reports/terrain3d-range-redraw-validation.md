@@ -43,13 +43,36 @@ All commands run on Godot 4.7-stable, Linux, NVIDIA GeForce RTX 4060 Ti.
 - `python3 scripts/check_ui_localization.py`: pass, 281 catalog keys and 5 production files.
 - `python3 scripts/check_docs.py`: pass.
 
-### Not run
+## Software-rendering cost
 
-The GPU performance gate was not run. This slice raises `mesh_lods` from 4 to 7,
-raises `mesh_size` from 16 to 48, and adds a GPU ground cover pass, so it does
-warrant a measurement. A concurrent benchmark process from another checkout held
-the GPU and the AirSim RPC port throughout, which would have contaminated any
-result. The gate is a separate workflow and remains outstanding.
+This slice raises `mesh_lods` from 4 to 7, raises `mesh_size` from 16 to 48, and
+adds a GPU ground cover pass, so it needed a measurement against the tightest
+budget in CI: `tests/test_performance_runner.py` wraps
+`scripts/run_performance_benchmark.sh --mode smoke --warmup-seconds 0 --seconds 0.1`
+in a hard 60 s timeout, and the CI step runs it under llvmpipe and Xvfb.
+
+Measured on an idle machine (1-minute load average 1.0), three runs per
+configuration, same Godot 4.7-stable and same debug GDExtension throughout:
+
+| Configuration | Runs | Delta vs main |
+| --- | --- | --- |
+| `main` | 3.8 s, 3.8 s, 3.7 s | — |
+| This slice | 22.8 s, 22.9 s, 23.2 s | +19.1 s |
+| This slice, no ground cover | 9.3 s, 9.4 s, 9.4 s | +5.6 s |
+| This slice, clipmap 5 / 32 | 18.3 s, 18.3 s, 17.4 s | +14.2 s |
+| This slice, clipmap 5 / 32, no ground cover | 5.9 s, 5.9 s, 6.1 s | +2.2 s |
+
+The GPU ground cover carries 13.5 s of the 19.1 s added, and the larger clipmap
+carries 4.9 s. At 22.9 s the slice sits well inside the 60 s budget, so nothing
+was traded away to land it, but the headroom drops from 15.8x on `main` to 2.6x.
+Anything else added to this map should be measured the same way before it lands.
+
+Earlier runs of this gate did time out. Those measurements were taken while a
+runaway `codebase-memory-mcp` process held roughly 28 of the machine's 32 cores,
+which put the 1-minute load average above 40 and stretched the same 22.9 s of
+work past the 60 s timeout. Repeated runs of one configuration varied between
+61 s and 104 s under that load, so no attribution was possible until the machine
+was idle. The numbers above supersede them.
 
 ## Gate changes
 
@@ -66,6 +89,21 @@ The hardcoded ground-sample coordinates in
 were retargeted to the new flight field, and two ray origins that were pinned to
 `y = 50` and `y = 0` now derive from terrain height. No assertion was weakened or
 removed.
+
+`tests/gut/test_collision_probe_body.gd` now settles the body for one physics
+frame after `add_child` before queuing the reset. The test previously added the
+body and queued the reset in the same frame, then awaited a single physics frame
+for the acknowledgement, but a body added mid-frame is not guaranteed to be
+simulated in the step that follows. Measured in isolation the old pattern missed
+106 of 300 attempts; the suite's timing usually hid that, and it surfaced as an
+intermittent failure once this slice changed how long the default map takes to
+load. The assertion is unchanged.
+
+The AirSim vertical commands this map depends on were fixed separately in #255:
+`takeoff`, `land` and the `moveByVelocityZ` family resolved their targets against
+world height rather than the spawn origin, which commanded a descent from this
+map's 79.7 m spawn. `scripts/test_airsim_rpc_client.sh` failed 3 of 3 runs on
+this branch before that fix and passes 3 of 3 after it.
 
 ## Visual evidence
 
