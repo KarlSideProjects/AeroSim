@@ -4,6 +4,17 @@ const GspLauncher = preload("res://common/gsp/gsp_launcher.gd")
 const GspHeadedAcceptance = preload("res://tests/headed/gsp_headed_acceptance.gd")
 
 
+class LauncherHarness extends GspLauncher:
+    var open_calls := 0
+
+    func get_display_name() -> String:
+        return "Wayland"
+
+    func open_panel(_url: String) -> bool:
+        open_calls += 1
+        return true
+
+
 func _init() -> void:
     var failures: Array[String] = []
     var disabled := GspLauncher.parse_user_args([])
@@ -32,6 +43,29 @@ func _init() -> void:
     var suppressed_open := GspLauncher.shell_open_result(false, false, "file:///tmp/panel.html")
     if not bool(suppressed_open.get("ok", false)):
         failures.append("suppressed panel opening must remain a successful launch")
+    var readme := FileAccess.get_file_as_string("res://README.md")
+    if not readme.contains("OPEN GSP PANEL") or not readme.contains("COPY GSP URL"):
+        failures.append("README must document GSP user actions")
+    if readme.contains("guaranteed browser focus"):
+        failures.append("README must not promise browser focus on Wayland")
+
+    var action_harness := LauncherHarness.new()
+    get_root().add_child(action_harness)
+    var action_launch: Dictionary = action_harness.launch({"enabled": true, "open": false})
+    if not bool(action_launch.get("ok", false)):
+        failures.append("launcher must start for user-action contract")
+    elif not action_harness.has_method("is_panel_ready") or not action_harness.has_method("request_panel_open") or not action_harness.has_method("copy_panel_url"):
+        failures.append("ready launcher must expose panel actions")
+    else:
+        if not bool(action_harness.call("is_panel_ready")):
+            failures.append("started launcher must report a ready panel")
+        var opened_from_user: Dictionary = action_harness.call("request_panel_open")
+        if not bool(opened_from_user.get("ok", false)) or action_harness.open_calls != 1:
+            failures.append("user open must invoke the panel opener once")
+        var copied_from_user: Dictionary = action_harness.call("copy_panel_url")
+        if not bool(copied_from_user.get("ok", false)):
+            failures.append("ready launcher must copy the panel URL")
+    action_harness.free()
 
     var retained_stages := GspHeadedAcceptance.append_stage([], "captured")
     retained_stages = GspHeadedAcceptance.append_stage(retained_stages, "release")
