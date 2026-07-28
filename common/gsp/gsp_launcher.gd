@@ -8,6 +8,7 @@ const PANEL_DIRECTORY := "gsp"
 const GspServer = preload("res://common/gsp/gsp_server.gd")
 
 var _server: GspServer
+var _panel_url := ""
 
 
 func _ready() -> void:
@@ -87,6 +88,7 @@ func launch(options: Dictionary = {}) -> Dictionary:
         _server.stop()
         return installed
     var url := panel_url(file_uri(String(installed.path)), int(server_result.port), String(server_result.token))
+    _panel_url = url
     print("GSP panel URL: %s" % url)
     var open_requested := bool(launch_options.get("open", false))
     var opened := true
@@ -114,6 +116,7 @@ func launch(options: Dictionary = {}) -> Dictionary:
 func _exit_tree() -> void:
     if _server != null:
         _server.stop()
+    _panel_url = ""
 
 
 func get_display_name() -> String:
@@ -122,6 +125,23 @@ func get_display_name() -> String:
 
 func open_panel(url: String) -> bool:
     return OS.shell_open(url) == OK
+
+
+func is_panel_ready() -> bool:
+    return _server != null and not _panel_url.is_empty()
+
+
+func request_panel_open() -> Dictionary:
+    if not is_panel_ready():
+        return {"ok": false, "error": "GSP panel is unavailable"}
+    return shell_open_result(true, open_panel(_panel_url), _panel_url)
+
+
+func copy_panel_url() -> Dictionary:
+    if not is_panel_ready():
+        return {"ok": false, "error": "GSP panel is unavailable"}
+    DisplayServer.clipboard_set(_panel_url)
+    return {"ok": true}
 
 
 static func shell_open_result(open_requested: bool, opened: bool, _url: String) -> Dictionary:
