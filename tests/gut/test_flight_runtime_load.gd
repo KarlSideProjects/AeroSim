@@ -470,6 +470,14 @@ func _graphics_runtime_with_store(render_scale: Variant) -> FlightRuntime:
     return runtime
 
 
+func _locale_runtime_with_store() -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime.settings_store = QualitySettingsStore.new(null)
+    runtime._load_player_settings()
+    return runtime
+
+
 func _native_runtime_available() -> bool:
     if ClassDB.class_exists("AeroSimNative"):
         return true
@@ -1174,9 +1182,7 @@ func test_finite_settings_messages_are_localized_without_generic_error_prefix() 
 
 
 func test_failed_locale_persistence_restores_previous_locale() -> void:
-    if not _native_runtime_available():
-        return
-    var runtime := _graphics_runtime_with_store(null)
+    var runtime := _locale_runtime_with_store()
     var store := runtime.settings_store as QualitySettingsStore
     store.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "zh_TW"}
     runtime._load_player_settings()
@@ -1188,9 +1194,7 @@ func test_failed_locale_persistence_restores_previous_locale() -> void:
 
 
 func test_factory_reset_applies_default_locale_after_successful_persistence() -> void:
-    if not _native_runtime_available():
-        return
-    var runtime := _graphics_runtime_with_store(null)
+    var runtime := _locale_runtime_with_store()
     var store := runtime.settings_store as QualitySettingsStore
     store.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "zh_TW"}
     runtime._load_player_settings()
