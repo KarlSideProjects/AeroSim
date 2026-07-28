@@ -287,6 +287,15 @@ class QuickFlyRuntime extends FlightRuntime:
         return super.reset_to_spawn(rpc_owned_reset)
 
 
+class GraphicsTestRuntime extends FlightRuntime:
+    func _load_and_validate_airsim_settings() -> Dictionary:
+        return {
+            "SettingsVersion": 1.2,
+            "SimMode": "Multirotor",
+            "RpcEnabled": false,
+        }
+
+
 class ResetPublicationRuntime extends FlightRuntime:
     var kinematic_reset_count := 0
 
@@ -463,6 +472,7 @@ class QualitySettingsStore:
 
 func _graphics_runtime_with_store(render_scale: Variant) -> FlightRuntime:
     var runtime := SmokeScene.instantiate() as FlightRuntime
+    runtime.set_script(GraphicsTestRuntime)
     get_tree().root.add_child(runtime)
     autofree(runtime)
     runtime.settings_store = QualitySettingsStore.new(render_scale)
