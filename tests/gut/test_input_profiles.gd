@@ -39,20 +39,20 @@ func test_known_xbox_device_gets_the_fixed_profile() -> void:
     )
 
 
-func test_xbox_profile_uses_canonical_mode_two_axes() -> void:
+func test_xbox_profile_routes_right_stick_for_flight_coordinate_contract() -> void:
     var profile = InputProfiles.GamepadProfile.xbox_default(7, FakeDeviceState.new([7]))
 
     assert_eq(profile.axis_for_role, {
         "yaw": JOY_AXIS_LEFT_X,
         "throttle": JOY_AXIS_LEFT_Y,
-        "roll": JOY_AXIS_RIGHT_X,
-        "pitch": JOY_AXIS_RIGHT_Y,
+        "roll": JOY_AXIS_RIGHT_Y,
+        "pitch": JOY_AXIS_RIGHT_X,
     })
     assert_eq(profile.reversed_for_role, {
         "yaw": false,
         "throttle": true,
         "roll": false,
-        "pitch": false,
+        "pitch": true,
     })
 
 

@@ -287,6 +287,15 @@ class QuickFlyRuntime extends FlightRuntime:
         return super.reset_to_spawn(rpc_owned_reset)
 
 
+class GraphicsTestRuntime extends FlightRuntime:
+    func _load_and_validate_airsim_settings() -> Dictionary:
+        return {
+            "SettingsVersion": 1.2,
+            "SimMode": "Multirotor",
+            "RpcEnabled": false,
+        }
+
+
 class ResetPublicationRuntime extends FlightRuntime:
     var kinematic_reset_count := 0
 
@@ -463,9 +472,18 @@ class QualitySettingsStore:
 
 func _graphics_runtime_with_store(render_scale: Variant) -> FlightRuntime:
     var runtime := SmokeScene.instantiate() as FlightRuntime
+    runtime.set_script(GraphicsTestRuntime)
     get_tree().root.add_child(runtime)
     autofree(runtime)
     runtime.settings_store = QualitySettingsStore.new(render_scale)
+    runtime._load_player_settings()
+    return runtime
+
+
+func _locale_runtime_with_store() -> FlightRuntime:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime.settings_store = QualitySettingsStore.new(null)
     runtime._load_player_settings()
     return runtime
 
@@ -1174,9 +1192,7 @@ func test_finite_settings_messages_are_localized_without_generic_error_prefix() 
 
 
 func test_failed_locale_persistence_restores_previous_locale() -> void:
-    if not _native_runtime_available():
-        return
-    var runtime := _graphics_runtime_with_store(null)
+    var runtime := _locale_runtime_with_store()
     var store := runtime.settings_store as QualitySettingsStore
     store.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "zh_TW"}
     runtime._load_player_settings()
@@ -1188,9 +1204,7 @@ func test_failed_locale_persistence_restores_previous_locale() -> void:
 
 
 func test_factory_reset_applies_default_locale_after_successful_persistence() -> void:
-    if not _native_runtime_available():
-        return
-    var runtime := _graphics_runtime_with_store(null)
+    var runtime := _locale_runtime_with_store()
     var store := runtime.settings_store as QualitySettingsStore
     store.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": "zh_TW"}
     runtime._load_player_settings()
@@ -2827,8 +2841,8 @@ func test_controller_monitor_renders_active_session_channels_and_unavailable_wit
 
     var monitor: Label = runtime.controller_settings_monitor_label
     assert_string_contains(monitor.text, "CHANNEL MONITOR (30 Hz)")
-    assert_string_contains(monitor.text, "roll:     [---------|-------] raw +0.250 | normalized +0.167")
-    assert_string_contains(monitor.text, "pitch:    [--|--------------] raw -0.750 | normalized -0.694")
+    assert_string_contains(monitor.text, "roll:     [--|--------------] raw -0.750 | normalized -0.694")
+    assert_string_contains(monitor.text, "pitch:    [-------|---------] raw +0.250 | normalized -0.167")
     assert_string_contains(monitor.text, "yaw:      [-----------|-----] raw +0.500 | normalized +0.420")
     assert_string_contains(monitor.text, "throttle: [-----------|-----] raw -0.500 | normalized +0.420 | HIGH")
     assert_string_contains(monitor.text, "DEADZONE: 0.080 (fixed)")
@@ -2851,7 +2865,7 @@ func test_controller_monitor_renders_active_session_channels_and_unavailable_wit
     Input.parse_input_event(yaw_deadzone)
     var roll_deadzone := InputEventJoypadMotion.new()
     roll_deadzone.device = 0
-    roll_deadzone.axis = JOY_AXIS_RIGHT_X
+    roll_deadzone.axis = JOY_AXIS_RIGHT_Y
     roll_deadzone.axis_value = -0.08
     Input.parse_input_event(roll_deadzone)
     await get_tree().process_frame
@@ -2909,7 +2923,7 @@ func test_startup_restores_persisted_profile_for_connected_channel_monitor() -> 
 
     var roll := InputEventJoypadMotion.new()
     roll.device = 7
-    roll.axis = JOY_AXIS_RIGHT_X
+    roll.axis = JOY_AXIS_RIGHT_Y
     roll.axis_value = 0.5
     Input.parse_input_event(roll)
     await get_tree().process_frame

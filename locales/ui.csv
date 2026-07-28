@@ -33,6 +33,12 @@ ui.action.back_to_menu,BACK TO MENU,返回主選單
 ui.settings.controller,CONTROLLER,控制器
 ui.settings.controller_monitor,CONTROLLER MONITOR,控制器監看
 ui.settings.status_diagram,STATUS DIAGRAM,狀態圖
+ui.gsp.open,OPEN GSP PANEL,開啟 GSP 面板
+ui.gsp.copy_url,COPY GSP URL,複製 GSP 網址
+ui.gsp.ready,GSP PANEL READY,GSP 面板已就緒
+ui.gsp.open_requested,GSP OPEN REQUESTED,GSP 已要求開啟
+ui.gsp.url_copied,GSP URL COPIED,GSP 網址已複製
+ui.gsp.unavailable,GSP UNAVAILABLE,GSP 無法使用
 ui.settings.rates,RATES,速率
 ui.settings.graphics,GRAPHICS,圖形
 ui.settings.factory_reset,FACTORY RESET SETTINGS,將設定恢復原廠
