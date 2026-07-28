@@ -10,6 +10,7 @@ const QualityProfile = preload("res://common/flight/quality_profile.gd")
 const CameraProfile = preload("res://common/flight/camera_profile.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
+const EnduranceEstimate = preload("res://common/flight/endurance_estimate.gd")
 const GspPresetStore = preload("res://common/gsp/gsp_preset_store.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const RotorTelemetryPanel = preload("res://common/flight/rotor_telemetry_panel.gd")
@@ -236,6 +237,9 @@ var _replay_secondary_row := PackedFloat64Array()
 var _airsim_vehicle_contexts: Dictionary = {}
 var _gsp_telemetry_cache: Dictionary = {}
 var _gsp_telemetry_publish_count := -1
+var _active_hardware_configuration: Dictionary = {}
+var _active_hardware_power_model: Dictionary = {}
+var _endurance_estimate := EnduranceEstimate.new()
 var _gsp_tuning_registry: Array = []
 var _gsp_tuning_registry_hash := "unavailable"
 var _gsp_tuning_pending: Array[Dictionary] = []
@@ -378,6 +382,7 @@ func _ready() -> void:
         last_error_message = hardware_config.last_error
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
     motor_hud_spin_directions = hardware_config.current.get("spin_direction", [])
+    _activate_hardware_configuration(hardware_config)
     if not _configure_secondary_native(hardware_config):
         push_error("Named vehicle runtime setup failed: %s" % last_error_message)
         if airsim_rpc_server != null and airsim_rpc_server.is_running():
@@ -1290,6 +1295,41 @@ func _save_camera_profile(profile: Dictionary) -> Dictionary:
     return result
 
 
+func _activate_hardware_configuration(hardware_config: RefCounted) -> void:
+    _active_hardware_configuration = hardware_config.current.duplicate(true)
+    _active_hardware_power_model = hardware_config.derive_power_model(_active_hardware_configuration)
+    _endurance_estimate.configure(float(_active_hardware_power_model.get("hover_endurance_minutes", 0.0)) * 60.0)
+    _gsp_telemetry_cache.clear()
+    _gsp_telemetry_publish_count = -1
+
+
+func _estimated_endurance(snapshot: Dictionary) -> Dictionary:
+    var timestamp_us := int(snapshot.get("timestamp_us", 0))
+    return _endurance_estimate.update(timestamp_us, _flight_control_armed())
+
+
+func _format_estimated_endurance(snapshot: Dictionary) -> Dictionary:
+    var endurance := _estimated_endurance(snapshot)
+    var remaining_seconds := int(round(float(endurance.get("remaining_seconds", 0.0))))
+    var minutes := remaining_seconds / 60
+    var seconds := remaining_seconds % 60
+    endurance["remaining_text"] = "%02d:%02d" % [minutes, seconds]
+    return endurance
+
+
+func _endurance_bar(ratio: float) -> String:
+    var filled := clampi(int(round(clampf(ratio, 0.0, 1.0) * 8.0)), 0, 8)
+    return "█".repeat(filled) + "░".repeat(8 - filled)
+
+
+func _localized_endurance_text(endurance: Dictionary) -> String:
+    const KEY := "ui.osd.endurance"
+    var template := _t(KEY)
+    if template == KEY:
+        template = "【%s】預估續航 %s" if Localization.current_locale == "zh_TW" else "[%s] EST %s"
+    return template % [_endurance_bar(float(endurance.get("ratio", 0.0))), String(endurance.get("remaining_text", "--:--"))]
+
+
 func _apply_hardware_camera_defaults(hardware_config: RefCounted) -> void:
     if camera_profile_persisted or hardware_config == null:
         return
@@ -2161,6 +2201,7 @@ func apply_flight_setup(raw_setup: Dictionary) -> bool:
             last_error_message = hardware_config.last_error
             return false
         motor_hud_spin_directions = hardware_config.current.get("spin_direction", [])
+        _activate_hardware_configuration(hardware_config)
         _apply_hardware_camera_defaults(hardware_config)
     flight_setup = candidate
     flight_mode = String(candidate.mode)
@@ -4885,8 +4926,16 @@ func _refresh_osd() -> void:
     if time_trial != null:
         var trial_state := _t("ui.hud.time_trial_finished") if time_trial.finished else _format("ui.hud.time_trial_next", [time_trial.next_checkpoint_index + 1, time_trial.checkpoint_positions.size()])
         lap_text = _format("ui.osd.lap", [trial_state])
+    var endurance := _format_estimated_endurance(snapshot)
     var values := {
-        "battery": _format("ui.osd.battery", [float(battery.get("voltage_v", 0.0)), float(battery.get("sag_v", 0.0)), float(battery.get("remaining_mah", 0.0))]),
+        "battery": "%s\n%s" % [
+            _localized_endurance_text(endurance),
+            _format("ui.osd.battery", [
+                float(battery.get("voltage_v", 0.0)),
+                float(battery.get("sag_v", 0.0)),
+                float(battery.get("remaining_mah", 0.0)),
+            ]),
+        ],
         "armed": _format("ui.osd.armed", [_localized_arm_state(armed)]),
         "flight_mode": _format("ui.osd.mode", [_localized_flight_mode(mode)]),
         "timer": _format("ui.osd.timer", [time_trial.elapsed_seconds if time_trial != null else 0.0]),
@@ -5950,6 +5999,9 @@ func gsp_telemetry_snapshot() -> Dictionary:
     snapshot["vehicle_instance"] = _airsim_vehicle_name
     snapshot["authority"] = String(snapshot.get("control_authority", "unavailable"))
     snapshot["registry_hash"] = _gsp_tuning_registry_hash
+    snapshot["hardware_configuration"] = _active_hardware_configuration.duplicate(true)
+    snapshot["hardware_power_model"] = _active_hardware_power_model.duplicate(true)
+    snapshot["endurance"] = _format_estimated_endurance(snapshot)
     snapshot["tuning"] = native.call("flight_tuning_configuration") if native != null and native.has_method("flight_tuning_configuration") else {}
     snapshot["tick"] = tick
     _gsp_telemetry_publish_count = publish_count
