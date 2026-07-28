@@ -56,7 +56,7 @@ detiling_rotation = 0.161
 [sub_resource type="Terrain3DTextureAsset" id="Terrain3DTextureAsset_soil_sand"]
 name = "SoilSand"
 id = 2
-albedo_color = Color(0.66, 0.47, 0.26, 1)
+albedo_color = Color(0.65, 0.47, 0.28, 1)
 albedo_texture = ExtResource("3_g8f2m")
 normal_texture = ExtResource("4_aw5y1")
 normal_depth = 1.0

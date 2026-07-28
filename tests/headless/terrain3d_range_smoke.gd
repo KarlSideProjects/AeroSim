@@ -3,12 +3,25 @@ extends SceneTree
 const TerrainRange = preload("res://levels/free_flight/terrain3d_range.tscn")
 const TerrainAssets = preload("res://assets/third_party/terrain3d_demo/demo/data/assets.tres")
 
+## The flight field sits on a 79.7 m mesa in the middle of the upstream valley.
+## Every sample below is a point on or beside that mesa; see
+## `scripts/author_terrain3d_range.gd` for how each surface is authored.
+const FieldCenter := Vector3(480, 79.7, -740)
+## Meadow east of the taxiway.
+const GrassSample := Vector3(540, 0, -760)
+## The north pad's worn soil apron.
+const SoilSandSample := Vector3(528, 0, -790)
+## The north launch pad's rock hardstand.
+const RockSample := Vector3(520, 0, -790)
+const ReliefSamples: Array[Vector3] = [Vector3(578, 0, -842), Vector3(556, 0, -700)]
+const PhysicalReliefSample := Vector3(408, 0, -792)
+
 func _initialize() -> void:
     call_deferred("_run")
 
 func _run() -> void:
     var camera := Camera3D.new()
-    camera.position = Vector3(0, 30, 30)
+    camera.position = FieldCenter + Vector3(0, 40, 40)
     camera.current = true
     root.add_child(camera)
     var scene := TerrainRange.instantiate() as Node3D
@@ -19,7 +32,7 @@ func _run() -> void:
         return
     root.add_child(scene)
     await process_frame
-    camera.look_at(Vector3.ZERO, Vector3.UP)
+    camera.look_at(FieldCenter, Vector3.UP)
     terrain.call("set_camera", camera)
     await process_frame
     var sun := scene.get_node_or_null("Sun") as DirectionalLight3D
@@ -62,9 +75,9 @@ func _run() -> void:
         quit(1)
         return
     var terrain_data := (terrain as Terrain3D).data
-    var grass_sample := terrain_data.get_texture_id(Vector3(80, 0, -80))
-    var soil_sand_sample := terrain_data.get_texture_id(Vector3(8, 0, -36))
-    var rock_sample := terrain_data.get_texture_id(Vector3(24, 0, -44))
+    var grass_sample := terrain_data.get_texture_id(GrassSample)
+    var soil_sand_sample := terrain_data.get_texture_id(SoilSandSample)
+    var rock_sample := terrain_data.get_texture_id(RockSample)
     if int(grass_sample.x) != 1 or int(soil_sand_sample.y) != 2 or int(rock_sample.y) != 0 or soil_sand_sample.z < 0.99 or rock_sample.z < 0.99:
         push_error("Terrain3D range must paint grass, soil/sand, and rock layers in the initial player-visible area")
         quit(1)
@@ -107,21 +120,24 @@ func _run() -> void:
             return
     for spawn_name in ["SpawnNorth", "SpawnSouth"]:
         var spawn := scene.get_node(spawn_name) as Marker3D
-        var hit: Vector3 = terrain.call("get_intersection", Vector3(spawn.position.x, 50, spawn.position.z), Vector3.DOWN, true)
+        var hit: Vector3 = terrain.call("get_intersection", Vector3(spawn.position.x, spawn.position.y + 200.0, spawn.position.z), Vector3.DOWN, true)
         if not is_finite(hit.x) or not is_finite(hit.y) or not is_finite(hit.z) or hit.y >= spawn.position.y:
             push_error("Terrain3D range spawn %s must clear the public terrain height" % spawn_name)
             quit(1)
             return
-    for relief_sample in [Vector3(30, 0, -72), Vector3(76, 0, -48)]:
+    for relief_sample in ReliefSamples:
         var relief_height := terrain_data.get_height(relief_sample)
         if not is_finite(relief_height) or relief_height < 3.0:
             push_error("Terrain3D range must provide readable terrain relief beyond the launch platform")
             quit(1)
             return
     await physics_frame
-    var physical_relief_sample := Vector3(30, 0, -60)
+    var physical_relief_sample := PhysicalReliefSample
     var authored_relief_height := terrain_data.get_height(physical_relief_sample)
-    var physical_relief_hit: Dictionary = scene.get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(physical_relief_sample + Vector3.UP * 20.0, physical_relief_sample + Vector3.DOWN * 20.0))
+    # Span the ray around the authored height so the probe stays valid wherever
+    # on the valley the flight field is placed.
+    var physical_relief_probe := Vector3(physical_relief_sample.x, authored_relief_height, physical_relief_sample.z)
+    var physical_relief_hit: Dictionary = scene.get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(physical_relief_probe + Vector3.UP * 20.0, physical_relief_probe + Vector3.DOWN * 20.0))
     var physical_relief_position: Vector3 = physical_relief_hit.get("position", Vector3.ZERO)
     if physical_relief_hit.is_empty() or absf(physical_relief_position.y - authored_relief_height) > 0.25:
         push_error("Terrain3D range collision must follow authored terrain relief")
@@ -146,7 +162,38 @@ func _run() -> void:
         push_error("Terrain3D range landmarks must not introduce rigid bodies")
         quit(1)
         return
+    var landmarks := scene.get_node_or_null("Landmarks") as Node3D
+    var landmark_meshes := landmarks.find_children("*", "MeshInstance3D", true, false) if landmarks != null else []
+    if landmark_meshes.size() < 5:
+        push_error("Terrain3D range must load its Kenney landmark set")
+        quit(1)
+        return
+    for mesh_instance in landmark_meshes:
+        var untextured := _untextured_surface(mesh_instance as MeshInstance3D)
+        if untextured >= 0:
+            push_error("Terrain3D range landmark %s surface %d renders untextured" % [mesh_instance.name, untextured])
+            quit(1)
+            return
     scene.queue_free()
     camera.queue_free()
     await process_frame
     quit(0)
+
+## Returns the index of the first surface that would render as a white model,
+## or -1 when every surface carries an albedo texture.
+##
+## The Kenney kit ships both `.glb` sources and pre-baked `.scn` scenes; the
+## latter lost their albedo textures, so a scene that referenced them rendered
+## solid white while every structural assertion still passed.
+func _untextured_surface(mesh_instance: MeshInstance3D) -> int:
+    var mesh := mesh_instance.mesh if mesh_instance != null else null
+    if mesh == null:
+        return 0
+    for surface in mesh.get_surface_count():
+        var material := mesh_instance.get_surface_override_material(surface)
+        if material == null:
+            material = mesh.surface_get_material(surface)
+        var base_material := material as BaseMaterial3D
+        if base_material == null or base_material.albedo_texture == null:
+            return surface
+    return -1
