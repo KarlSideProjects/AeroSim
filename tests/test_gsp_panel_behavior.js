@@ -41,6 +41,7 @@ class Element {
 const elements = new Map();
 for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state", "sparkline", "focus-state",
     "rate", "vehicle", "authority", "tick", "latency", "registry", "position", "velocity", "attitude", "rates", "motors",
+    "mode-armed", "config-hash", "endurance", "flight-diagnostics", "hardware-configuration", "hardware-derived", "telemetry-data",
     "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
     "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report"]) {
     elements.set(id, new Element(id === "sparkline" ? "canvas" : "div"));
@@ -126,8 +127,15 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     v: 2,
     t: "telemetry",
     tick: 1,
-    d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1 },
+    d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1, config_hash: "config-fixture", armed: true,
+        hardware_configuration: { battery: { capacity_mah: 1300 } }, hardware_power_model: { hover_endurance_minutes: 4.2 },
+        wind_world_mps: null, a3_operating_state: "disabled", a6_operating_state: "out_of_domain" },
 }) });
+assert.match(elements.get("telemetry-data").textContent, /a6_operating_state = out_of_domain/);
+assert.match(elements.get("telemetry-data").textContent, /wind_world_mps = 未提供／模型未啟用/);
+assert.match(elements.get("hardware-configuration").textContent, /battery.capacity_mah = 1300/);
+assert.match(elements.get("hardware-derived").textContent, /derived.hover_endurance_minutes = 4.2/);
+assert.equal(elements.get("config-hash").textContent, "config-fixture");
 const pingRequest = FakeWebSocket.instance.sent.find((item) => item.t === "ping");
 perfNow = 3;
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({

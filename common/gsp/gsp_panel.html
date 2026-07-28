@@ -1,24 +1,24 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AeroSim Ground Station Panel</title>
 <style>
 :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-body { margin: 0; min-width: 320px; background: #111820; color: #dce7f5; }
-main { max-width: 900px; margin: 0 auto; padding: 20px; }
+body { margin: 0; min-width: 320px; background: #0b1017; color: #dce7f5; }
+main { max-width: 1440px; margin: 0 auto; padding: 16px; }
 header, .state, .grid { display: flex; gap: 12px; align-items: start; }
-header { justify-content: space-between; }
+header { justify-content: space-between; border-bottom: 1px solid #31445d; padding-bottom: 12px; }
 h1 { margin: 0; font-size: 1.25rem; }
 .badge { color: #9ee6b1; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; }
-.state, .card { border: 1px solid #31445d; border-radius: 8px; padding: 12px; margin-top: 14px; }
+.state, .card { border: 1px solid #31445d; border-radius: 4px; padding: 12px; margin-top: 14px; background: #101923; }
 .state { justify-content: space-between; flex-wrap: wrap; }
 .grid { flex-wrap: wrap; }
-.card { flex: 1 1 260px; margin-top: 0; }
+.card { flex: 1 1 280px; margin-top: 0; }
 dl { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; margin: 0; }
 dt { color: #9fb0c5; } dd { margin: 0; font-variant-numeric: tabular-nums; }
-code { color: #b9d8ff; overflow-wrap: anywhere; }
+code, pre { color: #b9d8ff; overflow-wrap: anywhere; font: .78rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
 canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 #airframe-3d { height: 260px; border: 1px solid #263a47; }
 .muted { color: #9fb0c5; }
@@ -37,36 +37,45 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 .preset-row input, .preset-row select { flex: 1 1 10rem; }
 #preset-diff { white-space: pre-wrap; overflow-wrap: anywhere; }
 :disabled { opacity: .45; cursor: not-allowed; }
+.toolbar button, summary { background: #172b3a; color: #dce7f5; border: 1px solid #31445d; border-radius: 3px; padding: 5px 9px; cursor: pointer; }
+.toolbar { display: flex; gap: 6px; align-items: center; }
+details.card { flex-basis: 100%; } details > summary { font-weight: 700; } details > *:not(summary) { margin-top: 10px; }
+.telemetry-table { max-height: 460px; overflow: auto; } .telemetry-table .unavailable { color: #ffcf78; }
+.status-normal { color: #9ee6b1; } .status-low { color: #ffcf78; } .status-critical, .status-unavailable { color: #ff8aad; }
+@media (max-width: 720px) { main { padding: 10px; } .tuning-row { grid-template-columns: 1fr; } .quick-adjust-row { grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
 <body>
 <main>
-<header><h1>AeroSim Ground Station Panel</h1><span class="badge" id="focus-state">panel focus</span></header>
+<header><h1 data-i18n="title">AeroSim 地面站開發面板</h1><div class="toolbar"><button id="language-zh" type="button">繁中</button><button id="language-en" type="button">English</button><span class="badge" id="focus-state">panel focus</span></div></header>
 <section class="state" aria-live="polite">
-  <strong id="connection">Disconnected</strong>
-  <span id="fresh-state" class="muted">Waiting for session fragment.</span>
+  <strong id="connection">未連線</strong>
+  <span id="fresh-state" class="muted">等待工作階段片段。</span>
 </section>
 <div class="grid">
 <section class="card"><dl>
-  <dt>Vehicle Instance</dt><dd id="vehicle">—</dd>
-  <dt>Authority</dt><dd id="authority">—</dd>
+  <dt data-i18n="vehicle">Vehicle Instance</dt><dd id="vehicle">—</dd>
+  <dt data-i18n="authority">Authority</dt><dd id="authority">—</dd>
+  <dt>Mode / Armed</dt><dd id="mode-armed">—</dd>
   <dt>Tick</dt><dd id="tick">—</dd>
-  <dt>Actual telemetry rate</dt><dd id="rate">0 Hz</dd>
+  <dt data-i18n="rate">Actual telemetry rate</dt><dd id="rate">0 Hz</dd>
   <dt>WebSocket RTT</dt><dd id="latency">—</dd>
+  <dt>Config hash</dt><dd id="config-hash">—</dd>
   <dt>Registry hash</dt><dd id="registry">—</dd>
 </dl></section>
 <section class="card"><strong>位置／速度（NED、SI）</strong><p id="position" class="muted">—</p><p id="velocity" class="muted">—</p><strong>姿態／角速度（FRD、SI）</strong><p id="attitude" class="muted">—</p><p id="rates" class="muted">—</p></section>
 <section class="card"><strong>電池／預估續航</strong><p id="endurance" class="muted">等待即時資料。</p><strong>飛控／空力狀態</strong><p id="flight-diagnostics" class="muted">等待即時資料。</p></section>
-<section class="card"><strong>目前硬體設定（唯讀）</strong><pre id="hardware-configuration" class="muted">等待硬體設定。</pre></section>
-<section class="card"><strong>機體／馬達／氣流</strong><p class="muted">程序化 Quad-X 視圖；NED／FRD／SI 即時遙測。</p><canvas id="airframe-3d" aria-label="Quad-X telemetry visualization"></canvas><p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas></section>
-<section class="card"><strong>Quick Adjust</strong><div id="tuning-rows" class="muted">Waiting for registry.</div></section>
-<section class="card"><strong>In-flight Quick Adjust</strong><div id="quick-adjust-rows" class="muted">Waiting for registry.</div></section>
-<section class="card"><strong>Presets</strong>
+<section class="card"><strong>機體／馬達／氣流</strong><p class="muted">程序化 Quad-X 視圖；NED／FRD／SI 即時遙測。</p><div class="toolbar"><button id="view-isometric" type="button">Isometric</button><button id="view-top" type="button">Top</button><button id="view-side" type="button">Side</button><button id="view-rear" type="button">Rear</button></div><canvas id="airframe-3d" aria-label="Quad-X telemetry visualization"></canvas><p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas></section>
+<details class="card" open><summary>完整遙測（native TelemetrySnapshot；NED／FRD／SI）</summary><pre id="telemetry-data" class="telemetry-table muted">等待即時資料。</pre></details>
+<details class="card" open><summary>目前硬體設定（唯讀、canonical preset/schema）</summary><pre id="hardware-configuration" class="telemetry-table muted">等待硬體設定。</pre><pre id="hardware-derived" class="telemetry-table muted">等待衍生 power model。</pre></details>
+<details class="card" open><summary>Quick Adjust</summary><div id="tuning-rows" class="muted">Waiting for registry.</div></details>
+<details class="card"><summary>In-flight Quick Adjust</summary><div id="quick-adjust-rows" class="muted">Waiting for registry.</div></details>
+<details class="card"><summary>Presets</summary>
   <div class="preset-row"><input id="preset-name" placeholder="preset name" maxlength="64"><input id="preset-note" placeholder="optional note" maxlength="512"><button id="preset-save">Save</button><button id="preset-refresh">Refresh</button></div>
   <div class="preset-row"><select id="preset-source"><option value="">Current</option></select><button id="preset-retrieve">Retrieve</button><button id="preset-load">Load</button><button id="preset-preview">Preview migration</button><button id="preset-compare-current">Compare current</button></div>
   <div class="preset-row"><select id="preset-target"><option value="">Current</option></select><button id="preset-compare-two">Compare presets</button></div>
   <div id="preset-status" class="muted">No presets loaded.</div><pre id="preset-diff" class="muted">No changes.</pre><pre id="migration-report" class="muted">No migration preview.</pre>
-</section>
+</details>
 </div>
 </main>
 <script>
@@ -115,6 +124,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   var clockSync = { samples: 0, best_rtt_ms: null, offset_ms: null, error_bound_ms: null };
   var maxPerformanceSamples = 512;
   var requestAnimationFrame = window.requestAnimationFrame || function (callback) { callback(performance.now()); return 0; };
+  var language = "zh";
+  var translations = { zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…" }, en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…" } };
 
   function recordPerformanceSample(kind, value) {
     if (!Number.isFinite(value) || value < 0) return;
@@ -133,7 +144,17 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     },
   };
 
-  function text(id, value) { $(id).textContent = value; }
+  function text(id, value) { var element = $(id); if (element) element.textContent = value; }
+  function translate(key) { return (translations[language] || translations.zh)[key] || key; }
+  function setLanguage(value) {
+    language = value === "en" ? "en" : "zh";
+    if (document.documentElement) document.documentElement.lang = language === "en" ? "en" : "zh-Hant";
+    var nodes = document.querySelectorAll ? document.querySelectorAll("[data-i18n]") : [];
+    Array.prototype.forEach.call(nodes, function (node) { node.textContent = translate(node.dataset.i18n); });
+  }
+  function listen(id, callback) { var element = $(id); if (element) element.addEventListener("click", callback); }
+  listen("language-zh", function () { setLanguage("zh"); });
+  listen("language-en", function () { setLanguage("en"); });
   function panelReady() { return helloReady && snapshotReady; }
   function readinessControls() {
     var tuning = [];
@@ -178,6 +199,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     return "預估續航：" + String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0") + "　[" + "█".repeat(Math.round(Number(value.ratio || 0) * 8)) + "░".repeat(8 - Math.round(Number(value.ratio || 0) * 8)) + "]　" + String(value.severity || "normal");
   }
   function flattenConfiguration(value, prefix, rows) {
+    if (value === null || value === undefined) { rows.push(prefix + " = 未提供／模型未啟用"); return; }
     if (value && typeof value === "object" && !Array.isArray(value)) Object.keys(value).sort().forEach(function (key) { flattenConfiguration(value[key], prefix ? prefix + "." + key : key, rows); });
     else rows.push(prefix + " = " + (Array.isArray(value) ? JSON.stringify(value) : String(value)));
   }
@@ -185,6 +207,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     optionalText("endurance", formatEndurance(sample.endurance));
     optionalText("flight-diagnostics", "PID：" + JSON.stringify(sample.pid || "未提供") + "\n風（機體）：" + vector(sample.wind_body_mps, "m/s FRD") + "\n地面效應：" + String(sample.ground_effect_gain == null ? "未提供" : sample.ground_effect_gain) + "　A3：" + String(sample.a3_operating_state || "未提供") + "　A6：" + String(sample.a6_operating_state || "未提供"));
     var rows = []; flattenConfiguration(sample.hardware_configuration, "", rows); optionalText("hardware-configuration", rows.length ? rows.join("\n") : "未提供／模型未啟用");
+    var derived = []; flattenConfiguration(sample.hardware_power_model, "derived", derived); optionalText("hardware-derived", derived.length ? derived.join("\n") : "未提供／模型未啟用");
+    var telemetry = []; flattenConfiguration(sample, "", telemetry); optionalText("telemetry-data", telemetry.length ? telemetry.join("\n") : "未提供／模型未啟用");
   }
   function send(type, data) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return null;
@@ -243,7 +267,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     waitingForFresh = true;
     snapshotReady = false;
     setControlsEnabled(false);
-    freshState.textContent = "Waiting for fresh telemetry…";
+    freshState.textContent = translate("waiting");
     pendingFreshRequestSequence = send("request_snapshot", {});
   }
   function updateClockSync(message) {
@@ -465,8 +489,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
       reconnectAttempt = 0;
       setControlsEnabled(true);
     }
-    connection.textContent = "Connected";
-    freshState.textContent = "Live telemetry";
+    connection.textContent = translate("connected");
+    freshState.textContent = translate("live");
     text("vehicle", sample.vehicle_instance || "—");
     text("authority", sample.authority || sample.control_authority || "—");
     text("tick", message.tick == null ? "—" : message.tick);
@@ -474,6 +498,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     var elapsed = performance.now() - rateStartedAt;
     text("rate", elapsed > 0 ? (rateSamples * 1000 / elapsed).toFixed(1) + " Hz" : "—");
     text("registry", sample.registry_hash || "unavailable");
+    text("config-hash", sample.config_hash || "unavailable");
+    text("mode-armed", String(sample.mode || "未提供") + " / " + (sample.armed == null ? "未提供" : (sample.armed ? "ARMED" : "DISARMED")));
     text("position", "position: " + vector(sample.pos_ned, "m NED"));
     text("velocity", "velocity: " + vector(sample.vel_ned, "m/s NED"));
     text("attitude", "attitude: " + euler(sample.att_euler_deg));

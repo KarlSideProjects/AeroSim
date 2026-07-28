@@ -162,53 +162,44 @@ func install_panel(data_directory: String) -> Dictionary:
     var hash_context := HashingContext.new()
     hash_context.start(HashingContext.HASH_SHA256)
     hash_context.update(source.to_utf8_buffer())
+    var assets: Array[Dictionary] = []
+    for source_path in PANEL_ASSET_PATHS:
+        var asset_file := FileAccess.open(source_path, FileAccess.READ)
+        if asset_file == null:
+            return {"ok": false, "error": "packaged panel asset is unavailable: %s" % source_path}
+        var content := asset_file.get_buffer(asset_file.get_length())
+        asset_file.close()
+        hash_context.update(content)
+        assets.append({"name": source_path.get_file(), "content": content})
     var panel_hash := hash_context.finish().hex_encode()
     var directory := data_directory.path_join(PANEL_DIRECTORY)
-    var target := directory.path_join("panel-%s.html" % panel_hash)
+    var bundle := directory.path_join("bundle-%s" % panel_hash)
+    var target := bundle.path_join("panel.html")
     var mkdir_error := DirAccess.make_dir_recursive_absolute(directory)
     if mkdir_error != OK:
         return {"ok": false, "error": "cannot create panel directory: %s" % mkdir_error}
 
     if not FileAccess.file_exists(target):
-        var temporary := target + ".tmp-%d" % Time.get_ticks_usec()
-        var temporary_file := FileAccess.open(temporary, FileAccess.WRITE)
+        var temporary_bundle := bundle + ".tmp-%d" % Time.get_ticks_usec()
+        var assets_directory := temporary_bundle.path_join("assets")
+        if DirAccess.make_dir_recursive_absolute(assets_directory) != OK:
+            return {"ok": false, "error": "cannot create temporary panel bundle"}
+        var temporary_file := FileAccess.open(temporary_bundle.path_join("panel.html"), FileAccess.WRITE)
         if temporary_file == null:
             return {"ok": false, "error": "cannot write temporary panel"}
         temporary_file.store_string(source)
         temporary_file.flush()
         temporary_file.close()
-        var rename_error := DirAccess.rename_absolute(temporary, target)
+        for asset in assets:
+            var asset_file := FileAccess.open(assets_directory.path_join(String(asset.name)), FileAccess.WRITE)
+            if asset_file == null:
+                DirAccess.remove_absolute(temporary_bundle)
+                return {"ok": false, "error": "cannot write temporary panel asset"}
+            asset_file.store_buffer(asset.content)
+            asset_file.flush()
+            asset_file.close()
+        var rename_error := DirAccess.rename_absolute(temporary_bundle, bundle)
         if rename_error != OK and not FileAccess.file_exists(target):
-            DirAccess.remove_absolute(temporary)
+            DirAccess.remove_absolute(temporary_bundle)
             return {"ok": false, "error": "cannot atomically install panel: %s" % rename_error}
-        if FileAccess.file_exists(temporary):
-            DirAccess.remove_absolute(temporary)
-
-    var assets_result := _install_panel_assets(directory)
-    if not bool(assets_result.get("ok", false)):
-        return assets_result
     return {"ok": true, "path": target, "hash": panel_hash}
-
-
-func _install_panel_assets(directory: String) -> Dictionary:
-    var assets_directory := directory.path_join("assets")
-    var mkdir_error := DirAccess.make_dir_recursive_absolute(assets_directory)
-    if mkdir_error != OK:
-        return {"ok": false, "error": "cannot create panel asset directory: %s" % mkdir_error}
-    for source_path in PANEL_ASSET_PATHS:
-        var source_file := FileAccess.open(source_path, FileAccess.READ)
-        if source_file == null:
-            return {"ok": false, "error": "packaged panel asset is unavailable: %s" % source_path}
-        var target := assets_directory.path_join(source_path.get_file())
-        var temporary := target + ".tmp-%d" % Time.get_ticks_usec()
-        var target_file := FileAccess.open(temporary, FileAccess.WRITE)
-        if target_file == null:
-            return {"ok": false, "error": "cannot write panel asset"}
-        target_file.store_buffer(source_file.get_buffer(source_file.get_length()))
-        target_file.flush()
-        target_file.close()
-        source_file.close()
-        if DirAccess.rename_absolute(temporary, target) != OK:
-            DirAccess.remove_absolute(temporary)
-            return {"ok": false, "error": "cannot install panel asset"}
-    return {"ok": true}
