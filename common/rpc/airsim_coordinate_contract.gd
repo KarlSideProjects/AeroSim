@@ -39,6 +39,11 @@ static func ned_orientation_to_godot(orientation: Quaternion) -> Quaternion:
     return Quaternion(orientation.x, -orientation.z, orientation.y, orientation.w).normalized()
 
 
+static func ned_orientation_to_zyx_euler_degrees(orientation: Quaternion) -> Array[float]:
+    var euler := Basis(orientation).get_euler(EULER_ORDER_ZYX)
+    return [rad_to_deg(euler.x), rad_to_deg(euler.y), rad_to_deg(euler.z)]
+
+
 static func godot_yaw_radians_to_ned_degrees(yaw_radians: float) -> float:
     return -rad_to_deg(yaw_radians)
 

@@ -10,6 +10,7 @@ const QualityProfile = preload("res://common/flight/quality_profile.gd")
 const CameraProfile = preload("res://common/flight/camera_profile.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
+const GspPresetStore = preload("res://common/gsp/gsp_preset_store.gd")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 const RotorTelemetryPanel = preload("res://common/flight/rotor_telemetry_panel.gd")
 const GamepadTelemetryPanel = preload("res://common/flight/gamepad_telemetry_panel.gd")
@@ -170,6 +171,7 @@ var license_retry_button: Button
 var license_diagnostics_button: Button
 var license_exit_button: Button
 var acro_mode_button: Button
+var quick_adjust_status_label: Label
 var time_trial_status_label: Label
 var pause_panel: Control
 var status_diagram_back_button: Button
@@ -216,6 +218,9 @@ var _airsim_ready_file_pending := ""
 var _dashboard_vehicle_name := ""
 var _airsim_secondary_native: Object
 var _replay_recording_active := false
+var _replay_recording_failed := false
+var _replay_recording_failure := ""
+var _replay_authoritative_physics_tick := 0
 var _replay_settings_manifest_hash := ""
 var _replay_upper_config_manifest_hash := ""
 var _replay_lower_config_manifest_hash := ""
@@ -226,6 +231,26 @@ var _replay_epoch_pending := false
 var _last_complete_replay_serialized := ""
 var _replay_secondary_row := PackedFloat64Array()
 var _airsim_vehicle_contexts: Dictionary = {}
+var _gsp_telemetry_cache: Dictionary = {}
+var _gsp_telemetry_publish_count := -1
+var _gsp_tuning_registry: Array = []
+var _gsp_tuning_registry_hash := "unavailable"
+var _gsp_tuning_pending: Array[Dictionary] = []
+var _gsp_tuning_completed: Array[Dictionary] = []
+var _gsp_tuning_recent_results: Array[Dictionary] = []
+const GSP_MIGRATION_CAPABILITY_TTL_MS := 30_000
+const GSP_MIGRATION_CAPABILITY_LIMIT := 8
+var _gsp_migration_capabilities: Array[Dictionary] = []
+var _gsp_used_migration_ids: Array[String] = []
+var _gsp_expired_migration_ids: Array[String] = []
+var _native_external_authority_state: Variant = null
+var _quick_adjust_profile: Dictionary = InputProfiles.QuickAdjustProfile.default_profile()
+var _quick_adjust_next_allowed_usec: Array[int] = []
+var _quick_adjust_request_seq := 0
+var _quick_adjust_active_slot := -1
+var _quick_adjust_last_value := 0.0
+var _quick_adjust_pressed_keys: Dictionary = {}
+var _quick_adjust_axis_values: Dictionary = {}
 var _airsim_secondary_a5_configuration: Dictionary = {}
 var _secondary_collision_state_captured := false
 var _secondary_collision_layer := 1
@@ -336,6 +361,16 @@ func _ready() -> void:
             Callable(self, "_airsim_camera_origin"))
         airsim_rpc_server.set_camera_backend(Callable(airsim_camera_surface, "capture"))
     var hardware_config := HardwareConfig.new()
+    _gsp_tuning_registry = hardware_config.tuning_registry()
+    _gsp_tuning_registry_hash = hardware_config.tuning_registry_hash()
+    var quick_adjust_validation := validate_quick_adjust_profile(_quick_adjust_profile)
+    if not bool(quick_adjust_validation.get("ok", false)):
+        _quick_adjust_profile = InputProfiles.QuickAdjustProfile.default_profile()
+        last_error_message = "Quick Adjust settings rejected: %s" % String(quick_adjust_validation.get("error", "invalid binding"))
+    _reset_quick_adjust_rate_limits()
+    if not hardware_config.initialize_tuning(self):
+        last_error_message = hardware_config.last_error
+        push_error("Default tuning initialization failed: %s" % hardware_config.last_error)
     if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
         last_error_message = hardware_config.last_error
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
@@ -613,6 +648,10 @@ func _configure_secondary_native(hardware_config: RefCounted) -> bool:
         return false
     var primary_native := native
     native = _airsim_secondary_native
+    if not hardware_config.initialize_tuning(self):
+        native = primary_native
+        last_error_message = "second named vehicle tuning initialization failed"
+        return false
     var applied_result: Variant = hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET)
     var applied: bool = bool(applied_result)
     native = primary_native
@@ -655,6 +694,27 @@ func _replay_timestamp_for_recorded_frame(timestamp_us: int) -> int:
 func _replay_timestamp_us() -> int:
     var simulation_timestamp_us := int(round((airsim_session.simulation_time_seconds if airsim_session != null else 0.0) * 1_000_000.0))
     return _replay_timestamp_for_simulation_us(simulation_timestamp_us)
+
+
+func _set_replay_physics_tick(physics_tick: int = -1) -> bool:
+    if _replay_recording_failed or not _replay_recording_active:
+        return false
+    if native == null or not native.has_method("set_replay_physics_tick"):
+        _fail_replay_recording("replay physics tick hook is unavailable")
+        return false
+    var result: Dictionary = native.call("set_replay_physics_tick", _replay_authoritative_physics_tick if physics_tick < 0 else physics_tick)
+    if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "physics tick update failed")))
+        return false
+    return true
+
+
+func _fail_replay_recording(message: String) -> void:
+    if _replay_recording_failed:
+        return
+    _replay_recording_failed = true
+    _replay_recording_failure = message
+    push_error("Complete replay recording is irrecoverable: %s" % message)
 
 
 func _replay_frame_timestamp_us() -> int:
@@ -701,6 +761,9 @@ func _replay_canonical_json(value: Variant) -> String:
 
 func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     _replay_recording_active = false
+    _replay_recording_failed = false
+    _replay_recording_failure = ""
+    _replay_authoritative_physics_tick = 0
     _replay_last_timestamp_us = 0
     _replay_epoch_offset_us = 0
     _replay_last_simulation_timestamp_us = 0
@@ -737,13 +800,16 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     if _airsim_secondary_native.has_method("begin_replay_checkpoint_capture"):
         _airsim_secondary_native.call("begin_replay_checkpoint_capture")
     _replay_recording_active = true
-    if not _record_replay_environment({}):
+    if not _set_replay_physics_tick(0) or not _record_replay_environment({}):
         _replay_recording_active = false
 
 
 func _finish_complete_replay_recording(reason: String) -> Dictionary:
     if not _replay_recording_active or native == null:
         return {"ok": false, "error": "complete replay recording is inactive"}
+    if _replay_recording_failed:
+        _replay_recording_active = false
+        return {"ok": false, "error": "complete replay recording failed", "diagnostic_message": _replay_recording_failure}
     var result: Dictionary = native.call("finish_complete_replay_recording", _replay_timestamp_us(), reason)
     _replay_recording_active = false
     if bool(result.get("ok", false)):
@@ -766,7 +832,7 @@ func complete_replay_recording() -> String:
 
 
 func _record_replay_command(vehicle_name: String, controls: Dictionary, timestamp_us: int = -1) -> void:
-    if not _replay_recording_active or native == null:
+    if _replay_recording_failed or not _replay_recording_active or native == null:
         return
     var mode := String(controls.get("mode", "ANGLE"))
     if mode == "ASSISTED_HOLD":
@@ -802,6 +868,7 @@ func _record_replay_command(vehicle_name: String, controls: Dictionary, timestam
             float(controls.get("yaw_rate", 0.0)),
             0)
     if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "command recording failed")))
         push_error("Complete replay command recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
         return
     var response_native: Object = _airsim_secondary_native if vehicle_name == String(_airsim_vehicle_names[1]) else native
@@ -817,7 +884,7 @@ func _record_replay_command(vehicle_name: String, controls: Dictionary, timestam
 
 
 func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: PackedFloat32Array, timestamp_us: int) -> void:
-    if not _replay_recording_active or native == null or actuator_outputs.size() < 4:
+    if _replay_recording_failed or not _replay_recording_active or native == null or actuator_outputs.size() < 4:
         return
     var result: Dictionary = native.call(
         "record_replay_actuator_command",
@@ -829,6 +896,7 @@ func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: Pac
         clampf(float(actuator_outputs[3]), 0.0, 1.0),
         2)
     if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "actuator recording failed")))
         push_error("Complete replay actuator recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
         return
     if native.has_method("capture_replay_recorded_response"):
@@ -839,7 +907,7 @@ func _record_replay_actuator_command(vehicle_name: String, actuator_outputs: Pac
 
 
 func _record_replay_collision(vehicle_name: String, body, authority: int = 1, timestamp_us: int = -1) -> void:
-    if not _replay_recording_active or native == null or body == null or not body.contact_seen:
+    if _replay_recording_failed or not _replay_recording_active or native == null or body == null or not body.contact_seen:
         return
     var angular_velocity_body := _jolt_angular_velocity_body_y_up(body)
     var result: Dictionary = native.call(
@@ -864,11 +932,12 @@ func _record_replay_collision(vehicle_name: String, body, authority: int = 1, ti
         true,
         authority)
     if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "collision recording failed")))
         push_error("Complete replay collision recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
 
 
 func _record_replay_scene_object(operation: int, snapshot: Dictionary) -> void:
-    if not _replay_recording_active or native == null or snapshot.is_empty():
+    if _replay_recording_failed or not _replay_recording_active or native == null or snapshot.is_empty():
         return
     var position: Vector3 = snapshot.get("position", Vector3.ZERO)
     var orientation: Quaternion = snapshot.get("orientation", Quaternion.IDENTITY)
@@ -881,11 +950,12 @@ func _record_replay_scene_object(operation: int, snapshot: Dictionary) -> void:
         position,
         orientation)
     if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "scene recording failed")))
         push_error("Complete replay scene recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
 
 
 func _record_replay_environment(state: Dictionary) -> bool:
-    if not _replay_recording_active or native == null:
+    if _replay_recording_failed or not _replay_recording_active or native == null:
         return false
     var replay_state := state.duplicate(true)
     if native.has_method("wind_configuration"):
@@ -897,27 +967,31 @@ func _record_replay_environment(state: Dictionary) -> bool:
             replay_state["atmosphere_air_density_kg_m3"] = body_drag["air_density_kg_m3"]
     var result: Dictionary = native.call("record_replay_environment", _replay_timestamp_us(), JSON.stringify(replay_state))
     if not bool(result.get("ok", false)):
-        push_error("Complete replay environment recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        _fail_replay_recording(String(result.get("diagnostic_message", "environment recording failed")))
         return false
     return true
 
 
-func _record_replay_checkpoint(timestamp_us: int, upper_row: PackedFloat64Array) -> void:
-    if not _replay_recording_active or native == null or upper_row.size() < 12 or _replay_secondary_row.size() < 12:
-        return
+func _record_replay_checkpoint(timestamp_us: int, upper_row: PackedFloat64Array) -> bool:
+    if _replay_recording_failed or not _replay_recording_active or native == null or upper_row.size() < 12 or _replay_secondary_row.size() < 12:
+        return false
     var result: Dictionary = native.call("record_replay_checkpoint", timestamp_us, upper_row, _replay_secondary_row, _airsim_secondary_native)
     if not bool(result.get("ok", false)):
-        push_error("Complete replay checkpoint recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        _fail_replay_recording(String(result.get("diagnostic_message", "checkpoint recording failed")))
+        return false
+    return true
 
 
-func _record_replay_simulation_operation(operation: int, value: float) -> void:
-    if not _replay_recording_active or native == null:
-        return
+func _record_replay_simulation_operation(operation: int, value: float) -> bool:
+    if _replay_recording_failed or not _replay_recording_active or native == null:
+        return false
     var result: Dictionary = native.call("record_replay_simulation_operation", _replay_timestamp_us(), operation, value)
     if not bool(result.get("ok", false)):
-        push_error("Complete replay simulation recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
+        _fail_replay_recording(String(result.get("diagnostic_message", "simulation recording failed")))
+        return false
     elif operation == 4 or operation == 5:
         _replay_epoch_pending = true
+    return true
 
 
 func _record_replay_reset_environment() -> void:
@@ -926,11 +1000,12 @@ func _record_replay_reset_environment() -> void:
 
 
 func _record_replay_async(simulation_time_seconds: float, vehicle_name: String, command_id: String, method: String, lifecycle: int) -> void:
-    if not _replay_recording_active or native == null:
+    if _replay_recording_failed or not _replay_recording_active or native == null:
         return
     var timestamp_us := _replay_timestamp_for_simulation_us(int(round(simulation_time_seconds * 1_000_000.0)))
     var result: Dictionary = native.call("record_replay_async_command", timestamp_us, vehicle_name, command_id, method, lifecycle)
     if not bool(result.get("ok", false)):
+        _fail_replay_recording(String(result.get("diagnostic_message", "async recording failed")))
         push_error("Complete replay async recording failed: %s" % String(result.get("diagnostic_message", "unknown error")))
 
 
@@ -1131,6 +1206,11 @@ func _load_player_settings() -> void:
         var osd_result: Dictionary = OsdProfile.validate_profile(saved_osd)
         if osd_result.ok:
             osd_profile = osd_result.profile
+    var saved_quick_adjust = result.document.get("quick_adjust")
+    if saved_quick_adjust != null:
+        var quick_adjust_result: Dictionary = InputProfiles.QuickAdjustProfile.validate_profile(saved_quick_adjust)
+        if quick_adjust_result.ok:
+            _quick_adjust_profile = quick_adjust_result.profile
     if not result.ok and result.recovered:
         last_error_message = "Settings recovered to factory defaults: %s" % result.error
 
@@ -1320,6 +1400,12 @@ func _write_airsim_ready_marker(path: String) -> void:
     marker.close()
 
 func _unhandled_input(event: InputEvent) -> void:
+    if event is InputEventKey:
+        var key_event := event as InputEventKey
+        _quick_adjust_pressed_keys[int(key_event.keycode)] = key_event.pressed
+    elif event is InputEventJoypadMotion:
+        var axis_event := event as InputEventJoypadMotion
+        _quick_adjust_axis_values["%d:%d" % [axis_event.device, axis_event.axis]] = axis_event.axis_value
     if event is InputEventJoypadButton and _handle_gamepad_button(event):
         return
     if event.is_action_pressed("flight_takeoff") and screen in ["preflight", "flight"]:
@@ -1361,6 +1447,10 @@ func _process(_delta: float) -> void:
     _refresh_flight_hud()
 
 func _physics_process(delta: float) -> void:
+    if _replay_recording_active:
+        _replay_authoritative_physics_tick += 1
+        if not _set_replay_physics_tick():
+            return
     if _reset_pending_token != 0:
         _advance_reset_pending()
         return
@@ -1370,6 +1460,9 @@ func _physics_process(delta: float) -> void:
             drone_body.freeze = false
             drone_body.sleeping = false
         return
+    _sync_native_external_authority()
+    _apply_quick_adjust_inputs(delta)
+    _apply_gsp_tuning_requests(_gsp_public_physics_tick())
     if paused:
         if airsim_session != null and not airsim_session.is_paused():
             set_paused(false, false)
@@ -3181,13 +3274,15 @@ func _refresh_native_imu_sample(step_native) -> bool:
     return true
 
 func set_paused(value: bool, sync_session: bool = true) -> void:
+    _set_paused_checked(value, sync_session)
+
+
+func _set_paused_checked(value: bool, sync_session: bool = true) -> bool:
     if not value and _airsim_lifecycle_stopped() and (airsim_session == null or not airsim_session.is_explicit_step_active()):
-        return
+        return false
     if paused != value and sync_session and _replay_recording_active and native != null:
-        var replay_pause_result: Dictionary = native.call(
-            "record_replay_simulation_operation", _replay_timestamp_us(), 0 if value else 1, 0.0)
-        if not bool(replay_pause_result.get("ok", false)):
-            push_error("Complete replay pause recording failed: %s" % String(replay_pause_result.get("diagnostic_message", "unknown error")))
+        if not _record_replay_simulation_operation(0 if value else 1, 0.0):
+            return false
     paused = value
     if not value:
         status_diagram_fullscreen = false
@@ -3203,6 +3298,7 @@ func set_paused(value: bool, sync_session: bool = true) -> void:
     if secondary_drone_body != null:
         secondary_drone_body.freeze = value
         secondary_drone_body.sleeping = value
+    return true
 
 func set_participant_mode(value: bool) -> void:
     participant_mode = value
@@ -4178,6 +4274,10 @@ func _build_flight_hud() -> void:
     acro_mode_button.name = "AcroMode"
     acro_mode_button.pressed.connect(toggle_acro_mode)
     rows.add_child(acro_mode_button)
+    quick_adjust_status_label = Label.new()
+    quick_adjust_status_label.name = "QuickAdjustStatus"
+    quick_adjust_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(quick_adjust_status_label)
     _build_pause_panel()
     _build_camera_panel()
     _build_osd_panel()
@@ -4770,6 +4870,1029 @@ func _on_dashboard_vehicle_selected(vehicle_name: String) -> void:
     if _airsim_name_matches(vehicle_name):
         _dashboard_vehicle_name = vehicle_name
 
+
+func validate_quick_adjust_profile(candidate: Variant) -> Dictionary:
+    var profile_result := InputProfiles.QuickAdjustProfile.validate_profile(candidate)
+    if not bool(profile_result.get("ok", false)):
+        return profile_result
+    if _gsp_external_authority_active():
+        return {"ok": false, "error": "external_authority", "authority": "px4"}
+    var profile: Dictionary = profile_result.profile
+    for slot_index in profile.slots.size():
+        var slot_value = profile.slots[slot_index]
+        if slot_value == null:
+            continue
+        var slot: Dictionary = slot_value
+        var parameter := String(slot.parameter)
+        var descriptor: Dictionary = {}
+        for descriptor_value in _gsp_tuning_registry:
+            var candidate_descriptor: Dictionary = descriptor_value
+            if String(candidate_descriptor.get("key", "")) == parameter:
+                descriptor = candidate_descriptor
+                break
+        if descriptor.is_empty():
+            return {"ok": false, "error": "unknown_parameter", "slot": slot_index}
+        if not bool(descriptor.get("quick_adjust_eligible", false)):
+            return {"ok": false, "error": "quick_adjust_ineligible", "slot": slot_index, "parameter": parameter}
+        var timing := String(descriptor.get("apply_timing", "unknown"))
+        if timing in ["reset_required", "restart_required"]:
+            return {"ok": false, "error": timing, "slot": slot_index, "parameter": parameter}
+        var descriptor_min := float(descriptor.get("min", NAN))
+        var descriptor_max := float(descriptor.get("max", NAN))
+        if not is_finite(descriptor_min) or not is_finite(descriptor_max) or \
+                float(slot.subset_min) < descriptor_min or float(slot.subset_max) > descriptor_max:
+            return {"ok": false, "error": "quick_adjust_subset_out_of_descriptor", "slot": slot_index}
+        if float(slot.rate_limit) > 120.0:
+            return {"ok": false, "error": "quick_adjust_rate_limit_too_high", "slot": slot_index}
+        if String(slot.binding_type) == "key_pair":
+            for key_value in [int(slot.negative_key), int(slot.positive_key)]:
+                for action_name in InputMap.get_actions():
+                    if not String(action_name).begins_with("flight_"):
+                        continue
+                    for event_value in InputMap.action_get_events(action_name):
+                        if event_value is InputEventKey:
+                            var event := event_value as InputEventKey
+                            if int(event.keycode) == key_value or int(event.physical_keycode) == key_value:
+                                return {"ok": false, "error": "quick_adjust_binding_conflict", "slot": slot_index, "action": String(action_name)}
+        else:
+            if int(slot.axis) in [0, 1, 2, 3]:
+                return {"ok": false, "error": "quick_adjust_binding_conflict", "slot": slot_index, "axis": int(slot.axis)}
+            if _has_active_gamepad_profile() and int(slot.device) == session_gamepad_device_id and int(slot.axis) in session_gamepad_profile.axis_for_role.values():
+                return {"ok": false, "error": "quick_adjust_binding_conflict", "slot": slot_index}
+    return {"ok": true, "error": "", "profile": profile.duplicate(true)}
+
+
+func configure_quick_adjust(candidate: Variant, persist: bool = true) -> Dictionary:
+    var validation := validate_quick_adjust_profile(candidate)
+    if not bool(validation.get("ok", false)):
+        return validation
+    var profile: Dictionary = validation.profile
+    if _replay_recording_active and native != null and native.has_method("record_replay_quick_adjust_binding"):
+        if not _set_replay_physics_tick():
+            return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
+        var replay_result: Dictionary = native.call(
+                "record_replay_quick_adjust_binding", _replay_timestamp_us(), _replay_canonical_json(profile))
+        if not bool(replay_result.get("ok", false)):
+            _fail_replay_recording(String(replay_result.get("diagnostic_message", "Quick Adjust binding recording failed")))
+            return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
+    if persist:
+        if settings_store == null:
+            if _replay_recording_active:
+                _fail_replay_recording("Quick Adjust settings persistence is unavailable")
+                return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
+            return {"ok": false, "error": "settings_unavailable"}
+        var loaded: Dictionary = settings_store.load_document()
+        if not bool(loaded.get("ok", false)):
+            if _replay_recording_active:
+                _fail_replay_recording("Quick Adjust settings could not be loaded")
+                return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
+            return {"ok": false, "error": "settings_unavailable", "detail": loaded.get("error", "")}
+        loaded.document["quick_adjust"] = profile.duplicate(true)
+        var saved: Dictionary = settings_store.save_document(loaded.document)
+        if not bool(saved.get("ok", false)):
+            if _replay_recording_active:
+                _fail_replay_recording("Quick Adjust settings could not be saved")
+                return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
+            return {"ok": false, "error": "settings_save_failed", "detail": saved.get("error", "")}
+    _quick_adjust_profile = profile.duplicate(true)
+    _reset_quick_adjust_rate_limits()
+    return {"ok": true, "profile": _quick_adjust_profile.duplicate(true)}
+
+
+func gsp_quick_adjust_request(peer_id: int, connection_id: int, request_seq: int, profile: Variant) -> Dictionary:
+    var result := configure_quick_adjust(profile)
+    result["peer_id"] = peer_id
+    result["connection_id"] = connection_id
+    result["request_seq"] = request_seq
+    return result
+
+
+func gsp_marker_request(peer_id: int, connection_id: int, request_seq: int, label: String, note: String = "") -> Dictionary:
+    var result := {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    if not _replay_recording_active or native == null or not native.has_method("record_replay_marker"):
+        result["ok"] = false
+        result["error"] = "replay_unavailable"
+        return result
+    if not _set_replay_physics_tick():
+        result["ok"] = false
+        result["error"] = "replay_recording_failed"
+        return result
+    var recorded: Dictionary = native.call("record_replay_marker", _replay_timestamp_us(), label, note)
+    for key in recorded:
+        result[key] = recorded[key]
+    if not bool(recorded.get("ok", false)):
+        _fail_replay_recording(String(recorded.get("diagnostic_message", "marker recording failed")))
+    return result
+
+
+func gsp_simulation_request(peer_id: int, connection_id: int, request_seq: int, command: String) -> Dictionary:
+    var result := {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq, "cmd": command}
+    if command not in ["pause", "resume"]:
+        result["ok"] = false
+        result["error"] = "unsupported_simulation_command"
+        return result
+    var was_paused := paused
+    if not _set_paused_checked(command == "pause"):
+        result["ok"] = false
+        result["error"] = "replay_recording_failed"
+        return result
+    result["ok"] = true
+    result["changed"] = was_paused != paused
+    return result
+
+
+func gsp_quick_adjust_profile() -> Dictionary:
+    return _quick_adjust_profile.duplicate(true)
+
+
+func _reset_quick_adjust_rate_limits() -> void:
+    _quick_adjust_next_allowed_usec.clear()
+    for _index in InputProfiles.QuickAdjustProfile.SLOT_COUNT:
+        _quick_adjust_next_allowed_usec.append(0)
+
+
+func _quick_adjust_input(slot: Dictionary) -> float:
+    var input_value := 0.0
+    if String(slot.binding_type) == "axis":
+        var axis_key := "%d:%d" % [int(slot.device), int(slot.axis)]
+        input_value = float(_quick_adjust_axis_values.get(axis_key, Input.get_joy_axis(int(slot.device), int(slot.axis))))
+    else:
+        if bool(_quick_adjust_pressed_keys.get(int(slot.positive_key), false)) or Input.is_key_pressed(int(slot.positive_key)):
+            input_value += 1.0
+        if bool(_quick_adjust_pressed_keys.get(int(slot.negative_key), false)) or Input.is_key_pressed(int(slot.negative_key)):
+            input_value -= 1.0
+    var deadzone := float(slot.deadzone)
+    if absf(input_value) <= deadzone:
+        return 0.0
+    return sign(input_value) * ((absf(input_value) - deadzone) / (1.0 - deadzone))
+
+
+func _quick_adjust_value(slot: Dictionary, current: float, input_value: float) -> float:
+    if String(slot.mode) == "absolute":
+        return lerpf(float(slot.subset_min), float(slot.subset_max), (input_value + 1.0) * 0.5)
+    return current + input_value * float(slot.step)
+
+
+func _apply_quick_adjust_inputs(_delta: float) -> void:
+    if native == null or screen != "flight" or paused or _gsp_external_authority_active():
+        return
+    var slots: Array = _quick_adjust_profile.get("slots", [])
+    var has_binding := false
+    for slot_value in slots:
+        if slot_value != null:
+            has_binding = true
+            break
+    if not has_binding:
+        return
+    var active_values: Dictionary = native.call("flight_tuning_configuration") if native.has_method("flight_tuning_configuration") else {}
+    var now_usec := Time.get_ticks_usec()
+    for slot_index in slots.size():
+        var slot_value = slots[slot_index]
+        if slot_value == null:
+            continue
+        var slot: Dictionary = slot_value
+        var input_value := _quick_adjust_input(slot)
+        if is_zero_approx(input_value) or now_usec < int(_quick_adjust_next_allowed_usec[slot_index]):
+            continue
+        var parameter := String(slot.parameter)
+        if not active_values.has(parameter):
+            continue
+        var current := float(active_values[parameter])
+        var target := _quick_adjust_value(slot, current, input_value)
+        target = clampf(target, float(slot.subset_min), float(slot.subset_max))
+        target = clampf(snappedf(target - float(slot.subset_min), float(slot.step)) + float(slot.subset_min), float(slot.subset_min), float(slot.subset_max))
+        if is_equal_approx(target, current):
+            continue
+        _quick_adjust_request_seq += 1
+        var result := gsp_tuning_request(-1, -1, _quick_adjust_request_seq, parameter, target, "quick_adjust", slot_index)
+        if bool(result.get("ok", false)):
+            _quick_adjust_next_allowed_usec[slot_index] = now_usec + int(1_000_000.0 / float(slot.rate_limit))
+            _quick_adjust_active_slot = slot_index
+            _quick_adjust_last_value = target
+
+
+func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, parameter: Variant, value: Variant = null, source: String = "panel", quick_adjust_slot: int = -1) -> Dictionary:
+    if typeof(parameter) == TYPE_ARRAY:
+        return gsp_tuning_batch_request(peer_id, connection_id, request_seq, parameter, source, quick_adjust_slot)
+    return gsp_tuning_batch_request(peer_id, connection_id, request_seq, [{"parameter": parameter, "value": value}], source, quick_adjust_slot)
+
+
+func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array, source: String = "panel", quick_adjust_slot: int = -1, atomic_barrier: bool = false, preset_provenance: Dictionary = {}) -> Dictionary:
+    _sync_native_external_authority()
+    if _gsp_external_authority_active():
+        var result := {
+            "peer_id": peer_id,
+            "connection_id": connection_id,
+            "request_seq": request_seq,
+            "ok": false,
+            "error": "external_authority",
+            "authority": "px4",
+        }
+        _remember_gsp_tuning_result(result)
+        return result
+    var timing_result := _gsp_tuning_timings(changes)
+    if not bool(timing_result.get("ok", false)):
+        var invalid_timing := {
+            "peer_id": peer_id,
+            "connection_id": connection_id,
+            "request_seq": request_seq,
+            "ok": false,
+            "error": String(timing_result.get("error", "invalid_apply_timing")),
+        }
+        _remember_gsp_tuning_result(invalid_timing)
+        return invalid_timing
+    var apply_timing := String(timing_result.get("apply_timing", "unknown"))
+    if apply_timing == "restart_required" or apply_timing == "reset_required":
+        var deferred_result := {
+            "peer_id": peer_id,
+            "connection_id": connection_id,
+            "request_seq": request_seq,
+            "ok": false,
+            "error": apply_timing,
+            "apply_timing": apply_timing,
+        }
+        _remember_gsp_tuning_result(deferred_result)
+        return deferred_result
+    if apply_timing == "immediate" or paused:
+        var provenance: Dictionary = preset_provenance.duplicate(true)
+        for change_value in changes:
+            if typeof(change_value) == TYPE_DICTIONARY:
+                var key := String(change_value.get("parameter", ""))
+                if not provenance.has(key):
+                    provenance[key] = {
+                        "source": source,
+                        "request_seq": request_seq,
+                        "quick_adjust_slot": quick_adjust_slot,
+                        "request_id": 0,
+                    }
+        return _commit_gsp_tuning_batch(peer_id, connection_id, request_seq, changes, _gsp_public_physics_tick(), true, source, quick_adjust_slot, provenance)
+    _gsp_tuning_pending.append({
+        "peer_id": peer_id,
+        "connection_id": connection_id,
+        "request_seq": request_seq,
+        "changes": changes.duplicate(true),
+        "source": source,
+        "quick_adjust_slot": quick_adjust_slot,
+        "atomic_barrier": atomic_barrier,
+        "provenance": preset_provenance.duplicate(true),
+    })
+    return {"ok": true, "pending": true, "apply_timing": apply_timing}
+
+
+func gsp_tuning_results() -> Array:
+    var results := _gsp_tuning_completed.duplicate(true)
+    _gsp_tuning_completed.clear()
+    return results
+
+
+func _apply_gsp_tuning_requests(public_physics_tick: int) -> void:
+    if _gsp_tuning_pending.is_empty():
+        return
+    var pending := _gsp_tuning_pending
+    _gsp_tuning_pending = []
+    var ordinary_group: Array[Dictionary] = []
+    var deferred_group: Array[Dictionary] = []
+    var migration_keys: Dictionary = {}
+    for request in pending:
+        if bool(request.get("atomic_barrier", false)):
+            _commit_gsp_tuning_group(ordinary_group, public_physics_tick)
+            ordinary_group.clear()
+            var migration_changes: Array = request.get("changes", [])
+            var migration_provenance: Dictionary = request.get("provenance", {}).duplicate(true)
+            for change_value in migration_changes:
+                if typeof(change_value) == TYPE_DICTIONARY:
+                    var migration_change: Dictionary = change_value
+                    var migration_key := String(migration_change.get("parameter", ""))
+                    migration_keys[migration_key] = true
+                    if not migration_provenance.has(migration_key):
+                        migration_provenance[migration_key] = {
+                            "source": "preset",
+                            "request_seq": int(request.get("request_seq", -1)),
+                            "quick_adjust_slot": -1,
+                            "request_id": 0,
+                        }
+            var migration_commit := _commit_gsp_tuning_batch(
+                    -1, -1, -1, migration_changes, public_physics_tick, false, "preset", -1,
+                    migration_provenance)
+            var migration_ack := _gsp_tuning_request_ack(migration_commit, request)
+            migration_ack["commit_request_seq"] = int(migration_commit.get("request_seq", -1))
+            migration_ack["peer_id"] = int(request.get("peer_id", -1))
+            migration_ack["connection_id"] = int(request.get("connection_id", -1))
+            migration_ack["request_seq"] = int(request.get("request_seq", -1))
+            migration_ack["coalesced"] = false
+            _remember_gsp_tuning_result(migration_ack)
+            _gsp_tuning_completed.append(migration_ack)
+            continue
+        var conflicts_with_migration := false
+        for change_value in request.get("changes", []):
+            if typeof(change_value) == TYPE_DICTIONARY and migration_keys.has(String(change_value.get("parameter", ""))):
+                conflicts_with_migration = true
+                break
+        if conflicts_with_migration:
+            _commit_gsp_tuning_group(ordinary_group, public_physics_tick)
+            ordinary_group.clear()
+            deferred_group.append(request)
+        else:
+            ordinary_group.append(request)
+    _commit_gsp_tuning_group(ordinary_group, public_physics_tick)
+    _gsp_tuning_pending.append_array(deferred_group)
+
+
+func _commit_gsp_tuning_group(pending: Array[Dictionary], public_physics_tick: int) -> void:
+    if pending.is_empty():
+        return
+    var coalesced: Dictionary = {}
+    var provenance: Dictionary = {}
+    var ordered_keys: Array[String] = []
+    for request_index in pending.size():
+        var request: Dictionary = pending[request_index]
+        for change_value in request.get("changes", []):
+            var change: Dictionary = change_value
+            var key := String(change.get("parameter", ""))
+            if not coalesced.has(key):
+                ordered_keys.append(key)
+            coalesced[key] = {"parameter": key, "value": change.get("value", null)}
+            provenance[key] = {
+                "source": String(request.get("source", "panel")),
+                "request_seq": int(request.get("request_seq", -1)),
+                "quick_adjust_slot": int(request.get("quick_adjust_slot", -1)),
+                "request_id": request_index,
+            }
+    var changes: Array = []
+    for key in ordered_keys:
+        changes.append(coalesced[key])
+    var commit := _commit_gsp_tuning_batch(
+            -1, -1, -1, changes, public_physics_tick, false, "mixed", -1, provenance)
+    for request in pending:
+        var acknowledged := _gsp_tuning_request_ack(commit, request)
+        acknowledged["commit_request_seq"] = int(commit.get("request_seq", -1))
+        acknowledged["peer_id"] = int(request.get("peer_id", -1))
+        acknowledged["connection_id"] = int(request.get("connection_id", -1))
+        acknowledged["request_seq"] = int(request.get("request_seq", -1))
+        acknowledged["coalesced"] = pending.size() > 1
+        _remember_gsp_tuning_result(acknowledged)
+        _gsp_tuning_completed.append(acknowledged)
+
+
+func _commit_gsp_tuning_batch(peer_id: int, connection_id: int, request_seq: int, changes: Array, public_physics_tick: int, remember_result: bool = true, source: String = "panel", quick_adjust_slot: int = -1, provenance: Dictionary = {}) -> Dictionary:
+    var result: Dictionary = {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    _sync_native_external_authority()
+    if _gsp_external_authority_active():
+        result["ok"] = false
+        result["error"] = "external_authority"
+        result["authority"] = "px4"
+        if remember_result:
+            _remember_gsp_tuning_result(result)
+        return result
+    var timing_result := _gsp_tuning_timings(changes)
+    if not bool(timing_result.get("ok", false)):
+        result["ok"] = false
+        result["error"] = String(timing_result.get("error", "invalid_apply_timing"))
+        if remember_result:
+            _remember_gsp_tuning_result(result)
+        return result
+    var timing := String(timing_result.get("apply_timing", "unknown"))
+    if timing == "reset_required" or timing == "restart_required":
+        result["ok"] = false
+        result["error"] = timing
+        result["apply_timing"] = timing
+        if remember_result:
+            _remember_gsp_tuning_result(result)
+        return result
+    if native == null or not native.has_method("stage_flight_tuning_batch") or not native.has_method("commit_flight_tuning"):
+        result["ok"] = false
+        result["error"] = "tuning_unavailable"
+        if remember_result:
+            _remember_gsp_tuning_result(result)
+        return result
+    var preset_migration := false
+    var preset_keys: Dictionary = {}
+    for change_value in changes:
+        if typeof(change_value) != TYPE_DICTIONARY:
+            continue
+        var change: Dictionary = change_value
+        var key := String(change.get("parameter", ""))
+        var metadata: Dictionary = provenance.get(key, {})
+        if metadata.has("preset_original"):
+            preset_migration = true
+            preset_keys[key] = true
+            var descriptor: Dictionary = {}
+            for descriptor_value in _gsp_tuning_registry:
+                if String(descriptor_value.get("key", "")) == key:
+                    descriptor = descriptor_value
+                    break
+            var staged_value := float(change.get("value", NAN))
+            if descriptor.is_empty() or not metadata.has("requested_value") or not metadata.has("staged_value") or \
+                    not metadata.has("corrected_value") or metadata.get("staged_value") != metadata.get("corrected_value") or \
+                    staged_value != float(metadata.get("staged_value", NAN)) or not is_finite(staged_value) or \
+                    staged_value < float(descriptor.get("min", INF)) or staged_value > float(descriptor.get("max", -INF)) or \
+                    not is_finite(float(metadata.get("requested_value", NAN))):
+                result["ok"] = false
+                result["error"] = "migration_invariant"
+                if remember_result:
+                    _remember_gsp_tuning_result(result)
+                return result
+    if preset_migration and (preset_keys.size() != _gsp_tuning_registry.size() or not _gsp_preset_values_match_registry(_changes_to_values(changes), true) or provenance.size() != changes.size()):
+        result["ok"] = false
+        result["error"] = "migration_invariant"
+        if remember_result:
+            _remember_gsp_tuning_result(result)
+        return result
+    var staged_result: Dictionary = native.call("stage_flight_tuning_batch", changes)
+    if not bool(staged_result.get("ok", false)):
+        for key in staged_result:
+            result[key] = staged_result[key]
+        if remember_result:
+            _remember_gsp_tuning_result(result)
+        return result
+    var native_commit_started_usec := Time.get_ticks_usec()
+    var native_result: Dictionary = native.call("commit_flight_tuning", public_physics_tick)
+    var native_commit_finished_usec := Time.get_ticks_usec()
+    for key in native_result:
+        result[key] = native_result[key]
+    if bool(native_result.get("ok", false)):
+        result["native_commit_monotonic_usec"] = native_commit_finished_usec
+        result["native_commit_latency_ms"] = float(native_commit_finished_usec - native_commit_started_usec) / 1000.0
+        if _replay_recording_active and not _set_replay_physics_tick():
+            result["ok"] = false
+            result["error"] = "replay_recording_failed"
+            result["diagnostic_message"] = _replay_recording_failure
+            if remember_result:
+                _remember_gsp_tuning_result(result)
+            return result
+        result["apply_timing"] = _gsp_tuning_timings(changes).get("apply_timing", "unknown")
+        var winners: Array = []
+        var enriched_changes: Array = []
+        for change_value in native_result.get("changes", []):
+            var change: Dictionary = change_value.duplicate(true)
+            var parameter := String(change.get("parameter", ""))
+            var winner: Dictionary = provenance.get(parameter, {
+                "source": source,
+                "request_seq": request_seq,
+                "quick_adjust_slot": quick_adjust_slot,
+                "request_id": 0,
+            })
+            change["source"] = String(winner.get("source", source))
+            change["request_seq"] = int(winner.get("request_seq", request_seq))
+            if preset_migration:
+                var native_clamped := bool(change.get("clamped", false))
+                var clamp_reason: Array = winner.get("clamp_reason", [])
+                change["native_requested_value"] = change.get("requested_value", null)
+                change["native_clamped"] = native_clamped
+                change["native_clamp_reason"] = change.get("native_clamp_reason", "")
+                change["requested_value"] = winner.get("requested_value")
+                change["staged_value"] = winner.get("staged_value")
+                change["corrected_value"] = winner.get("corrected_value")
+                change["clamp_reason"] = clamp_reason.duplicate(true)
+                change["clamped"] = native_clamped or not clamp_reason.is_empty()
+            var winner_slot := int(winner.get("quick_adjust_slot", -1))
+            if winner_slot >= 0:
+                change["quick_adjust_slot"] = winner_slot
+            enriched_changes.append(change)
+            winners.append(winner)
+        var winner_sources: Array[String] = []
+        var common_slot := -1
+        var all_winners_have_one_slot := not winners.is_empty()
+        var winner_requests: Array[String] = []
+        for winner in winners:
+            var winner_source := String(winner.get("source", source))
+            if winner_source not in winner_sources:
+                winner_sources.append(winner_source)
+            var winner_slot := int(winner.get("quick_adjust_slot", -1))
+            if winner_slot < 0:
+                all_winners_have_one_slot = false
+            elif common_slot < 0:
+                common_slot = winner_slot
+            elif common_slot != winner_slot:
+                all_winners_have_one_slot = false
+            var winner_request_id := str(int(winner.get("request_id", 0)))
+            if winner_request_id not in winner_requests:
+                winner_requests.append(winner_request_id)
+        result["changes"] = enriched_changes
+        if preset_migration and not enriched_changes.is_empty():
+            var committed_keys: Dictionary = {}
+            for change_value in enriched_changes:
+                var committed_change: Dictionary = change_value
+                var committed_key := String(committed_change.get("parameter", ""))
+                committed_keys[committed_key] = true
+                if not preset_keys.has(committed_key) or not native_result.get("committed_values", {}).has(committed_key) or \
+                        float(native_result.committed_values[committed_key]) != float(provenance[committed_key].get("staged_value", NAN)):
+                    result["ok"] = false
+                    result["error"] = "migration_invariant"
+                    if remember_result:
+                        _remember_gsp_tuning_result(result)
+                    return result
+            if committed_keys != preset_keys:
+                result["ok"] = false
+                result["error"] = "migration_invariant"
+                if remember_result:
+                    _remember_gsp_tuning_result(result)
+                return result
+            var first_preset_change: Dictionary = enriched_changes[0]
+            for field in ["requested_value", "staged_value", "corrected_value", "clamp_reason", "native_clamped", "native_clamp_reason", "clamped"]:
+                if first_preset_change.has(field):
+                    result[field] = first_preset_change[field]
+        result["source"] = winner_sources[0] if winner_sources.size() == 1 else "mixed"
+        if all_winners_have_one_slot and common_slot >= 0:
+            result["quick_adjust_slot"] = common_slot
+        if winner_requests.size() == 1 and winners.size() > 0:
+            result["request_seq"] = int(winners[0].get("request_seq", request_seq))
+        else:
+            result.erase("request_seq")
+        if bool(native_result.get("changed", false)) and _replay_recording_active and native.has_method("record_replay_tuning"):
+            for change_value in enriched_changes:
+                var change: Dictionary = change_value
+                var replay_timestamp_us := _replay_timestamp_us()
+                var replay_result: Dictionary = native.call(
+                        "record_replay_tuning",
+                        replay_timestamp_us,
+                        _airsim_vehicle_name,
+                        int(change.get("request_seq", request_seq)),
+                        int(native_result.get("commit_id", 0)),
+                        String(change.get("parameter", "")),
+                        float(change.get("requested_value", 0.0)),
+                        float(change.get("committed_value", 0.0)),
+                        bool(change.get("clamped", false)),
+                        String(change.get("source", source)),
+                        int(change.get("quick_adjust_slot", -1)))
+                if not bool(replay_result.get("ok", false)):
+                    _fail_replay_recording(String(replay_result.get("diagnostic_message", "tuning recording failed")))
+                    result["ok"] = false
+                    result["error"] = "replay_recording_failed"
+                    result["diagnostic_message"] = _replay_recording_failure
+                    if remember_result:
+                        _remember_gsp_tuning_result(result)
+                    return result
+        if source == "quick_adjust" and bool(native_result.get("changed", false)):
+            _quick_adjust_active_slot = quick_adjust_slot
+            _quick_adjust_last_value = float(native_result.get("committed_value", _quick_adjust_last_value))
+    var acknowledged := _gsp_tuning_request_ack(result, {"changes": changes})
+    if remember_result:
+        _remember_gsp_tuning_result(acknowledged)
+    return acknowledged
+
+
+func _gsp_tuning_timings(changes: Array) -> Dictionary:
+    if changes.is_empty():
+        return {"ok": false, "error": "empty_tuning_batch"}
+    var timings: Array[String] = []
+    for change_value in changes:
+        if typeof(change_value) != TYPE_DICTIONARY:
+            return {"ok": false, "error": "malformed_tuning_batch"}
+        var change: Dictionary = change_value
+        var parameter := String(change.get("parameter", ""))
+        var timing := _gsp_tuning_descriptor_timing(parameter)
+        if timing == "unknown":
+            return {"ok": false, "error": "unknown_parameter"}
+        if timing not in timings:
+            timings.append(timing)
+    if timings.size() != 1:
+        return {"ok": false, "error": "mixed_apply_timing"}
+    var timing := timings[0]
+    if timing not in ["immediate", "next_physics_step", "reset_required", "restart_required"]:
+        return {"ok": false, "error": "invalid_apply_timing"}
+    return {"ok": true, "apply_timing": timing}
+
+
+func _gsp_tuning_request_ack(commit: Dictionary, request: Dictionary) -> Dictionary:
+    var acknowledged := commit.duplicate(true)
+    var requested_values: Dictionary = {}
+    var keys: Array[String] = []
+    for change_value in request.get("changes", []):
+        if typeof(change_value) != TYPE_DICTIONARY:
+            continue
+        var change: Dictionary = change_value
+        var key := String(change.get("parameter", ""))
+        if key not in keys:
+            keys.append(key)
+        requested_values[key] = change.get("value", null)
+    var committed_values: Dictionary = commit.get("committed_values", commit.get("values", {}))
+    var request_changes: Array = []
+    for key in keys:
+        if not committed_values.has(key):
+            continue
+        var committed_change: Dictionary = {}
+        for change_value in commit.get("changes", []):
+            if typeof(change_value) == TYPE_DICTIONARY and String(change_value.get("parameter", "")) == key:
+                committed_change = change_value.duplicate(true)
+                break
+        if committed_change.is_empty():
+            committed_change = {"parameter": key, "committed_value": committed_values[key], "changed": true}
+        if requested_values.has(key) and (not committed_change.has("staged_value") or not committed_change.has("requested_value")):
+            committed_change["requested_value"] = requested_values[key]
+        request_changes.append(committed_change)
+    var request_values: Dictionary = {}
+    for key in keys:
+        if committed_values.has(key):
+            request_values[key] = committed_values[key]
+    acknowledged["changes"] = request_changes
+    acknowledged["values"] = request_values
+    acknowledged["committed_values"] = request_values
+    acknowledged["commit_changes"] = commit.get("changes", []).duplicate(true)
+    acknowledged["commit_values"] = committed_values.duplicate(true)
+    var changed := false
+    for change_value in request_changes:
+        changed = changed or bool(change_value.get("changed", true))
+    acknowledged["changed"] = changed
+    if request_changes.size() == 1:
+        var scalar: Dictionary = request_changes[0]
+        for key in ["parameter", "requested_value", "staged_value", "corrected_value", "clamp_reason", "native_clamped", "native_clamp_reason", "committed_value", "clamped"]:
+            if scalar.has(key):
+                acknowledged[key] = scalar[key]
+    else:
+        for key in ["parameter", "requested_value", "staged_value", "corrected_value", "clamp_reason", "native_clamped", "native_clamp_reason", "committed_value", "clamped"]:
+            acknowledged.erase(key)
+    return acknowledged
+
+
+func _gsp_tuning_descriptor_timing(parameter: String) -> String:
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        if String(descriptor.get("key", "")) == parameter:
+            return String(descriptor.get("apply_timing", "unknown"))
+    return "unknown"
+
+
+func _gsp_active_tuning_values() -> Dictionary:
+    var active: Dictionary = native.call("flight_tuning_configuration") if native != null and native.has_method("flight_tuning_configuration") else {}
+    var values: Dictionary = {}
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        if active.has(key):
+            values[key] = float(active[key])
+    return values
+
+
+func gsp_list_presets() -> Dictionary:
+    return GspPresetStore.new().list_presets()
+
+
+func gsp_save_preset(name: String, note: String = "") -> Dictionary:
+    var values := _gsp_active_tuning_values()
+    if not _gsp_preset_values_match_registry(values):
+        return {"ok": false, "error": "tuning_unavailable"}
+    var sim_version := String(ProjectSettings.get_setting("application/config/version", "")).strip_edges()
+    if sim_version.is_empty():
+        sim_version = "unavailable"
+    return GspPresetStore.new().save_preset(
+            name,
+            values,
+            _gsp_tuning_registry_hash,
+            sim_version,
+            note)
+
+
+func gsp_retrieve_preset(name: String) -> Dictionary:
+    return GspPresetStore.new().retrieve_preset(name)
+
+
+func gsp_compare_presets(left_name: String, right_name: String) -> Dictionary:
+    var store := GspPresetStore.new()
+    var left_values := _gsp_active_tuning_values() if left_name.is_empty() else {}
+    if not left_name.is_empty():
+        var left_result: Dictionary = store.retrieve_preset(left_name)
+        if not bool(left_result.get("ok", false)):
+            return left_result
+        var left_preset: Dictionary = left_result.preset
+        if String(left_preset.get("registry_hash", "")) != _gsp_tuning_registry_hash:
+            return {"ok": false, "error": "registry_mismatch"}
+        if not _gsp_preset_values_match_registry(left_preset.get("values", {})):
+            return {"ok": false, "error": "registry_values_mismatch"}
+        left_values = left_preset.values
+    var right_values := _gsp_active_tuning_values() if right_name.is_empty() else {}
+    if not right_name.is_empty():
+        var right_result: Dictionary = store.retrieve_preset(right_name)
+        if not bool(right_result.get("ok", false)):
+            return right_result
+        var right_preset: Dictionary = right_result.preset
+        if String(right_preset.get("registry_hash", "")) != _gsp_tuning_registry_hash:
+            return {"ok": false, "error": "registry_mismatch"}
+        if not _gsp_preset_values_match_registry(right_preset.get("values", {})):
+            return {"ok": false, "error": "registry_values_mismatch"}
+        right_values = right_preset.values
+    return {
+        "ok": true,
+        "left": left_name if not left_name.is_empty() else "current",
+        "right": right_name if not right_name.is_empty() else "current",
+        "changes": GspPresetStore.diff_values(left_values, right_values),
+    }
+
+
+func gsp_load_preset(peer_id: int, connection_id: int, request_seq: int, name: String) -> Dictionary:
+    var loaded: Dictionary = gsp_retrieve_preset(name)
+    if not bool(loaded.get("ok", false)):
+        loaded["peer_id"] = peer_id
+        loaded["connection_id"] = connection_id
+        loaded["request_seq"] = request_seq
+        return loaded
+    var preset: Dictionary = loaded.preset
+    if String(preset.get("registry_hash", "")) != _gsp_tuning_registry_hash:
+        return {"ok": false, "error": "registry_mismatch", "peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    if not _gsp_preset_values_match_registry(preset.get("values", {})):
+        return {"ok": false, "error": "registry_values_mismatch", "peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    var changes: Array = []
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        if preset.values.has(key):
+            changes.append({"parameter": key, "value": preset.values[key]})
+    return gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset", -1)
+
+
+func gsp_preview_preset_migration(name: String) -> Dictionary:
+    var loaded: Dictionary = gsp_retrieve_preset(name)
+    if not bool(loaded.get("ok", false)):
+        return loaded
+    var preset: Dictionary = loaded.preset
+    var classification := GspPresetStore.classify_migration(preset.get("values", {}), _gsp_tuning_registry)
+    if not bool(classification.get("ok", false)):
+        return classification
+    _prune_gsp_migration_capabilities()
+    var migration_id := _new_gsp_migration_id()
+    _gsp_migration_capabilities.append({
+        "id": migration_id,
+        "name": name,
+        "content_hash": String(loaded.get("content_hash", "")),
+        "registry_hash": _gsp_tuning_registry_hash,
+        "values": classification.values.duplicate(true),
+        "corrections": classification.corrections.duplicate(true),
+        "created_at_ms": Time.get_ticks_msec(),
+        "expires_at_ms": Time.get_ticks_msec() + GSP_MIGRATION_CAPABILITY_TTL_MS,
+    })
+    while _gsp_migration_capabilities.size() > GSP_MIGRATION_CAPABILITY_LIMIT:
+        _gsp_expired_migration_ids.append(String(_gsp_migration_capabilities.pop_front().id))
+        _trim_gsp_migration_id_history(_gsp_expired_migration_ids)
+    classification.erase("values")
+    classification.erase("requested_values")
+    classification["ok"] = true
+    classification["operation"] = "preview_preset_migration"
+    classification["preset_name"] = name
+    classification["preset_registry_hash"] = String(preset.get("registry_hash", ""))
+    classification["registry_mismatch"] = String(preset.get("registry_hash", "")) != _gsp_tuning_registry_hash
+    classification["registry_hash"] = _gsp_tuning_registry_hash
+    classification["migration_id"] = migration_id
+    classification["expires_in_ms"] = GSP_MIGRATION_CAPABILITY_TTL_MS
+    return classification
+
+
+func gsp_apply_preset_migration(peer_id: int, connection_id: int, request_seq: int, name: String, migration_id: String, confirmed: bool) -> Dictionary:
+    var invalid_context := {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    if not confirmed:
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_confirmation_required"
+        return invalid_context
+    if migration_id.is_empty():
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_missing"
+        return invalid_context
+    if migration_id in _gsp_used_migration_ids:
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_reused"
+        return invalid_context
+    _prune_gsp_migration_capabilities()
+    var capability_index := -1
+    for index in _gsp_migration_capabilities.size():
+        if String(_gsp_migration_capabilities[index].get("id", "")) == migration_id:
+            capability_index = index
+            break
+    if capability_index < 0:
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_expired" if migration_id in _gsp_expired_migration_ids else "migration_wrong"
+        return invalid_context
+    var capability: Dictionary = _gsp_migration_capabilities[capability_index]
+    if String(capability.get("name", "")) != name or String(capability.get("registry_hash", "")) != _gsp_tuning_registry_hash:
+        _gsp_migration_capabilities.remove_at(capability_index)
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_stale"
+        return invalid_context
+    var loaded: Dictionary = gsp_retrieve_preset(name)
+    if not bool(loaded.get("ok", false)) or String(loaded.get("content_hash", "")) != String(capability.get("content_hash", "")):
+        _gsp_migration_capabilities.remove_at(capability_index)
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_stale"
+        return invalid_context
+    var classification := GspPresetStore.classify_migration(loaded.preset.get("values", {}), _gsp_tuning_registry)
+    if not bool(classification.get("ok", false)) or classification.get("values", {}) != capability.get("values", {}) or \
+            classification.get("corrections", {}) != capability.get("corrections", {}) or \
+            not _gsp_preset_values_match_registry(capability.get("values", {}), true):
+        _gsp_migration_capabilities.remove_at(capability_index)
+        _gsp_used_migration_ids.append(migration_id)
+        _trim_gsp_migration_id_history(_gsp_used_migration_ids)
+        invalid_context["ok"] = false
+        invalid_context["error"] = "migration_stale"
+        return invalid_context
+    _gsp_migration_capabilities.remove_at(capability_index)
+    _gsp_used_migration_ids.append(migration_id)
+    _trim_gsp_migration_id_history(_gsp_used_migration_ids)
+    var changes: Array = []
+    var provenance: Dictionary = {}
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        var effective_value := float(capability.values[key])
+        var correction: Dictionary = capability.corrections[key]
+        changes.append({"parameter": key, "value": effective_value})
+        provenance[key] = {
+            "source": "preset",
+            "request_seq": request_seq,
+            "quick_adjust_slot": -1,
+            "request_id": 0,
+            "preset_original": true,
+            "requested_value": float(correction.requested_value),
+            "staged_value": effective_value,
+            "corrected_value": effective_value,
+            "clamp_reason": correction.get("clamp_reason", []).duplicate(true),
+        }
+    var result := gsp_tuning_batch_request(peer_id, connection_id, request_seq, changes, "preset", -1, true, provenance)
+    result["source"] = "preset"
+    return result
+
+
+func _new_gsp_migration_id() -> String:
+    var crypto := Crypto.new()
+    var migration_id := crypto.generate_random_bytes(32).hex_encode()
+    while migration_id in _gsp_used_migration_ids:
+        migration_id = crypto.generate_random_bytes(32).hex_encode()
+    return migration_id
+
+
+func _prune_gsp_migration_capabilities() -> void:
+    var now_ms := Time.get_ticks_msec()
+    for capability in _gsp_migration_capabilities.duplicate():
+        if now_ms >= int(capability.get("expires_at_ms", 0)):
+            _gsp_migration_capabilities.erase(capability)
+            _gsp_expired_migration_ids.append(String(capability.get("id", "")))
+    _trim_gsp_migration_id_history(_gsp_expired_migration_ids)
+
+
+func _trim_gsp_migration_id_history(history: Array[String]) -> void:
+    while history.size() > GSP_MIGRATION_CAPABILITY_LIMIT:
+        history.pop_front()
+
+
+func _gsp_preset_values_match_registry(values: Variant, require_bounds: bool = false) -> bool:
+    if typeof(values) != TYPE_DICTIONARY or values.size() != _gsp_tuning_registry.size():
+        return false
+    var registry_keys := {}
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        if key.is_empty() or registry_keys.has(key) or not values.has(key):
+            return false
+        registry_keys[key] = true
+    for key in values.keys():
+        if typeof(key) != TYPE_STRING or not registry_keys.has(String(key)):
+            return false
+        if require_bounds:
+            var value := float(values[key])
+            var descriptor: Dictionary = {}
+            for descriptor_value in _gsp_tuning_registry:
+                if String(descriptor_value.get("key", "")) == String(key):
+                    descriptor = descriptor_value
+                    break
+            if descriptor.is_empty() or not is_finite(value) or value < float(descriptor.get("min", INF)) or value > float(descriptor.get("max", -INF)):
+                return false
+    return true
+
+
+func _changes_to_values(changes: Array) -> Dictionary:
+    var values: Dictionary = {}
+    for change_value in changes:
+        if typeof(change_value) == TYPE_DICTIONARY:
+            var change: Dictionary = change_value
+            values[String(change.get("parameter", ""))] = change.get("value", null)
+    return values
+
+
+func gsp_preset_request(peer_id: int, connection_id: int, request_seq: int, operation: String, data: Dictionary) -> Dictionary:
+    match operation:
+        "list_presets":
+            return gsp_list_presets()
+        "save_preset":
+            var saved: Dictionary = gsp_save_preset(String(data.get("name", "")), String(data.get("note", "")))
+            if bool(saved.get("ok", false)):
+                saved["presets"] = gsp_list_presets().get("presets", [])
+            return saved
+        "retrieve_preset":
+            return gsp_retrieve_preset(String(data.get("name", "")))
+        "load_preset":
+            return gsp_load_preset(peer_id, connection_id, request_seq, String(data.get("name", "")))
+        "preview_preset_migration":
+            return gsp_preview_preset_migration(String(data.get("name", "")))
+        "apply_preset_migration":
+            return gsp_apply_preset_migration(peer_id, connection_id, request_seq, String(data.get("name", "")),
+                    String(data.get("migration_id", "")), bool(data.get("confirmed", false)))
+        "compare_presets":
+            return gsp_compare_presets(String(data.get("left", "")), String(data.get("right", "")))
+    return {"ok": false, "error": "unsupported_preset_operation"}
+
+
+func gsp_validate_all() -> Dictionary:
+    var active: Dictionary = native.call("flight_tuning_configuration") if native != null and native.has_method("flight_tuning_configuration") else {}
+    var mismatches: Array[Dictionary] = []
+    for descriptor_value in _gsp_tuning_registry:
+        var descriptor: Dictionary = descriptor_value
+        var key := String(descriptor.get("key", ""))
+        if not active.has(key):
+            mismatches.append({"key": key, "error": "active_memory_missing"})
+            continue
+        var value := float(active[key])
+        if not is_finite(value) or value < float(descriptor.get("min", -INF)) or value > float(descriptor.get("max", INF)):
+            mismatches.append({"key": key, "error": "active_memory_out_of_range", "value": value})
+    return {"ok": mismatches.is_empty(), "mismatches": mismatches, "registry_hash": _gsp_tuning_registry_hash}
+
+
+func _remember_gsp_tuning_result(result: Dictionary) -> void:
+    var recent := result.duplicate(true)
+    recent.erase("peer_id")
+    _gsp_tuning_recent_results.append(recent)
+    if _gsp_tuning_recent_results.size() > 16:
+        _gsp_tuning_recent_results.pop_front()
+
+
+func _gsp_external_authority_active() -> bool:
+    return px4_sitl_bridge != null and px4_sitl_bridge.is_authority_active()
+
+
+func _sync_native_external_authority() -> void:
+    var external_authority_active := _gsp_external_authority_active()
+    if native != null and native.has_method("set_external_authority_active") and _native_external_authority_state != external_authority_active:
+        native.call("set_external_authority_active", external_authority_active)
+        _native_external_authority_state = external_authority_active
+
+
+func _gsp_public_physics_tick() -> int:
+    return airsim_session.frame_index if airsim_session != null else 0
+
+
+func gsp_identity_snapshot() -> Dictionary:
+    var telemetry: Dictionary = native.call("telemetry_snapshot") if native != null and native.has_method("telemetry_snapshot") else {}
+    var registry_parameters: Array = _gsp_tuning_registry.duplicate(true)
+    var active_tuning: Dictionary = native.call("flight_tuning_configuration") if native != null and native.has_method("flight_tuning_configuration") else {}
+    for descriptor_value in registry_parameters:
+        var descriptor: Dictionary = descriptor_value
+        if active_tuning.has(String(descriptor.get("key", ""))):
+            descriptor["active_value"] = active_tuning[String(descriptor.get("key", ""))]
+    var preset_listing: Dictionary = gsp_list_presets()
+    return {
+        "sim_version": String(ProjectSettings.get_setting("application/config/version", "unavailable")),
+        "proto_v": 2,
+        "physics_hz": Engine.physics_ticks_per_second,
+        "pid": OS.get_process_id(),
+        "instance_name": _airsim_vehicle_name,
+        "vehicle_instance": _airsim_vehicle_name,
+        "authority": String(telemetry.get("control_authority", "unavailable")),
+        "registry": {
+            "vehicle_instances": _airsim_vehicle_names.duplicate(),
+            "parameters": registry_parameters,
+            "tuning": active_tuning,
+            "tuning_recent_results": _gsp_tuning_recent_results.duplicate(true),
+            "quick_adjust": _quick_adjust_profile.duplicate(true),
+            "presets": preset_listing.get("presets", []),
+        },
+        "registry_hash": _gsp_tuning_registry_hash,
+        "tick": airsim_session.frame_index if airsim_session != null else 0,
+    }
+
+
+func gsp_telemetry_snapshot() -> Dictionary:
+    if native == null or not native.has_method("telemetry_snapshot"):
+        return {}
+    var snapshot: Dictionary = native.call("telemetry_snapshot")
+    var publish_count := int(snapshot.get("publish_count", -1))
+    if publish_count == _gsp_telemetry_publish_count and not _gsp_telemetry_cache.is_empty():
+        return _gsp_telemetry_cache.duplicate(true)
+    var position: Vector3 = drone_body.global_position if drone_body != null else _spawn_position()
+    var orientation: Quaternion = drone_body.global_transform.basis.get_rotation_quaternion() if drone_body != null else Quaternion.IDENTITY
+    var velocity: Vector3 = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
+    var angular_velocity: Vector3 = _jolt_angular_velocity_body_y_up(drone_body) if drone_body != null else Vector3.ZERO
+    var position_ned: Vector3 = AirSimCoordinateContract.godot_world_to_ned(position, _spawn_position())
+    var velocity_ned: Vector3 = AirSimCoordinateContract.godot_direction_to_ned(velocity)
+    var attitude_ned: Quaternion = AirSimCoordinateContract.godot_orientation_to_ned(orientation)
+    var rates_frd: Vector3 = AirSimCoordinateContract.godot_body_to_frd(angular_velocity)
+    var tick: int = airsim_session.frame_index if airsim_session != null else 0
+    var position_payload := _airsim_vector3(position_ned)
+    var velocity_payload := _airsim_vector3(velocity_ned)
+    var rates_payload := _airsim_vector3(rates_frd)
+    snapshot["pos_ned"] = position_payload
+    snapshot["vel_ned"] = velocity_payload
+    snapshot["att_euler_deg"] = AirSimCoordinateContract.ned_orientation_to_zyx_euler_degrees(attitude_ned)
+    snapshot["gyro_body"] = rates_payload
+    var rpm: Array[float] = []
+    for motor_value in snapshot.get("motors", []):
+        var motor: Dictionary = motor_value
+        rpm.append(float(motor.get("speed_rad_s", 0.0)) * 60.0 / TAU)
+    snapshot["rpm"] = rpm
+    snapshot["vehicle_instance"] = _airsim_vehicle_name
+    snapshot["authority"] = String(snapshot.get("control_authority", "unavailable"))
+    snapshot["registry_hash"] = _gsp_tuning_registry_hash
+    snapshot["tuning"] = native.call("flight_tuning_configuration") if native != null and native.has_method("flight_tuning_configuration") else {}
+    snapshot["tick"] = tick
+    _gsp_telemetry_publish_count = publish_count
+    _gsp_telemetry_cache = snapshot.duplicate(true)
+    return _gsp_telemetry_cache.duplicate(true)
+
 func _update_status_diagram() -> void:
     if status_diagram == null or native == null or not native.has_method("telemetry_snapshot"):
         return
@@ -4875,6 +5998,7 @@ func _refresh_flight_hud() -> void:
     if player_view_label != null:
         player_view_label.visible = loaded_map != null and screen in ["preflight", "flight", "finish"]
         player_view_label.text = _t("ui.view.third_person" if third_person_view else "ui.view.fpv")
+    _refresh_quick_adjust_hud()
     _refresh_rates_panel()
     _refresh_graphics_panel()
     arm_takeoff_button.disabled = screen in ["main_menu", "license_blocked"] or (controller_safety_latched and screen != "fallback_prompt")
@@ -4937,6 +6061,17 @@ func _refresh_motor_hud() -> void:
         motor_hud = status_diagram.call("get_motor_hud_state", paused, last_error_message if screen == "error" else "", motor_hud_spin_directions)
     if motor_hud_rotor_panel != null and motor_hud_rotor_panel.has_method("set_motor_hud"):
         motor_hud_rotor_panel.call("set_motor_hud", motor_hud)
+
+
+func _refresh_quick_adjust_hud() -> void:
+    if quick_adjust_status_label == null:
+        return
+    quick_adjust_status_label.visible = screen == "flight"
+    if _quick_adjust_active_slot >= 0 and _quick_adjust_active_slot < _quick_adjust_profile.slots.size() and _quick_adjust_profile.slots[_quick_adjust_active_slot] != null:
+        var quick_slot: Dictionary = _quick_adjust_profile.slots[_quick_adjust_active_slot]
+        quick_adjust_status_label.text = _format("ui.hud.quick_adjust_active", [_quick_adjust_active_slot + 1, String(quick_slot.parameter), _quick_adjust_last_value])
+    else:
+        quick_adjust_status_label.text = _t("ui.hud.quick_adjust_none")
 
 func _refresh_gamepad_hud() -> void:
     if gamepad_hud_panel == null or gamepad_hud_display == null:

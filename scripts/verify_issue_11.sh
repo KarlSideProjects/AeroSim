@@ -12,6 +12,10 @@ godot_cpp_dir="${GODOT_CPP_DIR:-$repo_root/third_party/godot-cpp}"
 
 scripts/test_native.sh
 scripts/test_license_scan.sh
+node tests/test_gsp_panel_behavior.js
+node tests/test_gsp_panel_recovery.js
+GODOT_BIN="${GODOT_BIN:-godot}" python3 scripts/test_gsp_transport_boundary.py
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_backpressure_contract.gd
 
 if ! command -v scons >/dev/null 2>&1; then
     python3 -m venv "$tool_root/scons-venv"
@@ -61,6 +65,12 @@ export AEROSIM_NATIVE_PROVENANCE="$native_provenance"
 scripts/test_terrain3d_dependency.sh
 scripts/run_gut_tests.sh
 scripts/test_native_atomic_boundary.sh
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_preset_contract.gd
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_preset_integration.gd
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_tuning_integration.gd
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_replay_integration.gd
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/quick_adjust_integration.gd
+"${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_tuning_stress.gd
 scripts/run_headed_acceptance.sh --xvfb
 scripts/test_replay_integration.sh
 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5

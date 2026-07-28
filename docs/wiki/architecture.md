@@ -12,8 +12,10 @@ sources:
   - common/rpc/airsim_coordinate_contract.gd
   - common/rpc/airsim_session.gd
   - common/rpc/airsim_sensor_suite.gd
+  - common/gsp/gsp_launcher.gd
+  - common/gsp/gsp_panel.html
   - docs/dataset_recording.md
-last_verified: 2026-07-26
+last_verified: 2026-07-27
 ---
 
 # AeroSim 運行時架構
@@ -33,6 +35,8 @@ flowchart TD
     Runtime --> AirSim[AirSim msgpack RPC\nLab Mode]
     Runtime --> PX4[PX4 MAVLink / HIL bridge]
     Runtime --> Dataset[Dataset Recording]
+    Runtime -. explicit --aerosim-gsp .-> GSP[Ground Station Panel\nindependent local file client]
+    GSP -. later loopback channel .-> Runtime
     PX4 --> Native
     Runtime --> Evidence[headless smoke / GUT]
     Core --> Evidence
@@ -47,6 +51,16 @@ flowchart TD
 | AeroSimNative | simulation integration、flight controller、aerodynamics、IMU、collision authority handoff、telemetry、replay。 | Godot scene graph 與 UI。 |
 | HardwareConfig + drone JSON | 機體物理與硬體參數的來源與驗證。 | 任意 runtime hard-coded airframe constants。 |
 | AirSim / PX4 adapters | 把 external command、sensor payload、actuator output 轉進同一 runtime/vehicle context。 | 繞過 public coordinate contract 直接操作 Godot axes。 |
+| Ground Station Panel (GSP) | 明確啟用後，以獨立 dependency-free `file://` panel 補充開發調參與後續 telemetry/replay 工作。 | 不取代 Godot 內的 Operations Dashboard，也不在未啟用時啟動。 |
+
+### GSP 與 Operations Dashboard 的邊界
+
+Operations Dashboard 是 Godot 內的 operator-facing UI：它跟著 Player/Lab Mode、同一個
+simulation session 與 native authority，負責 vehicle、telemetry、sensor、recording 與
+environment 的狀態操作。GSP 是 development-only 的第二個 native Wayland client，供 paused、
+post-flight 或 second-screen tuning 使用；它由 `--aerosim-gsp` 明確啟用，啟用時才安裝並
+開啟 `common/gsp/gsp_panel.html` 的本機副本。GSP 不建立第二份 simulation、telemetry、
+coordinate 或 replay authority。
 
 ## 四個重要時序
 

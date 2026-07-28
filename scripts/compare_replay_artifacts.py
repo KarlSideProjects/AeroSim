@@ -32,22 +32,22 @@ def main():
 
     reference = load(pathlib.Path(sys.argv[1]))
     actual = load(pathlib.Path(sys.argv[2]))
-    if reference.get("schema_version") != 3 or actual.get("schema_version") != 3:
-        print("replay artifact schema_version must be 3", file=sys.stderr)
+    if reference.get("schema_version") != 4 or actual.get("schema_version") != 4:
+        print("replay artifact schema_version must be 4", file=sys.stderr)
         return 1
     checkpoints = reference.get("checkpoints")
     actual_checkpoints = actual.get("checkpoints")
     if not isinstance(checkpoints, list) or len(checkpoints) != 1 or checkpoints != actual_checkpoints:
-        print("schema-v3 replay checkpoint diverged", file=sys.stderr)
+        print("schema-v4 replay checkpoint diverged", file=sys.stderr)
         return 1
     checkpoint = checkpoints[0]
     if len(checkpoint.get("controllers", [])) != 2 or len(checkpoint.get("clocks", [])) != 2 or \
             len(checkpoint.get("first_response_substeps", [])) != 2:
-        print("schema-v3 replay checkpoint is incomplete", file=sys.stderr)
+        print("schema-v4 replay checkpoint is incomplete", file=sys.stderr)
         return 1
     response = checkpoint["first_response_substeps"][0]
     if response.get("substeps", 0) <= 0 or not any(response.get("state", {}).get("propwash", [])):
-        print("schema-v3 replay first response lacks a real propwash substep", file=sys.stderr)
+        print("schema-v4 replay first response lacks a real propwash substep", file=sys.stderr)
         return 1
     reference_bits = reference.get("ieee754_bits")
     actual_bits = actual.get("ieee754_bits")
@@ -63,7 +63,7 @@ def main():
            for field in required_bits) or reference_bits["vehicle[0].controller.target_angle.z"] != "8000000000000000":
         print("IEEE-754 replay bit manifest is incomplete", file=sys.stderr)
         return 1
-    print("schema-v3 replay checkpoint passed")
+    print("schema-v4 replay checkpoint passed")
     return 0
 
 

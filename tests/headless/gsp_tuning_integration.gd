@@ -1,0 +1,640 @@
+extends SceneTree
+
+const AirSimSession = preload("res://common/rpc/airsim_session.gd")
+const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
+const GspServer = preload("res://common/gsp/gsp_server.gd")
+const HardwareConfig = preload("res://common/flight/hardware_config.gd")
+const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
+
+var _runtime: FlightRuntime
+var _server: GspServer
+var _client := WebSocketPeer.new()
+var _failures: Array[String] = []
+
+
+func _init() -> void:
+    _run()
+
+
+func _run() -> void:
+    _runtime = FlightRuntime.new()
+    _runtime.native = ClassDB.instantiate("AeroSimNative")
+    _runtime.airsim_session = AirSimSession.new(240)
+    _runtime._airsim_vehicle_names = ["DroneA", "DroneB"]
+    _runtime._airsim_vehicle_name = "DroneA"
+    var hardware := HardwareConfig.new()
+    _runtime._gsp_tuning_registry = hardware.tuning_registry()
+    _runtime._gsp_tuning_registry_hash = hardware.tuning_registry_hash()
+    _expect(_runtime.native != null, "runtime uses the registered native controller")
+    if _runtime.native == null:
+        _finish()
+        return
+    var initialized: Dictionary = _runtime.native.call(
+            "initialize_flight_tuning", "simpleflight.rate_p", 0.6)
+    _expect(bool(initialized.get("ok", false)) and int(initialized.get("commit_id", -1)) == 0,
+            "native defaults initialize without a tuning commit")
+    var initialized_state: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var second_initialization: Dictionary = _runtime.native.call(
+            "initialize_flight_tuning", "simpleflight.rate_p", 0.7)
+    var second_initialization_state: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(String(second_initialization.get("error", "")) == "tuning_already_initialized" and
+            second_initialization_state.get("simpleflight.rate_p", 0.0) == initialized_state.get("simpleflight.rate_p", -1.0) and
+            int(second_initialization_state.get("commit_id", -1)) == int(initialized_state.get("commit_id", -2)) and
+            int(second_initialization_state.get("commit_tick", -1)) == int(initialized_state.get("commit_tick", -2)),
+            "native tuning initialization is persistent and one-shot")
+    _expect(hardware.apply_to_runtime(_runtime, "res://config/drones/5_inch_6s.json"),
+            "integration runtime applies the canonical hardware preset")
+    var native_contract: Dictionary = _runtime.native.call("flight_tuning_contract")
+    var descriptor: Dictionary = _runtime._gsp_tuning_registry[0]
+    for key in ["key", "type", "default", "min", "max", "step"]:
+        _expect(native_contract.get(key) == descriptor.get(key), "schema/native tuning contract agrees on %s" % key)
+
+    var batch_native = ClassDB.instantiate("AeroSimNative")
+    var batch_defaults: Array = []
+    for item_value in _runtime._gsp_tuning_registry:
+        var item: Dictionary = item_value
+        batch_defaults.append({"parameter": item.key, "value": item.default})
+    var batch_init: Dictionary = batch_native.call("initialize_flight_tuning_batch", batch_defaults)
+    _expect(bool(batch_init.get("ok", false)), "native initializes the complete tuning registry atomically")
+    var batch_before: Dictionary = batch_native.call("flight_tuning_configuration")
+    var invalid_batch: Dictionary = batch_native.call("stage_flight_tuning_batch", [
+        {"parameter": "simpleflight.rate_p", "value": 1.1},
+        {"parameter": "disconnected.descriptor", "value": 1.0},
+    ])
+    var batch_after_invalid: Dictionary = batch_native.call("flight_tuning_configuration")
+    _expect(String(invalid_batch.get("error", "")) == "unknown_parameter" and
+            batch_after_invalid.get("simpleflight.rate_p", -1.0) == batch_before.get("simpleflight.rate_p", -2.0) and
+            int(batch_after_invalid.get("commit_id", -1)) == int(batch_before.get("commit_id", -2)),
+            "invalid batch member leaves every active value unchanged")
+    _expect(bool(batch_native.call("stage_flight_tuning_batch", [
+        {"parameter": "simpleflight.rate_p", "value": 1.1},
+        {"parameter": "simpleflight.rate_i", "value": 0.031},
+        {"parameter": "simpleflight.rate_p", "value": 1.2},
+    ]).get("ok", false)), "valid batch coalesces repeated keys before commit")
+    var batch_commit: Dictionary = batch_native.call("commit_flight_tuning", 7)
+    var batch_values: Dictionary = batch_native.call("flight_tuning_configuration")
+    _expect(bool(batch_commit.get("changed", false)) and int(batch_commit.get("commit_id", -1)) == 1 and
+            float(batch_values.get("simpleflight.rate_p", 0.0)) == 1.2 and
+            float(batch_values.get("simpleflight.rate_i", 0.0)) == 0.031 and
+            int(batch_values.get("commit_tick", -1)) == 7,
+            "one native batch swaps all final values under one commit identity")
+
+    _server = GspServer.new()
+    root.add_child(_server)
+    _server.set_identity_provider(Callable(_runtime, "gsp_identity_snapshot"))
+    _server.set_tuning_request_provider(Callable(_runtime, "gsp_tuning_request"))
+    _server.set_tuning_result_provider(Callable(_runtime, "gsp_tuning_results"))
+    var started := _server.start()
+    _server.set_process(false)
+    _expect(bool(started.get("ok", false)), "runtime GSP server starts")
+    if not bool(started.get("ok", false)):
+        _finish()
+        return
+    await _connect_and_auth(_client, int(started.port), String(started.token))
+    var hello := await _next_message_type(_client, "hello", 240)
+    var hello_data: Dictionary = hello.get("d", {})
+    _expect(typeof(hello_data.get("registry", {}).get("tuning", {})) == TYPE_DICTIONARY,
+            "hello carries active tuning reconciliation metadata")
+    var panel_client := WebSocketPeer.new()
+    await _connect_and_auth(panel_client, int(started.port), String(started.token))
+    var panel_hello := await _next_message_type(panel_client, "hello", 240)
+    _expect(not panel_hello.is_empty(), "second authenticated panel receives hello")
+
+    _runtime.paused = false
+    _expect(_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning_batch", "seq": 1,
+        "d": {"changes": [
+            {"parameter": "simpleflight.rate_p", "value": 1.25},
+            {"parameter": "simpleflight.rate_i", "value": 0.03}
+        ]}
+    })) == OK, "active tuning request sends")
+    _server.poll()
+    _client.poll()
+    var before_active: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(before_active.get("simpleflight.rate_p", 0.0) == 0.6 and before_active.get("simpleflight.rate_i", 0.0) == 0.02 and _client.get_available_packet_count() == 0,
+            "active tuning remains staged until the next physics boundary")
+    _runtime._physics_process(1.0 / 240.0)
+    var after_active: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(after_active.get("simpleflight.rate_p", 0.0) == 1.25 and after_active.get("simpleflight.rate_i", 0.0) == 0.03 and int(after_active.get("commit_id", 0)) == 1,
+            "active tuning commits through native active memory")
+    _expect(int(after_active.get("commit_tick", -1)) == 0, "active tuning reports public frame tick zero")
+    var active_ack := await _next_message_type(_client, "tuning_ack", 240)
+    _expect(int(active_ack.get("d", {}).get("request_seq", -1)) == 1 and bool(active_ack.get("d", {}).get("changed", false)),
+            "active tuning ack preserves request correlation and changed outcome")
+    var panel_commit := await _next_message_type(panel_client, "tuning_commit", 240)
+    _expect(int(panel_commit.get("d", {}).get("commit_id", -1)) == 1 and
+            float(panel_commit.get("d", {}).get("committed_values", {}).get("simpleflight.rate_p", 0.0)) == 1.25 and
+            float(panel_commit.get("d", {}).get("committed_values", {}).get("simpleflight.rate_i", 0.0)) == 0.03,
+            "second panel receives the same batch commit identity and values")
+
+    _expect(_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 2,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.35}
+    })) == OK, "disconnect-race tuning request sends")
+    _server.poll()
+    _client.close()
+    for _attempt in 30:
+        _server.poll()
+        await process_frame
+    _runtime._physics_process(1.0 / 240.0)
+    _server.poll()
+    _expect(_runtime.gsp_tuning_results().is_empty(),
+            "disconnected tuning result is drained without the disconnected peer")
+    _client = WebSocketPeer.new()
+    await _connect_and_auth(_client, int(started.port), String(started.token))
+    var disconnect_reconnect_hello := await _next_message_type(_client, "hello", 240)
+    var disconnect_recent: Array = disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning_recent_results", [])
+    var disconnect_match: Dictionary = {}
+    for recent_value in disconnect_recent:
+        if typeof(recent_value) == TYPE_DICTIONARY and int(recent_value.get("request_seq", -1)) == 2:
+            disconnect_match = recent_value
+            break
+    _expect(int(disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {}).get("commit_id", -1)) == 2 and
+            int(disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {}).get("commit_tick", -1)) == 1 and
+            float(disconnect_reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {}).get("committed_values", {}).get("simpleflight.rate_p", 0.0)) == 1.35 and
+            int(disconnect_match.get("commit_id", -1)) == 2 and int(disconnect_match.get("commit_tick", -1)) == 1 and
+            float(disconnect_match.get("committed_value", 0.0)) == 1.35,
+            "reconnect hello reconciles a disconnected request without reapplying it")
+
+    _runtime.paused = true
+    _expect(_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 1,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.5}
+    })) == OK, "paused tuning request sends")
+    var paused_ack := await _next_message_type(_client, "tuning_ack", 240)
+    var paused_data: Dictionary = paused_ack.get("d", {})
+    _expect(int(paused_data.get("request_seq", -1)) == 1 and int(paused_data.get("commit_id", 0)) == 3 and
+            int(paused_data.get("commit_tick", -1)) == 2,
+            "paused tuning commits immediately through the same native operation")
+
+    _expect(_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 2,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.5}
+    })) == OK, "no-op tuning request sends")
+    var noop_ack := await _next_message_type(_client, "tuning_ack", 240)
+    var noop_data: Dictionary = noop_ack.get("d", {})
+    _expect(not bool(noop_data.get("changed", true)) and int(noop_data.get("commit_id", 0)) == 3,
+            "no-op tuning keeps commit ID and reports changed false")
+
+    var before_rejection: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 3,
+        "d": {"parameter": "unknown", "value": 1.0}
+    })) == OK, "unknown tuning request sends")
+    var rejected_ack := await _next_message_type(_client, "tuning_ack", 240)
+    _expect(String(rejected_ack.get("d", {}).get("error", "")) == "unknown_parameter",
+            "unknown tuning parameter is rejected")
+    var after_rejection: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(after_rejection.get("simpleflight.rate_p", 0.0) == before_rejection.get("simpleflight.rate_p", -1.0) and
+            int(after_rejection.get("commit_id", -1)) == int(before_rejection.get("commit_id", -2)),
+            "rejected tuning does not mutate active memory")
+
+    _expect(_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 4,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.234}
+    })) == OK, "schema-step tuning request sends")
+    var clamp_ack := await _next_message_type(_client, "tuning_ack", 240)
+    var clamp_data: Dictionary = clamp_ack.get("d", {})
+    _expect(bool(clamp_data.get("clamped", false)) and float(clamp_data.get("requested_value", 0.0)) == 1.234 and
+            float(clamp_data.get("committed_value", 0.0)) == 1.23 and int(clamp_data.get("commit_id", 0)) == 4,
+            "schema-step quantization reports requested and committed values")
+
+    var before_bounds: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var below_contract: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", -0.01)
+    var above_contract: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", 2.01)
+    var after_bounds: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(String(below_contract.get("error", "")) == "out_of_contract" and
+            String(above_contract.get("error", "")) == "out_of_contract" and
+            after_bounds.get("simpleflight.rate_p", 0.0) == before_bounds.get("simpleflight.rate_p", -1.0) and
+            int(after_bounds.get("commit_id", -1)) == int(before_bounds.get("commit_id", -2)),
+            "finite values outside the native contract are rejected without mutation")
+
+    var wrong_type: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", "bad")
+    var non_finite: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", NAN)
+    _expect(String(wrong_type.get("error", "")) == "wrong_type" and String(non_finite.get("error", "")) == "non_finite",
+            "native rejects wrong-type and non-finite staging inputs")
+
+    var before_authority_race: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var local_stage: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", 1.75)
+    _expect(bool(local_stage.get("ok", false)), "native stages tuning while local authority is active")
+    var bridge := Px4SitlBridge.new()
+    bridge._authority_active = true
+    bridge.state = "connected"
+    _runtime.px4_sitl_bridge = bridge
+    _runtime._sync_native_external_authority()
+    var raced_commit: Dictionary = _runtime.native.call("commit_flight_tuning", 99)
+    var after_authority_race: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var external_stage: Dictionary = _runtime.native.call("stage_flight_tuning", "simpleflight.rate_p", 1.75)
+    _expect(String(raced_commit.get("error", "")) == "external_authority" and
+            String(external_stage.get("error", "")) == "external_authority" and
+            after_authority_race.get("simpleflight.rate_p", 0.0) == before_authority_race.get("simpleflight.rate_p", -1.0) and
+            int(after_authority_race.get("commit_id", -1)) == int(before_authority_race.get("commit_id", -2)) and
+            int(after_authority_race.get("commit_tick", -1)) == int(before_authority_race.get("commit_tick", -2)),
+            "native authority race invalidates staging and preserves active identity")
+    _expect(_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 5,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.0}
+    })) == OK, "external-authority tuning request sends")
+    var authority_ack := await _next_message_type(_client, "tuning_ack", 240)
+    _expect(String(authority_ack.get("d", {}).get("error", "")) == "external_authority",
+            "native rejects tuning under external authority")
+    _runtime.px4_sitl_bridge = null
+    _runtime._sync_native_external_authority()
+
+    _client.close()
+    for _attempt in 30:
+        _server.poll()
+        await process_frame
+    var reconnect_client := WebSocketPeer.new()
+    await _connect_and_auth(reconnect_client, int(started.port), String(started.token))
+    var reconnect_hello := await _next_message_type(reconnect_client, "hello", 240)
+    var reconciled: Dictionary = reconnect_hello.get("d", {}).get("registry", {}).get("tuning", {})
+    _expect(int(reconciled.get("commit_id", -1)) == 4 and int(reconciled.get("commit_tick", -1)) == 2 and
+            float(reconciled.get("committed_values", {}).get("simpleflight.rate_p", 0.0)) == 1.23,
+            "reconnect hello reconciles latest active tuning state")
+    _expect(not reconnect_hello.get("d", {}).get("registry", {}).get("tuning_recent_results", []).is_empty(),
+            "reconnect hello carries bounded recent tuning results")
+
+    _runtime._replay_recording_active = true
+    var config_json := _runtime._replay_canonical_json(_runtime.native.call("replay_vehicle_config_manifest"))
+    var config_hash := String(_runtime.native.call("replay_manifest_hash", config_json))
+    var begin: Dictionary = _runtime.native.call(
+            "begin_complete_replay_recording", 11, "tuning-settings", "DroneA", config_hash, config_json, 0,
+            "DroneB", config_hash, config_json, 0)
+    _expect(bool(begin.get("ok", false)), "runtime native replay recorder starts")
+    var atmosphere := {
+        "rain": 0.0,
+        "atmosphere": _runtime.native.call("wind_configuration"),
+        "atmosphere_air_density_kg_m3": float(_runtime.native.call("body_drag_configuration").get("air_density_kg_m3", 1.225)),
+    }
+    var environment_result: Dictionary = _runtime.native.call(
+            "record_replay_environment", 0, _runtime._replay_canonical_json(atmosphere))
+    _expect(bool(environment_result.get("ok", false)),
+            "runtime replay recorder accepts the atmosphere baseline: %s" % String(environment_result.get("diagnostic_message", "unknown")))
+    _expect(reconnect_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning_batch", "seq": 1,
+        "d": {"changes": [
+            {"parameter": "simpleflight.rate_p", "value": 1.0},
+            {"parameter": "simpleflight.angle_p", "value": 16.0},
+            {"parameter": "simpleflight.rate_i", "value": 0.031},
+            {"parameter": "simpleflight.rate_d", "value": 0.007}
+        ]}
+    })) == OK, "replay tuning batch sends every supported parameter")
+    var replay_ack := await _next_message_type(reconnect_client, "tuning_ack", 240)
+    _expect(bool(replay_ack.get("d", {}).get("changed", false)), "replay tuning request commits a real change")
+    var finish: Dictionary = _runtime.native.call("finish_complete_replay_recording", 100000, "tuning-test")
+    _runtime._replay_recording_active = false
+    var serialized := String(finish.get("serialized", ""))
+    _expect(bool(finish.get("ok", false)) and serialized.contains("\"type\":\"tuning\""),
+            "changed tuning is recorded as a replay input: %s" % String(finish.get("diagnostic_message", "missing tuning event")))
+    var replay: Dictionary = _runtime.native.call(
+            "replay_complete_session", serialized, "tuning-settings", config_hash, config_hash,
+            _runtime.native.call("replay_vehicle_config_manifest"), _runtime.native.call("replay_vehicle_config_manifest"))
+    _expect(bool(replay.get("ok", false)), "recorded tuning replay applies successfully: %s" % String(replay.get("diagnostic_message", "unknown")))
+
+    _runtime.paused = false
+    _server.poll()
+    panel_client.poll()
+    _drain_messages(panel_client, "tuning_commit")
+    for index in 50:
+        var request_value := 1.4 + float(index) * 0.001
+        _expect(reconnect_client.send_text(JSON.stringify({
+            "v": 2, "t": "set_tuning", "seq": index + 2,
+            "d": {"parameter": "simpleflight.rate_p", "value": request_value}
+        })) == OK, "coalesce regression sends request %d" % index)
+    _server.poll()
+    _runtime._physics_process(1.0 / 240.0)
+    var coalesced_acks: Array = []
+    var coalesced_commits: Array = []
+    for _attempt in 120:
+        _server.poll()
+        reconnect_client.poll()
+        panel_client.poll()
+        coalesced_acks.append_array(_drain_messages(reconnect_client, "tuning_ack"))
+        coalesced_commits.append_array(_drain_messages(panel_client, "tuning_commit"))
+        if coalesced_acks.size() == 50 and coalesced_commits.size() == 1:
+            break
+        await process_frame
+    var first_coalesced_ack: Dictionary = coalesced_acks[0] if not coalesced_acks.is_empty() else {}
+    var last_coalesced_ack: Dictionary = coalesced_acks.back() if not coalesced_acks.is_empty() else {}
+    _expect(coalesced_acks.size() == 50, "coalesce server returns 50 ACKs (got %d)" % coalesced_acks.size())
+    _expect(coalesced_commits.size() == 1, "coalesce server broadcasts one commit (got %d)" % coalesced_commits.size())
+    _expect(float(first_coalesced_ack.get("d", {}).get("requested_value", 0.0)) == 1.4 and
+            float(last_coalesced_ack.get("d", {}).get("requested_value", 0.0)) == 1.449 and
+            float(first_coalesced_ack.get("d", {}).get("committed_value", 0.0)) == 1.45 and
+            float(last_coalesced_ack.get("d", {}).get("committed_value", 0.0)) == 1.45,
+            "coalesce server ACK values come from each request (first=%s last=%s/%s)" % [
+                JSON.stringify(first_coalesced_ack.get("d", {})),
+                JSON.stringify(last_coalesced_ack.get("d", {})),
+                coalesced_commits.size(),
+            ])
+
+    _server.poll()
+    reconnect_client.poll()
+    panel_client.poll()
+    _drain_all_messages(reconnect_client)
+    _drain_all_messages(panel_client)
+    for index in 4:
+        var alternate_client: WebSocketPeer = reconnect_client if index % 2 == 0 else panel_client
+        var alternate_sequence := 52 + index / 2 if index % 2 == 0 else 1 + index / 2
+        _expect(alternate_client.send_text(JSON.stringify({
+            "v": 2, "t": "set_tuning", "seq": alternate_sequence,
+            "d": {"parameter": "simpleflight.rate_p", "value": 1.5 + float(index) * 0.01}
+        })) == OK, "alternating-origin coalesce request %d sends" % index)
+    _server.poll()
+    _runtime._physics_process(1.0 / 240.0)
+    var alternate_events: Array = [[], []]
+    for _attempt in 120:
+        _server.poll()
+        reconnect_client.poll()
+        panel_client.poll()
+        alternate_events[0].append_array(_drain_all_messages(reconnect_client))
+        alternate_events[1].append_array(_drain_all_messages(panel_client))
+        if alternate_events[0].size() >= 3 and alternate_events[1].size() >= 3:
+            break
+        await process_frame
+    var alternate_commit_id := -1
+    var alternate_order_ok := true
+    for origin_index in 2:
+        var origin_events: Array = alternate_events[origin_index]
+        var expected_sequences: Array = [52, 53] if origin_index == 0 else [1, 2]
+        for expected_sequence in expected_sequences:
+            var ack_index := -1
+            var commit_index := -1
+            for event_index in origin_events.size():
+                var event: Dictionary = origin_events[event_index]
+                if String(event.get("t", "")) == "tuning_ack" and int(event.get("d", {}).get("request_seq", -1)) == expected_sequence:
+                    ack_index = event_index
+                if String(event.get("t", "")) == "tuning_commit":
+                    commit_index = event_index if commit_index < 0 else commit_index
+                    alternate_commit_id = int(event.get("d", {}).get("commit_id", alternate_commit_id))
+            alternate_order_ok = alternate_order_ok and ack_index >= 0 and commit_index >= 0 and ack_index < commit_index
+    _expect(alternate_order_ok and alternate_commit_id > 0,
+            "alternating origins observe each correlated ACK before the coalesced tuning_commit")
+
+    _expect(reconnect_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 54,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.7}
+    })) == OK, "disconnected-origin tuning request sends")
+    _server.poll()
+    reconnect_client.close()
+    for _attempt in 30:
+        _server.poll()
+        await process_frame
+    _runtime._physics_process(1.0 / 240.0)
+    var disconnected_observer_commits: Array = []
+    for _attempt in 120:
+        _server.poll()
+        panel_client.poll()
+        disconnected_observer_commits.append_array(_drain_messages(panel_client, "tuning_commit"))
+        if not disconnected_observer_commits.is_empty():
+            break
+        await process_frame
+    _expect(not disconnected_observer_commits.is_empty() and
+            int(disconnected_observer_commits.back().get("d", {}).get("commit_id", -1)) > alternate_commit_id,
+            "connected observer receives a commit after its origin disconnects before the physics boundary")
+
+    var paused_origin_client := WebSocketPeer.new()
+    await _connect_and_auth(paused_origin_client, int(started.port), String(started.token))
+    _expect(not (await _next_message_type(paused_origin_client, "hello", 240)).is_empty(),
+            "paused saturation origin authenticates")
+    _drain_all_messages(panel_client)
+    var paused_saturated_record: Dictionary = {}
+    var paused_healthy_record: Dictionary = {}
+    if _server._authenticated_peers.size() == 2:
+        paused_healthy_record = _server._authenticated_peers[0]
+        paused_saturated_record = _server._authenticated_peers[1]
+    _expect(not paused_saturated_record.is_empty() and not paused_healthy_record.is_empty(),
+            "paused saturation regression resolves origin and observer records")
+    _drain_all_messages(paused_origin_client)
+    _drain_all_messages(panel_client)
+    _expect(paused_origin_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 1,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.72}
+    })) == OK and panel_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 3,
+        "d": {"parameter": "simpleflight.angle_p", "value": 1.8}
+    })) == OK, "two peers send mixed tuning requests before one boundary")
+    _server.poll()
+    _runtime._physics_process(1.0 / 240.0)
+    var mixed_peer_events: Array = [[], []]
+    for _attempt in 120:
+        _server.poll()
+        paused_origin_client.poll()
+        panel_client.poll()
+        mixed_peer_events[0].append_array(_drain_all_messages(paused_origin_client))
+        mixed_peer_events[1].append_array(_drain_all_messages(panel_client))
+        if mixed_peer_events[0].size() >= 2 and mixed_peer_events[1].size() >= 2:
+            break
+        await process_frame
+    var mixed_peer_ok := true
+    for peer_index in 2:
+        var peer_events: Array = mixed_peer_events[peer_index]
+        var expected_request_seq := 1 if peer_index == 0 else 3
+        var ack_count := 0
+        var commit_count := 0
+        var commit: Dictionary = {}
+        for event_value in peer_events:
+            var event: Dictionary = event_value
+            if String(event.get("t", "")) == "tuning_ack" and int(event.get("d", {}).get("request_seq", -1)) == expected_request_seq:
+                ack_count += 1
+            elif String(event.get("t", "")) == "tuning_commit":
+                commit_count += 1
+                commit = event.get("d", {})
+        var change_sequences := {}
+        for change_value in commit.get("changes", []):
+            var change: Dictionary = change_value
+            change_sequences[String(change.get("parameter", ""))] = int(change.get("request_seq", -1))
+        mixed_peer_ok = mixed_peer_ok and (ack_count == 1 and commit_count == 1 and not commit.has("request_seq") and
+                String(commit.get("source", "")) == "panel" and change_sequences.get("simpleflight.rate_p", -1) == 1 and
+                change_sequences.get("simpleflight.angle_p", -1) == 3)
+    _expect(mixed_peer_ok, "two-peer mixed tuning emits one ACK per request and one aggregate commit without fake request_seq")
+    var paused_forced_queue: Array = []
+    for _slot in GspServer.MAX_RELIABLE_MESSAGES:
+        paused_forced_queue.append("{}")
+    if not paused_saturated_record.is_empty():
+        paused_saturated_record["reliable_queue"] = paused_forced_queue
+        paused_saturated_record["reliable_bytes"] = paused_forced_queue.size()
+    var paused_overflow_before := _server.reliable_overflow_count
+    _runtime.paused = true
+    _expect(paused_origin_client.send_text(JSON.stringify({
+        "v": 2, "t": "set_tuning", "seq": 2,
+        "d": {"parameter": "simpleflight.rate_p", "value": 1.81}
+    })) == OK, "paused saturated origin sends a synchronous tuning request")
+    _server.poll()
+    var paused_observer_commit := await _next_message_type(panel_client, "tuning_commit", 120)
+    _expect(_server.reliable_overflow_count == paused_overflow_before + 1 and
+            _server.last_reliable_error == "reliable queue overflow" and
+            not _server._authenticated_peers.has(paused_saturated_record) and
+            float(paused_observer_commit.get("d", {}).get("committed_values", {}).get("simpleflight.rate_p", 0.0)) == 1.81,
+            "paused origin ACK failure isolates the origin while the observer receives its committed result")
+    paused_origin_client.close()
+    for _attempt in 30:
+        _server.poll()
+        await process_frame
+    _runtime.paused = false
+
+    var capacity_client := WebSocketPeer.new()
+    await _connect_and_auth(capacity_client, int(started.port), String(started.token))
+    _expect(not (await _next_message_type(capacity_client, "hello", 240)).is_empty(),
+            "capacity regression client authenticates")
+    var saturated_record: Dictionary = {}
+    var healthy_record: Dictionary = {}
+    if _server._authenticated_peers.size() == 2:
+        saturated_record = _server._authenticated_peers[0]
+        healthy_record = _server._authenticated_peers[1]
+    _expect(not saturated_record.is_empty() and not healthy_record.is_empty(),
+            "capacity regression resolves both real authenticated peer records")
+    var forced_queue: Array = []
+    for _slot in GspServer.MAX_RELIABLE_MESSAGES:
+        forced_queue.append("{}")
+    if not saturated_record.is_empty():
+        saturated_record["reliable_queue"] = forced_queue
+        saturated_record["reliable_bytes"] = forced_queue.size()
+    var overflow_before := _server.reliable_overflow_count
+    _server._broadcast_tuning_commit({
+        "ok": true,
+        "changed": true,
+        "commit_id": 9001,
+        "committed_values": {"simpleflight.rate_p": 1.71},
+    }, 9001)
+    if not healthy_record.is_empty():
+        _server._flush_reliable(healthy_record)
+    capacity_client.poll()
+    var capacity_commit := await _next_message_type(capacity_client, "tuning_commit", 120)
+    _expect(_server.reliable_overflow_count == overflow_before + 1 and
+            _server.last_reliable_error == "reliable queue overflow" and
+            not _server._authenticated_peers.has(saturated_record) and
+            int(capacity_commit.get("d", {}).get("commit_id", -1)) == 9001,
+            "capacity failure records diagnostics, isolates the saturated peer, and preserves healthy delivery")
+    capacity_client.close()
+    panel_client.close()
+
+    var timing_registry := _runtime._gsp_tuning_registry.duplicate(true)
+    for descriptor_value in _runtime._gsp_tuning_registry:
+        var timing_descriptor: Dictionary = descriptor_value
+        if String(timing_descriptor.get("key", "")) == "simpleflight.rate_p":
+            timing_descriptor["apply_timing"] = "immediate"
+    var immediate_before: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var immediate_result: Dictionary = _runtime.gsp_tuning_request(7, 7, 700, "simpleflight.rate_p", 1.6)
+    var immediate_after: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(bool(immediate_result.get("ok", false)) and not bool(immediate_result.get("pending", false)) and
+            float(immediate_after.get("simpleflight.rate_p", 0.0)) == 1.6 and
+            float(immediate_before.get("simpleflight.rate_p", 0.0)) != 1.6,
+            "runtime immediate timing commits at the request seam")
+    _runtime._gsp_tuning_registry = timing_registry.duplicate(true)
+    var next_result: Dictionary = _runtime.gsp_tuning_request(7, 7, 701, "simpleflight.rate_p", 1.61)
+    var next_before: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _runtime._physics_process(1.0 / 240.0)
+    _runtime.gsp_tuning_results()
+    var next_after: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(bool(next_result.get("pending", false)) and float(next_before.get("simpleflight.rate_p", 0.0)) == 1.6 and
+            float(next_after.get("simpleflight.rate_p", 0.0)) == 1.61,
+            "runtime next-physics timing stages until the real physics seam")
+    for required_timing in ["reset_required", "restart_required"]:
+        _runtime._gsp_tuning_registry = timing_registry.duplicate(true)
+        for descriptor_value in _runtime._gsp_tuning_registry:
+            var required_descriptor: Dictionary = descriptor_value
+            if String(required_descriptor.get("key", "")) == "simpleflight.rate_p":
+                required_descriptor["apply_timing"] = required_timing
+        var required_before: Dictionary = _runtime.native.call("flight_tuning_configuration")
+        var required_result: Dictionary = _runtime.gsp_tuning_request(7, 7, 702, "simpleflight.rate_p", 1.62)
+        var required_after: Dictionary = _runtime.native.call("flight_tuning_configuration")
+        _expect(String(required_result.get("error", "")) == required_timing and
+                float(required_after.get("simpleflight.rate_p", 0.0)) == float(required_before.get("simpleflight.rate_p", 0.0)),
+                "runtime %s timing is truthful and non-mutating" % required_timing)
+    _runtime._gsp_tuning_registry = timing_registry.duplicate(true)
+    for descriptor_value in _runtime._gsp_tuning_registry:
+        var mixed_descriptor: Dictionary = descriptor_value
+        if String(mixed_descriptor.get("key", "")) == "simpleflight.rate_p":
+            mixed_descriptor["apply_timing"] = "immediate"
+    var mixed_before: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    var mixed_result: Dictionary = _runtime.gsp_tuning_batch_request(7, 7, 703, [
+        {"parameter": "simpleflight.rate_p", "value": 1.63},
+        {"parameter": "simpleflight.angle_p", "value": 17.0},
+    ])
+    var mixed_after: Dictionary = _runtime.native.call("flight_tuning_configuration")
+    _expect(String(mixed_result.get("error", "")) == "mixed_apply_timing" and
+            float(mixed_after.get("simpleflight.rate_p", 0.0)) == float(mixed_before.get("simpleflight.rate_p", 0.0)) and
+            float(mixed_after.get("simpleflight.angle_p", 0.0)) == float(mixed_before.get("simpleflight.angle_p", 0.0)),
+            "mixed incompatible timing is rejected atomically")
+    _runtime._gsp_tuning_registry = timing_registry
+
+    var disconnected_descriptor := {"key": "simpleflight.disconnected", "min": 0.0, "max": 1.0}
+    _runtime._gsp_tuning_registry.append(disconnected_descriptor)
+    var validation := _runtime.gsp_validate_all()
+    _runtime._gsp_tuning_registry.pop_back()
+    _expect(not bool(validation.get("ok", true)) and not validation.get("mismatches", []).is_empty(),
+            "validate-all exposes a disconnected native descriptor read-back mismatch")
+
+    reconnect_client.close()
+    panel_client.close()
+    _server.stop()
+    _finish()
+
+
+func _connect_and_auth(client: WebSocketPeer, port: int, token: String) -> void:
+    client.handshake_headers = PackedStringArray(["Origin: null"])
+    client.connect_to_url("ws://127.0.0.1:%d" % port)
+    for _attempt in 240:
+        _server.poll()
+        client.poll()
+        if client.get_ready_state() == WebSocketPeer.STATE_OPEN:
+            break
+        await process_frame
+    client.send_text(JSON.stringify({"v": 2, "t": "auth", "seq": 0, "d": {"token": token}}))
+
+
+func _next_message_type(client: WebSocketPeer, message_type: String, attempts: int) -> Dictionary:
+    for _attempt in attempts:
+        _server.poll()
+        client.poll()
+        while client.get_available_packet_count() > 0:
+            var packet := client.get_packet()
+            if not client.was_string_packet():
+                continue
+            var parsed = JSON.parse_string(packet.get_string_from_utf8())
+            if typeof(parsed) == TYPE_DICTIONARY and String(parsed.get("t", "")) == message_type:
+                return parsed
+        await process_frame
+    return {}
+
+
+func _drain_messages(client: WebSocketPeer, message_type: String) -> Array:
+    var messages: Array = []
+    while client.get_available_packet_count() > 0:
+        var packet := client.get_packet()
+        if not client.was_string_packet():
+            continue
+        var parsed = JSON.parse_string(packet.get_string_from_utf8())
+        if typeof(parsed) == TYPE_DICTIONARY and String(parsed.get("t", "")) == message_type:
+            messages.append(parsed)
+    return messages
+
+
+func _drain_all_messages(client: WebSocketPeer) -> Array:
+    var messages: Array = []
+    while client.get_available_packet_count() > 0:
+        var packet := client.get_packet()
+        if not client.was_string_packet():
+            continue
+        var parsed = JSON.parse_string(packet.get_string_from_utf8())
+        if typeof(parsed) == TYPE_DICTIONARY:
+            messages.append(parsed)
+    return messages
+
+
+func _expect(condition: bool, message: String) -> void:
+    if not condition:
+        _failures.append(message)
+
+
+func _finish() -> void:
+    if _failures.is_empty():
+        print("GSP tuning integration: PASS")
+        quit(0)
+    else:
+        for failure in _failures:
+            push_error(failure)
+        print("GSP tuning integration: FAIL")
+        quit(1)

@@ -24,6 +24,7 @@ last_verified: 2026-07-26
 | Baseline Sensor Suite | 每個 AirSim-class release 承諾的 RGB、depth、segmentation、IMU、GPS、magnetometer、barometer、LiDAR。 |
 | Vehicle Instance | 一台具名稱、獨立 physics/control/sensor state 的多旋翼；不是單純 visual drone。 |
 | Operations Dashboard | Godot 內的 vehicle 與 telemetry/sensor/recording/environment 狀態介面，不是 web dashboard。 |
+| Ground Station Panel (GSP) | 明確啟用後開啟的 dependency-free 本機 `file://` panel，作為開發調參 workstation；不取代 Operations Dashboard。 |
 | Flight Replay | 從控制輸入與模擬條件重建的可重現飛行；不是影片。 |
 | Dataset Recording | 時間對齊的 command、state、collision、weather、camera、sensor 資料；不是 replay。 |
 | Dataset Package | 一個版本化錄製資料夾，含 manifest、samples 與影像／point data；不是 database 或 ROS bag。 |

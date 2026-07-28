@@ -1,8 +1,9 @@
-[gd_scene load_steps=14 format=3 uid="uid://aerosim_smoke_scene"]
+[gd_scene load_steps=15 format=3 uid="uid://aerosim_smoke_scene"]
 
 [ext_resource type="Script" path="res://common/flight/flight_runtime.gd" id="1_2nq71"]
 [ext_resource type="Script" path="res://common/flight/collision_probe_body.gd" id="2_e6a3t"]
 [ext_resource type="Script" path="res://common/flight/drone_visual_loader.gd" id="3_drone_visual"]
+[ext_resource type="Script" path="res://common/gsp/gsp_launcher.gd" id="4_gsp_launcher"]
 
 [sub_resource type="SphereShape3D" id="SphereShape3D_drone"]
 radius = 0.1
@@ -37,6 +38,9 @@ size = Vector3(0.02, 0.02, 24)
 [node name="SmokeRoot" type="Node3D"]
 script = ExtResource("1_2nq71")
 scene_steady_wind_mps = Vector3(4, 0, -2)
+
+[node name="GspLauncher" type="Node" parent="."]
+script = ExtResource("4_gsp_launcher")
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
 rotation = Vector3(-0.8, 0.45, 0)

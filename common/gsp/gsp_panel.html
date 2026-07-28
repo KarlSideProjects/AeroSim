@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AeroSim Ground Station Panel</title>
+<style>
+:root { color-scheme: dark; font-family: system-ui, sans-serif; }
+body { margin: 0; min-width: 320px; background: #111820; color: #dce7f5; }
+main { max-width: 900px; margin: 0 auto; padding: 20px; }
+header, .state, .grid { display: flex; gap: 12px; align-items: start; }
+header { justify-content: space-between; }
+h1 { margin: 0; font-size: 1.25rem; }
+.badge { color: #9ee6b1; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; }
+.state, .card { border: 1px solid #31445d; border-radius: 8px; padding: 12px; margin-top: 14px; }
+.state { justify-content: space-between; flex-wrap: wrap; }
+.grid { flex-wrap: wrap; }
+.card { flex: 1 1 260px; margin-top: 0; }
+dl { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; margin: 0; }
+dt { color: #9fb0c5; } dd { margin: 0; font-variant-numeric: tabular-nums; }
+code { color: #b9d8ff; overflow-wrap: anywhere; }
+canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
+.muted { color: #9fb0c5; }
+.tuning-group { border-top: 1px solid #24364c; padding-top: 8px; margin-top: 10px; }
+.tuning-group:first-child { border-top: 0; margin-top: 0; }
+.tuning-row { display: grid; grid-template-columns: 1fr minmax(8rem, 1fr) 7rem auto; gap: 8px; align-items: center; margin-top: 8px; }
+.tuning-row input[type="number"] { width: 7rem; }
+.tuning-row input { box-sizing: border-box; background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
+.tuning-row input[type="range"] { width: 100%; accent-color: #67d5ff; }
+.tuning-row input { width: 8rem; box-sizing: border-box; background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
+.tuning-row button { background: #244d67; color: #dce7f5; border: 0; border-radius: 4px; padding: 6px 10px; }
+.quick-adjust-row { display: grid; grid-template-columns: repeat(5, minmax(7rem, 1fr)); gap: 6px; align-items: center; margin-top: 8px; }
+.quick-adjust-row input, .quick-adjust-row select { box-sizing: border-box; width: 100%; background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
+.preset-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.preset-row input, .preset-row select, .preset-row button { background: #0c1219; color: #dce7f5; border: 1px solid #31445d; border-radius: 4px; padding: 5px; }
+.preset-row input, .preset-row select { flex: 1 1 10rem; }
+#preset-diff { white-space: pre-wrap; overflow-wrap: anywhere; }
+:disabled { opacity: .45; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<main>
+<header><h1>AeroSim Ground Station Panel</h1><span class="badge" id="focus-state">panel focus</span></header>
+<section class="state" aria-live="polite">
+  <strong id="connection">Disconnected</strong>
+  <span id="fresh-state" class="muted">Waiting for session fragment.</span>
+</section>
+<div class="grid">
+<section class="card"><dl>
+  <dt>Vehicle Instance</dt><dd id="vehicle">—</dd>
+  <dt>Authority</dt><dd id="authority">—</dd>
+  <dt>Tick</dt><dd id="tick">—</dd>
+  <dt>Actual telemetry rate</dt><dd id="rate">0 Hz</dd>
+  <dt>WebSocket RTT</dt><dd id="latency">—</dd>
+  <dt>Registry hash</dt><dd id="registry">—</dd>
+</dl></section>
+<section class="card"><strong>Position / velocity (NED, SI)</strong><p id="position" class="muted">—</p><p id="velocity" class="muted">—</p><strong>Attitude / rates (FRD, SI)</strong><p id="attitude" class="muted">—</p><p id="rates" class="muted">—</p></section>
+<section class="card"><strong>Motor order: rear_right, front_right, rear_left, front_left</strong><p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas></section>
+<section class="card"><strong>Quick Adjust</strong><div id="tuning-rows" class="muted">Waiting for registry.</div></section>
+<section class="card"><strong>In-flight Quick Adjust</strong><div id="quick-adjust-rows" class="muted">Waiting for registry.</div></section>
+<section class="card"><strong>Presets</strong>
+  <div class="preset-row"><input id="preset-name" placeholder="preset name" maxlength="64"><input id="preset-note" placeholder="optional note" maxlength="512"><button id="preset-save">Save</button><button id="preset-refresh">Refresh</button></div>
+  <div class="preset-row"><select id="preset-source"><option value="">Current</option></select><button id="preset-retrieve">Retrieve</button><button id="preset-load">Load</button><button id="preset-preview">Preview migration</button><button id="preset-compare-current">Compare current</button></div>
+  <div class="preset-row"><select id="preset-target"><option value="">Current</option></select><button id="preset-compare-two">Compare presets</button></div>
+  <div id="preset-status" class="muted">No presets loaded.</div><pre id="preset-diff" class="muted">No changes.</pre><pre id="migration-report" class="muted">No migration preview.</pre>
+</section>
+</div>
+</main>
+<script>
+(function () {
+  var protocolVersion = 2;
+  var RECONNECT_MIN_DELAY_MS = 250;
+  var RECONNECT_MAX_DELAY_MS = 5000;
+  var fragment = new URLSearchParams(window.location.hash.slice(1));
+  var port = Number(fragment.get("port"));
+  var token = fragment.get("token") || "";
+  var socket = null;
+  var socketGeneration = 0;
+  var reconnectTimer = null;
+  var reconnectAttempt = 0;
+  var helloReady = false;
+  var snapshotReady = false;
+  var clientSequence = 1;
+  var lastSampleSequence = 0;
+  var waitingForFresh = false;
+  var pendingFreshRequestSequence = null;
+  var rateStartedAt = 0;
+  var rateSamples = 0;
+  var sparkValues = [];
+  var pingTimer = null;
+  var $ = function (id) { return document.getElementById(id); };
+  var tuningRows = $("tuning-rows");
+  var connection = $("connection");
+  var freshState = $("fresh-state");
+  var canvas = $("sparkline");
+  var context = canvas.getContext("2d");
+  var pendingTuning = {};
+  var tuningControls = {};
+  var tuningGroupControls = [];
+  var quickAdjustRows = $("quick-adjust-rows");
+  var pendingQuickAdjust = {};
+  var quickAdjustControls = [];
+  var pendingPresets = {};
+  var presetName = $("preset-name");
+  var presetNote = $("preset-note");
+  var presetSource = $("preset-source");
+  var presetTarget = $("preset-target");
+  var presetStatus = $("preset-status");
+  var presetDiff = $("preset-diff");
+  var staticControls = [presetName, presetNote, presetSource, presetTarget, $("preset-save"), $("preset-refresh"), $("preset-retrieve"), $("preset-load"), $("preset-preview"), $("preset-compare-current"), $("preset-compare-two")];
+  var gspPerformance = { request_to_native_commit_ms: [], native_commit_to_rendered_ack_ms: [] };
+  var clockSync = { samples: 0, best_rtt_ms: null, offset_ms: null, error_bound_ms: null };
+  var maxPerformanceSamples = 512;
+  var requestAnimationFrame = window.requestAnimationFrame || function (callback) { callback(performance.now()); return 0; };
+
+  function recordPerformanceSample(kind, value) {
+    if (!Number.isFinite(value) || value < 0) return;
+    var samples = gspPerformance[kind];
+    samples.push(value);
+    if (samples.length > maxPerformanceSamples) samples.shift();
+  }
+  window.__AEROSIM_GSP_PERF__ = {
+    reset: function () { gspPerformance.request_to_native_commit_ms = []; gspPerformance.native_commit_to_rendered_ack_ms = []; clockSync = { samples: 0, best_rtt_ms: null, offset_ms: null, error_bound_ms: null }; },
+    snapshot: function () {
+      return {
+        request_to_native_commit_ms: gspPerformance.request_to_native_commit_ms.slice(),
+        native_commit_to_rendered_ack_ms: gspPerformance.native_commit_to_rendered_ack_ms.slice(),
+        clock_sync: Object.assign({}, clockSync),
+      };
+    },
+  };
+
+  function text(id, value) { $(id).textContent = value; }
+  function panelReady() { return helloReady && snapshotReady; }
+  function readinessControls() {
+    var tuning = [];
+    Object.keys(tuningControls).forEach(function (key) {
+      var controls = tuningControls[key];
+      tuning.push(controls.slider, controls.number, controls.button);
+    });
+    var quick = [];
+    quickAdjustControls.forEach(function (controls) {
+      quick.push(controls.parameter, controls.type, controls.mode, controls.subsetMin, controls.subsetMax, controls.deadzone, controls.step, controls.rate, controls.device, controls.axis, controls.negative, controls.positive, controls.apply);
+    });
+    return { static: staticControls.slice(), tuning: tuning, groups: tuningGroupControls.slice(), quick: quick };
+  }
+  function setControlsEnabled(enabled) {
+    var inventory = readinessControls();
+    Object.keys(inventory).forEach(function (category) {
+      inventory[category].forEach(function (control) { control.disabled = !enabled; });
+    });
+  }
+  function resetSessionReadiness() {
+    helloReady = false;
+    snapshotReady = false;
+    clockSync = { samples: 0, best_rtt_ms: null, offset_ms: null, error_bound_ms: null };
+    setControlsEnabled(false);
+  }
+  function reconnectDelay() {
+    return Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_MIN_DELAY_MS * Math.pow(2, reconnectAttempt));
+  }
+  setControlsEnabled(false);
+  function vector(value, unit) {
+    if (!value) return "—";
+    return "[" + Number(value.x_val).toFixed(3) + ", " + Number(value.y_val).toFixed(3) + ", " + Number(value.z_val).toFixed(3) + "] " + unit;
+  }
+  function euler(value) {
+    if (!value || value.length !== 3) return "—";
+    return "[roll " + Number(value[0]).toFixed(2) + "°, pitch " + Number(value[1]).toFixed(2) + "°, yaw " + Number(value[2]).toFixed(2) + "°] Z-Y-X";
+  }
+  function send(type, data) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return null;
+    var sequence = clientSequence++;
+    socket.send(JSON.stringify({ v: protocolVersion, t: type, seq: sequence, d: data }));
+    return sequence;
+  }
+  function sendTelemetryRate(rate) { send("set_telemetry", { hz: rate, extra: [] }); }
+  function sendPreset(type, data) {
+    if (!panelReady()) { presetStatus.textContent = "Disconnected"; return null; }
+    var sequence = send(type, data || {});
+    if (sequence == null) { presetStatus.textContent = "Disconnected"; return null; }
+    pendingPresets[sequence] = type;
+    presetStatus.textContent = "Waiting for preset acknowledgement…";
+    return sequence;
+  }
+  function renderPresets(presets) {
+    [presetSource, presetTarget].forEach(function (select) {
+      select.textContent = "";
+      select.appendChild(new Option("Current", ""));
+      (Array.isArray(presets) ? presets : []).forEach(function (preset) {
+        select.appendChild(new Option(preset.name + " — " + (preset.sim_version || "unavailable") + " — " + (preset.created_at || "unknown time"), preset.name));
+      });
+    });
+    presetStatus.textContent = (presets || []).length + " preset(s) available.";
+  }
+  function renderPresetDiff(result) {
+    var changes = result && Array.isArray(result.changes) ? result.changes : [];
+    if (!changes.length) { presetDiff.textContent = "No changes."; return; }
+    presetDiff.textContent = changes.map(function (change) {
+      var percentage = change.percentage_status === "finite" ? Number(change.percentage).toFixed(2) + "%" : "n/a (" + change.percentage_status + ")";
+      var before = change.before == null ? "missing" : Number(change.before).toFixed(6);
+      var after = change.after == null ? "missing" : Number(change.after).toFixed(6);
+      return change.parameter + ": " + before + " → " + after + " (" + percentage + ")";
+    }).join("\n");
+  }
+  function renderMigrationReport(result) {
+    var sections = [
+      ["Removed from current registry", result && result.removed],
+      ["Missing; current defaults", result && result.missing],
+      ["Out of range; corrected", result && result.out_of_range]
+    ];
+    var lines = [];
+    sections.forEach(function (section) {
+      lines.push(section[0] + ":");
+      (Array.isArray(section[1]) ? section[1] : []).forEach(function (item) {
+        var original = item.original_value == null ? item.value : item.original_value;
+        var corrected = item.corrected_value == null ? item.default_value : item.corrected_value;
+        lines.push("  " + item.parameter + ": " + (original == null ? "missing" : original) + " → " + (corrected == null ? "removed" : corrected));
+      });
+      if (!section[1] || !section[1].length) lines.push("  none");
+    });
+    $("migration-report").textContent = lines.join("\n");
+  }
+  function requestFreshSnapshot() {
+    waitingForFresh = true;
+    snapshotReady = false;
+    setControlsEnabled(false);
+    freshState.textContent = "Waiting for fresh telemetry…";
+    pendingFreshRequestSequence = send("request_snapshot", {});
+  }
+  function updateClockSync(message) {
+    var data = message && message.d ? message.d : {};
+    var echo = data.echo || {};
+    var t0 = Number(echo.client_send_perf_ms);
+    var t1 = Number(data.server_receive_usec);
+    var t2 = Number(data.server_send_usec);
+    var t3 = performance.now();
+    var rtt = t3 - t0;
+    if (!Number.isFinite(t0) || !Number.isFinite(t1) || !Number.isFinite(t2) || !Number.isFinite(t3) || !Number.isFinite(rtt) || rtt < 0 || t2 < t1) return false;
+    var offset = (t0 + t3) / 2 - (t1 + t2) / 2000;
+    var errorBound = rtt / 2;
+    if (!Number.isFinite(offset) || !Number.isFinite(errorBound)) return false;
+    clockSync.samples += 1;
+    if (clockSync.best_rtt_ms == null || rtt < clockSync.best_rtt_ms) {
+      clockSync.best_rtt_ms = rtt;
+      clockSync.offset_ms = offset;
+      clockSync.error_bound_ms = errorBound;
+    }
+    return true;
+  }
+  function serverMonotonicToClientPerf(serverUsec) {
+    if (clockSync.samples < 1 || clockSync.offset_ms == null || clockSync.error_bound_ms == null) return NaN;
+    var value = Number(serverUsec) / 1000 + clockSync.offset_ms;
+    return Number.isFinite(value) ? value : NaN;
+  }
+  function sendPing() { send("ping", { client_send_perf_ms: performance.now() }); }
+  function rawTuningValue(controls) {
+    var value = Number(controls.number.value);
+    return Number.isFinite(value) ? value : null;
+  }
+  function cancelTransient(controls) {
+    if (controls.transientTimer) clearTimeout(controls.transientTimer);
+    controls.transientTimer = null;
+  }
+  function sendTuning(descriptor, controls, finalValue, batch) {
+    cancelTransient(controls);
+    if (!panelReady()) { controls.status.textContent = "Disconnected"; return; }
+    var value = rawTuningValue(controls);
+    if (value == null) { controls.status.textContent = "Invalid number"; return; }
+    var tuningData = batch ? { changes: batch } : { parameter: descriptor.key, value: value };
+    tuningData.client_sent_at_perf_ms = performance.now();
+    var sequence = send(batch ? "set_tuning_batch" : "set_tuning", tuningData);
+    if (sequence == null) { controls.status.textContent = "Disconnected"; return; }
+    controls.status.textContent = finalValue ? "Waiting for acknowledgement…" : "Preview " + value.toFixed(3);
+    var generation = socketGeneration;
+    pendingTuning[sequence] = { controls: controls, descriptor: descriptor, final: finalValue, started: performance.now(), startedClientPerfMs: tuningData.client_sent_at_perf_ms, generation: generation };
+    setTimeout(function () {
+      if (!pendingTuning[sequence] || pendingTuning[sequence].generation !== generation) return;
+      delete pendingTuning[sequence];
+      controls.status.textContent = "Timeout; committed value unknown";
+    }, 1500);
+  }
+  function scheduleTransient(descriptor, controls) {
+    var elapsed = performance.now() - controls.lastTransientAt;
+    cancelTransient(controls);
+    var generation = socketGeneration;
+    controls.transientTimer = setTimeout(function () {
+      if (generation !== socketGeneration) { controls.transientTimer = null; return; }
+      controls.lastTransientAt = performance.now();
+      sendTuning(descriptor, controls, false, null);
+      controls.transientTimer = null;
+    }, Math.max(0, 50 - elapsed));
+  }
+  function renderTuning(registry) {
+    tuningRows.textContent = "";
+    tuningControls = {};
+    tuningGroupControls = [];
+    var parameters = registry && Array.isArray(registry.parameters) ? registry.parameters : [];
+    var groups = {};
+    parameters.forEach(function (descriptor) {
+      var groupName = descriptor.group || "Tuning";
+      if (!groups[groupName]) {
+        var group = document.createElement("section"); group.className = "tuning-group";
+        var heading = document.createElement("strong"); heading.textContent = groupName;
+        var applyGroup = document.createElement("button"); applyGroup.textContent = "Apply group";
+        tuningGroupControls.push(applyGroup);
+        var rows = document.createElement("div");
+        applyGroup.addEventListener("click", function () {
+          Array.prototype.forEach.call(rows.querySelectorAll(".tuning-row"), function (row) {
+            cancelTransient(tuningControls[row.dataset.key]);
+          });
+          var changes = Array.prototype.map.call(rows.querySelectorAll(".tuning-row"), function (row) {
+            var item = tuningControls[row.dataset.key];
+            return { parameter: item.descriptor.key, value: rawTuningValue(item) };
+          }).filter(function (item) { return item.value != null; });
+          if (changes.length) sendTuning(descriptor, tuningControls[changes[0].parameter], true, changes);
+        });
+        group.appendChild(heading); group.appendChild(applyGroup); group.appendChild(rows); tuningRows.appendChild(group);
+        groups[groupName] = rows;
+      }
+      var row = document.createElement("div"); row.className = "tuning-row"; row.dataset.key = descriptor.key;
+      var label = document.createElement("label"); label.textContent = descriptor.key || "parameter";
+      var slider = document.createElement("input"); slider.type = "range"; slider.min = descriptor.min; slider.max = descriptor.max; slider.step = descriptor.step;
+      var number = document.createElement("input"); number.type = "number"; number.min = descriptor.min; number.max = descriptor.max; number.step = descriptor.step;
+      var initial = descriptor.active_value == null ? descriptor.default : descriptor.active_value; slider.value = initial; number.value = initial;
+      var button = document.createElement("button"); button.textContent = "Apply";
+      var status = document.createElement("span"); status.className = "muted";
+      var controls = { descriptor: descriptor, slider: slider, number: number, button: button, status: status, lastTransientAt: 0, transientTimer: null };
+      tuningControls[descriptor.key] = controls;
+      function preview() { number.value = slider.value; scheduleTransient(descriptor, controls); }
+      slider.addEventListener("input", preview); slider.addEventListener("change", function () { sendTuning(descriptor, controls, true, null); });
+      number.addEventListener("input", function () { slider.value = number.value; scheduleTransient(descriptor, controls); });
+      number.addEventListener("change", function () { sendTuning(descriptor, controls, true, null); });
+      button.addEventListener("click", function () { sendTuning(descriptor, controls, true, null); });
+      row.appendChild(label); row.appendChild(slider); row.appendChild(number); row.appendChild(button); row.appendChild(status); groups[descriptor.group || "Tuning"].appendChild(row);
+      setControlsEnabled(panelReady());
+    });
+    if (!parameters.length) tuningRows.textContent = "No tunable parameters.";
+  }
+  function renderQuickAdjust(profile, registry) {
+    quickAdjustRows.textContent = "";
+    quickAdjustControls = [];
+    var parameters = (registry && Array.isArray(registry.parameters) ? registry.parameters : []).filter(function (item) { return item.quick_adjust_eligible; });
+    var slots = profile && Array.isArray(profile.slots) ? profile.slots : [];
+    for (let index = 0; index < 8; index += 1) {
+      let row = document.createElement("div"); row.className = "quick-adjust-row";
+      let parameter = document.createElement("select");
+      parameter.appendChild(new Option("Slot " + (index + 1) + " — off", ""));
+      parameters.forEach(function (item) { parameter.appendChild(new Option(item.key, item.key)); });
+      let type = document.createElement("select"); ["axis", "key_pair"].forEach(function (item) { type.appendChild(new Option(item, item)); });
+      let mode = document.createElement("select"); ["absolute", "relative"].forEach(function (item) { mode.appendChild(new Option(item, item)); });
+      let subsetMin = document.createElement("input"); subsetMin.type = "number"; subsetMin.title = "subset min";
+      let subsetMax = document.createElement("input"); subsetMax.type = "number"; subsetMax.title = "subset max";
+      let deadzone = document.createElement("input"); deadzone.type = "number"; deadzone.step = "0.01"; deadzone.value = "0.05"; deadzone.title = "deadzone";
+      let step = document.createElement("input"); step.type = "number"; step.step = "any"; step.title = "step";
+      let rate = document.createElement("input"); rate.type = "number"; rate.step = "any"; rate.value = "30"; rate.title = "rate limit";
+      let device = document.createElement("input"); device.type = "number"; device.value = "0"; device.title = "device";
+      let axis = document.createElement("input"); axis.type = "number"; axis.value = "4"; axis.title = "axis";
+      let negative = document.createElement("input"); negative.type = "number"; negative.placeholder = "negative key";
+      let positive = document.createElement("input"); positive.type = "number"; positive.placeholder = "positive key";
+      let apply = document.createElement("button"); apply.textContent = "Save";
+      let status = document.createElement("span"); status.className = "muted";
+      let controls = { parameter: parameter, type: type, mode: mode, subsetMin: subsetMin, subsetMax: subsetMax, deadzone: deadzone, step: step, rate: rate, device: device, axis: axis, negative: negative, positive: positive, apply: apply, status: status };
+      quickAdjustControls.push(controls);
+      function descriptorFor() { return parameters.find(function (item) { return item.key === parameter.value; }) || {}; }
+      function refreshBounds() {
+        var descriptor = descriptorFor();
+        if (subsetMin.value === "") subsetMin.value = descriptor.min == null ? "" : descriptor.min;
+        if (subsetMax.value === "") subsetMax.value = descriptor.max == null ? "" : descriptor.max;
+        if (step.value === "") step.value = descriptor.step == null ? "" : descriptor.step;
+      }
+      parameter.addEventListener("change", refreshBounds);
+      apply.addEventListener("click", function () {
+        if (!panelReady()) { status.textContent = "Disconnected"; return; }
+        var slotsToSend = quickAdjustControls.map(function (item) {
+          if (!item.parameter.value) return null;
+          var result = { parameter: item.parameter.value, binding_type: item.type.value, mode: item.mode.value, subset_min: Number(item.subsetMin.value), subset_max: Number(item.subsetMax.value), deadzone: Number(item.deadzone.value), step: Number(item.step.value), rate_limit: Number(item.rate.value) };
+          if (item.type.value === "axis") { result.device = Number(item.device.value); result.axis = Number(item.axis.value); }
+          else { result.negative_key = Number(item.negative.value); result.positive_key = Number(item.positive.value); }
+          return result;
+        });
+        var sequence = send("set_quick_adjust", { profile: { schema_version: 1, slots: slotsToSend } });
+        if (sequence == null) { status.textContent = "Disconnected"; return; }
+        status.textContent = "Waiting for acknowledgement…";
+        pendingQuickAdjust[sequence] = status;
+      });
+      var slot = slots[index];
+      if (slot) {
+        parameter.value = slot.parameter || ""; type.value = slot.binding_type || "axis"; mode.value = slot.mode || "relative";
+        subsetMin.value = slot.subset_min; subsetMax.value = slot.subset_max; deadzone.value = slot.deadzone; step.value = slot.step; rate.value = slot.rate_limit;
+        device.value = slot.device == null ? 0 : slot.device; axis.value = slot.axis == null ? 4 : slot.axis;
+        negative.value = slot.negative_key == null ? "" : slot.negative_key; positive.value = slot.positive_key == null ? "" : slot.positive_key;
+      }
+      refreshBounds();
+      [parameter, type, mode, subsetMin, subsetMax, deadzone, step, rate, device, axis, negative, positive, apply, status].forEach(function (item) { row.appendChild(item); });
+      quickAdjustRows.appendChild(row);
+      setControlsEnabled(panelReady());
+    }
+  }
+  function disconnect(message) {
+    var generation = arguments.length > 1 ? arguments[1] : socketGeneration;
+    if (generation !== socketGeneration) return;
+    var disconnectedSocket = socket;
+    socket = null;
+    if (disconnectedSocket) disconnectedSocket.close();
+    if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+    resetSessionReadiness();
+    waitingForFresh = true;
+    pendingFreshRequestSequence = null;
+    lastSampleSequence = 0;
+    connection.textContent = message;
+    freshState.textContent = "Live display disabled.";
+    text("rate", "0 Hz");
+    if (reconnectTimer == null && port >= 8765 && port <= 8769 && /^[0-9a-f]{32}$/i.test(token)) {
+      var delay = reconnectDelay();
+      reconnectAttempt += 1;
+      reconnectTimer = setTimeout(function () {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    }
+  }
+  function drawSparkline() {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.strokeStyle = "#31445d";
+    context.beginPath(); context.moveTo(0, 50); context.lineTo(canvas.width, 50); context.stroke();
+    if (sparkValues.length < 2) return;
+    context.strokeStyle = "#67d5ff"; context.beginPath();
+    sparkValues.forEach(function (value, index) {
+      var x = index * canvas.width / Math.max(sparkValues.length - 1, 1);
+      var y = 90 - Math.min(Math.max(value, 0), 1) * 80;
+      if (index === 0) context.moveTo(x, y); else context.lineTo(x, y);
+    });
+    context.stroke();
+  }
+  function displayTelemetry(message) {
+    if (document.hidden) return;
+    var sample = message.d;
+    if (waitingForFresh && (!sample.fresh || Number(sample.request_seq) !== pendingFreshRequestSequence)) return;
+    if (!sample.sample_seq) return;
+    if (!waitingForFresh && Number(sample.sample_seq) <= lastSampleSequence) return;
+    lastSampleSequence = Number(sample.sample_seq);
+    waitingForFresh = false;
+    pendingFreshRequestSequence = null;
+    snapshotReady = true;
+    if (panelReady()) {
+      reconnectAttempt = 0;
+      setControlsEnabled(true);
+    }
+    connection.textContent = "Connected";
+    freshState.textContent = "Live telemetry";
+    text("vehicle", sample.vehicle_instance || "—");
+    text("authority", sample.authority || sample.control_authority || "—");
+    text("tick", message.tick == null ? "—" : message.tick);
+    rateSamples += 1;
+    var elapsed = performance.now() - rateStartedAt;
+    text("rate", elapsed > 0 ? (rateSamples * 1000 / elapsed).toFixed(1) + " Hz" : "—");
+    text("registry", sample.registry_hash || "unavailable");
+    text("position", "position: " + vector(sample.pos_ned, "m NED"));
+    text("velocity", "velocity: " + vector(sample.vel_ned, "m/s NED"));
+    text("attitude", "attitude: " + euler(sample.att_euler_deg));
+    text("rates", "rates: " + vector(sample.gyro_body, "rad/s FRD"));
+    var motors = sample.motors || [];
+    text("motors", motors.map(function (motor) { return Number(motor.thrust_newtons).toFixed(2) + " N"; }).join(" | ") || "—");
+    sparkValues.push((sample.rpm || []).reduce(function (sum, rpm) { return sum + Number(rpm || 0); }, 0) / 60000);
+    if (sparkValues.length > 80) sparkValues.shift();
+    drawSparkline();
+  }
+  function connect() {
+    if (port < 8765 || port > 8769 || !/^[0-9a-f]{32}$/i.test(token)) {
+      connection.textContent = "No valid GSP session fragment"; return;
+    }
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    var generation = ++socketGeneration;
+    resetSessionReadiness();
+    waitingForFresh = true;
+    pendingFreshRequestSequence = null;
+    lastSampleSequence = 0;
+    clientSequence = 1;
+    pendingTuning = {};
+    pendingQuickAdjust = {};
+    pendingPresets = {};
+    var candidate;
+    try {
+      candidate = new WebSocket("ws://127.0.0.1:" + port);
+    } catch (_error) {
+      disconnect("GSP session unavailable", generation);
+      return;
+    }
+    socket = candidate;
+    candidate.addEventListener("open", function () {
+      if (generation !== socketGeneration || socket !== candidate) return;
+      connection.textContent = "Authenticating…";
+      candidate.send(JSON.stringify({ v: protocolVersion, t: "auth", seq: 0, d: { token: token } }));
+    });
+    candidate.addEventListener("message", function (event) {
+      if (generation !== socketGeneration || socket !== candidate) return;
+      var message;
+      try { message = JSON.parse(event.data); } catch (_error) { disconnect("Invalid GSP response"); return; }
+      if (message.t === "telemetry") { displayTelemetry(message); return; }
+      if (message.v !== protocolVersion || typeof message.t !== "string" || !message.d) { disconnect("Invalid GSP protocol response"); return; }
+      if (message.t === "hello") {
+        helloReady = true;
+        snapshotReady = false;
+        setControlsEnabled(false);
+        connection.textContent = "Authenticating…";
+        renderTuning(message.d.registry || {});
+        renderQuickAdjust((message.d.registry || {}).quick_adjust || {}, message.d.registry || {});
+        renderPresets((message.d.registry || {}).presets || []);
+        rateStartedAt = performance.now(); rateSamples = 0;
+        sendTelemetryRate(document.hidden ? 0 : 30); requestFreshSnapshot();
+        sendPing();
+        if (pingTimer) clearInterval(pingTimer);
+        pingTimer = setInterval(sendPing, 1000);
+      } else if (message.t === "pong" && message.d.echo && updateClockSync(message)) {
+        text("latency", Number(clockSync.best_rtt_ms).toFixed(1) + " ms");
+      } else if (message.t === "tuning_ack") {
+        var ack = message.d;
+        var pending = pendingTuning[Number(ack.request_seq)];
+        if (!pending) {
+          if (pendingPresets[Number(ack.request_seq)] === "load_preset") {
+            delete pendingPresets[Number(ack.request_seq)];
+            presetStatus.textContent = ack.ok ? "Preset load committed." : String(ack.error || "Preset load rejected");
+          }
+          return;
+        }
+        delete pendingTuning[Number(ack.request_seq)];
+        pending.controls.status.textContent = ack.ok ? (ack.clamped ? "Clamped to " : "Committed ") + (ack.committed_value == null ? "" : Number(ack.committed_value).toFixed(3)) : String(ack.error || "Rejected");
+        if (ack.ok && ack.committed_value != null) { pending.controls.slider.value = ack.committed_value; pending.controls.number.value = ack.committed_value; }
+        if (ack.ok && pending.final && Number(ack.commit_id) > 0 && Number.isFinite(Number(ack.native_commit_monotonic_usec))) {
+          var nativeCommitPerfMs = serverMonotonicToClientPerf(ack.native_commit_monotonic_usec);
+          if (Number.isFinite(nativeCommitPerfMs) && Number.isFinite(pending.startedClientPerfMs)) recordPerformanceSample("request_to_native_commit_ms", nativeCommitPerfMs - pending.startedClientPerfMs);
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function (renderedAt) {
+              var renderedPerfMs = Number(renderedAt);
+              if (Number.isFinite(nativeCommitPerfMs) && Number.isFinite(renderedPerfMs)) recordPerformanceSample("native_commit_to_rendered_ack_ms", renderedPerfMs - nativeCommitPerfMs);
+            });
+          });
+        }
+      } else if (message.t === "tuning_commit") {
+        var values = message.d.committed_values || message.d.values || {};
+        Object.keys(values).forEach(function (key) {
+          if (!tuningControls[key]) return;
+          tuningControls[key].slider.value = values[key]; tuningControls[key].number.value = values[key];
+          tuningControls[key].status.textContent = "Committed by session";
+        });
+      } else if (message.t === "quick_adjust_ack") {
+        var quickStatus = pendingQuickAdjust[Number(message.d.request_seq)];
+        if (!quickStatus) return;
+        delete pendingQuickAdjust[Number(message.d.request_seq)];
+        quickStatus.textContent = message.d.ok ? "Saved" : String(message.d.error || "Rejected");
+      } else if (message.t === "preset_ack") {
+        var presetAck = message.d;
+        var operation = pendingPresets[Number(presetAck.request_seq)];
+        delete pendingPresets[Number(presetAck.request_seq)];
+        if (!presetAck.ok) { presetStatus.textContent = String(presetAck.error || "Preset request rejected"); return; }
+        if (operation === "list_presets" || operation === "save_preset") renderPresets(presetAck.presets || []);
+        if (operation === "retrieve_preset" && presetAck.preset) presetStatus.textContent = presetAck.preset.name + " — " + (presetAck.preset.note || "no note");
+        if (operation === "compare_presets") { presetStatus.textContent = "Comparison ready."; renderPresetDiff(presetAck); }
+        if (operation === "preview_preset_migration") {
+          renderMigrationReport(presetAck);
+          presetStatus.textContent = "Migration preview ready; confirmation required.";
+          if (window.confirm("Apply this preset migration at the next authoritative boundary?")) {
+            sendPreset("apply_preset_migration", { name: presetAck.preset_name, migration_id: presetAck.migration_id, confirmed: true });
+          }
+        }
+      }
+    });
+    candidate.addEventListener("close", function () { disconnect("GSP session closed", generation); });
+    candidate.addEventListener("error", function () { disconnect("GSP session unavailable", generation); });
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) { waitingForFresh = true; sendTelemetryRate(0); freshState.textContent = "Panel hidden; telemetry stopped."; return; }
+    if (socket && socket.readyState === WebSocket.OPEN) { requestFreshSnapshot(); sendTelemetryRate(30); }
+  });
+  window.addEventListener("focus", function () { $("focus-state").textContent = "panel focus"; });
+  window.addEventListener("blur", function () { $("focus-state").textContent = "panel unfocused"; });
+  $("preset-save").addEventListener("click", function () { sendPreset("save_preset", { name: presetName.value, note: presetNote.value }); });
+  $("preset-refresh").addEventListener("click", function () { sendPreset("list_presets", {}); });
+  $("preset-retrieve").addEventListener("click", function () { if (presetSource.value) sendPreset("retrieve_preset", { name: presetSource.value }); });
+  $("preset-load").addEventListener("click", function () { if (presetSource.value) sendPreset("load_preset", { name: presetSource.value }); });
+  $("preset-preview").addEventListener("click", function () { if (presetSource.value) sendPreset("preview_preset_migration", { name: presetSource.value }); });
+  $("preset-compare-current").addEventListener("click", function () { if (presetSource.value) sendPreset("compare_presets", { left: "", right: presetSource.value }); });
+  $("preset-compare-two").addEventListener("click", function () { if (presetSource.value && presetTarget.value) sendPreset("compare_presets", { left: presetSource.value, right: presetTarget.value }); });
+  if (window.__AEROSIM_PANEL_TEST__) {
+    window.__AEROSIM_PANEL_TEST__.tuningControls = function () { return tuningControls; };
+    window.__AEROSIM_PANEL_TEST__.renderQuickAdjust = renderQuickAdjust;
+    window.__AEROSIM_PANEL_TEST__.quickAdjustControls = function () { return quickAdjustControls; };
+    window.__AEROSIM_PANEL_TEST__.readinessControls = readinessControls;
+    window.__AEROSIM_PANEL_TEST__.renderPresets = renderPresets;
+    window.__AEROSIM_PANEL_TEST__.renderPresetDiff = renderPresetDiff;
+    window.__AEROSIM_PANEL_TEST__.renderMigrationReport = renderMigrationReport;
+  }
+  connect(); drawSparkline();
+}());
+</script>
+</body>
+</html>

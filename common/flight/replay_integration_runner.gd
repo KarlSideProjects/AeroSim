@@ -95,8 +95,8 @@ func run() -> Dictionary:
     if not bool(replay.get("ok", false)) or int(replay.get("scene_object_count", 0)) != 1 or String(replay.get("environment_json", "")).find("rain") < 0:
         return _failure("native replay failed: %s expected=%s actual=%s" % [String(replay.get("diagnostic_message", "unknown")), String(replay.get("divergence_expected", "")), String(replay.get("divergence_actual", ""))])
     var altered_manifest: Dictionary = JSON.parse_string(finish.serialized)
-    if int(altered_manifest.get("schema_version", 0)) != 3:
-        return _failure("replay recording did not emit schema v3")
+    if int(altered_manifest.get("schema_version", 0)) != 5:
+        return _failure("replay recording did not emit schema v5")
     var checkpoints: Array = altered_manifest.get("checkpoints", [])
     if checkpoints.is_empty():
         return _failure("replay recording did not emit a checkpoint")
@@ -108,17 +108,17 @@ func run() -> Dictionary:
     var scene_objects: Array = checkpoint.get("scene_objects", [])
     if controllers.size() != 2 or clocks.size() != 2 or responses.size() != 2 or collisions.size() != 2 or scene_objects.size() != 1 \
             or not bool((collisions[1] as Dictionary).get("touching", false)) or String((scene_objects[0] as Dictionary).get("name", "")) != "crate":
-        return _failure("schema-v3 checkpoint state is incomplete")
+        return _failure("schema-v5 checkpoint state is incomplete")
     for vehicle_index in range(2):
         var controller: Dictionary = controllers[vehicle_index]
         var response: Dictionary = responses[vehicle_index]
         var response_state: Dictionary = response.get("state", {})
         for field in ["target_angle", "target_rate", "integral", "previous_error", "derivative", "mode", "initialized", "motor_latches", "pid_latches", "motor_total"]:
             if not controller.has(field):
-                return _failure("schema-v3 controller checkpoint field is missing: %s" % field)
+                return _failure("schema-v5 controller checkpoint field is missing: %s" % field)
         if not clocks[vehicle_index].has("substep_accumulator") or not clocks[vehicle_index].has("total_substeps") or \
                 not response_state.has("motor_thrust") or not response_state.has("propwash"):
-            return _failure("schema-v3 clock, motor, or first-response state is missing")
+            return _failure("schema-v5 clock, motor, or first-response state is missing")
     altered_manifest["vehicles"][0]["config"]["mass_kg"] = 1.25
     var strict_manifest_rejection: Dictionary = native.call(
         "replay_complete_session", JSON.stringify(altered_manifest), SETTINGS_HASH, config_hash, config_hash,

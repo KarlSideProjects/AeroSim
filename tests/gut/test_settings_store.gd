@@ -30,7 +30,7 @@ func test_default_document_has_one_allowlisted_versioned_envelope() -> void:
     assert_true(result.ok, result.error)
     assert_eq(
         result.document.keys(),
-        ["schema_version", "confirmed_gamepad", "rates", "osd", "camera", "language", "quality"]
+        ["schema_version", "confirmed_gamepad", "rates", "osd", "camera", "language", "quality", "quick_adjust"]
     )
 
 
@@ -60,6 +60,27 @@ func test_settings_store_rejects_unknown_or_future_schema_without_partial_apply(
     assert_string_contains(unknown.error, "future")
     assert_false(future.ok)
     assert_string_contains(future.error, "schema_version")
+
+
+func test_settings_store_persists_exactly_eight_quick_adjust_slots() -> void:
+    var store = SettingsStoreScript.new(test_path)
+    var profile: Dictionary = InputProfiles.QuickAdjustProfile.default_profile()
+    profile.slots[0] = {
+        "parameter": "simpleflight.rate_p", "binding_type": "key_pair", "negative_key": KEY_Q, "positive_key": KEY_E,
+        "mode": "relative", "subset_min": 0.6, "subset_max": 1.4, "deadzone": 0.05, "step": 0.01, "rate_limit": 30.0
+    }
+    var document := store.default_document()
+    document["quick_adjust"] = profile
+    var saved: Dictionary = store.save_document(document)
+    assert_true(saved.ok, saved.error)
+    var loaded: Dictionary = store.load_document()
+    assert_true(loaded.ok, loaded.error)
+    assert_eq(loaded.document.quick_adjust.slots.size(), 8)
+    assert_eq(loaded.document.quick_adjust.slots[0].parameter, "simpleflight.rate_p")
+    var invalid: Dictionary = profile.duplicate(true)
+    invalid.slots.resize(7)
+    document["quick_adjust"] = invalid
+    assert_false(store.validate_document(document).ok)
 
 
 func test_settings_store_validates_the_versioned_rates_slot() -> void:

@@ -54,7 +54,10 @@ if "--out-dir" in runner_args:
     result_key = "passed"
     for screenshot in (
         "00_cold_start.png",
+        "00_keyboard_fallback_preconfirm.png",
         "01_controller_confirmation.png",
+        "01_terrain_range_preflight.png",
+        "01_third_person_preflight.png",
         "02_keyboard_fallback.png",
         "03_takeoff.png",
         "04_paused.png",
@@ -73,6 +76,7 @@ else:
     result_key = "completed"
 
 mode = os.environ["FAKE_GODOT_RESULT"]
+locale_elapsed_us = int(os.environ.get("FAKE_GODOT_LOCALE_SWITCH_US", "1000"))
 result = {} if mode == "missing" else {
     result_key: mode == "true",
     "provenance": {
@@ -83,7 +87,7 @@ result = {} if mode == "missing" else {
         "gpu_adapter": "fake",
     },
     "locale_switches": [
-        {"from": "en", "to": "zh_TW", "elapsed_us": 1000, "threshold_us": 100000},
+        {"from": "en", "to": "zh_TW", "elapsed_us": locale_elapsed_us},
     ],
 }
 result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,46 +126,46 @@ class CiStrategyTest(unittest.TestCase):
             ),
         )
 
-    def test_blocking_gut_runs_immediately_after_linux_debug_artifact_recording(self):
-        match = re.search(
-            re.compile(
-                r"^      - name: Build GDExtension\n"
-                r"^        run: scons target=template_debug platform=linux\n"
-                r"\n"
-                r"^      - name: Record Linux debug artifact provenance\n"
-                r"(?:(?!^      - ).)*"
-                r"\n"
-                r"(?P<gut_step>^      - name: [^\n]*GUT[^\n]*\n"
-                r"(?:(?!^      - ).)*(?=^      - |\Z))",
-                re.MULTILINE | re.DOTALL,
-            ),
-            self.linux_job,
+    def test_linux_builds_extension_before_exported_smoke_and_blocking_gut(self):
+        build_position = self.linux_job.index("      - name: Build GDExtension")
+        provenance_position = self.linux_job.index(
+            "      - name: Record Linux debug artifact provenance"
         )
-        self.assertIsNotNone(match)
-        gut_step = match.group("gut_step")
+        export_position = self.linux_job.index("      - name: Exported localization smoke")
+        gut_position = self.linux_job.index("run: scripts/run_gut_tests.sh")
+        self.assertLess(build_position, provenance_position)
+        self.assertLess(provenance_position, export_position)
+        self.assertLess(export_position, gut_position)
+
+        gut_step = re.search(
+            r"^      - name: [^\n]*GUT[^\n]*\n"
+            r"(?:(?!^      - ).)*(?=^      - |\Z)",
+            self.linux_job,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(gut_step)
+        gut_step_text = gut_step.group(0) if gut_step else ""
         with self.subTest(contract="blocking command"):
             self.assertRegex(
-                gut_step,
+                gut_step_text,
                 re.compile(r"^        run: scripts/run_gut_tests\.sh$", re.MULTILINE),
             )
         with self.subTest(contract="not continue-on-error true"):
             self.assertNotRegex(
-                gut_step,
+                gut_step_text,
                 re.compile(r"^        continue-on-error: true$", re.MULTILINE),
             )
         with self.subTest(contract="unconditional"):
-            self.assertNotRegex(gut_step, re.compile(r"^        if:", re.MULTILINE))
-        gut_position = self.linux_job.find("run: scripts/run_gut_tests.sh")
-        if gut_position >= 0:
-            for later_step in (
-                "Headless physics qualification",
-                "Headed acceptance (Xvfb + lavapipe)",
-                "Performance harness smoke (Xvfb + lavapipe)",
-                "Install Godot export templates",
-                "Export Linux release artifact",
-            ):
-                with self.subTest(later_step=later_step):
-                    self.assertLess(gut_position, self.linux_job.index(later_step))
+            self.assertNotRegex(gut_step_text, re.compile(r"^        if:", re.MULTILINE))
+        for later_step in (
+            "Headless physics qualification",
+            "Headed acceptance (Xvfb + lavapipe)",
+            "Performance harness smoke (Xvfb + lavapipe)",
+            "Install Godot export templates",
+            "Export Linux release artifact",
+        ):
+            with self.subTest(later_step=later_step):
+                self.assertLess(gut_position, self.linux_job.index(later_step))
 
     def test_recovery_shadow_is_non_blocking_and_not_a_platform_dependency(self):
         with self.subTest(contract="recovery shadow job"):
@@ -394,6 +398,15 @@ class CiStrategyTest(unittest.TestCase):
     def test_headed_runner_retains_logs_and_requires_structured_success(self):
         self._assert_runtime_runner_contract(HEADED_RUNNER, reject_console_errors=True)
 
+    def test_headed_runner_keeps_locale_timing_as_diagnostic_evidence(self):
+        completed, _ = self._run_runner(
+            HEADED_RUNNER,
+            "true",
+            "Godot Engine fake\n",
+            extra_environment={"FAKE_GODOT_LOCALE_SWITCH_US": "100001"},
+        )
+        self.assertEqual(0, completed.returncode)
+
     def test_headless_runner_retains_logs_and_requires_structured_completion(self):
         # Headless intentionally exercises HardwareConfig's push_error + fallback path.
         self._assert_runtime_runner_contract(HEADLESS_RUNNER, reject_console_errors=False)
@@ -470,6 +483,7 @@ class CiStrategyTest(unittest.TestCase):
         exit_status: int = 0,
         expected_fixed_fps: str | None = None,
         with_native_provenance: bool = True,
+        extra_environment: dict[str, str] | None = None,
     ):
         with tempfile.TemporaryDirectory() as temporary_directory:
             workdir = Path(temporary_directory)
@@ -510,6 +524,8 @@ class CiStrategyTest(unittest.TestCase):
             )
             if expected_fixed_fps is not None:
                 environment["FAKE_GODOT_EXPECT_FIXED_FPS"] = expected_fixed_fps
+            if extra_environment is not None:
+                environment.update(extra_environment)
             completed = subprocess.run(
                 [str(runner)],
                 cwd=workdir,

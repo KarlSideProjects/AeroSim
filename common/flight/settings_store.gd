@@ -7,6 +7,7 @@ const QualityProfile = preload("res://common/flight/quality_profile.gd")
 const LanguageProfile = preload("res://common/flight/language_profile.gd")
 const CameraProfile = preload("res://common/flight/camera_profile.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
+const QuickAdjustProfile = InputProfiles.QuickAdjustProfile
 
 const SCHEMA_VERSION := 1
 const FIELD_NAMES := [
@@ -17,6 +18,7 @@ const FIELD_NAMES := [
     "camera",
     "language",
     "quality",
+    "quick_adjust",
 ]
 const DEFAULT_PATH := "user://settings.json"
 
@@ -36,18 +38,21 @@ func default_document() -> Dictionary:
         "camera": null,
         "language": null,
         "quality": null,
+        "quick_adjust": null,
     }
 
 
 func validate_document(candidate: Variant) -> Dictionary:
     if typeof(candidate) != TYPE_DICTIONARY:
         return {"ok": false, "error": "settings document must be an object"}
-    var source: Dictionary = candidate
+    var source: Dictionary = candidate.duplicate(true)
+    if not source.has("quick_adjust"):
+        source["quick_adjust"] = null
     for key in source.keys():
         if not FIELD_NAMES.has(key):
             return {"ok": false, "error": "unknown settings field: %s" % key}
     for key in FIELD_NAMES:
-        if not source.has(key):
+        if not source.has(key) and key != "quick_adjust":
             return {"ok": false, "error": "missing settings field: %s" % key}
     if typeof(source["schema_version"]) != TYPE_INT or int(source["schema_version"]) != SCHEMA_VERSION:
         return {"ok": false, "error": "unsupported settings schema_version"}
@@ -82,6 +87,11 @@ func validate_document(candidate: Variant) -> Dictionary:
         quality_result = QualityProfile.validate_profile(source["quality"])
         if not quality_result.ok:
             return quality_result
+    var quick_adjust_result: Dictionary = {"ok": true, "profile": null}
+    if source.get("quick_adjust") != null:
+        quick_adjust_result = QuickAdjustProfile.validate_profile(source["quick_adjust"])
+        if not quick_adjust_result.ok:
+            return quick_adjust_result
     var normalized := source.duplicate(true)
     normalized["schema_version"] = SCHEMA_VERSION
     if source["camera"] != null:
@@ -92,6 +102,10 @@ func validate_document(candidate: Variant) -> Dictionary:
         normalized["quality"] = quality_result.profile
     if source["language"] != null:
         normalized["language"] = language_result.profile if source["language"].has("schema_version") else source["language"].duplicate(true)
+    if source.get("quick_adjust") != null:
+        normalized["quick_adjust"] = quick_adjust_result.profile
+    elif not normalized.has("quick_adjust"):
+        normalized["quick_adjust"] = null
     return {"ok": true, "error": "", "document": normalized}
 
 
@@ -206,6 +220,24 @@ func _normalize_loaded_document(candidate: Variant) -> Variant:
                 normalized_slot_profile["positions"]["warnings"] = OsdProfile.DEFAULT_POSITIONS["warnings"].duplicate(true)
                 normalized_slot_profile["positions"]["reset_hint"] = OsdProfile.DEFAULT_POSITIONS["reset_hint"].duplicate(true)
             normalized[slot] = normalized_slot_profile
+    var quick_adjust = normalized.get("quick_adjust")
+    if typeof(quick_adjust) == TYPE_DICTIONARY:
+        var normalized_quick_adjust: Dictionary = quick_adjust.duplicate(true)
+        if typeof(normalized_quick_adjust.get("schema_version")) in [TYPE_INT, TYPE_FLOAT]:
+            normalized_quick_adjust["schema_version"] = _normalize_integer_json_value(normalized_quick_adjust["schema_version"])
+        if typeof(normalized_quick_adjust.get("slots")) == TYPE_ARRAY:
+            var normalized_slots: Array = []
+            for slot_value in normalized_quick_adjust.slots:
+                if typeof(slot_value) != TYPE_DICTIONARY:
+                    normalized_slots.append(slot_value)
+                    continue
+                var normalized_slot: Dictionary = slot_value.duplicate(true)
+                for key in ["device", "axis", "negative_key", "positive_key"]:
+                    if typeof(normalized_slot.get(key)) in [TYPE_INT, TYPE_FLOAT]:
+                        normalized_slot[key] = _normalize_integer_json_value(normalized_slot[key])
+                normalized_slots.append(normalized_slot)
+            normalized_quick_adjust["slots"] = normalized_slots
+        normalized["quick_adjust"] = normalized_quick_adjust
     return normalized
 
 

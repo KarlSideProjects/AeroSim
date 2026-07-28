@@ -1,6 +1,7 @@
 extends SceneTree
 
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const GspServer = preload("res://common/gsp/gsp_server.gd")
 const G3_7_WORKLOAD_ATTESTATION := {
     "workload_id": "G3.7-A3-A6-public-native-v1",
     "effect_paths": {
@@ -141,13 +142,19 @@ var _warmup_seconds := 10.0
 var _seconds := 60.0
 var _effects := "off"
 var _benchmark_mode := "gate"
+var _gsp_mode := "none"
 var _commit_sha := ""
+var _gsp_ready_path := ""
+var _gsp_external_client := false
 var _required_adapter := "NVIDIA"
 var _godot_version := ""
 var _godot_sha256 := ""
 var _godot_cpp_revision := ""
 var _gdextension_sha256 := ""
 var _native_source_sha256 := ""
+var _gsp_server: GspServer
+var _gsp_evidence_samples: Array[Dictionary] = []
+var _gsp_monotonic_timing: Dictionary = {}
 
 
 func _initialize() -> void:
@@ -168,8 +175,14 @@ func _run() -> void:
     if _benchmark_mode != "smoke" and (_warmup_seconds != 10.0 or _seconds != 60.0):
         _fail("gate and reference modes require exactly 10s warmup and 60s measurement")
         return
-    if _commit_sha.length() != 40 or _godot_version.is_empty() or _godot_sha256.length() != 64 or _godot_cpp_revision.length() != 40 or _gdextension_sha256.length() != 64 or _native_source_sha256.length() != 64:
+    if _commit_sha.length() != 40:
+        _fail("commit provenance is required")
+        return
+    if _benchmark_mode != "smoke" and (_godot_version.is_empty() or _godot_sha256.length() != 64 or _godot_cpp_revision.length() != 40 or _gdextension_sha256.length() != 64 or _native_source_sha256.length() != 64):
         _fail("complete Godot, godot-cpp, GDExtension, and native source provenance is required")
+        return
+    if _gsp_mode != "none":
+        await _run_gsp_mode()
         return
     var adapter := RenderingServer.get_video_adapter_name()
     if adapter.is_empty():
@@ -311,6 +324,196 @@ func _configure_effects(native: Object) -> bool:
     return true
 
 
+func _run_gsp_mode() -> void:
+    if _gsp_mode != "disabled" and _gsp_mode != "authenticated-idle":
+        _fail("GSP benchmark mode must be disabled or authenticated-idle")
+        return
+    if _gsp_mode == "authenticated-idle" and not _gsp_external_client:
+        _fail("authenticated-idle requires the external client runner")
+        return
+    var setup := await _prepare_gsp_runtime()
+    if setup.is_empty():
+        return
+    var runtime: Node = setup.runtime
+    var effect_workload: EffectWorkload = setup.effect_workload
+    var profiler := PhysicsFrameProfiler.new()
+    EngineDebugger.register_profiler("aerosim_physics_frame", profiler)
+    EngineDebugger.profiler_enable("aerosim_physics_frame", true)
+    var samples: Array[float] = await _run_gsp_phase(_gsp_mode, runtime, effect_workload, profiler)
+    EngineDebugger.profiler_enable("aerosim_physics_frame", false)
+    EngineDebugger.unregister_profiler("aerosim_physics_frame")
+    if _benchmark_mode != "smoke" and samples.size() != ceili(_seconds * Engine.physics_ticks_per_second):
+        _fail("PhysicsFrameProfiler captured %d of %d GSP measurement frames" % [samples.size(), ceili(_seconds * Engine.physics_ticks_per_second)])
+        return
+    if samples.is_empty():
+        _fail("PhysicsFrameProfiler captured no GSP measurement frames")
+        return
+    _write_gsp_raw(_output_path, _gsp_mode, samples)
+    runtime.queue_free()
+    quit(0)
+
+
+func _prepare_gsp_runtime() -> Dictionary:
+    var runtime: Node = SmokeScene.instantiate()
+    root.add_child(runtime)
+    await process_frame
+    if runtime.native == null:
+        _fail("AeroSimNative is not registered")
+        return {}
+    _install_deterministic_valid_license(runtime)
+    _effects = "off"
+    if not _configure_effects(runtime.native):
+        return {}
+    var effect_workload := EffectWorkload.new()
+    if not effect_workload.configure(runtime.native, false):
+        _fail("GSP benchmark could not configure the production EffectWorkload")
+        return {}
+    effect_workload.process_physics_priority = 100
+    root.add_child(effect_workload)
+    return {"runtime": runtime, "effect_workload": effect_workload}
+
+
+func _run_gsp_phase(mode: String, runtime: Node, _effect_workload: EffectWorkload, profiler: PhysicsFrameProfiler) -> Array[float]:
+    _gsp_evidence_samples.clear()
+    _gsp_monotonic_timing = {}
+    if mode == "authenticated-idle" and not await _start_external_gsp(runtime):
+        _fail("authenticated idle GSP server could not start or external client did not authenticate")
+        return []
+
+    var warmup_frames := maxi(0, ceili(_warmup_seconds * Engine.physics_ticks_per_second))
+    var warmup_started_usec := Time.get_ticks_usec()
+    for _frame in warmup_frames:
+        await physics_frame
+        _sample_gsp_evidence()
+    var warmup_elapsed_usec := Time.get_ticks_usec() - warmup_started_usec
+    profiler.frame_ids.clear()
+    profiler.samples_ms.clear()
+    var measurement_frames := maxi(1, ceili(_seconds * Engine.physics_ticks_per_second))
+    var measurement_started_usec := Time.get_ticks_usec()
+    for _frame in measurement_frames:
+        await physics_frame
+        _sample_gsp_evidence()
+    var measurement_elapsed_usec := Time.get_ticks_usec() - measurement_started_usec
+    await process_frame
+    _gsp_monotonic_timing = {
+        "warmup_elapsed_monotonic_seconds": float(warmup_elapsed_usec) / 1000000.0,
+        "measurement_elapsed_monotonic_seconds": float(measurement_elapsed_usec) / 1000000.0,
+        "phase_elapsed_monotonic_seconds": float(warmup_elapsed_usec + measurement_elapsed_usec) / 1000000.0,
+    }
+    if _benchmark_mode != "smoke" and profiler.samples_ms.size() != measurement_frames:
+        _fail("PhysicsFrameProfiler captured %d of %d GSP measurement frames" % [profiler.samples_ms.size(), measurement_frames])
+        return []
+    return profiler.samples_ms.duplicate()
+
+
+func _write_gsp_raw(output_path: String, mode: String, samples: Array[float]) -> void:
+    DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(output_path.get_base_dir()))
+    var output := FileAccess.open(output_path, FileAccess.WRITE)
+    if output == null:
+        _fail("Cannot write GSP benchmark output: %s" % output_path)
+        return
+    output.store_string(JSON.stringify({
+        "samples_ms": samples,
+        "sample_count": samples.size(),
+        "sampling_source": "PhysicsFrameProfiler._tick",
+        "workload_source": "EffectWorkload on the production SmokeScene",
+        "gsp_mode": mode,
+        "authenticated_idle": mode == "authenticated-idle",
+        "commit_sha": _commit_sha,
+        "godot_version": _godot_version,
+        "godot_sha256": _godot_sha256,
+        "godot_cpp_revision": _godot_cpp_revision,
+        "gdextension_sha256": _gdextension_sha256,
+        "native_source_sha256": _native_source_sha256,
+        "physics_ticks_per_second": Engine.physics_ticks_per_second,
+        "warmup_seconds": _warmup_seconds,
+        "measured_seconds": _seconds,
+        "workload_initialization": "fresh Godot process; EffectWorkload.configure once before warmup",
+        "monotonic_timing": _gsp_monotonic_timing,
+        "gsp_server_evidence": _gsp_server_evidence(),
+    }))
+    output.close()
+
+
+func _start_external_gsp(runtime: Node) -> bool:
+    _gsp_server = GspServer.new()
+    root.add_child(_gsp_server)
+    _gsp_server.set_identity_provider(Callable(runtime, "gsp_identity_snapshot"))
+    _gsp_server.set_telemetry_provider(Callable(runtime, "gsp_telemetry_snapshot"))
+    var started := _gsp_server.start()
+    if not bool(started.get("ok", false)):
+        return false
+    if _gsp_ready_path.is_empty():
+        return false
+    DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_gsp_ready_path.get_base_dir()))
+    var temporary_path := "%s.tmp-%d" % [_gsp_ready_path, Time.get_ticks_usec()]
+    var ready := FileAccess.open(temporary_path, FileAccess.WRITE)
+    if ready == null:
+        return false
+    ready.store_string(JSON.stringify({
+        "port": started.port,
+        "token": started.token,
+        "mode": "authenticated-idle",
+        "listening": _gsp_server.is_listening(),
+        "physics_ticks_per_second": Engine.physics_ticks_per_second,
+    }))
+    ready.flush()
+    ready.close()
+    if DirAccess.rename_absolute(temporary_path, _gsp_ready_path) != OK:
+        DirAccess.remove_absolute(temporary_path)
+        return false
+    for _attempt in 240:
+        if _gsp_server.get_authenticated_peer_count() == 1:
+            return true
+        await process_frame
+    return false
+
+
+func _sample_gsp_evidence() -> void:
+    if _gsp_server == null:
+        return
+    var diagnostics := _gsp_server.get_peer_transport_diagnostics()
+    var open := _gsp_server.get_authenticated_peer_count() == 1
+    var max_buffered_bytes := 0
+    var suppressed := false
+    for diagnostic in diagnostics:
+        var buffered_bytes := int(diagnostic.get("outbound_buffered_bytes", 0))
+        max_buffered_bytes = maxi(max_buffered_bytes, buffered_bytes)
+        suppressed = suppressed or buffered_bytes >= GspServer.TELEMETRY_SUPPRESSION_THRESHOLD_BYTES
+    _gsp_evidence_samples.append({
+        "open": open,
+        "suppressed": suppressed,
+        "max_outbound_buffered_bytes": max_buffered_bytes,
+    })
+
+
+func _gsp_server_evidence() -> Dictionary:
+    if _gsp_server == null:
+        return {"server_started": false, "external_client": false}
+    var not_open_count := 0
+    var suppression_observed := false
+    var max_buffered_bytes := 0
+    for sample in _gsp_evidence_samples:
+        if not bool(sample.get("open", false)):
+            not_open_count += 1
+        suppression_observed = suppression_observed or bool(sample.get("suppressed", false))
+        max_buffered_bytes = maxi(max_buffered_bytes, int(sample.get("max_outbound_buffered_bytes", 0)))
+    return {
+        "server_started": true,
+        "external_client": true,
+        "expected_phase_samples": ceili((_warmup_seconds + _seconds) * Engine.physics_ticks_per_second),
+        "sample_count": _gsp_evidence_samples.size(),
+        "open_samples": _gsp_evidence_samples.size() - not_open_count,
+        "not_open_samples": not_open_count,
+        "suppression_observed": suppression_observed,
+        "max_outbound_buffered_bytes": max_buffered_bytes,
+        "telemetry_send_count": _gsp_server.telemetry_send_count,
+        "telemetry_processing": _gsp_server.get_telemetry_processing_diagnostics(),
+        "reliable_overflow_count": _gsp_server.reliable_overflow_count,
+        "hard_close_count": _gsp_server.hard_close_count,
+    }
+
+
 func _install_deterministic_valid_license(runtime: Node) -> void:
     if runtime.license_provider != null:
         runtime.remove_child(runtime.license_provider)
@@ -323,6 +526,7 @@ func _install_deterministic_valid_license(runtime: Node) -> void:
 
 func _parse_args() -> void:
     var args := OS.get_cmdline_user_args()
+    _gsp_external_client = args.has("--external-client")
     for index in range(args.size() - 1):
         match args[index]:
             "--output":
@@ -335,6 +539,12 @@ func _parse_args() -> void:
                 _effects = args[index + 1]
             "--benchmark-mode":
                 _benchmark_mode = args[index + 1]
+            "--gsp-mode":
+                _gsp_mode = args[index + 1]
+            "--ready-file":
+                _gsp_ready_path = args[index + 1]
+            "--external-client":
+                _gsp_external_client = true
             "--commit-sha":
                 _commit_sha = args[index + 1]
             "--godot-version":

@@ -65,3 +65,14 @@ func test_yaw_is_reported_in_ned_degrees_with_positive_downstream_rotation() -> 
         -PI / 2.0,
         0.000001
     )
+
+
+func test_ned_orientation_reports_zyx_roll_pitch_yaw_in_degrees() -> void:
+    var orientation := Quaternion(Vector3(0.0, 0.0, 1.0), deg_to_rad(30.0)) * \
+        Quaternion(Vector3(0.0, 1.0, 0.0), deg_to_rad(-20.0)) * \
+        Quaternion(Vector3(1.0, 0.0, 0.0), deg_to_rad(10.0))
+    var euler: Array[float] = AirSimCoordinateContract.ned_orientation_to_zyx_euler_degrees(orientation)
+
+    assert_almost_eq(float(euler[0]), 10.0, 0.0001)
+    assert_almost_eq(float(euler[1]), -20.0, 0.0001)
+    assert_almost_eq(float(euler[2]), 30.0, 0.0001)

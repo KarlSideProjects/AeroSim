@@ -7,6 +7,27 @@
 
 namespace aerosim {
 
+inline constexpr char kSimpleFlightRatePParameter[] = "simpleflight.rate_p";
+inline constexpr char kSimpleFlightAnglePParameter[] = "simpleflight.angle_p";
+inline constexpr char kSimpleFlightRateIParameter[] = "simpleflight.rate_i";
+inline constexpr char kSimpleFlightRateDParameter[] = "simpleflight.rate_d";
+constexpr double kSimpleFlightRatePDefault = 0.600;
+constexpr double kSimpleFlightRatePMin = 0.0;
+constexpr double kSimpleFlightRatePMax = 2.0;
+constexpr double kSimpleFlightRatePStep = 0.01;
+constexpr double kSimpleFlightAnglePDefault = 15.0;
+constexpr double kSimpleFlightAnglePMin = 0.0;
+constexpr double kSimpleFlightAnglePMax = 40.0;
+constexpr double kSimpleFlightAnglePStep = 0.1;
+constexpr double kSimpleFlightRateIDefault = 0.020;
+constexpr double kSimpleFlightRateIMin = 0.0;
+constexpr double kSimpleFlightRateIMax = 1.0;
+constexpr double kSimpleFlightRateIStep = 0.001;
+constexpr double kSimpleFlightRateDDefault = 0.005;
+constexpr double kSimpleFlightRateDMin = 0.0;
+constexpr double kSimpleFlightRateDMax = 1.0;
+constexpr double kSimpleFlightRateDStep = 0.001;
+
 struct FlightCommand {
     double throttle = 0.0;
     double roll_degrees = 0.0;
@@ -174,6 +195,10 @@ private:
     };
 
     bool armed_ = false;
+    double rate_p_ = kSimpleFlightRatePDefault;
+    double angle_p_ = kSimpleFlightAnglePDefault;
+    double rate_i_ = kSimpleFlightRateIDefault;
+    double rate_d_ = kSimpleFlightRateDDefault;
     std::string arm_reject_code_ = "";
     int integrator_reset_count_ = 0;
     double motor_thrust_newtons_ = 0.0;
@@ -248,6 +273,14 @@ public:
     void reset_integrators();
     int integrator_reset_count() const;
     double motor_thrust_newtons() const;
+    bool set_rate_p(double value);
+    double rate_p() const;
+    bool set_angle_p(double value);
+    double angle_p() const;
+    bool set_rate_i(double value);
+    double rate_i() const;
+    bool set_rate_d(double value);
+    double rate_d() const;
     void capture_altitude_hold(double target_altitude_m);
     const PidTimingStats &pid_timing_stats() const;
     FlightControlState control_state() const;

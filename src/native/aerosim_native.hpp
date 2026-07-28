@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "aerosim_collision.hpp"
 #include "aerosim_flight_control.hpp"
@@ -12,8 +13,10 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/packed_float64_array.hpp>
 #include <godot_cpp/variant/quaternion.hpp>
+#include <godot_cpp/variant/variant.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
 class AeroSimNative : public godot::RefCounted {
@@ -35,6 +38,8 @@ private:
         bool has_last_imu_sample = false;
         bool flight_control_used_estimated_attitude = false;
         godot::String flight_mode;
+        bool external_authority_active = false;
+        std::uint64_t tuning_commit_id = 0;
     };
     aerosim::RigidBodyState simulation_state_;
     aerosim::SimulationClock simulation_clock_;
@@ -67,6 +72,27 @@ private:
     bool flight_control_used_estimated_attitude_ = false;
     godot::String flight_mode_ = "ANGLE";
     godot::String last_step_error_;
+    bool external_authority_active_ = false;
+    bool tuning_initialized_ = false;
+    std::uint64_t tuning_commit_id_ = 0;
+    std::uint64_t tuning_commit_tick_ = 0;
+    double tuning_last_requested_value_ = aerosim::kSimpleFlightRatePDefault;
+    bool tuning_last_changed_ = false;
+    bool tuning_last_clamped_ = false;
+    struct StagedTuning {
+        bool valid = false;
+        godot::String parameter;
+        double requested_value = 0.0;
+        double committed_value = 0.0;
+        bool clamped = false;
+    } staged_tuning_;
+    struct StagedTuningEntry {
+        godot::String parameter;
+        double requested_value = 0.0;
+        double committed_value = 0.0;
+        bool clamped = false;
+    };
+    std::vector<StagedTuningEntry> staged_tuning_batch_;
     aerosim::ImuSample sample_imu();
     void apply_downwash_provider(aerosim::SimulationConfig &config) const;
     StepSnapshot snapshot_step() const;
@@ -147,6 +173,7 @@ public:
             const godot::String &lower_config_manifest_hash,
             const godot::String &lower_config_json,
             std::int32_t lower_controller_authority);
+    godot::Dictionary set_replay_physics_tick(std::int64_t physics_tick);
     void begin_replay_checkpoint_capture();
     void capture_replay_recorded_response(bool non_neutral);
     godot::Dictionary record_replay_command(
@@ -226,6 +253,27 @@ public:
             const godot::String &command_id,
             const godot::String &method,
             std::int32_t lifecycle);
+    godot::Dictionary record_replay_quick_adjust_binding(
+            std::int64_t timestamp_us,
+            const godot::String &profile_json);
+    godot::Dictionary record_replay_tuning(
+            std::int64_t timestamp_us,
+            const godot::String &vehicle_name,
+            std::int64_t request_seq,
+            std::int64_t commit_id,
+            const godot::String &parameter,
+            double requested_value,
+            double committed_value,
+            bool clamped,
+            const godot::String &source = "panel",
+            std::int32_t quick_adjust_slot = -1);
+    godot::Dictionary record_replay_marker(
+            std::int64_t timestamp_us,
+            const godot::String &label,
+            const godot::String &note = {});
+    godot::String derive_replay_session_jsonl(
+            const godot::String &serialized,
+            const godot::String &expected_settings_manifest_hash);
     godot::Dictionary finish_complete_replay_recording(
             std::int64_t timestamp_us,
             const godot::String &reason);
@@ -284,6 +332,14 @@ public:
     godot::Dictionary wind_configuration() const;
     godot::Vector3 sample_wind(double time_seconds, double position_x, double position_y, double position_z) const;
     godot::Dictionary flight_control_diagnostics() const;
+    godot::Dictionary initialize_flight_tuning(const godot::String &parameter, const godot::Variant &value);
+    godot::Dictionary initialize_flight_tuning_batch(const godot::Array &changes);
+    godot::Dictionary stage_flight_tuning(const godot::String &parameter, const godot::Variant &value);
+    godot::Dictionary stage_flight_tuning_batch(const godot::Array &changes);
+    godot::Dictionary commit_flight_tuning(std::int64_t public_physics_tick);
+    void set_external_authority_active(bool active);
+    godot::Dictionary flight_tuning_contract() const;
+    godot::Dictionary flight_tuning_configuration() const;
     godot::Dictionary hardware_power_diagnostics() const;
     godot::Dictionary hardware_per_motor_diagnostics() const;
     godot::Dictionary telemetry_snapshot() const;
