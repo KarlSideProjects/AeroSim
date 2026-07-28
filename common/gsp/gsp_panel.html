@@ -55,7 +55,9 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   <dt>WebSocket RTT</dt><dd id="latency">—</dd>
   <dt>Registry hash</dt><dd id="registry">—</dd>
 </dl></section>
-<section class="card"><strong>Position / velocity (NED, SI)</strong><p id="position" class="muted">—</p><p id="velocity" class="muted">—</p><strong>Attitude / rates (FRD, SI)</strong><p id="attitude" class="muted">—</p><p id="rates" class="muted">—</p></section>
+<section class="card"><strong>位置／速度（NED、SI）</strong><p id="position" class="muted">—</p><p id="velocity" class="muted">—</p><strong>姿態／角速度（FRD、SI）</strong><p id="attitude" class="muted">—</p><p id="rates" class="muted">—</p></section>
+<section class="card"><strong>電池／預估續航</strong><p id="endurance" class="muted">等待即時資料。</p><strong>飛控／空力狀態</strong><p id="flight-diagnostics" class="muted">等待即時資料。</p></section>
+<section class="card"><strong>目前硬體設定（唯讀）</strong><pre id="hardware-configuration" class="muted">等待硬體設定。</pre></section>
 <section class="card"><strong>機體／馬達／氣流</strong><p class="muted">程序化 Quad-X 視圖；NED／FRD／SI 即時遙測。</p><canvas id="airframe-3d" aria-label="Quad-X telemetry visualization"></canvas><p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas></section>
 <section class="card"><strong>Quick Adjust</strong><div id="tuning-rows" class="muted">Waiting for registry.</div></section>
 <section class="card"><strong>In-flight Quick Adjust</strong><div id="quick-adjust-rows" class="muted">Waiting for registry.</div></section>
@@ -168,6 +170,21 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
   function euler(value) {
     if (!value || value.length !== 3) return "—";
     return "[roll " + Number(value[0]).toFixed(2) + "°, pitch " + Number(value[1]).toFixed(2) + "°, yaw " + Number(value[2]).toFixed(2) + "°] Z-Y-X";
+  }
+  function optionalText(id, value) { var element = $(id); if (element) element.textContent = value; }
+  function formatEndurance(value) {
+    if (!value || value.state === "unavailable") return "預估續航：未提供";
+    var seconds = Math.max(0, Math.round(Number(value.remaining_seconds || 0)));
+    return "預估續航：" + String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0") + "　[" + "█".repeat(Math.round(Number(value.ratio || 0) * 8)) + "░".repeat(8 - Math.round(Number(value.ratio || 0) * 8)) + "]　" + String(value.severity || "normal");
+  }
+  function flattenConfiguration(value, prefix, rows) {
+    if (value && typeof value === "object" && !Array.isArray(value)) Object.keys(value).sort().forEach(function (key) { flattenConfiguration(value[key], prefix ? prefix + "." + key : key, rows); });
+    else rows.push(prefix + " = " + (Array.isArray(value) ? JSON.stringify(value) : String(value)));
+  }
+  function renderDiagnostics(sample) {
+    optionalText("endurance", formatEndurance(sample.endurance));
+    optionalText("flight-diagnostics", "PID：" + JSON.stringify(sample.pid || "未提供") + "\n風（機體）：" + vector(sample.wind_body_mps, "m/s FRD") + "\n地面效應：" + String(sample.ground_effect_gain == null ? "未提供" : sample.ground_effect_gain) + "　A3：" + String(sample.a3_operating_state || "未提供") + "　A6：" + String(sample.a6_operating_state || "未提供"));
+    var rows = []; flattenConfiguration(sample.hardware_configuration, "", rows); optionalText("hardware-configuration", rows.length ? rows.join("\n") : "未提供／模型未啟用");
   }
   function send(type, data) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return null;
@@ -463,6 +480,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
     text("rates", "rates: " + vector(sample.gyro_body, "rad/s FRD"));
     var motors = sample.motors || [];
     text("motors", motors.map(function (motor) { return Number(motor.thrust_newtons).toFixed(2) + " N"; }).join(" | ") || "—");
+    renderDiagnostics(sample);
     window.__AEROSIM_GSP_TELEMETRY__ = sample;
     if (typeof CustomEvent === "function" && window.dispatchEvent) window.dispatchEvent(new CustomEvent("aerosim-gsp-telemetry", { detail: sample }));
     sparkValues.push((sample.rpm || []).reduce(function (sum, rpm) { return sum + Number(rpm || 0); }, 0) / 60000);
