@@ -80,6 +80,8 @@ class Cdp:
 
     def evaluate(self, expression: str) -> object:
         result = self.command("Runtime.evaluate", {"expression": expression, "awaitPromise": True, "returnByValue": True})
+        if result.get("exceptionDetails"):
+            raise RuntimeError(f"Chrome page evaluation failed: {result['exceptionDetails']}")
         remote = result.get("result", {})
         if remote.get("subtype") == "error" or remote.get("type") == "object" and remote.get("value") is None and remote.get("description"):
             raise RuntimeError(f"Chrome page evaluation failed: {remote}")
@@ -164,7 +166,7 @@ def main() -> int:
                       const button = document.querySelector('.tuning-row button');
                       const input = document.querySelector('.tuning-row input[type="number"]');
                       const perf = window.__AEROSIM_GSP_PERF__;
-                      if (button && input && perf && document.querySelector('#connection').textContent === 'Connected') {
+                      if (button && input && perf && !button.disabled && !input.disabled) {
                         for (let sampleIndex = 0; sampleIndex < 100; sampleIndex += 1) {
                           input.value = String(0.61 + (sampleIndex % 4) * 0.01);
                           button.click();

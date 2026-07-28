@@ -275,6 +275,7 @@ ui.osd.element.signal,Signal,訊號
 ui.osd.element.warnings,Warnings,警告
 ui.osd.element.reset_hint,Reset hint,重設提示
 ui.osd.battery,BAT %.2f V | SAG %.2f V | %.0f mAh,電池 %.2f V｜壓降 %.2f V｜%.0f mAh
+ui.osd.endurance,[%s] EST %s,【%s】預估續航 %s
 ui.osd.armed,ARM: %s,解鎖：%s
 ui.osd.mode,MODE: %s,模式：%s
 ui.osd.timer,TIME %.2f S,時間 %.2f 秒

@@ -54,6 +54,8 @@ func _init() -> void:
     var action_launch: Dictionary = action_harness.launch({"enabled": true, "open": false})
     if not bool(action_launch.get("ok", false)):
         failures.append("launcher must start for user-action contract")
+    elif not String(action_launch.get("panel_path", "")).contains("/bundle-") or not FileAccess.file_exists(String(action_launch.get("panel_path", "")).get_base_dir().path_join("assets/gsp_visual.js")):
+        failures.append("launcher must atomically publish a versioned panel bundle with its local assets")
     elif not action_harness.has_method("is_panel_ready") or not action_harness.has_method("request_panel_open") or not action_harness.has_method("copy_panel_url"):
         failures.append("ready launcher must expose panel actions")
     else:

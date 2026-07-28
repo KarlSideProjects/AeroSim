@@ -107,9 +107,9 @@ jobs:
 
       - name: Install build tools
         run: |
-          python3 -m pip install --target "$AEROSIM_TOOL_ROOT/python-packages" scons numpy
           mkdir -p "$AEROSIM_TOOL_ROOT/bin"
           mkdir -p "$AEROSIM_TOOL_ROOT/tmp"
+          TMPDIR="$AEROSIM_TOOL_ROOT/tmp" python3 -m pip install --target "$AEROSIM_TOOL_ROOT/python-packages" scons numpy
           printf '%s\n' '#!/usr/bin/env sh' \
             'PYTHONPATH="$AEROSIM_TOOL_ROOT/python-packages${PYTHONPATH:+:$PYTHONPATH}"' \
             'export PYTHONPATH' \
