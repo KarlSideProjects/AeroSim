@@ -243,6 +243,7 @@ const GSP_MIGRATION_CAPABILITY_LIMIT := 8
 var _gsp_migration_capabilities: Array[Dictionary] = []
 var _gsp_used_migration_ids: Array[String] = []
 var _gsp_expired_migration_ids: Array[String] = []
+var _native_external_authority_state: Variant = null
 var _quick_adjust_profile: Dictionary = InputProfiles.QuickAdjustProfile.default_profile()
 var _quick_adjust_next_allowed_usec: Array[int] = []
 var _quick_adjust_request_seq := 0
@@ -5035,10 +5036,18 @@ func _quick_adjust_value(slot: Dictionary, current: float, input_value: float) -
 func _apply_quick_adjust_inputs(_delta: float) -> void:
     if native == null or screen != "flight" or paused or _gsp_external_authority_active():
         return
+    var slots: Array = _quick_adjust_profile.get("slots", [])
+    var has_binding := false
+    for slot_value in slots:
+        if slot_value != null:
+            has_binding = true
+            break
+    if not has_binding:
+        return
     var active_values: Dictionary = native.call("flight_tuning_configuration") if native.has_method("flight_tuning_configuration") else {}
     var now_usec := Time.get_ticks_usec()
-    for slot_index in _quick_adjust_profile.slots.size():
-        var slot_value = _quick_adjust_profile.slots[slot_index]
+    for slot_index in slots.size():
+        var slot_value = slots[slot_index]
         if slot_value == null:
             continue
         var slot: Dictionary = slot_value
@@ -5807,8 +5816,10 @@ func _gsp_external_authority_active() -> bool:
 
 
 func _sync_native_external_authority() -> void:
-    if native != null and native.has_method("set_external_authority_active"):
-        native.call("set_external_authority_active", _gsp_external_authority_active())
+    var external_authority_active := _gsp_external_authority_active()
+    if native != null and native.has_method("set_external_authority_active") and _native_external_authority_state != external_authority_active:
+        native.call("set_external_authority_active", external_authority_active)
+        _native_external_authority_state = external_authority_active
 
 
 func _gsp_public_physics_tick() -> int:

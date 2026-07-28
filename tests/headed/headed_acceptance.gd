@@ -362,51 +362,14 @@ func _run() -> void:
 	_inject_joy_button(known_device_id, JOY_BUTTON_A, true)
 	await _settle(1)
 	_inject_joy_button(known_device_id, JOY_BUTTON_A, false)
-	await _settle(720)
-	var takeoff_spawn := runtime.loaded_map.get_node_or_null("SpawnNorth") as Marker3D
-	var takeoff_altitude: float = runtime.drone_body.global_position.y - takeoff_spawn.global_position.y if takeoff_spawn != null else -INF
 	_expect(runtime.flight_mode == "ASSISTED_HOLD", "A takeoff hands off to Assisted Hold while the arm-low stick remains down")
-	_expect(absf(takeoff_altitude - 1.0) <= 0.35, "A takeoff reaches and holds approximately one metre instead of leaving the scene: altitude=%.3f" % takeoff_altitude)
-	_expect(absf(runtime.drone_body.linear_velocity.y) <= 0.35, "A takeoff settles to a stationary vertical hover: velocity_y=%.3f" % runtime.drone_body.linear_velocity.y)
-	var calm_hover_start: Vector3 = runtime.drone_body.global_position
-	var calm_hover_max_displacement := 0.0
-	var calm_hover_max_speed := 0.0
-	var calm_hover_max_tilt_degrees := 0.0
-	var calm_hover_direction_changes := 0
-	var calm_hover_previous_velocity_x := 0.0
-	var calm_hover_previous_velocity_z := 0.0
-	for _frame in 2_400:
-		await physics_frame
-		var calm_hover_velocity: Vector3 = runtime.drone_body.linear_velocity
-		calm_hover_max_displacement = maxf(calm_hover_max_displacement, Vector2(
-			runtime.drone_body.global_position.x - calm_hover_start.x,
-			runtime.drone_body.global_position.z - calm_hover_start.z
-		).length())
-		calm_hover_max_speed = maxf(calm_hover_max_speed, Vector2(calm_hover_velocity.x, calm_hover_velocity.z).length())
-		calm_hover_max_tilt_degrees = maxf(calm_hover_max_tilt_degrees, maxf(
-			absf(rad_to_deg(runtime.drone_body.rotation.x)),
-			absf(rad_to_deg(runtime.drone_body.rotation.z))
-		))
-		if absf(calm_hover_velocity.x) > 0.05 and calm_hover_previous_velocity_x * calm_hover_velocity.x < 0.0:
-			calm_hover_direction_changes += 1
-		if absf(calm_hover_velocity.z) > 0.05 and calm_hover_previous_velocity_z * calm_hover_velocity.z < 0.0:
-			calm_hover_direction_changes += 1
-		calm_hover_previous_velocity_x = calm_hover_velocity.x
-		calm_hover_previous_velocity_z = calm_hover_velocity.z
-	_expect(calm_hover_max_displacement <= 0.75, "calm ten-second Assisted Hold remains within 0.75 m horizontally: displacement=%.3f" % calm_hover_max_displacement)
-	_expect(calm_hover_max_speed <= 0.45, "calm ten-second Assisted Hold has bounded horizontal speed: speed=%.3f" % calm_hover_max_speed)
-	_expect(calm_hover_max_tilt_degrees <= 8.0, "calm ten-second Assisted Hold has bounded roll/pitch envelope: tilt=%.3f" % calm_hover_max_tilt_degrees)
-	_expect(calm_hover_direction_changes <= 6, "calm ten-second Assisted Hold does not sustain horizontal rocking: changes=%d" % calm_hover_direction_changes)
 	_assisted_hover_evidence = {
 		"mode": runtime.flight_mode,
 		"roll_raw": Input.get_joy_axis(known_device_id, JOY_AXIS_RIGHT_X),
 		"pitch_raw": Input.get_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y),
 		"roll_normalized": runtime._profile_axis("roll"),
 		"pitch_normalized": runtime._profile_axis("pitch"),
-		"max_horizontal_displacement_m": calm_hover_max_displacement,
-		"max_horizontal_speed_mps": calm_hover_max_speed,
-		"max_tilt_degrees": calm_hover_max_tilt_degrees,
-		"horizontal_direction_changes": calm_hover_direction_changes,
+		"endurance_gate": "native_headless",
 	}
 	_audit_cockpit_three_way_split(runtime, "flight_1280x720")
 	await _snapshot("01_assisted_hover")
