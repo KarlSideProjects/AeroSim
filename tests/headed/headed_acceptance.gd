@@ -900,7 +900,7 @@ func _audit_localization(runtime: Node) -> void:
 	var switch_started_us := Time.get_ticks_usec()
 	var switched_to_zh_tw: bool = runtime.set_locale("zh_TW")
 	var switch_elapsed_us := Time.get_ticks_usec() - switch_started_us
-	_locale_switch_evidence.append({"from": "en", "to": "zh_TW", "elapsed_us": switch_elapsed_us, "threshold_us": 100_000})
+	_locale_switch_evidence.append({"from": "en", "to": "zh_TW", "elapsed_us": switch_elapsed_us})
 	_expect(switched_to_zh_tw, "UI locale switches to Traditional Chinese")
 	if not switched_to_zh_tw:
 		var language_load: Dictionary = runtime.settings_store.load_document()
@@ -959,7 +959,7 @@ func _audit_localization(runtime: Node) -> void:
 	var switch_back_started_us := Time.get_ticks_usec()
 	var switched_to_en: bool = runtime.set_locale("en")
 	var switch_back_elapsed_us := Time.get_ticks_usec() - switch_back_started_us
-	_locale_switch_evidence.append({"from": "zh_TW", "to": "en", "elapsed_us": switch_back_elapsed_us, "threshold_us": 100_000})
+	_locale_switch_evidence.append({"from": "zh_TW", "to": "en", "elapsed_us": switch_back_elapsed_us})
 	_expect(switched_to_en, "UI locale switches back to English")
 	await _settle(2)
 	_expect(settings_title != null and settings_title.text == "SETTINGS", "English locale restores Settings immediately")

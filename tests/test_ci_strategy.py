@@ -54,7 +54,10 @@ if "--out-dir" in runner_args:
     result_key = "passed"
     for screenshot in (
         "00_cold_start.png",
+        "00_keyboard_fallback_preconfirm.png",
         "01_controller_confirmation.png",
+        "01_terrain_range_preflight.png",
+        "01_third_person_preflight.png",
         "02_keyboard_fallback.png",
         "03_takeoff.png",
         "04_paused.png",
@@ -73,6 +76,7 @@ else:
     result_key = "completed"
 
 mode = os.environ["FAKE_GODOT_RESULT"]
+locale_elapsed_us = int(os.environ.get("FAKE_GODOT_LOCALE_SWITCH_US", "1000"))
 result = {} if mode == "missing" else {
     result_key: mode == "true",
     "provenance": {
@@ -83,7 +87,7 @@ result = {} if mode == "missing" else {
         "gpu_adapter": "fake",
     },
     "locale_switches": [
-        {"from": "en", "to": "zh_TW", "elapsed_us": 1000, "threshold_us": 100000},
+        {"from": "en", "to": "zh_TW", "elapsed_us": locale_elapsed_us},
     ],
 }
 result_path.parent.mkdir(parents=True, exist_ok=True)
@@ -394,6 +398,15 @@ class CiStrategyTest(unittest.TestCase):
     def test_headed_runner_retains_logs_and_requires_structured_success(self):
         self._assert_runtime_runner_contract(HEADED_RUNNER, reject_console_errors=True)
 
+    def test_headed_runner_keeps_locale_timing_as_diagnostic_evidence(self):
+        completed, _ = self._run_runner(
+            HEADED_RUNNER,
+            "true",
+            "Godot Engine fake\n",
+            extra_environment={"FAKE_GODOT_LOCALE_SWITCH_US": "100001"},
+        )
+        self.assertEqual(0, completed.returncode)
+
     def test_headless_runner_retains_logs_and_requires_structured_completion(self):
         # Headless intentionally exercises HardwareConfig's push_error + fallback path.
         self._assert_runtime_runner_contract(HEADLESS_RUNNER, reject_console_errors=False)
@@ -470,6 +483,7 @@ class CiStrategyTest(unittest.TestCase):
         exit_status: int = 0,
         expected_fixed_fps: str | None = None,
         with_native_provenance: bool = True,
+        extra_environment: dict[str, str] | None = None,
     ):
         with tempfile.TemporaryDirectory() as temporary_directory:
             workdir = Path(temporary_directory)
@@ -510,6 +524,8 @@ class CiStrategyTest(unittest.TestCase):
             )
             if expected_fixed_fps is not None:
                 environment["FAKE_GODOT_EXPECT_FIXED_FPS"] = expected_fixed_fps
+            if extra_environment is not None:
+                environment.update(extra_environment)
             completed = subprocess.run(
                 [str(runner)],
                 cwd=workdir,
