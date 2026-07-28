@@ -5,6 +5,10 @@ const ENABLE_ARG := "--aerosim-gsp"
 const NO_OPEN_ARG := "--aerosim-gsp-no-open"
 const PANEL_RESOURCE_PATH := "res://common/gsp/gsp_panel.html"
 const PANEL_DIRECTORY := "gsp"
+const PANEL_ASSET_PATHS := [
+    "res://common/gsp/assets/gsp_visual.js",
+    "res://common/gsp/assets/three-0.180.0.module.min.js",
+]
 const GspServer = preload("res://common/gsp/gsp_server.gd")
 
 var _server: GspServer
@@ -180,4 +184,31 @@ func install_panel(data_directory: String) -> Dictionary:
         if FileAccess.file_exists(temporary):
             DirAccess.remove_absolute(temporary)
 
+    var assets_result := _install_panel_assets(directory)
+    if not bool(assets_result.get("ok", false)):
+        return assets_result
     return {"ok": true, "path": target, "hash": panel_hash}
+
+
+func _install_panel_assets(directory: String) -> Dictionary:
+    var assets_directory := directory.path_join("assets")
+    var mkdir_error := DirAccess.make_dir_recursive_absolute(assets_directory)
+    if mkdir_error != OK:
+        return {"ok": false, "error": "cannot create panel asset directory: %s" % mkdir_error}
+    for source_path in PANEL_ASSET_PATHS:
+        var source_file := FileAccess.open(source_path, FileAccess.READ)
+        if source_file == null:
+            return {"ok": false, "error": "packaged panel asset is unavailable: %s" % source_path}
+        var target := assets_directory.path_join(source_path.get_file())
+        var temporary := target + ".tmp-%d" % Time.get_ticks_usec()
+        var target_file := FileAccess.open(temporary, FileAccess.WRITE)
+        if target_file == null:
+            return {"ok": false, "error": "cannot write panel asset"}
+        target_file.store_buffer(source_file.get_buffer(source_file.get_length()))
+        target_file.flush()
+        target_file.close()
+        source_file.close()
+        if DirAccess.rename_absolute(temporary, target) != OK:
+            DirAccess.remove_absolute(temporary)
+            return {"ok": false, "error": "cannot install panel asset"}
+    return {"ok": true}
