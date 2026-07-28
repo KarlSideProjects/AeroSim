@@ -176,6 +176,7 @@ var acro_mode_button: Button
 var quick_adjust_status_label: Label
 var time_trial_status_label: Label
 var pause_panel: Control
+var gsp_panel_status_label: Label
 var status_diagram_back_button: Button
 var finish_panel: Control
 var finish_summary_label: Label
@@ -3616,6 +3617,8 @@ func _refresh_localized_ui() -> void:
         "FlightHud/PausePanel/Rows/Rates": "ui.settings.rates",
         "FlightHud/PausePanel/Rows/ControllerMonitor": "ui.settings.controller_monitor",
         "FlightHud/PausePanel/Rows/StatusDiagram": "ui.settings.status_diagram",
+        "FlightHud/PausePanel/Rows/OpenGspPanel": "ui.gsp.open",
+        "FlightHud/PausePanel/Rows/CopyGspUrl": "ui.gsp.copy_url",
         "FlightHud/PausePanel/Rows/Exit": "ui.action.exit",
         "FlightHud/FinishPanel/Rows/Retry": "ui.action.retry",
         "FlightHud/FinishPanel/Rows/ChangeMap": "ui.action.change_map",
@@ -4680,11 +4683,54 @@ func _build_pause_panel() -> void:
     status_diagram_button.text = _t("ui.settings.status_diagram")
     status_diagram_button.pressed.connect(_show_status_diagram_from_pause)
     rows.add_child(status_diagram_button)
+    _build_gsp_pause_actions(rows)
     var exit := Button.new()
     exit.name = "Exit"
     exit.text = _t("ui.action.exit")
     exit.pressed.connect(request_exit)
     rows.add_child(exit)
+
+
+func _gsp_pause_launcher() -> Node:
+    var launcher := get_node_or_null("GspLauncher")
+    if launcher == null or not launcher.has_method("is_panel_ready") or not launcher.has_method("request_panel_open") or not launcher.has_method("copy_panel_url"):
+        return null
+    return launcher
+
+
+func _build_gsp_pause_actions(rows: VBoxContainer) -> void:
+    var launcher := _gsp_pause_launcher()
+    if launcher == null or not bool(launcher.call("is_panel_ready")):
+        return
+    gsp_panel_status_label = Label.new()
+    gsp_panel_status_label.name = "GspPanelStatus"
+    gsp_panel_status_label.text = _t("ui.gsp.ready")
+    gsp_panel_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    rows.add_child(gsp_panel_status_label)
+    var open := Button.new()
+    open.name = "OpenGspPanel"
+    open.text = _t("ui.gsp.open")
+    open.pressed.connect(_request_gsp_panel_open)
+    rows.add_child(open)
+    var copy := Button.new()
+    copy.name = "CopyGspUrl"
+    copy.text = _t("ui.gsp.copy_url")
+    copy.pressed.connect(_copy_gsp_panel_url)
+    rows.add_child(copy)
+
+
+func _request_gsp_panel_open() -> void:
+    var launcher := _gsp_pause_launcher()
+    var result: Dictionary = launcher.call("request_panel_open") if launcher != null else {"ok": false}
+    if gsp_panel_status_label != null:
+        gsp_panel_status_label.text = _t("ui.gsp.open_requested") if bool(result.get("ok", false)) else _t("ui.gsp.unavailable")
+
+
+func _copy_gsp_panel_url() -> void:
+    var launcher := _gsp_pause_launcher()
+    var result: Dictionary = launcher.call("copy_panel_url") if launcher != null else {"ok": false}
+    if gsp_panel_status_label != null:
+        gsp_panel_status_label.text = _t("ui.gsp.url_copied") if bool(result.get("ok", false)) else _t("ui.gsp.unavailable")
 
 
 func _show_status_diagram_from_pause() -> void:
