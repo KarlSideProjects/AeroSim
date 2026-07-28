@@ -43,6 +43,11 @@ func _init() -> void:
     var suppressed_open := GspLauncher.shell_open_result(false, false, "file:///tmp/panel.html")
     if not bool(suppressed_open.get("ok", false)):
         failures.append("suppressed panel opening must remain a successful launch")
+    var readme := FileAccess.get_file_as_string("res://README.md")
+    if not readme.contains("OPEN GSP PANEL") or not readme.contains("COPY GSP URL"):
+        failures.append("README must document GSP user actions")
+    if readme.contains("guaranteed browser focus"):
+        failures.append("README must not promise browser focus on Wayland")
 
     var action_harness := LauncherHarness.new()
     get_root().add_child(action_harness)
