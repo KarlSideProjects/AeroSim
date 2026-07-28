@@ -15,7 +15,9 @@ sources:
   - common/gsp/gsp_launcher.gd
   - common/gsp/gsp_panel.html
   - docs/dataset_recording.md
-last_verified: 2026-07-27
+  - levels/free_flight/terrain3d_range.tscn
+  - assets/third_party/terrain3d/asset_notes.md
+last_verified: 2026-07-28
 ---
 
 # AeroSim 運行時架構
@@ -142,4 +144,5 @@ sequenceDiagram
 | native flight / aero / collision / IMU / replay | native core 與 hardware config | `tests/native/test_*.cpp`、`scripts/test_native.sh` |
 | Godot ↔ GDExtension boundary | FlightRuntime、AeroSimNative binding | headless smoke |
 | AirSim / PX4 / coordinates | coordinate contract、RPC server、PX4 bridge | 對應 GUT 與 headless integration harness |
+| Free Flight 地圖場景與視覺資產 | `levels/free_flight/` 的場景，以及 `assets/third_party/terrain3d/asset_notes.md` 記錄的 write boundary：third-party terrain 目錄為唯讀，authoring pass 只寫入 `assets/maps/terrain3d_range/data/` | `tests/headless/terrain3d_range_smoke.gd`、`tests/headless/industrial_yard_renderer_smoke.gd`（兩者除結構外，也檢查可見 Kenney 資產每個 surface 都帶 albedo texture） |
 | Linux 綜合 gate | CI 與驗收規則 | `scripts/verify_issue_11.sh` |
