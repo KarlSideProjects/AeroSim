@@ -14,13 +14,16 @@ sources:
   - common/rpc/airsim_sensor_suite.gd
   - common/gsp/gsp_launcher.gd
   - common/gsp/gsp_panel.html
+  - common/gsp/assets/gsp_visual.js
+  - third_party/licenses.json
+  - tests/headless/gsp_launch_contract.gd
   - README.md
   - docs/dataset_recording.md
   - levels/free_flight/terrain3d_range.tscn
   - assets/third_party/terrain3d/asset_notes.md
   - scripts/check_third_party_terrain_integrity.py
   - .github/workflows/ci.yml
-last_verified: 2026-07-28
+last_verified: 2026-07-29
 ---
 
 # AeroSim 運行時架構
@@ -64,8 +67,21 @@ Operations Dashboard 是 Godot 內的 operator-facing UI：它跟著 Player/Lab 
 simulation session 與 native authority，負責 vehicle、telemetry、sensor、recording 與
 environment 的狀態操作。GSP 是 development-only 的第二個 native Wayland client，供 paused、
 post-flight 或 second-screen tuning 使用；它由 `--aerosim-gsp` 明確啟用，啟用時才安裝並
-開啟 `common/gsp/gsp_panel.html` 的本機副本。GSP 不建立第二份 simulation、telemetry、
-coordinate 或 replay authority。
+開啟本機 panel bundle。GSP 不建立第二份 simulation、telemetry、coordinate 或 replay
+authority。
+
+安裝單位是 bundle 而不是單一檔案：`install_panel()` 對 `gsp_panel.html` 與
+`PANEL_ASSET_PATHS` 列出的每個 packaged asset 一起計算 SHA-256，寫進暫存目錄後以一次
+rename 發佈成 `gsp/bundle-<hash>/`，內含 `panel.html` 與 `assets/`。任何 packaged asset
+缺席都讓安裝直接失敗，不會退回半套 bundle；`tests/headless/gsp_launch_contract.gd` 會驗證
+launcher 回報的 panel path 位於 `bundle-` 目錄且 `assets/gsp_visual.js` 存在。bundle 內的
+Three.js 是釘住版本並記錄 SHA-256 的 vendored 副本，attribution 與範圍寫在
+`third_party/licenses.json`；panel 不在執行期抓取遠端資源。
+
+panel 的視覺化元素都是 presenter，不是新的真相來源：程序化 Quad-X 檢視、硬體設定與
+derived power model 檢視、完整 telemetry 傾印，全部只讀同一份
+`FlightRuntime.gsp_telemetry_snapshot()` payload，沿用既有的 NED／FRD／SI 表述。3D 檢視
+不做物理積分，rotor 動畫只依 telemetry 的 motor speed 與 `spin_direction` 呈現。
 
 GSP 的瀏覽器開啟是 best-effort：Wayland 不允許應用程式強迫另一個應用程式取得焦點，因此
 啟動時的自動開啟不能當成面板已顯示的證據。當 GSP server 已啟動且 launcher 保有這次執行的
