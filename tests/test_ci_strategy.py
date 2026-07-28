@@ -122,46 +122,46 @@ class CiStrategyTest(unittest.TestCase):
             ),
         )
 
-    def test_blocking_gut_runs_immediately_after_linux_debug_artifact_recording(self):
-        match = re.search(
-            re.compile(
-                r"^      - name: Build GDExtension\n"
-                r"^        run: scons target=template_debug platform=linux\n"
-                r"\n"
-                r"^      - name: Record Linux debug artifact provenance\n"
-                r"(?:(?!^      - ).)*"
-                r"\n"
-                r"(?P<gut_step>^      - name: [^\n]*GUT[^\n]*\n"
-                r"(?:(?!^      - ).)*(?=^      - |\Z))",
-                re.MULTILINE | re.DOTALL,
-            ),
-            self.linux_job,
+    def test_linux_builds_extension_before_exported_smoke_and_blocking_gut(self):
+        build_position = self.linux_job.index("      - name: Build GDExtension")
+        provenance_position = self.linux_job.index(
+            "      - name: Record Linux debug artifact provenance"
         )
-        self.assertIsNotNone(match)
-        gut_step = match.group("gut_step")
+        export_position = self.linux_job.index("      - name: Exported localization smoke")
+        gut_position = self.linux_job.index("run: scripts/run_gut_tests.sh")
+        self.assertLess(build_position, provenance_position)
+        self.assertLess(provenance_position, export_position)
+        self.assertLess(export_position, gut_position)
+
+        gut_step = re.search(
+            r"^      - name: [^\n]*GUT[^\n]*\n"
+            r"(?:(?!^      - ).)*(?=^      - |\Z)",
+            self.linux_job,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(gut_step)
+        gut_step_text = gut_step.group(0) if gut_step else ""
         with self.subTest(contract="blocking command"):
             self.assertRegex(
-                gut_step,
+                gut_step_text,
                 re.compile(r"^        run: scripts/run_gut_tests\.sh$", re.MULTILINE),
             )
         with self.subTest(contract="not continue-on-error true"):
             self.assertNotRegex(
-                gut_step,
+                gut_step_text,
                 re.compile(r"^        continue-on-error: true$", re.MULTILINE),
             )
         with self.subTest(contract="unconditional"):
-            self.assertNotRegex(gut_step, re.compile(r"^        if:", re.MULTILINE))
-        gut_position = self.linux_job.find("run: scripts/run_gut_tests.sh")
-        if gut_position >= 0:
-            for later_step in (
-                "Headless physics qualification",
-                "Headed acceptance (Xvfb + lavapipe)",
-                "Performance harness smoke (Xvfb + lavapipe)",
-                "Install Godot export templates",
-                "Export Linux release artifact",
-            ):
-                with self.subTest(later_step=later_step):
-                    self.assertLess(gut_position, self.linux_job.index(later_step))
+            self.assertNotRegex(gut_step_text, re.compile(r"^        if:", re.MULTILINE))
+        for later_step in (
+            "Headless physics qualification",
+            "Headed acceptance (Xvfb + lavapipe)",
+            "Performance harness smoke (Xvfb + lavapipe)",
+            "Install Godot export templates",
+            "Export Linux release artifact",
+        ):
+            with self.subTest(later_step=later_step):
+                self.assertLess(gut_position, self.linux_job.index(later_step))
 
     def test_recovery_shadow_is_non_blocking_and_not_a_platform_dependency(self):
         with self.subTest(contract="recovery shadow job"):

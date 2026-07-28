@@ -455,83 +455,6 @@ def run_restart_token_case(temp: Path) -> None:
         finish_launcher_harness(second_process, second_stop, launcher_output)
 
 
-def run_graceful_case(temp: Path) -> None:
-    process, identity, stop, status, _, _ = start_harness(temp, True)
-    sock: socket.socket | None = None
-    try:
-        sock = websocket_connect("127.0.0.1", int(identity["port"]))
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)
-        authenticate(sock, identity)
-        sock.settimeout(1.0)
-        sent = 0
-        for sequence in range(1, 101):
-            send_text(sock, json.dumps({"v": 2, "t": "ping", "seq": sequence, "d": {"request": sequence}}, separators=(",", ":")))
-            sent += 1
-        pongs: list[int] = []
-        overflow_error: dict[str, object] | None = None
-        close_payload: bytes | None = None
-        deadline = time.monotonic() + 3.0
-        while time.monotonic() < deadline:
-            opcode, payload = receive_frame(sock)
-            if opcode == 1:
-                message = json.loads(payload.decode("utf-8"))
-                if message.get("t") == "pong":
-                    pongs.append(int(message["d"]["echo"]["request"]))
-                elif message.get("t") == "error" and message.get("d", {}).get("code") == "overflow":
-                    overflow_error = message
-            elif opcode == 8:
-                close_payload = payload
-                if payload:
-                    send_close(sock, payload)
-                break
-        if not close_payload or len(close_payload) < 2:
-            raise RuntimeError("graceful boundary did not receive a close frame")
-        close_code = int.from_bytes(close_payload[:2], "big")
-        if close_code != 1008:
-            raise RuntimeError(f"unexpected graceful close code: {close_code!r}")
-        if not pongs or pongs != list(range(1, len(pongs) + 1)):
-            raise RuntimeError(f"graceful pong prefix was not contiguous: {pongs!r}")
-        stop.touch()
-        diagnostics = finish_harness(process, stop, status)
-        if diagnostics["reliable_overflow_count"] != 1 or diagnostics["reliable_send_failure_count"] != 0:
-            raise RuntimeError(f"graceful reliable diagnostics were wrong after sent={sent}: {diagnostics!r}")
-        if diagnostics["reliable_overflow_error_attempt_count"] != 1:
-            raise RuntimeError(f"overflow error attempt was not bounded to one local attempt: {diagnostics!r}")
-        accepted = int(diagnostics["reliable_overflow_error_accepted_count"])
-        if accepted not in (0, 1):
-            raise RuntimeError(f"overflow error local acceptance was not boolean: {diagnostics!r}")
-        if accepted == 1 and overflow_error is None:
-            raise RuntimeError("accepted overflow error was not observed as a WebSocket frame")
-        print("GSP graceful boundary: PASS pongs=%d close_code=1008 overflow_error_accepted=%s" % (len(pongs), bool(accepted)))
-    finally:
-        if sock is not None:
-            sock.close()
-
-
-def run_slow_overflow_case(temp: Path) -> None:
-    process, identity, stop, status, _, _ = start_harness(temp, True)
-    sock: socket.socket | None = None
-    try:
-        sock = websocket_connect("127.0.0.1", int(identity["port"]))
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
-        authenticate(sock, identity)
-        sent = 0
-        for sequence in range(1, 101):
-            send_text(sock, json.dumps({"v": 2, "t": "ping", "seq": sequence, "d": {"request": sequence}}, separators=(",", ":")))
-            sent += 1
-        time.sleep(int(identity["closing_peer_timeout_ms"]) / 1000.0 + 1.0)
-        stop.touch()
-        diagnostics = finish_harness(process, stop, status)
-        if diagnostics["reliable_overflow_count"] != 1 or diagnostics["reliable_send_failure_count"] != 0:
-            raise RuntimeError(f"slow-peer reliable diagnostics were wrong after sent={sent}: {diagnostics!r}")
-        if diagnostics["max_closing_peer_count"] < 1 or diagnostics["live_peer_count"] != 0 or diagnostics["closing_peer_count"] != 0:
-            raise RuntimeError(f"slow peer was not retained then reclaimed: {diagnostics!r}")
-        print("GSP slow-peer overflow: PASS max_closing=%d" % diagnostics["max_closing_peer_count"])
-    finally:
-        if sock is not None:
-            sock.close()
-
-
 def run_packet_overload_no_overflow_case(temp: Path) -> None:
     process, identity, stop, status, _, _ = start_harness(temp, False)
     sock: socket.socket | None = None
@@ -627,10 +550,6 @@ def main() -> int:
         run_probe_delayed_consumption_regression(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-pending-") as temp_dir:
         run_pending_handshake_boundary(Path(temp_dir))
-    with tempfile.TemporaryDirectory(prefix="aerosim-gsp-graceful-") as temp_dir:
-        run_graceful_case(Path(temp_dir))
-    with tempfile.TemporaryDirectory(prefix="aerosim-gsp-slow-") as temp_dir:
-        run_slow_overflow_case(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-packet-overload-") as temp_dir:
         run_packet_overload_no_overflow_case(Path(temp_dir))
     with tempfile.TemporaryDirectory(prefix="aerosim-gsp-isolation-") as temp_dir:

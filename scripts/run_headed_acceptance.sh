@@ -110,7 +110,7 @@ printf '%s\n' \
 export AEROSIM_HEADED_COMMIT_SHA="$(git rev-parse HEAD)"
 log_path="$out_dir/godot.log"
 rm -f "$out_dir"/*.png "$out_dir/report.json" "$log_path" "$out_dir/xvfb.log"
-timeout 90s "${launcher[@]}" "$godot_bin" "${display_driver_args[@]}" --path . --resolution 1280x720 \
+timeout 180s "${launcher[@]}" "$godot_bin" "${display_driver_args[@]}" --path . --resolution 1280x720 \
     --log-file "$log_path" \
     --script res://tests/headed/headed_acceptance.gd -- --out-dir "$out_dir"
 

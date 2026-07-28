@@ -180,19 +180,6 @@ jobs:
           unzip -q "$godot_zip" -d "$godot_dir"
           echo "GODOT_BIN=$(find "$godot_dir" -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
 
-      - name: Exported localization smoke
-        run: |
-          mkdir -p build/export-smoke
-          "$GODOT_BIN" --headless --path . --export-pack "Linux Desktop" build/export-smoke/AeroSim.pck
-          "$GODOT_BIN" --headless --main-pack build/export-smoke/AeroSim.pck \
-            --script res://tests/headless/localization_export_smoke.gd
-
-      - name: Industrial Yard renderer smoke
-        run: scripts/test_industrial_yard_renderers.sh
-
-      - name: Terrain3D dependency smoke
-        run: scripts/test_terrain3d_dependency.sh
-
       - name: Fetch godot-cpp
         run: |
           rm -rf "$GODOT_CPP_DIR"
@@ -221,6 +208,19 @@ jobs:
               "native_source_sha256": sys.argv[4],
           }, separators=(",", ":")) + "\n", encoding="utf-8")
           PY
+
+      - name: Exported localization smoke
+        run: |
+          mkdir -p build/export-smoke
+          "$GODOT_BIN" --headless --path . --export-pack "Linux Desktop" build/export-smoke/AeroSim.pck
+          "$GODOT_BIN" --headless --main-pack build/export-smoke/AeroSim.pck \
+            --script res://tests/headless/localization_export_smoke.gd
+
+      - name: Industrial Yard renderer smoke
+        run: scripts/test_industrial_yard_renderers.sh
+
+      - name: Terrain3D dependency smoke
+        run: scripts/test_terrain3d_dependency.sh
 
       - name: GUT GDScript unit tests
         env:
