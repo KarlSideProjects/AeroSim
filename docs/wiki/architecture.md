@@ -14,6 +14,7 @@ sources:
   - common/rpc/airsim_sensor_suite.gd
   - common/gsp/gsp_launcher.gd
   - common/gsp/gsp_panel.html
+  - README.md
   - docs/dataset_recording.md
   - levels/free_flight/terrain3d_range.tscn
   - assets/third_party/terrain3d/asset_notes.md
@@ -63,6 +64,13 @@ environment 的狀態操作。GSP 是 development-only 的第二個 native Wayla
 post-flight 或 second-screen tuning 使用；它由 `--aerosim-gsp` 明確啟用，啟用時才安裝並
 開啟 `common/gsp/gsp_panel.html` 的本機副本。GSP 不建立第二份 simulation、telemetry、
 coordinate 或 replay authority。
+
+GSP 的瀏覽器開啟是 best-effort：Wayland 不允許應用程式強迫另一個應用程式取得焦點，因此
+啟動時的自動開啟不能當成面板已顯示的證據。當 GSP server 已啟動且 launcher 保有這次執行的
+panel URL 時，暫停選單會額外出現 `OPEN GSP PANEL`、`COPY GSP URL` 兩個使用者觸發的入口與
+一個狀態標籤；GSP 未啟用或尚未就緒時，這三個控制項完全不建立。狀態標籤只顯示請求成功或
+不可用，帶 session token 的 URL 不會出現在 HUD。這些控制項屬於 paused／post-flight 的
+workstation 入口，不改變飛行中的控制路徑。
 
 ## 四個重要時序
 
