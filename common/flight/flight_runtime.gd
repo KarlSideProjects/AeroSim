@@ -4915,6 +4915,7 @@ func _refresh_osd() -> void:
     var body_panel := body_drag_debug_panel.get("_panel") as Control if body_drag_debug_panel != null else null
     var body_surface := body_panel.get("_scroll") as Control if body_panel != null else null
     var default_right_stack_offset_y := 0.0
+    var default_right_stack_end_y := -INF
     if dashboard_panel != null and dashboard_panel.is_visible_in_tree():
         default_right_stack_offset_y = maxf(0.0, dashboard_panel.get_global_rect().end.y + 8.0 - float(OsdProfile.DEFAULT_POSITIONS["battery"].y) * viewport_size.y)
     var active := screen in ["preflight", "flight", "finish", "osd"] and not (paused and screen == "flight")
@@ -4955,6 +4956,8 @@ func _refresh_osd() -> void:
         var label_position := Vector2(float(position.x) * viewport_size.x, float(position.y) * viewport_size.y)
         if element in ["battery", "armed", "flight_mode", "signal"] and position == OsdProfile.DEFAULT_POSITIONS[element]:
             label_position.y += default_right_stack_offset_y
+            if default_right_stack_end_y >= 0.0:
+                label_position.y = maxf(label_position.y, default_right_stack_end_y + 8.0)
         if element == "warnings" and position == OsdProfile.DEFAULT_POSITIONS["warnings"]:
             var rendered_height := maxf(label.size.y, label.get_combined_minimum_size().y)
             if status_panel != null and status_panel.is_visible_in_tree():
@@ -4964,6 +4967,8 @@ func _refresh_osd() -> void:
         if element == "reset_hint" and motor_hud_visible and position == OsdProfile.DEFAULT_POSITIONS["reset_hint"]:
             label_position = Vector2(viewport_size.x * 0.35, maxf(viewport_size.y * 0.16, status_panel.get_global_rect().end.y + 8.0) if status_panel != null and status_panel.is_visible_in_tree() else viewport_size.y * 0.16)
         label.position = label_position
+        if element in ["battery", "armed", "flight_mode", "signal"] and position == OsdProfile.DEFAULT_POSITIONS[element]:
+            default_right_stack_end_y = label_position.y + maxf(label.size.y, label.get_combined_minimum_size().y)
     if analog_noise_overlay != null:
         analog_noise_overlay.visible = active and bool(camera_profile.analog_noise)
 
