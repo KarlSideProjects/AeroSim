@@ -1,5 +1,5 @@
 class GamepadProfile:
-    const SCHEMA_VERSION := 5
+    const SCHEMA_VERSION := 6
     const RAW_AXIS_DEADZONE := 0.08
     const THROTTLE_LOW_THRESHOLD := RAW_AXIS_DEADZONE
     const CENTER_RESPONSE_SOFTNESS := 0.10
@@ -8,8 +8,8 @@ class GamepadProfile:
     const ACRO_BUTTON := JOY_BUTTON_RIGHT_SHOULDER
 
     var deadzone := RAW_AXIS_DEADZONE
-    var axis_for_role := {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_Y, "pitch": JOY_AXIS_RIGHT_X}
-    var reversed_for_role := {"yaw": false, "throttle": true, "roll": false, "pitch": true}
+    var axis_for_role := {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}
+    var reversed_for_role := {"yaw": false, "throttle": true, "roll": false, "pitch": false}
     var arm_button := JOY_BUTTON_A
     var mode_button := JOY_BUTTON_Y
     var profile_schema_version := SCHEMA_VERSION
@@ -26,8 +26,8 @@ class GamepadProfile:
         if not is_supported_device(device_id, device_state):
             return null
         var gamepad := GamepadProfile.new()
-        gamepad.axis_for_role = {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_Y, "pitch": JOY_AXIS_RIGHT_X}
-        gamepad.reversed_for_role = {"yaw": false, "throttle": true, "roll": false, "pitch": true}
+        gamepad.axis_for_role = {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}
+        gamepad.reversed_for_role = {"yaw": false, "throttle": true, "roll": false, "pitch": false}
         gamepad.arm_button = JOY_BUTTON_A
         gamepad.mode_button = JOY_BUTTON_Y
         return gamepad
@@ -71,8 +71,8 @@ class GamepadProfile:
             return {"ok": false, "error": "unsupported confirmed_gamepad schema"}
         if typeof(source["axis_for_role"]) != TYPE_DICTIONARY or typeof(source["reversed_for_role"]) != TYPE_DICTIONARY:
             return {"ok": false, "error": "confirmed_gamepad mappings must be objects"}
-        var expected_axes := {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_Y, "pitch": JOY_AXIS_RIGHT_X}
-        var expected_reversed := {"yaw": false, "throttle": true, "roll": false, "pitch": true}
+        var expected_axes := {"yaw": JOY_AXIS_LEFT_X, "throttle": JOY_AXIS_LEFT_Y, "roll": JOY_AXIS_RIGHT_X, "pitch": JOY_AXIS_RIGHT_Y}
+        var expected_reversed := {"yaw": false, "throttle": true, "roll": false, "pitch": false}
         for role in source["axis_for_role"].keys():
             if not expected_axes.has(role):
                 return {"ok": false, "error": "unknown confirmed_gamepad axis role: %s" % role}

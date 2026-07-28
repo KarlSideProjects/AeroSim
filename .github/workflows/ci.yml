@@ -145,6 +145,9 @@ jobs:
           scripts/test_shared_map_assets.sh
           scripts/check_shared_map_assets.sh
 
+      - name: Third-party Terrain3D region integrity
+        run: python3 scripts/check_third_party_terrain_integrity.py
+
       - name: Store Linux replay artifact locally
         run: |
           install -D build/replay_terminal_state.json \
