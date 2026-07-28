@@ -2827,8 +2827,8 @@ func test_controller_monitor_renders_active_session_channels_and_unavailable_wit
 
     var monitor: Label = runtime.controller_settings_monitor_label
     assert_string_contains(monitor.text, "CHANNEL MONITOR (30 Hz)")
-    assert_string_contains(monitor.text, "roll:     [---------|-------] raw +0.250 | normalized +0.167")
-    assert_string_contains(monitor.text, "pitch:    [--|--------------] raw -0.750 | normalized -0.694")
+    assert_string_contains(monitor.text, "roll:     [--|--------------] raw -0.750 | normalized -0.694")
+    assert_string_contains(monitor.text, "pitch:    [-------|---------] raw +0.250 | normalized -0.167")
     assert_string_contains(monitor.text, "yaw:      [-----------|-----] raw +0.500 | normalized +0.420")
     assert_string_contains(monitor.text, "throttle: [-----------|-----] raw -0.500 | normalized +0.420 | HIGH")
     assert_string_contains(monitor.text, "DEADZONE: 0.080 (fixed)")
@@ -2851,7 +2851,7 @@ func test_controller_monitor_renders_active_session_channels_and_unavailable_wit
     Input.parse_input_event(yaw_deadzone)
     var roll_deadzone := InputEventJoypadMotion.new()
     roll_deadzone.device = 0
-    roll_deadzone.axis = JOY_AXIS_RIGHT_X
+    roll_deadzone.axis = JOY_AXIS_RIGHT_Y
     roll_deadzone.axis_value = -0.08
     Input.parse_input_event(roll_deadzone)
     await get_tree().process_frame
@@ -2909,7 +2909,7 @@ func test_startup_restores_persisted_profile_for_connected_channel_monitor() -> 
 
     var roll := InputEventJoypadMotion.new()
     roll.device = 7
-    roll.axis = JOY_AXIS_RIGHT_X
+    roll.axis = JOY_AXIS_RIGHT_Y
     roll.axis_value = 0.5
     Input.parse_input_event(roll)
     await get_tree().process_frame

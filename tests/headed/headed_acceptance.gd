@@ -291,10 +291,10 @@ func _run() -> void:
 	var mapping: Label = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/FixedMapping")
 	var axes: Label = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/LiveAxes")
 	var confirm_button: Button = runtime.get_node_or_null("FlightHud/ControllerConfirmation/Rows/UseXboxDefaultProfile")
-	_expect(mapping != null and mapping.text.contains("roll -> Axis 2") and mapping.text.contains("throttle -> Axis 1"), "confirmation shows fixed Xbox mapping")
+	_expect(mapping != null and mapping.text.contains("roll -> Axis 3") and mapping.text.contains("throttle -> Axis 1"), "confirmation shows fixed Xbox mapping")
 	for expected_axis in [
-		"roll: Raw +0.250 | Normalized +0.167",
-		"pitch: Raw -0.750 | Normalized -0.694",
+		"roll: Raw -0.750 | Normalized -0.694",
+		"pitch: Raw +0.250 | Normalized -0.167",
 		"yaw: Raw +0.500 | Normalized +0.420",
 		"throttle: Raw -0.500 | Normalized +0.420"
 	]:
@@ -302,8 +302,8 @@ func _run() -> void:
 	for update in [
 		{"axis": JOY_AXIS_LEFT_X, "value": -0.5, "expected": "yaw: Raw -0.500 | Normalized -0.420"},
 		{"axis": JOY_AXIS_LEFT_Y, "value": 0.5, "expected": "throttle: Raw +0.500 | Normalized -0.420"},
-		{"axis": JOY_AXIS_RIGHT_X, "value": -0.25, "expected": "roll: Raw -0.250 | Normalized -0.167"},
-		{"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "pitch: Raw +0.750 | Normalized +0.694"}
+		{"axis": JOY_AXIS_RIGHT_X, "value": -0.25, "expected": "pitch: Raw -0.250 | Normalized +0.167"},
+		{"axis": JOY_AXIS_RIGHT_Y, "value": 0.75, "expected": "roll: Raw +0.750 | Normalized +0.694"}
 	]:
 		_inject_joy_axis(known_device_id, update.axis, update.value)
 		await _settle(2)
@@ -373,8 +373,8 @@ func _run() -> void:
 	_expect(runtime.flight_mode == "ASSISTED_HOLD", "A takeoff hands off to Assisted Hold while the arm-low stick remains down")
 	_assisted_hover_evidence = {
 		"mode": runtime.flight_mode,
-		"roll_raw": Input.get_joy_axis(known_device_id, JOY_AXIS_RIGHT_X),
-		"pitch_raw": Input.get_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y),
+		"roll_raw": Input.get_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y),
+		"pitch_raw": Input.get_joy_axis(known_device_id, JOY_AXIS_RIGHT_X),
 		"roll_normalized": runtime._profile_axis("roll"),
 		"pitch_normalized": runtime._profile_axis("pitch"),
 		"endurance_gate": "native_headless",
@@ -389,8 +389,8 @@ func _run() -> void:
 	runtime.flight_mode = "ANGLE"
 	runtime.takeoff_assist_active = false
 	var xbox_frd_axis_cases := [
-		{"role": "roll", "axis": JOY_AXIS_RIGHT_X, "value": -0.5, "component": 0},
-		{"role": "pitch", "axis": JOY_AXIS_RIGHT_Y, "value": -0.5, "component": 1},
+		{"role": "roll", "axis": JOY_AXIS_RIGHT_Y, "value": -0.5, "component": 0},
+		{"role": "pitch", "axis": JOY_AXIS_RIGHT_X, "value": -0.5, "component": 1},
 	]
 	for axis_case in xbox_frd_axis_cases:
 		for axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y, JOY_AXIS_RIGHT_X, JOY_AXIS_RIGHT_Y]:
