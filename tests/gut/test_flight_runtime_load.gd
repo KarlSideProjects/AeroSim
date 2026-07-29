@@ -976,7 +976,8 @@ func test_demo_flight_menu_uses_industrial_yard_third_person_and_live_hud_contro
     var runtime := _quick_fly_runtime()
     _attach_runtime_ui(runtime)
 
-    (runtime.main_menu_layer.get_node("Entries/DemoFlight") as Button).pressed.emit()
+    (runtime.main_menu_layer.get_node("Entries/Map") as Button).pressed.emit()
+    (runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/DemoFlight") as Button).pressed.emit()
     await _await_reset_commit()
     runtime.demo_flight_route.start((runtime._current_spawn_marker() as Marker3D).global_position)
     runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime.drone_body.rotation.y)
@@ -1285,7 +1286,7 @@ func test_lab_mode_button_reuses_runtime_and_visible_back_control_returns_to_men
 
 func test_main_menu_exposes_the_ordered_cap006_entries_and_defaults() -> void:
     var runtime := _licensed_runtime()
-    assert_eq(runtime.main_menu_entries, ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Demo Flight", "Quit"])
+    assert_eq(runtime.main_menu_entries, ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"])
     assert_eq(runtime.default_flight_setup(), {
         "hardware_preset": "res://config/drones/5_inch_6s.json",
         "map_id": "terrain3d_range",

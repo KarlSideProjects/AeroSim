@@ -119,7 +119,7 @@ var _reset_last_committed_generation := 0
 var _reset_last_failed_generation := 0
 var _quick_fly_route_pending := false
 var last_profile_status := ""
-var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Demo Flight", "Quit"]
+var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]
 var screen := "main_menu"
 var flight_setup: Dictionary = {}
 var flight_setup_focus := "drone"
@@ -3559,6 +3559,12 @@ func _build_flight_setup_panel() -> void:
     fly_button.text = _t("ui.action.fly")
     fly_button.pressed.connect(_fly_from_flight_setup)
     rows.add_child(fly_button)
+
+    var demo_button := Button.new()
+    demo_button.name = "DemoFlight"
+    demo_button.text = _t("ui.menu.demo_flight")
+    demo_button.pressed.connect(start_demo_flight)
+    rows.add_child(demo_button)
 
     var back_button := Button.new()
     back_button.name = "Back"
