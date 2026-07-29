@@ -50,7 +50,7 @@ const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const ASSISTED_MAX_YAW_RATE_DPS := 120.0
 const ASSISTED_MAX_VERTICAL_SPEED_MPS := 2.0
 const DEMO_MAX_TILT_DEGREES := 5.0
-const DEMO_MAX_YAW_RATE_DPS := 5.0
+const DEMO_MAX_ROUTE_SPEED_MPS := 0.75
 const DEMO_MAX_SPEED_MPS := 30.0
 const DEMO_MAX_RELATIVE_ALTITUDE_M := 32.0
 const DEMO_VERTICAL_POSITION_GAIN := 0.15
@@ -2395,14 +2395,12 @@ func _demo_controls_for_frame(delta: float) -> Dictionary:
         return _demo_flight_controls
     var error_world: Vector3 = state.target_position - drone_body.global_position
     var horizontal_error := Vector3(error_world.x, 0.0, error_world.z)
-    var target_speed := minf(float(state.target_speed_mps), horizontal_error.length() * 1.5)
+    var target_speed := minf(minf(float(state.target_speed_mps), horizontal_error.length() * 1.5), DEMO_MAX_ROUTE_SPEED_MPS)
     var target_horizontal_velocity := horizontal_error.normalized() * target_speed if horizontal_error.length_squared() > 0.0001 else Vector3.ZERO
     var yaw_basis := Basis(Vector3.UP, drone_body.rotation.y)
     var body_target_velocity: Vector3 = yaw_basis.inverse() * target_horizontal_velocity
     var body_velocity: Vector3 = yaw_basis.inverse() * Vector3(drone_body.linear_velocity.x, 0.0, drone_body.linear_velocity.z)
     var horizontal_velocity_error := body_target_velocity - body_velocity
-    var heading: float = atan2(error_world.z, error_world.x) if Vector2(error_world.x, error_world.z).length_squared() > 0.01 else drone_body.rotation.y
-    var yaw_error_degrees := rad_to_deg(wrapf(heading - drone_body.rotation.y, -PI, PI))
     var hover := _configured_hover_throttle()
     var target_vertical_speed := clampf(error_world.y * DEMO_VERTICAL_POSITION_GAIN, -DEMO_MAX_VERTICAL_TARGET_SPEED_MPS, DEMO_MAX_VERTICAL_TARGET_SPEED_MPS)
     var roll := clampf(horizontal_velocity_error.z * 3.0, -DEMO_MAX_TILT_DEGREES, DEMO_MAX_TILT_DEGREES)
@@ -2413,13 +2411,12 @@ func _demo_controls_for_frame(delta: float) -> Dictionary:
         throttle = minf(1.0, hover + DEMO_THROTTLE_RANGE)
         roll = 0.0
         pitch = 0.0
-        yaw_error_degrees = 0.0
     _demo_flight_controls = {
         "mode": "ANGLE",
         "throttle": throttle,
         "roll": roll,
         "pitch": pitch,
-        "yaw_rate": clampf(yaw_error_degrees * 2.0, -DEMO_MAX_YAW_RATE_DPS, DEMO_MAX_YAW_RATE_DPS),
+        "yaw_rate": 0.0,
     }
     return _demo_flight_controls
 
@@ -6402,7 +6399,7 @@ func _refresh_gamepad_hud() -> void:
         "actions": _t("ui.gamepad_hud.actions"),
         "connection": _t("ui.gamepad_hud.connected") if connected else _t("ui.gamepad_hud.unavailable"),
         "mode": _localized_flight_mode(flight_mode),
-        "yaw": clampf(float(_demo_flight_controls.get("yaw_rate", 0.0)) / DEMO_MAX_YAW_RATE_DPS, -1.0, 1.0) if demo_controls_active else (_profile_axis("yaw") if connected else 0.0),
+        "yaw": 0.0 if demo_controls_active else (_profile_axis("yaw") if connected else 0.0),
         "throttle": demo_throttle if demo_controls_active else (_profile_axis("throttle") if connected else 0.0),
         "roll": clampf(float(_demo_flight_controls.get("roll", 0.0)) / ANGLE_MAX_TILT_DEGREES, -1.0, 1.0) if demo_controls_active else (_profile_axis("roll") if connected else 0.0),
         "pitch": clampf(float(_demo_flight_controls.get("pitch", 0.0)) / ANGLE_MAX_TILT_DEGREES, -1.0, 1.0) if demo_controls_active else (_profile_axis("pitch") if connected else 0.0),

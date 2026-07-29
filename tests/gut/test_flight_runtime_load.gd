@@ -1085,11 +1085,11 @@ func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     assert_true(runtime.demo_flight_active())
     assert_eq(runtime.flight_mode, "ANGLE")
     assert_gt(absf(float(native.collision_angle_arguments.roll)) + absf(float(native.collision_angle_arguments.pitch)), 0.25)
-    assert_lte(absf(float(native.collision_angle_arguments.yaw_rate)), FlightRuntime.DEMO_MAX_YAW_RATE_DPS)
-    assert_gt(absf(float(native.collision_angle_arguments.yaw_rate)) + absf(float(native.collision_angle_arguments.throttle) * 2.0 - 1.0), 0.25)
+    assert_eq(float(native.collision_angle_arguments.yaw_rate), 0.0)
+    assert_gt(absf(float(native.collision_angle_arguments.throttle) * 2.0 - 1.0), 0.25)
     assert_eq(display.state.roll, float(native.collision_angle_arguments.roll) / FlightRuntime.ANGLE_MAX_TILT_DEGREES)
     assert_eq(display.state.pitch, float(native.collision_angle_arguments.pitch) / FlightRuntime.ANGLE_MAX_TILT_DEGREES)
-    assert_eq(display.state.yaw, float(native.collision_angle_arguments.yaw_rate) / FlightRuntime.DEMO_MAX_YAW_RATE_DPS)
+    assert_eq(display.state.yaw, 0.0)
     assert_eq(display.state.throttle, float(native.collision_angle_arguments.throttle) * 2.0 - 1.0)
     assert_false(runtime.has_method("_apply_demo_flight_pose"))
 
@@ -1111,6 +1111,23 @@ func test_demo_controls_damp_native_horizontal_velocity_toward_route_speed() -> 
 
     assert_lt(float(accelerating.get("pitch", 0.0)), 0.0)
     assert_gt(float(braking.get("pitch", 0.0)), 0.0)
+
+
+func test_demo_route_caps_horizontal_speed_without_removing_roll_or_pitch() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.native = FakeNative.new()
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime.drone_body.global_position.y += FlightRuntime.AIRSIM_GROUND_BODY_CLEARANCE_M
+    runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, Vector3.ZERO, runtime.drone_body.rotation.y)
+
+    var controls := runtime._demo_controls_for_frame(0.0)
+    assert_eq(float(controls.yaw_rate), 0.0)
+    assert_gt(absf(float(controls.roll)), 0.01)
+    assert_gt(absf(float(controls.pitch)), 0.01)
+    assert_lte(absf(float(controls.roll)), FlightRuntime.DEMO_MAX_ROUTE_SPEED_MPS * 3.0)
+    assert_lte(absf(float(controls.pitch)), FlightRuntime.DEMO_MAX_ROUTE_SPEED_MPS * 3.0)
 
 
 func test_demo_safety_rejects_injected_overspeed_and_altitude() -> void:
