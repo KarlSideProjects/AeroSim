@@ -17,18 +17,6 @@ class LauncherHarness extends GspLauncher:
 
 func _init() -> void:
     var failures: Array[String] = []
-    var disabled := GspLauncher.parse_user_args([])
-    if bool(disabled.get("enabled", true)) or bool(disabled.get("open", true)):
-        failures.append("GSP is enabled or opened without an explicit user argument")
-
-    var enabled := GspLauncher.parse_user_args(["--aerosim-gsp"])
-    if not bool(enabled.get("enabled", false)) or not bool(enabled.get("open", false)):
-        failures.append("--aerosim-gsp must enable and open the panel")
-
-    var no_open := GspLauncher.parse_user_args(["--aerosim-gsp", "--aerosim-gsp-no-open"])
-    if not bool(no_open.get("enabled", false)) or bool(no_open.get("open", true)):
-        failures.append("--aerosim-gsp-no-open must preserve enablement and suppress opening")
-
     var uri := GspLauncher.file_uri("/tmp/Aero Sim/panel.html")
     if uri != "file:///tmp/Aero%20Sim/panel.html":
         failures.append("file URI is not correctly encoded: %s" % uri)
@@ -51,18 +39,17 @@ func _init() -> void:
 
     var action_harness := LauncherHarness.new()
     get_root().add_child(action_harness)
-    var action_launch: Dictionary = action_harness.launch({"enabled": true, "open": false})
+    var action_launch: Dictionary = action_harness.request_panel_open()
     if not bool(action_launch.get("ok", false)):
-        failures.append("launcher must start for user-action contract")
+        failures.append("user action must start the launcher without a command-line argument")
     elif not String(action_launch.get("panel_path", "")).contains("/bundle-") or not FileAccess.file_exists(String(action_launch.get("panel_path", "")).get_base_dir().path_join("assets/gsp_visual.js")):
-        failures.append("launcher must atomically publish a versioned panel bundle with its local assets")
+        failures.append("launcher must atomically publish the visual bundle")
     elif not action_harness.has_method("is_panel_ready") or not action_harness.has_method("request_panel_open") or not action_harness.has_method("copy_panel_url"):
         failures.append("ready launcher must expose panel actions")
     else:
         if not bool(action_harness.call("is_panel_ready")):
             failures.append("started launcher must report a ready panel")
-        var opened_from_user: Dictionary = action_harness.call("request_panel_open")
-        if not bool(opened_from_user.get("ok", false)) or action_harness.open_calls != 1:
+        if action_harness.open_calls != 1:
             failures.append("user open must invoke the panel opener once")
         var copied_from_user: Dictionary = action_harness.call("copy_panel_url")
         if not bool(copied_from_user.get("ok", false)):

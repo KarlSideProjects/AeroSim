@@ -89,7 +89,7 @@ const FACTORY_DEFAULT := {
         "random_walk": 0.0001,
         "barometer_noise_m": 0.10
     },
-    "fpv": {"camera_angle_deg": 30, "fov_deg": 150}
+    "fpv": {"camera_angle_deg": 0, "fov_deg": 90}
 }
 
 var current: Dictionary = FACTORY_DEFAULT.duplicate(true)

@@ -1,43 +1,25 @@
-import * as THREE from "./three-0.180.0.module.min.js";
+(function () {
+    const canvas = document.getElementById("airframe-3d");
+    const context = canvas && canvas.getContext("2d");
+    if (!canvas || !context) return;
 
-const canvas = document.getElementById("airframe-3d");
-if (canvas) {
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 100);
-    const frame = new THREE.Group();
-    const rotors = [];
     const motorOrder = ["rear_right", "front_right", "rear_left", "front_left"];
-    const motorPositions = [[.34, 0, .34], [.34, 0, -.34], [-.34, 0, .34], [-.34, 0, -.34]];
+    const motorPositions = [[.34, .34], [.34, -.34], [-.34, .34], [-.34, -.34]];
     let sample = window.__AEROSIM_GSP_TELEMETRY__ || {};
     let view = "isometric";
-    let dragging = false;
     let yaw = .78;
     let pitch = .62;
     let distance = 1.9;
+    let dragging = false;
     let previousPointer = null;
-
-    scene.add(new THREE.HemisphereLight(0x46d6e8, 0x05080b, 2));
-    const hub = new THREE.Mesh(new THREE.BoxGeometry(.22, .06, .16), new THREE.MeshStandardMaterial({ color: 0x263a47 }));
-    frame.add(hub);
-    motorPositions.forEach((position, index) => {
-        const arm = new THREE.Mesh(new THREE.BoxGeometry(.52, .025, .025), new THREE.MeshStandardMaterial({ color: 0x7d939f }));
-        arm.position.set(position[0] / 2, 0, position[2] / 2);
-        arm.rotation.y = Math.atan2(position[2], position[0]);
-        frame.add(arm);
-        const rotor = new THREE.Mesh(new THREE.CylinderGeometry(.14, .14, .012, 32), new THREE.MeshStandardMaterial({ color: 0xffb020, transparent: true, opacity: .75 }));
-        rotor.position.set(...position);
-        rotor.userData.key = motorOrder[index];
-        frame.add(rotor);
-        rotors.push(rotor);
-    });
-    scene.add(frame);
+    let spinPhase = 0;
 
     function setView(next) {
         view = next;
         const presets = { isometric: [.78, .62], top: [0, 1.54], side: [1.57, 0], rear: [3.14, 0] };
         [yaw, pitch] = presets[next] || presets.isometric;
     }
+
     ["isometric", "top", "side", "rear"].forEach((name) => {
         const button = document.getElementById(`view-${name}`);
         if (button) button.addEventListener("click", () => setView(name));
@@ -54,31 +36,73 @@ if (canvas) {
     window.addEventListener("aerosim-gsp-telemetry", (event) => { sample = event.detail || {}; });
     window.__AEROSIM_GSP_VISUAL__ = { motor_order: motorOrder.slice(), set_view: setView, current_view: () => view };
 
-    function motorsByKey() {
-        const data = {};
-        const values = Array.isArray(sample.motors) ? sample.motors : [];
-        motorOrder.forEach((key, index) => { data[key] = values[index] || null; });
-        return data;
+    function motorFor(index) {
+        const motors = Array.isArray(sample.motors) ? sample.motors : [];
+        return motors[index] || null;
     }
+
+    function resize() {
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+        const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
+        const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
+        if (canvas.width !== width || canvas.height !== height) {
+            canvas.width = width;
+            canvas.height = height;
+        }
+        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        return { width: canvas.clientWidth || 1, height: canvas.clientHeight || 1 };
+    }
+
     function render() {
-        const width = canvas.clientWidth || 1;
-        const height = canvas.clientHeight || 1;
-        renderer.setSize(width, height, false);
-        camera.aspect = width / height;
-        camera.position.set(distance * Math.cos(pitch) * Math.cos(yaw), distance * Math.sin(pitch), distance * Math.cos(pitch) * Math.sin(yaw));
-        camera.lookAt(0, 0, 0);
-        camera.updateProjectionMatrix();
-        const motors = motorsByKey();
-        const spins = sample.hardware_configuration && sample.hardware_configuration.spin_direction;
-        rotors.forEach((rotor) => {
-            const motor = motors[rotor.userData.key];
-            if (!motor) { rotor.material.color.set(0x59646d); return; }
-            const direction = Array.isArray(spins) && spins[motorOrder.indexOf(rotor.userData.key)] === "ccw" ? -1 : 1;
-            if (!window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches) rotor.rotation.y += direction * Number(motor.speed_rad_s || 0) / 3000;
-            rotor.material.color.set(motor.saturated ? 0xff4d8d : 0xffb020);
+        const size = resize();
+        const centerX = size.width / 2;
+        const centerY = size.height / 2;
+        const scale = Math.min(size.width, size.height) * .62 / distance;
+        const verticalScale = Math.max(.24, Math.abs(Math.sin(pitch)));
+        const cosine = Math.cos(yaw);
+        const sine = Math.sin(yaw);
+        const project = (x, z) => [centerX + (x * cosine - z * sine) * scale, centerY + (x * sine + z * cosine) * scale * verticalScale];
+        const hub = project(0, 0);
+        context.clearRect(0, 0, size.width, size.height);
+        context.fillStyle = "#0c1219";
+        context.fillRect(0, 0, size.width, size.height);
+        context.strokeStyle = "#31445d";
+        context.lineWidth = 1;
+        context.beginPath(); context.moveTo(0, centerY); context.lineTo(size.width, centerY); context.stroke();
+
+        motorPositions.forEach((position, index) => {
+            const rotor = project(position[0], position[1]);
+            context.strokeStyle = "#7d939f";
+            context.lineWidth = 5;
+            context.beginPath(); context.moveTo(hub[0], hub[1]); context.lineTo(rotor[0], rotor[1]); context.stroke();
         });
-        renderer.render(scene, camera);
+        context.fillStyle = "#263a47";
+        context.fillRect(hub[0] - 12, hub[1] - 8, 24, 16);
+
+        const spins = sample.hardware_configuration && sample.hardware_configuration.spin_direction;
+        motorPositions.forEach((position, index) => {
+            const rotor = project(position[0], position[1]);
+            const motor = motorFor(index);
+            const color = !motor ? "#59646d" : motor.saturated ? "#ff4d8d" : "#ffb020";
+            const radius = Math.max(9, scale * .14);
+            context.fillStyle = color;
+            context.globalAlpha = .78;
+            context.beginPath(); context.arc(rotor[0], rotor[1], radius, 0, Math.PI * 2); context.fill();
+            context.globalAlpha = 1;
+            const direction = Array.isArray(spins) && spins[index] === "ccw" ? -1 : 1;
+            context.strokeStyle = "#dce7f5";
+            context.lineWidth = 2;
+            for (let blade = 0; blade < 2; blade += 1) {
+                const angle = spinPhase * direction + blade * Math.PI / 2;
+                context.beginPath(); context.moveTo(rotor[0], rotor[1]); context.lineTo(rotor[0] + Math.cos(angle) * radius, rotor[1] + Math.sin(angle) * radius); context.stroke();
+            }
+            context.fillStyle = "#dce7f5";
+            context.font = "12px system-ui";
+            context.fillText(`M${index + 1}`, rotor[0] + radius + 4, rotor[1] + 4);
+        });
+        if (!window.matchMedia || !window.matchMedia("(prefers-reduced-motion: reduce)").matches) spinPhase += .06;
         requestAnimationFrame(render);
     }
+
     render();
-}
+}());

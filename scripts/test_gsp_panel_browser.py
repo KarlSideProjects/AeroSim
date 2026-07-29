@@ -139,7 +139,7 @@ def main() -> int:
             raise RuntimeError("real headed browser requires DISPLAY or WAYLAND_DISPLAY")
         with tempfile.TemporaryDirectory(prefix="aerosim-gsp-browser-") as temp_dir:
             game = subprocess.Popen(
-                [GODOT, "--display-driver", "wayland", "--path", str(ROOT), "--", "--aerosim-gsp", "--aerosim-gsp-no-open"],
+                [GODOT, "--display-driver", "wayland", "--path", str(ROOT)],
                 cwd=ROOT,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -159,6 +159,43 @@ def main() -> int:
             cdp.command("Runtime.enable")
             cdp.command("Page.bringToFront")
             cdp.command("Page.navigate", {"url": panel_url})
+            visual = cdp.evaluate(
+                """(async () => {
+                    const deadline = performance.now() + 5000;
+                    while (performance.now() < deadline && !window.__AEROSIM_GSP_VISUAL__) await new Promise(requestAnimationFrame);
+                    const canvas = document.getElementById('airframe-3d');
+                    const sample = document.createElement('canvas'); sample.width = 96; sample.height = 48;
+                    const context = sample.getContext('2d'); context.drawImage(canvas, 0, 0, sample.width, sample.height);
+                    const pixels = context.getImageData(0, 0, sample.width, sample.height).data;
+                    let visiblePixels = 0;
+                    for (let index = 0; index < pixels.length; index += 4) {
+                      if (pixels[index] > 12 || pixels[index + 1] > 12 || pixels[index + 2] > 12) visiblePixels += 1;
+                    }
+                    return { loaded: !!window.__AEROSIM_GSP_VISUAL__, visible_pixels: visiblePixels };
+                })()"""
+            )
+            if not isinstance(visual, dict) or not visual.get("loaded") or not isinstance(visual.get("visible_pixels"), int) or visual["visible_pixels"] <= 0:
+                result["visual"] = visual
+                raise RuntimeError("production GSP visual module did not render visible pixels")
+            layout = cdp.evaluate(
+                """(() => {
+                    const heights = () => [
+                      document.getElementById('flight-diagnostics').closest('.card').getBoundingClientRect().height,
+                      document.getElementById('hardware-configuration').closest('.card').getBoundingClientRect().height,
+                      document.getElementById('telemetry-data').closest('.card').getBoundingClientRect().height,
+                    ];
+                    const before = heights();
+                    document.getElementById('flight-diagnostics').textContent = 'diagnostic\\n'.repeat(200);
+                    document.getElementById('hardware-configuration').textContent = 'hardware\\n'.repeat(200);
+                    document.getElementById('hardware-derived').textContent = 'derived\\n'.repeat(200);
+                    document.getElementById('telemetry-data').textContent = 'telemetry\\n'.repeat(400);
+                    const after = heights();
+                    return { before, after, stable: before.every((height, index) => Math.abs(height - after[index]) < 0.5) };
+                })()"""
+            )
+            if not isinstance(layout, dict) or not layout.get("stable"):
+                result["layout"] = layout
+                raise RuntimeError("telemetry updates changed GSP card heights")
             samples = cdp.evaluate(
                 """(async () => {
                     const deadline = performance.now() + 15000;

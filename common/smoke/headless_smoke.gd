@@ -1686,7 +1686,7 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     var fallback_local_camera_offset: Vector3 = scene.drone_body.global_basis.inverse() * (fallback_third_person_camera.global_position - scene.drone_body.global_position)
-    if fallback_local_camera_offset.y <= 0.0 or fallback_local_camera_offset.z <= 0.0:
+    if fallback_local_camera_offset.y <= 0.0 or fallback_local_camera_offset.x >= 0.0 or absf(fallback_local_camera_offset.z) > 0.000001:
         push_error("No-controller Quick Fly third-person camera must remain above and behind the drone")
         scene.queue_free()
         return false
@@ -2037,7 +2037,7 @@ func _verify_runtime_actions() -> bool:
         scene.queue_free()
         return false
     var local_camera_offset: Vector3 = scene.drone_body.global_basis.inverse() * (third_person_camera.global_position - scene.drone_body.global_position)
-    if local_camera_offset.y <= 0.0 or local_camera_offset.z <= 0.0:
+    if local_camera_offset.y <= 0.0 or local_camera_offset.x >= 0.0 or absf(local_camera_offset.z) > 0.000001:
         push_error("Third-person camera must remain above and behind the drone in body coordinates")
         scene.queue_free()
         return false
@@ -2090,15 +2090,15 @@ func _verify_runtime_actions() -> bool:
     _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, 0.50)
     await process_frame
     await process_frame
-    if scene._profile_axis("pitch") >= 0.0:
-        push_error("Positive Xbox pitch raw input must be reversed before flight control")
+    if scene._profile_axis("pitch") <= 0.0:
+        push_error("Positive Xbox pitch raw input must remain positive for flight control")
         scene.queue_free()
         return false
     _inject_joy_axis(known_device_id, JOY_AXIS_RIGHT_Y, -0.50)
     await process_frame
     await process_frame
-    if scene._profile_axis("pitch") <= 0.0:
-        push_error("Negative Xbox pitch raw input must retain the opposite reversed sign")
+    if scene._profile_axis("pitch") >= 0.0:
+        push_error("Negative Xbox pitch raw input must remain negative for flight control")
         scene.queue_free()
         return false
     _inject_joy_axis(known_device_id, JOY_AXIS_LEFT_Y, -0.75)
