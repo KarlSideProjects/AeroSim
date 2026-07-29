@@ -1072,6 +1072,7 @@ func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     native.armed = true
     runtime.native = native
     runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime.drone_body.rotation.y)
+    runtime.drone_body.global_position.y += FlightRuntime.AIRSIM_GROUND_BODY_CLEARANCE_M
     runtime._physics_process(1.0 / 60.0)
     runtime._refresh_gamepad_hud()
 
@@ -1144,6 +1145,22 @@ func test_demo_launch_ignores_only_the_initial_upward_platform_contact() -> void
     runtime.drone_body.contact_normal = Vector3.UP
     runtime._physics_process(1.0 / 60.0)
     assert_true(bool(runtime.native.collision_angle_arguments.touching))
+
+
+func test_demo_launch_commands_level_sticks() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime._demo_launching = true
+    runtime.drone_body.global_position.x += 0.1
+    runtime.native = FakeNative.new()
+
+    var launch_controls := runtime._demo_controls_for_frame(0.0)
+    assert_almost_eq(float(launch_controls.throttle), 0.35, 0.000001)
+    assert_eq(float(launch_controls.roll), 0.0)
+    assert_eq(float(launch_controls.pitch), 0.0)
+    assert_eq(float(launch_controls.yaw_rate), 0.0)
 
 
 func test_demo_collision_handoff_resyncs_native_state_on_the_next_frame() -> void:

@@ -2410,6 +2410,9 @@ func _demo_controls_for_frame(delta: float) -> Dictionary:
     var throttle := clampf(hover / tilt_cos + (target_vertical_speed - drone_body.linear_velocity.y) * DEMO_VERTICAL_VELOCITY_GAIN, maxf(0.0, hover - DEMO_THROTTLE_RANGE), minf(1.0, hover + DEMO_THROTTLE_RANGE))
     if _demo_launching_active():
         throttle = minf(1.0, hover + DEMO_THROTTLE_RANGE)
+        roll = 0.0
+        pitch = 0.0
+        yaw_error_degrees = 0.0
     _demo_flight_controls = {
         "mode": "ANGLE",
         "throttle": throttle,
