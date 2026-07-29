@@ -2354,7 +2354,7 @@ func _demo_controls_for_frame(_delta: float) -> Dictionary:
     _demo_flight_target = target
     _demo_flight_heading = heading
     _demo_flight_controls = _airsim_velocity_controls(Vector3(desired_horizontal.x, desired_vertical, desired_horizontal.z), target.y - drone_body.global_position.y, {"is_rate": true, "yaw_or_rate": yaw_rate})
-    _demo_flight_controls["throttle"] = clampf(_configured_hover_throttle() + float(_demo_flight_controls.throttle) - 0.5, 0.0, 1.0)
+    _demo_flight_controls["throttle"] = clampf(_configured_hover_throttle() + float(_demo_flight_controls.throttle) - float(_airsim_neutral_controls().throttle), 0.0, 1.0)
     return _demo_flight_controls
 
 
