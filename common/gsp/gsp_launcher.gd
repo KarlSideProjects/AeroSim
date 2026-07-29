@@ -13,9 +13,7 @@ var _panel_url := ""
 
 
 func _ready() -> void:
-    var result := launch()
-    if not bool(result.get("ok", false)):
-        print("GSP unavailable: %s" % String(result.get("error", "unknown error")))
+    pass
 
 
 static func is_native_wayland(display_name: String) -> bool:
