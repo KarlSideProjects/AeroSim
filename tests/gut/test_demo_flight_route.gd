@@ -3,6 +3,16 @@ extends GutTest
 const DemoFlightRoute = preload("res://common/flight/demo_flight_route.gd")
 
 
+func test_route_advances_only_by_simulation_delta() -> void:
+    var route := DemoFlightRoute.new()
+    route.start(Vector3.ZERO)
+
+    route.advance(2.5, Vector3.ZERO, Vector3.ZERO, 0.0)
+    assert_eq(route.snapshot().phase, "hover")
+    route.advance(0.6, Vector3.ZERO, Vector3.ZERO, 0.0)
+    assert_eq(route.snapshot().phase, "low_pass")
+
+
 func test_route_starts_with_a_three_second_hover_then_visits_every_recording_phase() -> void:
     var route := DemoFlightRoute.new()
     var spawn := Vector3(0.0, 0.6, -24.0)

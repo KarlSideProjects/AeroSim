@@ -2309,7 +2309,6 @@ func start_demo_flight() -> void:
         _refresh_flight_hud()
         return
     demo_flight_route = DemoFlightRoute.new()
-    demo_flight_route.start(spawn.global_position, true)
     var gsp_launcher := get_node_or_null("GspLauncher")
     if gsp_launcher != null and gsp_launcher.has_method("open_demo_panel"):
         gsp_launcher.call("open_demo_panel")
@@ -2326,6 +2325,14 @@ func start_demo_flight() -> void:
 
 func demo_flight_active() -> bool:
     return demo_flight_route != null and bool(demo_flight_route.snapshot().active)
+
+
+func _start_demo_route_after_reset() -> void:
+    var spawn := _current_spawn_marker()
+    if spawn == null:
+        cancel_demo_flight()
+        return
+    demo_flight_route.start(spawn.global_position)
 
 
 func cancel_demo_flight() -> void:
@@ -2862,6 +2869,7 @@ func _advance_reset_pending() -> void:
             _complete_takeoff_after_reset()
             if screen == "error":
                 return
+            _start_demo_route_after_reset()
         elif _quick_fly_route_pending:
             set_paused(false)
             _route_quick_fly_after_reset()
