@@ -108,6 +108,24 @@ class FakeNative:
         return row
 
 
+class CollisionHandoffNative extends FakeNative:
+    var sync_calls := 0
+    var step_calls := 0
+    var jolt_handoff_next := true
+
+    func sync_flight_state(..._args) -> void:
+        sync_calls += 1
+
+    func step_collision_angle_mode(..._args) -> PackedFloat64Array:
+        step_calls += 1
+        var row := PackedFloat64Array()
+        row.resize(17)
+        row[7] = 1.0
+        row[12] = 1.0 if jolt_handoff_next else 0.0
+        jolt_handoff_next = false
+        return row
+
+
 class ResetRecordingNative extends FakeNative:
     var reset_operation_count := 0
     var environment_record_count := 0
@@ -1100,6 +1118,51 @@ func test_demo_safety_rejects_injected_overspeed_and_altitude() -> void:
     runtime.drone_body.linear_velocity = Vector3.ZERO
     runtime.drone_body.global_position.y = runtime._demo_spawn_height + FlightRuntime.DEMO_MAX_RELATIVE_ALTITUDE_M + 1.0
     assert_eq(runtime._demo_safety_error(), "Demo Flight altitude limit exceeded")
+
+
+func test_demo_collision_handoff_resyncs_native_state_on_the_next_frame() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quit_on_exit = false
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime.native = CollisionHandoffNative.new()
+    runtime.native.armed = true
+    runtime.takeoff_requested = true
+    runtime.screen = "flight"
+    runtime.paused = false
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+    runtime.drone_body.contact_impulse = Vector3(0.0, 1.0, 0.0)
+
+    runtime._physics_process(1.0 / 60.0)
+
+    assert_eq(runtime.collision_handoff_count, 1)
+    assert_eq(runtime.last_collision_authority, 1)
+    assert_eq(runtime.native.sync_calls, 1)
+    assert_false(runtime.drone_body.contact_seen)
+    runtime._physics_process(1.0 / 60.0)
+    assert_eq(runtime.native.sync_calls, 2)
+
+
+func test_demo_safety_cancels_before_sending_another_native_command() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quit_on_exit = false
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime.native = CollisionHandoffNative.new()
+    runtime.native.armed = true
+    runtime.takeoff_requested = true
+    runtime.screen = "flight"
+    runtime.paused = false
+    runtime.drone_body.linear_velocity = Vector3(FlightRuntime.DEMO_MAX_SPEED_MPS + 1.0, 0.0, 0.0)
+
+    runtime._physics_process(1.0 / 60.0)
+
+    assert_eq(runtime.native.step_calls, 0)
+    assert_false(runtime.demo_flight_active())
+    assert_eq(runtime.last_error_message, "Demo Flight safety limit exceeded")
 
 
 func test_demo_native_sync_only_follows_reset_or_jolt_authority() -> void:
