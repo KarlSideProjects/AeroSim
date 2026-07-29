@@ -16,10 +16,6 @@ func _ready() -> void:
     pass
 
 
-static func is_native_wayland(display_name: String) -> bool:
-    return display_name == "Wayland"
-
-
 static func file_uri(path: String) -> String:
     var normalized := path.replace("\\", "/")
     var encoded_parts: Array[String] = []
@@ -50,10 +46,6 @@ func launch(options: Dictionary = {}) -> Dictionary:
             "gsp_running": true,
             "error": shell_result.get("error", ""),
         }
-
-    var display_name := get_display_name()
-    if not is_native_wayland(display_name):
-        return {"ok": false, "error": "native Wayland required; detected %s" % display_name}
 
     _discard_unready_server()
     DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
@@ -96,7 +88,7 @@ func launch(options: Dictionary = {}) -> Dictionary:
     var result := {
         "ok": bool(shell_result.get("ok", false)),
         "enabled": true,
-        "display_name": display_name,
+        "display_name": get_display_name(),
         "window_mode": DisplayServer.window_get_mode(),
         "borderless": DisplayServer.window_get_flag(DisplayServer.WINDOW_FLAG_BORDERLESS),
         "panel_path": installed.path,

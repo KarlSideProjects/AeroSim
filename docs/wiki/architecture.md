@@ -60,7 +60,7 @@ flowchart TD
 | AeroSimNative | simulation integration、flight controller、aerodynamics、IMU、collision authority handoff、telemetry、replay。 | Godot scene graph 與 UI。 |
 | HardwareConfig + drone JSON | 機體物理與硬體參數的來源與驗證。 | 任意 runtime hard-coded airframe constants。 |
 | AirSim / PX4 adapters | 把 external command、sensor payload、actuator output 轉進同一 runtime/vehicle context。 | 繞過 public coordinate contract 直接操作 Godot axes。 |
-| Ground Station Panel (GSP) | 在 debug build 的 session 內，以獨立、自包含的本機 `file://` panel bundle 補充開發調參與後續 telemetry/replay 工作。 | 不取代 Godot 內的 Operations Dashboard，也不在 release build 或非原生 Wayland 環境下啟動。 |
+| Ground Station Panel (GSP) | 在 debug build 的 session 內，以獨立、自包含的本機 `file://` panel bundle 補充開發調參與後續 telemetry/replay 工作。 | 不取代 Godot 內的 Operations Dashboard，也不在 release build 啟動。 |
 
 ### GSP 與 Operations Dashboard 的邊界
 
@@ -71,7 +71,7 @@ post-flight 或 second-screen tuning 使用；debug session 啟動時會建立�
 `common/gsp/gsp_panel.html` 的副本，暫停選單的使用者動作才開啟面板。GSP 不建立第二份 simulation、telemetry、
 coordinate 或 replay authority。
 
-GSP 沒有啟動參數：`GspLauncher` 在 debug build 的 `_ready()` 直接嘗試建立本機服務並安裝
+GSP 沒有啟動參數：`GspLauncher` 會在使用者操作時建立本機服務並安裝
 bundle，但不會自動開啟瀏覽器。Wayland 不允許應用程式強迫另一個應用程式取得焦點，因此
 面板一律由使用者動作開啟。只要 runtime 掛著 `GspLauncher`，暫停選單就會建立
 `OPEN GSP PANEL`、`COPY GSP URL` 兩個入口與一個狀態標籤；本機服務尚未就緒時這些控制項
