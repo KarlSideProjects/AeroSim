@@ -972,6 +972,37 @@ func test_quick_fly_defaults_the_player_view_to_third_person_before_controller_r
     assert_true(runtime.third_person_view)
 
 
+func test_demo_flight_menu_uses_industrial_yard_third_person_and_live_hud_controls() -> void:
+    var runtime := _quick_fly_runtime()
+    _attach_runtime_ui(runtime)
+
+    (runtime.main_menu_layer.get_node("Entries/DemoFlight") as Button).pressed.emit()
+    await _await_reset_commit()
+    var controls: Dictionary = runtime._demo_controls_for_frame(4.0)
+    runtime._refresh_gamepad_hud()
+
+    var display := runtime.flight_hud_layer.get_node("GamepadHudMargin/GamepadHudPanel/GamepadTelemetryPanel") as Control
+    assert_eq(runtime.loaded_map_id, "industrial_yard")
+    assert_true(runtime.third_person_view)
+    assert_true(runtime.demo_flight_active())
+    assert_true(absf(float(controls.get("roll", 0.0))) > 0.01 or absf(float(controls.get("pitch", 0.0))) > 0.01)
+    assert_true(absf(float(display.state.get("roll", 0.0))) > 0.01 or absf(float(display.state.get("pitch", 0.0))) > 0.01)
+    assert_true(absf(float(display.state.get("yaw", 0.0))) > 0.01 or absf(float(display.state.get("throttle", 0.0))) > 0.01)
+
+
+func test_demo_flight_exit_returns_to_menu_without_quitting_the_application() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.start_demo_flight()
+    await _await_reset_commit()
+
+    runtime._unhandled_input(_flight_exit_event(false))
+
+    assert_eq(runtime.screen, "main_menu")
+    assert_false(runtime.demo_flight_active())
+    assert_false(runtime.exit_requested)
+    assert_null(runtime.loaded_map)
+
+
 func test_controller_confirmation_keeps_the_selected_third_person_player_view() -> void:
     var runtime := FlightRuntime.new()
     autofree(runtime)
@@ -1236,7 +1267,7 @@ func test_lab_mode_button_reuses_runtime_and_visible_back_control_returns_to_men
 
 func test_main_menu_exposes_the_ordered_cap006_entries_and_defaults() -> void:
     var runtime := _licensed_runtime()
-    assert_eq(runtime.main_menu_entries, ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"])
+    assert_eq(runtime.main_menu_entries, ["Quick Fly", "Demo Flight", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"])
     assert_eq(runtime.default_flight_setup(), {
         "hardware_preset": "res://config/drones/5_inch_6s.json",
         "map_id": "terrain3d_range",
