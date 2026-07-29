@@ -13,10 +13,12 @@ class FakeGspLauncher extends Node:
 
     func request_panel_open() -> Dictionary:
         open_calls += 1
+        available = true
         return {"ok": true}
 
     func copy_panel_url() -> Dictionary:
         copy_calls += 1
+        available = true
         return {"ok": true}
 
 
@@ -56,10 +58,18 @@ func test_ready_gsp_exposes_pause_actions_without_rendering_the_url() -> void:
     assert_false(status.text.contains("token="))
 
 
-func test_unready_gsp_does_not_expose_pause_actions() -> void:
+func test_unready_gsp_exposes_actions_that_start_the_panel() -> void:
     var fixture := _runtime_with_gsp(false)
     var runtime: Node = fixture.runtime
+    var launcher: FakeGspLauncher = fixture.launcher
+    var open: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/OpenGspPanel")
+    var copy: Button = runtime.get_node_or_null("FlightHud/PausePanel/Rows/CopyGspUrl")
 
-    assert_null(runtime.get_node_or_null("FlightHud/PausePanel/Rows/OpenGspPanel"))
-    assert_null(runtime.get_node_or_null("FlightHud/PausePanel/Rows/CopyGspUrl"))
-    assert_null(runtime.get_node_or_null("FlightHud/PausePanel/Rows/GspPanelStatus"))
+    assert_not_null(open)
+    assert_not_null(copy)
+    if open != null:
+        open.pressed.emit()
+    if copy != null:
+        copy.pressed.emit()
+    assert_eq(launcher.open_calls, 1)
+    assert_eq(launcher.copy_calls, 1)
