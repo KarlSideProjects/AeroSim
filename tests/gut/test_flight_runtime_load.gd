@@ -1051,32 +1051,35 @@ func test_imported_drone_nose_aligns_with_the_frd_forward_axis() -> void:
     var model := loader.get_node_or_null("ImportedDroneModel") as Node3D
     assert_not_null(model)
 
-    # Measure the mesh, not the loader's own rotation constant. The previous version of
-    # this test asserted that model-space +Z lands on body +X, which only restated
-    # whatever rotation the loader applied and stayed green while the airframe sat
-    # sideways across the flight path.
-    # Measured at the shipped scale: 0.372 long x 0.263 wide x 0.101 tall, so the
-    # fore-aft axis leads the lateral one by 1.42x. A 1.2x margin passes that comfortably
-    # and still fails the 90-degree case, which reads 0.263 x 0.372 (0.71x).
-    var airframe := _model_aabb_in_body_space(model, body)
-    assert_gt(airframe.size.x, airframe.size.z * 1.2,
-        "The airframe's long axis must lie along the body's +X forward axis, not across it.")
-
-
-func _model_aabb_in_body_space(model: Node3D, body: Node3D) -> AABB:
-    var combined := AABB()
-    var seen := false
+    # Measure the mesh, not the loader's own rotation constant, and not the bounding box.
+    #
+    # Two earlier versions of this test were useless. The first asserted that model-space
+    # +Z lands on body +X, which only restated whatever rotation the loader applied. The
+    # second compared AABB extents, but the AABB is dominated by the four outstretched
+    # rotor arms rather than the fuselage, so it pointed 90 degrees away from the nose.
+    #
+    # The asset carries its detail at the nose: the canopy and twin camera assembly put
+    # 9883 of 13743 vertices on that side against 3860 on the tail side, a 2.56x lead.
+    # Requiring 1.5x forward of the origin uniquely selects the correct heading and
+    # rejects 0, +90 and 180 degrees, which read 1.06x, 0.39x and 0.95x.
+    var forward_vertices := 0
+    var aft_vertices := 0
     for node in _descendants(model):
         if node is MeshInstance3D:
             var mesh_instance := node as MeshInstance3D
-            var in_body: AABB = body.global_transform.affine_inverse() * (mesh_instance.global_transform * mesh_instance.get_aabb())
-            if seen:
-                combined = combined.merge(in_body)
-            else:
-                combined = in_body
-                seen = true
-    assert_true(seen, "The imported drone model must contain at least one mesh.")
-    return combined
+            var to_body: Transform3D = body.global_transform.affine_inverse() * mesh_instance.global_transform
+            var mesh: Mesh = mesh_instance.mesh
+            for surface in mesh.get_surface_count():
+                var vertices: PackedVector3Array = mesh.surface_get_arrays(surface)[Mesh.ARRAY_VERTEX]
+                for vertex in vertices:
+                    if (to_body * vertex).x >= 0.0:
+                        forward_vertices += 1
+                    else:
+                        aft_vertices += 1
+    assert_gt(forward_vertices + aft_vertices, 0,
+        "The imported drone model must contain mesh vertices.")
+    assert_gt(float(forward_vertices), float(aft_vertices) * 1.5,
+        "The airframe's detailed nose must face the body's +X forward axis.")
 
 
 func _descendants(node: Node) -> Array:
