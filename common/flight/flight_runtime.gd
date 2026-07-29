@@ -58,6 +58,7 @@ const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 # looks along local -Z. This rotates the camera into the body convention.
 const FPV_CAMERA_BODY_ALIGNMENT := Basis(Vector3.UP, -PI * 0.5)
 const THIRD_PERSON_CAMERA_OFFSET := Vector3(-5.5, 2.4, 0.0)
+const DEMO_THIRD_PERSON_FOV_DEG := 45.5
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
@@ -2350,14 +2351,14 @@ func _demo_controls_for_frame(_delta: float) -> Dictionary:
             call_deferred("cancel_demo_flight")
         return _demo_flight_controls
     var target: Vector3 = state.target_position
-    var horizontal_delta := Vector3(target.x - drone_body.global_position.x, 0.0, target.z - drone_body.global_position.z)
-    var desired_horizontal := horizontal_delta.normalized() * minf(horizontal_delta.length() * 1.2, float(state.target_speed_mps))
-    var desired_vertical := clampf((target.y - drone_body.global_position.y) * 1.5, -2.0, 2.0)
+    var route_delta: Vector3 = target - drone_body.global_position
+    var horizontal_delta := Vector3(route_delta.x, 0.0, route_delta.z)
+    var desired_velocity: Vector3 = route_delta.normalized() * float(state.target_speed_mps)
     var heading: float = atan2(horizontal_delta.z, horizontal_delta.x) if horizontal_delta.length_squared() > 0.01 else drone_body.rotation.y
     var yaw_rate := clampf(rad_to_deg(wrapf(heading - drone_body.rotation.y, -PI, PI)) * 2.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
     _demo_flight_target = target
     _demo_flight_heading = heading
-    _demo_flight_controls = _airsim_velocity_controls(Vector3(desired_horizontal.x, desired_vertical, desired_horizontal.z), target.y - drone_body.global_position.y, {"is_rate": true, "yaw_or_rate": yaw_rate})
+    _demo_flight_controls = _airsim_velocity_controls(desired_velocity, 0.0, {"is_rate": true, "yaw_or_rate": yaw_rate})
     _demo_flight_controls["throttle"] = clampf(_configured_hover_throttle() + float(_demo_flight_controls.throttle) - float(_airsim_neutral_controls().throttle), 0.0, 1.0)
     return _demo_flight_controls
 
@@ -6615,6 +6616,7 @@ func _update_chase_camera() -> void:
         var horizontal_body_basis := Basis(horizontal_forward, Vector3.UP, horizontal_forward.cross(Vector3.UP))
         third_person_camera.global_position = drone_body.global_position + horizontal_body_basis * THIRD_PERSON_CAMERA_OFFSET
         third_person_camera.look_at(drone_body.global_position + Vector3(0.0, 0.2, 0.0), Vector3.UP)
+        third_person_camera.fov = DEMO_THIRD_PERSON_FOV_DEG if demo_flight_active() else 70.0
         third_person_camera.current = true
         chase_camera.current = false
     else:

@@ -998,7 +998,9 @@ func test_demo_flight_menu_uses_quick_fly_terrain_third_person_and_live_hud_cont
     await _await_reset_commit()
     runtime.demo_flight_route.start((runtime._current_spawn_marker() as Marker3D).global_position)
     runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime.drone_body.rotation.y)
-    var controls: Dictionary = runtime._demo_controls_for_frame(0.0)
+    runtime._demo_controls_for_frame(0.0)
+    runtime._apply_demo_flight_pose()
+    var controls: Dictionary = runtime._demo_controls_for_frame(1.0 / 60.0)
     runtime._refresh_gamepad_hud()
 
     var display := runtime.flight_hud_layer.get_node("GamepadHudMargin/GamepadHudPanel/GamepadTelemetryPanel") as Control
@@ -1006,10 +1008,11 @@ func test_demo_flight_menu_uses_quick_fly_terrain_third_person_and_live_hud_cont
     assert_eq(gsp_launcher.demo_open_calls, 1)
     assert_true(runtime.third_person_view)
     assert_true(runtime.third_person_camera.current)
+    assert_almost_eq(runtime.third_person_camera.fov, FlightRuntime.DEMO_THIRD_PERSON_FOV_DEG, 0.01)
     assert_true(runtime.demo_flight_active())
-    assert_true(absf(float(controls.get("roll", 0.0))) > 0.01 or absf(float(controls.get("pitch", 0.0))) > 0.01)
-    assert_true(absf(float(display.state.get("roll", 0.0))) > 0.01 or absf(float(display.state.get("pitch", 0.0))) > 0.01)
-    assert_true(absf(float(display.state.get("yaw", 0.0))) > 0.01 or absf(float(display.state.get("throttle", 0.0))) > 0.01)
+    assert_true(absf(float(controls.get("roll", 0.0))) > FlightRuntime.ANGLE_MAX_TILT_DEGREES * 0.25 or absf(float(controls.get("pitch", 0.0))) > FlightRuntime.ANGLE_MAX_TILT_DEGREES * 0.25)
+    assert_true(absf(float(display.state.get("roll", 0.0))) > 0.25 or absf(float(display.state.get("pitch", 0.0))) > 0.25)
+    assert_true(absf(float(display.state.get("yaw", 0.0))) > 0.25 or absf(float(display.state.get("throttle", 0.0))) > 0.25)
 
 
 func test_demo_flight_exit_returns_to_menu_without_quitting_the_application() -> void:
