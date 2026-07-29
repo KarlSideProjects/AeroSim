@@ -10,6 +10,7 @@
     let view = "isometric";
     let visualStatus = { available: false, rotor_count: 0, context_lost: false };
     let labels = {};
+    let rotorById = {};
 
     function finite(value) {
         return typeof value === "number" && Number.isFinite(value);
@@ -17,13 +18,8 @@
 
     function vectorState(value, gate) {
         if (gate && gate !== "active") return { state: gate, value: null };
-        if (!value || !finite(Number(value.x_val)) || !finite(Number(value.y_val)) || !finite(Number(value.z_val))) {
-            return { state: "unavailable", value: null };
-        }
-        return {
-            state: "active",
-            value: { x: Number(value.x_val), y: Number(value.y_val), z: Number(value.z_val) },
-        };
+        if (!value || !finite(Number(value.x_val)) || !finite(Number(value.y_val)) || !finite(Number(value.z_val))) return { state: "unavailable", value: null };
+        return { state: "active", value: { x: Number(value.x_val), y: Number(value.y_val), z: Number(value.z_val) } };
     }
 
     function mapTelemetryToViewState(sample, frameSeconds) {
@@ -31,16 +27,13 @@
         const motors = Array.isArray(sample.motors) ? sample.motors : [];
         const order = Array.isArray(sample.motor_order) ? sample.motor_order : [];
         const rpm = Array.isArray(sample.rpm) ? sample.rpm : [];
-        const spin = sample.hardware_configuration && Array.isArray(sample.hardware_configuration.spin_direction)
-            ? sample.hardware_configuration.spin_direction
-            : [];
+        const spin = sample.hardware_configuration && Array.isArray(sample.hardware_configuration.spin_direction) ? sample.hardware_configuration.spin_direction : [];
         const power = sample.hardware_power_model || {};
         const count = motors.length;
         const maxThrust = Number(power.max_total_thrust_newtons) / count;
         const maxCurrent = Number(power.max_total_current_a) / count;
         const hasPower = count > 0 && finite(maxThrust) && maxThrust > 0 && finite(maxCurrent) && maxCurrent > 0;
         const seconds = finite(frameSeconds) && frameSeconds > 0 ? frameSeconds : 1 / 60;
-
         return {
             axes: { body: "FRD", scene: { forward: "-Z", right: "+X", down: "-Y" } },
             motors: motors.map((motor, index) => {
@@ -48,31 +41,20 @@
                 const current = Number(motor && motor.current_a);
                 const speed = Number(motor && motor.speed_rad_s);
                 const measuredRpm = finite(Number(rpm[index])) ? Number(rpm[index]) : speed * 60 / TAU;
-                const ratio = hasPower && finite(thrust) && finite(current)
-                    ? Math.max(thrust / maxThrust, current / maxCurrent)
-                    : Number.NaN;
-                let health = "unavailable";
-                if (finite(ratio)) health = motor && motor.saturated ? "critical" : ratio >= 0.98 ? "critical" : ratio >= 0.85 ? "warning" : "normal";
-                const id = String(order[index] || "motor_" + (index + 1));
+                const ratio = hasPower && finite(thrust) && finite(current) ? Math.max(thrust / maxThrust, current / maxCurrent) : Number.NaN;
+                const health = !finite(ratio) ? "unavailable" : motor && motor.saturated || ratio >= .98 ? "critical" : ratio >= .85 ? "warning" : "normal";
                 const normalized = finite(ratio) ? Math.max(0, Math.min(ratio, 1)) : 0;
+                const id = String(order[index] || "motor_" + (index + 1));
                 return {
-                    id,
-                    index,
-                    position: MOTOR_POSITIONS[id] || [0, 0, 0],
-                    rpm: finite(measuredRpm) ? measuredRpm : null,
-                    thrust_newtons: finite(thrust) ? thrust : null,
-                    current_a: finite(current) ? current : null,
-                    saturated: !!(motor && motor.saturated),
-                    spin_direction: spin[index] === "cw" || spin[index] === "ccw" ? spin[index] : "unavailable",
-                    health,
-                    rotor_opacity: 1 - normalized * 0.85,
-                    disc_opacity: normalized * 0.85,
+                    id, index, position: MOTOR_POSITIONS[id] || [0, 0, 0], rpm: finite(measuredRpm) ? measuredRpm : null,
+                    thrust_newtons: finite(thrust) ? thrust : null, current_a: finite(current) ? current : null,
+                    saturated: !!(motor && motor.saturated), spin_direction: spin[index] === "cw" || spin[index] === "ccw" ? spin[index] : "unavailable",
+                    health, rotor_opacity: 1 - normalized * .85, disc_opacity: normalized * .85,
                     angular_step_rad: finite(measuredRpm) ? Math.min(Math.PI / 6, Math.abs(measuredRpm) * TAU / 60 * seconds) : 0,
                 };
             }),
             flow: {
-                wind: vectorState(sample.wind_body_mps),
-                airspeed: vectorState(sample.airspeed_body_frd_mps_mean),
+                wind: vectorState(sample.wind_body_mps), airspeed: vectorState(sample.airspeed_body_frd_mps_mean),
                 body_drag: vectorState(sample.drag_body_n, String(sample.body_drag_operating_state || "unavailable")),
                 mean_drag: vectorState(sample.body_drag_force_body_frd_n_mean, String(sample.body_drag_operating_state || "unavailable")),
                 rotor_drag: vectorState(sample.a3_drag_force_body_frd_n_mean, String(sample.a3_operating_state || "unavailable")),
@@ -92,111 +74,138 @@
         labels = next || {};
     }
 
-    root.__AEROSIM_GSP_VISUAL__ = {
-        map_telemetry_to_view_state: mapTelemetryToViewState,
-        set_labels: setLabels,
-        set_view: setView,
-        current_view: () => view,
-        status: () => Object.assign({}, visualStatus),
-    };
+    function api() {
+        return {
+            map_telemetry_to_view_state: mapTelemetryToViewState,
+            set_labels: setLabels,
+            set_view: setView,
+            current_view: () => view,
+            status: () => Object.assign({}, visualStatus),
+            rotor: (id) => rotorById[id] || null,
+        };
+    }
 
+    root.__AEROSIM_GSP_VISUAL__ = api();
     if (typeof document === "undefined") return;
     const canvas = document.getElementById("airframe-3d");
-    const context = canvas && canvas.getContext("2d");
-    if (!canvas || !context) return;
+    const THREE = root.THREE;
+    if (!canvas || !THREE) return;
 
-    const motorOrder = ["rear_right", "front_right", "rear_left", "front_left"];
-    const motorPositions = [[.34, .34], [.34, -.34], [-.34, .34], [-.34, -.34]];
+    let renderer;
+    try {
+        renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    } catch (_error) {
+        return;
+    }
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0c1219);
+    const camera = new THREE.PerspectiveCamera(38, 1, .1, 50);
+    const key = new THREE.DirectionalLight(0xd9ecff, 2.2);
+    key.position.set(4, 6, 2); key.castShadow = true; scene.add(key);
+    scene.add(new THREE.HemisphereLight(0x9fc8ff, 0x102236, 1.6));
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), new THREE.MeshStandardMaterial({ color: 0x101923, roughness: .94 }));
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -.36; ground.receiveShadow = true; scene.add(ground);
+    const airframe = new THREE.Group(); scene.add(airframe);
+    const frameMaterial = new THREE.MeshStandardMaterial({ color: 0x263a47, metalness: .62, roughness: .32 });
+    const motorMaterial = new THREE.MeshStandardMaterial({ color: 0x7d939f, metalness: .84, roughness: .2 });
+    const propMaterial = new THREE.MeshStandardMaterial({ color: 0xc5e8ff, transparent: true, opacity: .9, roughness: .38 });
+    const discMaterial = new THREE.MeshBasicMaterial({ color: 0x67d5ff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+    const hub = new THREE.Mesh(new THREE.BoxGeometry(.48, .16, .34), frameMaterial); hub.castShadow = true; airframe.add(hub);
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(.09, .3, 12), new THREE.MeshStandardMaterial({ color: 0x9ee6b1, emissive: 0x173c26 }));
+    nose.rotation.x = Math.PI / 2; nose.position.z = -.34; airframe.add(nose);
+
+    Object.keys(MOTOR_POSITIONS).forEach((id) => {
+        const position = MOTOR_POSITIONS[id];
+        const group = new THREE.Group(); group.name = "rotor-" + id; group.position.set(position[0], position[1], position[2]);
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(.12, .07, 1.5), frameMaterial);
+        arm.position.copy(group.position).multiplyScalar(.5); arm.rotation.y = Math.atan2(position[0], position[2]); arm.castShadow = true; airframe.add(arm);
+        const bell = new THREE.Mesh(new THREE.CylinderGeometry(.15, .15, .13, 20), motorMaterial); bell.castShadow = true; group.add(bell);
+        const blade = new THREE.Mesh(new THREE.BoxGeometry(.95, .018, .12), propMaterial); blade.position.x = .38; blade.castShadow = true;
+        const bladePair = new THREE.Group(); bladePair.add(blade); const opposite = blade.clone(); opposite.rotation.y = Math.PI; bladePair.add(opposite); bladePair.position.y = .1; group.add(bladePair);
+        const disc = new THREE.Mesh(new THREE.CircleGeometry(.58, 32), discMaterial.clone()); disc.rotation.x = -Math.PI / 2; disc.position.y = .11; group.add(disc);
+        airframe.add(group); rotorById[id] = { group, blade: bladePair, disc };
+    });
+
+    const flow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(), 0, 0x67d5ff, .18, .1);
+    scene.add(flow);
+    const downwash = new THREE.ArrowHelper(new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, .05, 0), 0, 0xffcf78, .12, .08);
+    scene.add(downwash);
     let sample = root.__AEROSIM_GSP_TELEMETRY__ || {};
-    let yaw = .78;
-    let pitch = .62;
-    let distance = 1.9;
+    let state = mapTelemetryToViewState(sample);
+    let lastFrame = performance.now();
     let dragging = false;
     let previousPointer = null;
-    let spinPhase = 0;
+    let yaw = .78;
+    let pitch = .62;
+    let distance = 4.3;
 
-    ["isometric", "top", "side", "rear"].forEach((name) => {
-        const button = document.getElementById("view-" + name);
-        if (button) button.addEventListener("click", () => setView(name));
-    });
+    function setCamera() {
+        const presets = { isometric: [.78, .62], top: [0, 1.54], side: [1.57, 0], rear: [3.14, 0] };
+        if (view !== "free") [yaw, pitch] = presets[view] || presets.isometric;
+        camera.position.set(Math.sin(yaw) * Math.cos(pitch) * distance, Math.sin(pitch) * distance, Math.cos(yaw) * Math.cos(pitch) * distance);
+        camera.lookAt(0, 0, 0);
+    }
+
+    function sceneVector(vector) {
+        return new THREE.Vector3(vector.y, -vector.z, -vector.x);
+    }
+
+    function updateFlow() {
+        const wind = state.flow.wind;
+        if (wind.state === "active") {
+            const vector = sceneVector(wind.value); const length = vector.length();
+            flow.visible = length > 0; if (length > 0) { flow.position.set(0, .4, 0); flow.setDirection(vector.normalize()); flow.setLength(Math.min(2.4, length / 15 * 2.4)); }
+        } else flow.visible = false;
+        const down = state.flow.downwash;
+        downwash.visible = down.state === "active" && down.value > 0;
+        if (downwash.visible) downwash.setLength(Math.min(1.4, down.value / 10));
+    }
+
+    function updateScene(seconds) {
+        state = mapTelemetryToViewState(sample, seconds);
+        state.motors.forEach((motor) => {
+            const rotor = rotorById[motor.id]; if (!rotor) return;
+            const color = motor.health === "critical" ? 0xff8aad : motor.health === "warning" ? 0xffcf78 : motor.health === "normal" ? 0x9ee6b1 : 0x59646d;
+            rotor.blade.children.forEach((blade) => { blade.material.color.setHex(color); blade.material.opacity = motor.rotor_opacity; });
+            rotor.disc.material.color.setHex(color); rotor.disc.material.opacity = motor.disc_opacity;
+            if (!root.matchMedia || !root.matchMedia("(prefers-reduced-motion: reduce)").matches) rotor.blade.rotation.y += motor.angular_step_rad * (motor.spin_direction === "ccw" ? -1 : 1);
+        });
+        updateFlow();
+    }
+
+    function resize() {
+        const width = Math.max(1, canvas.clientWidth || 1); const height = Math.max(1, canvas.clientHeight || 1);
+        renderer.setPixelRatio(Math.min(root.devicePixelRatio || 1, 2)); renderer.setSize(width, height, false);
+        camera.aspect = width / height; camera.updateProjectionMatrix();
+    }
+
     canvas.addEventListener("pointerdown", (event) => { dragging = true; previousPointer = event; canvas.setPointerCapture?.(event.pointerId); });
     canvas.addEventListener("pointerup", () => { dragging = false; previousPointer = null; });
     canvas.addEventListener("pointermove", (event) => {
         if (!dragging || !previousPointer) return;
-        yaw += (event.clientX - previousPointer.clientX) * .012;
-        pitch = Math.max(-1.45, Math.min(1.45, pitch + (event.clientY - previousPointer.clientY) * .012));
-        previousPointer = event;
+        view = "free"; yaw += (event.clientX - previousPointer.clientX) * .012; pitch = Math.max(-1.35, Math.min(1.35, pitch + (event.clientY - previousPointer.clientY) * .012)); previousPointer = event;
     });
-    canvas.addEventListener("wheel", (event) => { distance = Math.max(.7, Math.min(4, distance + event.deltaY * .002)); event.preventDefault(); }, { passive: false });
+    canvas.addEventListener("wheel", (event) => { distance = Math.max(2.5, Math.min(8, distance + event.deltaY * .004)); event.preventDefault(); }, { passive: false });
+    canvas.addEventListener("webglcontextlost", (event) => { event.preventDefault(); visualStatus = { available: false, rotor_count: 0, context_lost: true }; });
     root.addEventListener("aerosim-gsp-telemetry", (event) => { sample = event.detail || {}; });
 
-    function motorFor(index) {
-        const motors = Array.isArray(sample.motors) ? sample.motors : [];
-        return motors[index] || null;
-    }
-
-    function resize() {
-        const pixelRatio = Math.min(root.devicePixelRatio || 1, 2);
-        const width = Math.max(1, Math.round(canvas.clientWidth * pixelRatio));
-        const height = Math.max(1, Math.round(canvas.clientHeight * pixelRatio));
-        if (canvas.width !== width || canvas.height !== height) {
-            canvas.width = width;
-            canvas.height = height;
+    try {
+        if (THREE.RoomEnvironment && THREE.PMREMGenerator) {
+            const pmrem = new THREE.PMREMGenerator(renderer); scene.environment = pmrem.fromScene(new THREE.RoomEnvironment()).texture; pmrem.dispose();
         }
-        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-        return { width: canvas.clientWidth || 1, height: canvas.clientHeight || 1 };
+        visualStatus = { available: true, rotor_count: Object.keys(rotorById).length, context_lost: false };
+    } catch (_error) {
+        visualStatus = { available: true, rotor_count: Object.keys(rotorById).length, context_lost: false };
     }
 
-    function render() {
-        const size = resize();
-        const centerX = size.width / 2;
-        const centerY = size.height / 2;
-        const scale = Math.min(size.width, size.height) * .62 / distance;
-        const verticalScale = Math.max(.24, Math.abs(Math.sin(pitch)));
-        const cosine = Math.cos(yaw);
-        const sine = Math.sin(yaw);
-        const project = (x, z) => [centerX + (x * cosine - z * sine) * scale, centerY + (x * sine + z * cosine) * scale * verticalScale];
-        const hub = project(0, 0);
-        context.clearRect(0, 0, size.width, size.height);
-        context.fillStyle = "#0c1219";
-        context.fillRect(0, 0, size.width, size.height);
-        context.strokeStyle = "#31445d";
-        context.lineWidth = 1;
-        context.beginPath(); context.moveTo(0, centerY); context.lineTo(size.width, centerY); context.stroke();
-
-        motorPositions.forEach((position) => {
-            const rotor = project(position[0], position[1]);
-            context.strokeStyle = "#7d939f";
-            context.lineWidth = 5;
-            context.beginPath(); context.moveTo(hub[0], hub[1]); context.lineTo(rotor[0], rotor[1]); context.stroke();
-        });
-        context.fillStyle = "#263a47";
-        context.fillRect(hub[0] - 12, hub[1] - 8, 24, 16);
-
-        const spins = sample.hardware_configuration && sample.hardware_configuration.spin_direction;
-        motorPositions.forEach((position, index) => {
-            const rotor = project(position[0], position[1]);
-            const motor = motorFor(index);
-            const color = !motor ? "#59646d" : motor.saturated ? "#ff4d8d" : "#ffb020";
-            const radius = Math.max(9, scale * .14);
-            context.fillStyle = color;
-            context.globalAlpha = .78;
-            context.beginPath(); context.arc(rotor[0], rotor[1], radius, 0, Math.PI * 2); context.fill();
-            context.globalAlpha = 1;
-            const direction = Array.isArray(spins) && spins[index] === "ccw" ? -1 : 1;
-            context.strokeStyle = "#dce7f5";
-            context.lineWidth = 2;
-            for (let blade = 0; blade < 2; blade += 1) {
-                const angle = spinPhase * direction + blade * Math.PI / 2;
-                context.beginPath(); context.moveTo(rotor[0], rotor[1]); context.lineTo(rotor[0] + Math.cos(angle) * radius, rotor[1] + Math.sin(angle) * radius); context.stroke();
-            }
-            context.fillStyle = "#dce7f5";
-            context.font = "12px system-ui";
-            context.fillText("M" + (index + 1), rotor[0] + radius + 4, rotor[1] + 4);
-        });
-        if (!root.matchMedia || !root.matchMedia("(prefers-reduced-motion: reduce)").matches) spinPhase += .06;
-        root.requestAnimationFrame(render);
+    function render(now) {
+        const seconds = Math.min(.1, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
+        resize(); setCamera(); updateScene(seconds); renderer.render(scene, camera); root.requestAnimationFrame(render);
     }
-
-    render();
+    root.requestAnimationFrame(render);
 }());
