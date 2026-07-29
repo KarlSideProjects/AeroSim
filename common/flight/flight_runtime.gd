@@ -66,7 +66,7 @@ const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 # looks along local -Z. This rotates the camera into the body convention.
 const FPV_CAMERA_BODY_ALIGNMENT := Basis(Vector3.UP, -PI * 0.5)
 const THIRD_PERSON_CAMERA_OFFSET := Vector3(-5.5, 2.4, 0.0)
-const DEMO_THIRD_PERSON_FOV_DEG := 45.5
+const DEMO_THIRD_PERSON_FOV_DEG := 35.0
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
@@ -6402,8 +6402,8 @@ func _refresh_gamepad_hud() -> void:
         "mode": _localized_flight_mode(flight_mode),
         "yaw": 0.0 if demo_controls_active else (_profile_axis("yaw") if connected else 0.0),
         "throttle": demo_throttle if demo_controls_active else (_profile_axis("throttle") if connected else 0.0),
-        "roll": clampf(float(_demo_flight_controls.get("roll", 0.0)) / ANGLE_MAX_TILT_DEGREES, -1.0, 1.0) if demo_controls_active else (_profile_axis("roll") if connected else 0.0),
-        "pitch": clampf(float(_demo_flight_controls.get("pitch", 0.0)) / ANGLE_MAX_TILT_DEGREES, -1.0, 1.0) if demo_controls_active else (_profile_axis("pitch") if connected else 0.0),
+        "roll": clampf(float(_demo_flight_controls.get("roll", 0.0)) / DEMO_MAX_TILT_DEGREES, -1.0, 1.0) if demo_controls_active else (_profile_axis("roll") if connected else 0.0),
+        "pitch": clampf(float(_demo_flight_controls.get("pitch", 0.0)) / DEMO_MAX_TILT_DEGREES, -1.0, 1.0) if demo_controls_active else (_profile_axis("pitch") if connected else 0.0),
     })
 
 func _handle_primary_action() -> void:
