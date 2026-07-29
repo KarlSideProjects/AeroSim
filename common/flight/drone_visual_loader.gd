@@ -24,13 +24,16 @@ func _load_model() -> void:
     var model := model_scene.instantiate()
     model.name = "ImportedDroneModel"
     model.scale = MODEL_SCALE
-    # No rotation belongs here. At this scale the airframe measures 0.372 along body X,
-    # 0.263 along body Z, so its long axis already lies on the body's +X forward axis; a
-    # 90 degree turn swaps those to 0.263 x 0.372 and lays it across the flight path.
-    # An earlier +90 degrees was applied on the false premise that the nose ran along
-    # local +Z. Because pitch rotates about body Z, that made a forward stick spin the
-    # visible model about its own long axis, reading as the aircraft turning rather than
-    # moving forward. Guarded by test_imported_drone_nose_aligns_with_the_frd_forward_axis.
+    # The asset's nose is its local -Z: rendering the model shows twin camera lenses on
+    # that end face, and 72% of its vertices sit on that side because the canopy and
+    # camera assembly carry the detail. -90 degrees about Y maps local -Z onto the body's
+    # +X forward axis.
+    #
+    # Do not trust the bounding box here. The AABB is 0.372 x 0.263 with its long side on
+    # local X, because the four outstretched rotor arms dominate it, not the fuselage.
+    # Following it leaves the airframe broadside to the flight path.
+    # Guarded by test_imported_drone_nose_aligns_with_the_frd_forward_axis.
+    model.rotation.y = -PI * 0.5
     add_child(model)
     model_loaded = true
     var fallback_mesh := get_parent().get_node_or_null("DroneMesh") as MeshInstance3D
