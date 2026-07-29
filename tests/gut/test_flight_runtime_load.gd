@@ -35,6 +35,7 @@ class FakeNative:
 
     var disarmed := false
     var armed := false
+    var collision_angle_arguments: Dictionary = {}
 
     func flight_control_armed() -> bool:
         return armed
@@ -54,6 +55,57 @@ class FakeNative:
 
     func hardware_power_diagnostics() -> Dictionary:
         return {"hover_throttle": 0.30}
+
+    func sync_flight_state(
+        _position_x: float,
+        _position_y: float,
+        _position_z: float,
+        _orientation_x: float,
+        _orientation_y: float,
+        _orientation_z: float,
+        _orientation_w: float,
+        _velocity_x: float,
+        _velocity_y: float,
+        _velocity_z: float,
+        _angular_velocity_x: float,
+        _angular_velocity_y: float,
+        _angular_velocity_z: float
+    ) -> void:
+        pass
+
+    func step_collision_angle_mode(
+        _physics_hz: int,
+        _substep_hz: int,
+        throttle: float,
+        roll: float,
+        pitch: float,
+        yaw_rate: float,
+        _touching: bool,
+        _normal_x: float,
+        _normal_y: float,
+        _normal_z: float,
+        _impulse_x: float,
+        _impulse_y: float,
+        _impulse_z: float,
+        _restitution: float,
+        _velocity_x: float,
+        _velocity_y: float,
+        _velocity_z: float,
+        _angular_velocity_x: float,
+        _angular_velocity_y: float,
+        _angular_velocity_z: float,
+        _energy_limit: float
+    ) -> PackedFloat64Array:
+        collision_angle_arguments = {
+            "throttle": throttle,
+            "roll": roll,
+            "pitch": pitch,
+            "yaw_rate": yaw_rate,
+        }
+        var row := PackedFloat64Array()
+        row.resize(17)
+        row[7] = 1.0
+        return row
 
 
 class ResetRecordingNative extends FakeNative:
@@ -982,7 +1034,7 @@ func test_quick_fly_defaults_the_player_view_to_third_person_before_controller_r
     assert_true(runtime.third_person_view)
 
 
-func test_demo_flight_menu_uses_quick_fly_terrain_third_person_and_live_hud_controls() -> void:
+func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     var runtime := _quick_fly_runtime()
     _attach_runtime_ui(runtime)
     var installed_gsp_launcher := runtime.get_node_or_null("GspLauncher")
@@ -997,10 +1049,11 @@ func test_demo_flight_menu_uses_quick_fly_terrain_third_person_and_live_hud_cont
     (runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/DemoFlight") as Button).pressed.emit()
     assert_false(runtime.demo_flight_active())
     await _await_reset_commit()
+    var native := FakeNative.new()
+    native.armed = true
+    runtime.native = native
     runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime.drone_body.rotation.y)
-    runtime._demo_controls_for_frame(0.0)
-    runtime._apply_demo_flight_pose()
-    var controls: Dictionary = runtime._demo_controls_for_frame(1.0 / 60.0)
+    runtime._physics_process(1.0 / 60.0)
     runtime._refresh_gamepad_hud()
 
     var display := runtime.flight_hud_layer.get_node("GamepadHudMargin/GamepadHudPanel/GamepadTelemetryPanel") as Control
@@ -1010,9 +1063,14 @@ func test_demo_flight_menu_uses_quick_fly_terrain_third_person_and_live_hud_cont
     assert_true(runtime.third_person_camera.current)
     assert_almost_eq(runtime.third_person_camera.fov, FlightRuntime.DEMO_THIRD_PERSON_FOV_DEG, 0.01)
     assert_true(runtime.demo_flight_active())
-    assert_true(absf(float(controls.get("roll", 0.0))) > FlightRuntime.ANGLE_MAX_TILT_DEGREES * 0.25 or absf(float(controls.get("pitch", 0.0))) > FlightRuntime.ANGLE_MAX_TILT_DEGREES * 0.25)
-    assert_true(absf(float(display.state.get("roll", 0.0))) > 0.25 or absf(float(display.state.get("pitch", 0.0))) > 0.25)
-    assert_true(absf(float(display.state.get("yaw", 0.0))) > 0.25 or absf(float(display.state.get("throttle", 0.0))) > 0.25)
+    assert_eq(runtime.flight_mode, "ANGLE")
+    assert_gt(absf(float(native.collision_angle_arguments.roll)) + absf(float(native.collision_angle_arguments.pitch)), 0.25)
+    assert_gt(absf(float(native.collision_angle_arguments.yaw_rate)) + absf(float(native.collision_angle_arguments.throttle) * 2.0 - 1.0), 0.25)
+    assert_eq(display.state.roll, float(native.collision_angle_arguments.roll) / FlightRuntime.ANGLE_MAX_TILT_DEGREES)
+    assert_eq(display.state.pitch, float(native.collision_angle_arguments.pitch) / FlightRuntime.ANGLE_MAX_TILT_DEGREES)
+    assert_eq(display.state.yaw, float(native.collision_angle_arguments.yaw_rate) / FlightRuntime.ANGLE_MAX_YAW_RATE_DPS)
+    assert_eq(display.state.throttle, float(native.collision_angle_arguments.throttle) * 2.0 - 1.0)
+    assert_false(runtime.has_method("_apply_demo_flight_pose"))
 
 
 func test_demo_flight_exit_returns_to_menu_without_quitting_the_application() -> void:
@@ -1028,7 +1086,7 @@ func test_demo_flight_exit_returns_to_menu_without_quitting_the_application() ->
     assert_null(runtime.loaded_map)
 
 
-func test_demo_flight_moves_the_native_drone_after_the_initial_hover() -> void:
+func test_demo_flight_cancels_on_native_safety_limit() -> void:
     if not _native_runtime_available():
         return
     var runtime := SmokeScene.instantiate() as FlightRuntime
@@ -1038,12 +1096,8 @@ func test_demo_flight_moves_the_native_drone_after_the_initial_hover() -> void:
     await get_tree().process_frame
     runtime.start_demo_flight()
     await get_tree().create_timer(8.0).timeout
-    var spawn := runtime._current_spawn_marker()
-    assert_not_null(spawn)
-    if spawn != null:
-        var displacement: Vector3 = runtime.drone_body.global_position - spawn.global_position
-        assert_gt(Vector2(displacement.x, displacement.z).length(), 1.0, "position=%s velocity=%s controls=%s authority=%s" % [runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime._demo_flight_controls, runtime.last_collision_authority])
-        assert_lt(absf(displacement.y), 8.0, "low pass must remain low: position=%s velocity=%s" % [runtime.drone_body.global_position, runtime.drone_body.linear_velocity])
+    assert_false(runtime.demo_flight_active())
+    assert_eq(runtime.last_error_message, "Demo Flight safety limit exceeded")
 
 
 func test_controller_confirmation_keeps_the_selected_third_person_player_view() -> void:

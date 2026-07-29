@@ -49,6 +49,8 @@ const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const ASSISTED_MAX_YAW_RATE_DPS := 120.0
 const ASSISTED_MAX_VERTICAL_SPEED_MPS := 2.0
+const DEMO_MAX_SPEED_MPS := 30.0
+const DEMO_MAX_RELATIVE_ALTITUDE_M := 32.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const MAIN_MENU_ENTRIES_INSET := Vector2(24.0, 56.0)
 const COCKPIT_LEFT_RAIL_WIDTH := 360.0
@@ -136,8 +138,8 @@ var demo_flight_route: DemoFlightRoute
 var _demo_flight_controls: Dictionary = {}
 var _demo_flight_finish_pending := false
 var _demo_flight_route_pending := false
-var _demo_flight_target := Vector3.ZERO
-var _demo_flight_heading := 0.0
+var _demo_native_state_synced := false
+var _demo_spawn_height := 0.0
 var dashboard_layout_mode := "compact"
 var development_license_bypass := OS.is_debug_build()
 var status_diagram: CanvasLayer
@@ -1612,6 +1614,12 @@ func _physics_process(delta: float) -> void:
         acro_yaw = float(external_controls.get("acro_yaw", acro_yaw))
         if external_controls.has("mode"):
             flight_mode = String(external_controls["mode"])
+    if demo_flight_active():
+        var demo_safety_error := _demo_safety_error()
+        if not demo_safety_error.is_empty():
+            last_error_message = demo_safety_error
+            cancel_demo_flight()
+            return
     var row: PackedFloat64Array
     if px4_sitl_bridge != null:
         var actuator_outputs := px4_sitl_bridge.actuator_outputs()
@@ -1682,8 +1690,11 @@ func _physics_process(delta: float) -> void:
         if _handle_native_step_failure(native, row, true):
             return
     elif drone_body != null:
-        if not _sync_native_from_drone():
-            return
+        if not demo_flight_active() or _demo_needs_native_sync():
+            if not _sync_native_from_drone():
+                return
+            if demo_flight_active():
+                _demo_native_state_synced = true
         var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body)
         var energy_limit := _pre_impact_energy(drone_body)
         if flight_mode == "ACRO":
@@ -1809,7 +1820,6 @@ func _physics_process(delta: float) -> void:
             Vector3(row[8], row[9], row[10]),
             Vector3(row[14], row[15], row[16])
         )
-        _apply_demo_flight_pose()
     if defer_airsim_advance and airsim_session != null and not px4_lockstep_active:
         session_advanced = airsim_session.advance_frame()
         if not session_advanced and airsim_session.is_paused():
@@ -2339,6 +2349,8 @@ func _start_demo_route_after_reset() -> void:
     if spawn == null:
         cancel_demo_flight()
         return
+    _demo_native_state_synced = false
+    _demo_spawn_height = spawn.global_position.y
     demo_flight_route.start(spawn.global_position)
 
 
@@ -2347,6 +2359,7 @@ func cancel_demo_flight() -> void:
     if demo_flight_route != null:
         demo_flight_route.cancel()
     _demo_flight_controls.clear()
+    _demo_native_state_synced = false
     _demo_flight_finish_pending = false
     var restore_quit_on_exit := quit_on_exit
     quit_on_exit = false
@@ -2355,33 +2368,44 @@ func cancel_demo_flight() -> void:
     exit_requested = false
 
 
-func _demo_controls_for_frame(_delta: float) -> Dictionary:
+func _demo_needs_native_sync() -> bool:
+    return not _demo_native_state_synced or (drone_body != null and drone_body.contact_seen)
+
+
+func _demo_controls_for_frame(delta: float) -> Dictionary:
     _demo_flight_controls.clear()
     if not demo_flight_active() or drone_body == null:
         return _demo_flight_controls
-    var state: Dictionary = demo_flight_route.advance(_delta, drone_body.global_position, drone_body.linear_velocity, drone_body.rotation.y)
+    var state: Dictionary = demo_flight_route.advance(delta, drone_body.global_position, drone_body.linear_velocity, drone_body.rotation.y)
     if bool(state.complete):
         if not _demo_flight_finish_pending:
             _demo_flight_finish_pending = true
             call_deferred("cancel_demo_flight")
         return _demo_flight_controls
-    var target: Vector3 = state.target_position
-    var route_delta: Vector3 = target - drone_body.global_position
-    var horizontal_delta := Vector3(route_delta.x, 0.0, route_delta.z)
-    var desired_velocity: Vector3 = route_delta.normalized() * float(state.target_speed_mps)
-    var heading: float = atan2(horizontal_delta.z, horizontal_delta.x) if horizontal_delta.length_squared() > 0.01 else drone_body.rotation.y
-    var yaw_rate := clampf(rad_to_deg(wrapf(heading - drone_body.rotation.y, -PI, PI)) * 2.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
-    _demo_flight_target = target
-    _demo_flight_heading = heading
-    _demo_flight_controls = _airsim_velocity_controls(desired_velocity, 0.0, {"is_rate": true, "yaw_or_rate": yaw_rate})
-    _demo_flight_controls["throttle"] = clampf(_configured_hover_throttle() + float(_demo_flight_controls.throttle) - float(_airsim_neutral_controls().throttle), 0.0, 1.0)
+    var error_world: Vector3 = state.target_position - drone_body.global_position
+    var body_error: Vector3 = drone_body.global_transform.basis.inverse() * Vector3(error_world.x, 0.0, error_world.z)
+    var heading: float = atan2(error_world.z, error_world.x) if Vector2(error_world.x, error_world.z).length_squared() > 0.01 else drone_body.rotation.y
+    var yaw_error_degrees := rad_to_deg(wrapf(heading - drone_body.rotation.y, -PI, PI))
+    var hover := _configured_hover_throttle()
+    _demo_flight_controls = {
+        "mode": "ANGLE",
+        "throttle": clampf(hover + error_world.y * 0.08 - drone_body.linear_velocity.y * 0.04, 0.0, 1.0),
+        "roll": clampf(body_error.z * 1.5, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
+        "pitch": clampf(-body_error.x * 1.5, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
+        "yaw_rate": clampf(yaw_error_degrees * 2.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS),
+    }
     return _demo_flight_controls
 
 
-func _apply_demo_flight_pose() -> void:
-    if not demo_flight_active() or drone_body == null:
-        return
-    drone_body.apply_native_state(_demo_flight_target, Quaternion(Vector3.UP, _demo_flight_heading), Vector3.ZERO, Vector3.ZERO)
+func _demo_safety_error() -> String:
+    if drone_body == null:
+        return ""
+    var speed: float = drone_body.linear_velocity.length()
+    if not is_finite(drone_body.global_position.y) or not is_finite(speed) or speed > DEMO_MAX_SPEED_MPS:
+        return "Demo Flight safety limit exceeded"
+    if absf(drone_body.global_position.y - _demo_spawn_height) > DEMO_MAX_RELATIVE_ALTITUDE_M:
+        return "Demo Flight altitude limit exceeded"
+    return ""
 
 
 func _route_quick_fly_after_reset() -> void:
