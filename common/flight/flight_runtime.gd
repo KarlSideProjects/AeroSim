@@ -66,7 +66,7 @@ const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 # looks along local -Z. This rotates the camera into the body convention.
 const FPV_CAMERA_BODY_ALIGNMENT := Basis(Vector3.UP, -PI * 0.5)
 const THIRD_PERSON_CAMERA_OFFSET := Vector3(-5.5, 2.4, 0.0)
-const DEMO_THIRD_PERSON_FOV_DEG := 35.0
+const DEMO_THIRD_PERSON_FOV_DEG := 20.0 - 2.0
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO

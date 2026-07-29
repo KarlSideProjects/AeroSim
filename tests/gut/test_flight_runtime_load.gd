@@ -1071,7 +1071,7 @@ func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     var native := FakeNative.new()
     native.armed = true
     runtime.native = native
-    runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime.drone_body.rotation.y)
+    runtime.demo_flight_route.advance(6.0, runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime.drone_body.rotation.y)
     runtime.drone_body.global_position.y += FlightRuntime.AIRSIM_GROUND_BODY_CLEARANCE_M
     runtime._physics_process(1.0 / 60.0)
     runtime._refresh_gamepad_hud()
@@ -1081,7 +1081,7 @@ func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     assert_eq(gsp_launcher.demo_open_calls, 1)
     assert_true(runtime.third_person_view)
     assert_true(runtime.third_person_camera.current)
-    assert_almost_eq(FlightRuntime.DEMO_THIRD_PERSON_FOV_DEG, 35.0, 0.01)
+    assert_almost_eq(FlightRuntime.DEMO_THIRD_PERSON_FOV_DEG, 18.0, 0.01)
     assert_almost_eq(runtime.third_person_camera.fov, FlightRuntime.DEMO_THIRD_PERSON_FOV_DEG, 0.01)
     assert_true(runtime.demo_flight_active())
     assert_eq(runtime.flight_mode, "ANGLE")
@@ -1095,13 +1095,13 @@ func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     assert_false(runtime.has_method("_apply_demo_flight_pose"))
 
 
-func test_demo_route_requires_sixty_hud_seconds_before_completion() -> void:
+func test_demo_route_requires_three_minutes_before_completion() -> void:
     var runtime := _quick_fly_runtime()
     runtime.airsim_session = AirSimSession.new(4)
     runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
     runtime.demo_flight_route.start(runtime.drone_body.global_position)
 
-    for _tick in range(Engine.physics_ticks_per_second * 60 - 1):
+    for _tick in range(Engine.physics_ticks_per_second * 180 - 1):
         runtime._demo_controls_for_frame(0.0)
 
     assert_true(runtime.demo_flight_active())
@@ -1109,7 +1109,7 @@ func test_demo_route_requires_sixty_hud_seconds_before_completion() -> void:
     assert_false(runtime.demo_flight_active())
 
 
-func test_demo_completion_advances_the_hud_timer_to_sixty_seconds_before_exit() -> void:
+func test_demo_completion_advances_the_hud_timer_to_three_minutes_before_exit() -> void:
     var runtime := _quick_fly_runtime()
     var native := FakeNative.new()
     native.armed = true
@@ -1118,15 +1118,15 @@ func test_demo_completion_advances_the_hud_timer_to_sixty_seconds_before_exit() 
     runtime.paused = false
     runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
     runtime.demo_flight_route.start(runtime.drone_body.global_position)
-    runtime.demo_flight_route.advance(60.0 - 1.0 / float(Engine.physics_ticks_per_second), runtime.drone_body.global_position, Vector3.ZERO, 0.0)
+    runtime.demo_flight_route.advance(180.0 - 1.0 / float(Engine.physics_ticks_per_second), runtime.drone_body.global_position, Vector3.ZERO, 0.0)
     runtime.time_trial = TimeTrial.new()
     runtime.time_trial.configure([], Vector3(1000.0, 1000.0, 1000.0))
     runtime.time_trial.start()
-    runtime.time_trial.elapsed_seconds = 60.0 - 1.0 / float(Engine.physics_ticks_per_second)
+    runtime.time_trial.elapsed_seconds = 180.0 - 1.0 / float(Engine.physics_ticks_per_second)
 
     runtime._physics_process(0.0)
 
-    assert_almost_eq(runtime.time_trial.elapsed_seconds, 60.0, 0.00001)
+    assert_almost_eq(runtime.time_trial.elapsed_seconds, 180.0, 0.00001)
 
 
 func test_demo_controls_damp_native_horizontal_velocity_toward_route_speed() -> void:
@@ -1138,7 +1138,7 @@ func test_demo_controls_damp_native_horizontal_velocity_toward_route_speed() -> 
     runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
     runtime.demo_flight_route.start(Vector3.ZERO)
     assert_true(runtime.demo_flight_active())
-    runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, Vector3.ZERO, runtime.drone_body.rotation.y)
+    runtime.demo_flight_route.advance(6.0, runtime.drone_body.global_position, Vector3.ZERO, runtime.drone_body.rotation.y)
     runtime.drone_body.linear_velocity = Vector3.ZERO
     var accelerating := runtime._demo_controls_for_frame(0.0).duplicate()
     runtime.drone_body.linear_velocity = Vector3(30.0, 0.0, 0.0)
@@ -1155,7 +1155,7 @@ func test_demo_route_caps_horizontal_speed_without_removing_roll_or_pitch() -> v
     runtime.demo_flight_route.start(runtime.drone_body.global_position)
     runtime._demo_spawn_height = runtime.drone_body.global_position.y
     runtime.drone_body.global_position.y += FlightRuntime.AIRSIM_GROUND_BODY_CLEARANCE_M
-    runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, Vector3.ZERO, runtime.drone_body.rotation.y)
+    runtime.demo_flight_route.advance(6.0, runtime.drone_body.global_position, Vector3.ZERO, runtime.drone_body.rotation.y)
 
     var controls := runtime._demo_controls_for_frame(0.0)
     assert_eq(float(controls.yaw_rate), 0.0)

@@ -37,7 +37,7 @@ static func panel_url(panel_file_url: String, port: int, token: String) -> Strin
 
 
 static func demo_panel_split(game_position: Vector2i, game_size: Vector2i) -> Dictionary:
-    var game_height := game_size.y * 3 / 5
+    var game_height := game_size.y * 4 / 5
     return {
         "game_size": Vector2i(game_size.x, game_height),
         "panel_position": Vector2i(game_position.x, game_position.y + game_height),
