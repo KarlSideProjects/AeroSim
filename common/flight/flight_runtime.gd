@@ -57,7 +57,7 @@ const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 # The simulation body is +X forward, +Z right, and +Y up, whereas Camera3D
 # looks along local -Z. This rotates the camera into the body convention.
 const FPV_CAMERA_BODY_ALIGNMENT := Basis(Vector3.UP, -PI * 0.5)
-const THIRD_PERSON_CAMERA_OFFSET := Vector3(-1.8, 0.8, 0.0)
+const THIRD_PERSON_CAMERA_OFFSET := Vector3(-5.5, 2.4, 0.0)
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
@@ -134,6 +134,8 @@ var acro_yaw_stick := 0.0
 var demo_flight_route: DemoFlightRoute
 var _demo_flight_controls: Dictionary = {}
 var _demo_flight_finish_pending := false
+var _demo_flight_target := Vector3.ZERO
+var _demo_flight_heading := 0.0
 var dashboard_layout_mode := "compact"
 var development_license_bypass := OS.is_debug_build()
 var status_diagram: CanvasLayer
@@ -1805,6 +1807,7 @@ func _physics_process(delta: float) -> void:
             Vector3(row[8], row[9], row[10]),
             Vector3(row[14], row[15], row[16])
         )
+        _apply_demo_flight_pose()
     if defer_airsim_advance and airsim_session != null and not px4_lockstep_active:
         session_advanced = airsim_session.advance_frame()
         if not session_advanced and airsim_session.is_paused():
@@ -2345,8 +2348,17 @@ func _demo_controls_for_frame(_delta: float) -> Dictionary:
     var desired_vertical := clampf((target.y - drone_body.global_position.y) * 1.5, -2.0, 2.0)
     var heading: float = atan2(horizontal_delta.z, horizontal_delta.x) if horizontal_delta.length_squared() > 0.01 else drone_body.rotation.y
     var yaw_rate := clampf(rad_to_deg(wrapf(heading - drone_body.rotation.y, -PI, PI)) * 2.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+    _demo_flight_target = target
+    _demo_flight_heading = heading
     _demo_flight_controls = _airsim_velocity_controls(Vector3(desired_horizontal.x, desired_vertical, desired_horizontal.z), target.y - drone_body.global_position.y, {"is_rate": true, "yaw_or_rate": yaw_rate})
+    _demo_flight_controls["throttle"] = clampf(_configured_hover_throttle() + float(_demo_flight_controls.throttle) - 0.5, 0.0, 1.0)
     return _demo_flight_controls
+
+
+func _apply_demo_flight_pose() -> void:
+    if not demo_flight_active() or drone_body == null:
+        return
+    drone_body.apply_native_state(_demo_flight_target, Quaternion(Vector3.UP, _demo_flight_heading), Vector3.ZERO, Vector3.ZERO)
 
 
 func _route_quick_fly_after_reset() -> void:

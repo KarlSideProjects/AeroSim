@@ -1020,6 +1020,7 @@ func test_demo_flight_moves_the_native_drone_after_the_initial_hover() -> void:
     if spawn != null:
         var displacement: Vector3 = runtime.drone_body.global_position - spawn.global_position
         assert_gt(Vector2(displacement.x, displacement.z).length(), 1.0, "position=%s velocity=%s controls=%s authority=%s" % [runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime._demo_flight_controls, runtime.last_collision_authority])
+        assert_lt(absf(displacement.y), 8.0, "low pass must remain low: position=%s velocity=%s" % [runtime.drone_body.global_position, runtime.drone_body.linear_velocity])
 
 
 func test_controller_confirmation_keeps_the_selected_third_person_player_view() -> void:
