@@ -49,8 +49,8 @@ const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const ASSISTED_MAX_YAW_RATE_DPS := 120.0
 const ASSISTED_MAX_VERTICAL_SPEED_MPS := 2.0
-const DEMO_MAX_TILT_DEGREES := 5.0
-const DEMO_MAX_ROUTE_SPEED_MPS := 0.75
+const DEMO_MAX_TILT_DEGREES := 10.0
+const DEMO_MAX_ROUTE_SPEED_MPS := 4.0
 const DEMO_MAX_SPEED_MPS := 30.0
 const DEMO_MAX_RELATIVE_ALTITUDE_M := 32.0
 const DEMO_VERTICAL_POSITION_GAIN := 0.15
@@ -1862,6 +1862,9 @@ func _physics_process(delta: float) -> void:
     _airsim_last_velocity = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
     if time_trial != null and drone_body != null:
         time_trial.advance(drone_body.global_position, 1.0 / float(Engine.physics_ticks_per_second))
+    if _demo_flight_finish_pending:
+        _demo_flight_finish_pending = false
+        call_deferred("cancel_demo_flight")
     _advance_airsim_sensors()
     _update_status_diagram()
 
@@ -2392,7 +2395,6 @@ func _demo_controls_for_frame(_delta: float) -> Dictionary:
     if bool(state.complete):
         if not _demo_flight_finish_pending:
             _demo_flight_finish_pending = true
-            call_deferred("cancel_demo_flight")
         return _demo_flight_controls
     var error_world: Vector3 = state.target_position - drone_body.global_position
     var horizontal_error := Vector3(error_world.x, 0.0, error_world.z)

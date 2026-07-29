@@ -1109,6 +1109,26 @@ func test_demo_route_requires_sixty_hud_seconds_before_completion() -> void:
     assert_false(runtime.demo_flight_active())
 
 
+func test_demo_completion_advances_the_hud_timer_to_sixty_seconds_before_exit() -> void:
+    var runtime := _quick_fly_runtime()
+    var native := FakeNative.new()
+    native.armed = true
+    runtime.native = native
+    runtime.takeoff_requested = true
+    runtime.paused = false
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime.demo_flight_route.advance(60.0 - 1.0 / float(Engine.physics_ticks_per_second), runtime.drone_body.global_position, Vector3.ZERO, 0.0)
+    runtime.time_trial = TimeTrial.new()
+    runtime.time_trial.configure([], Vector3(1000.0, 1000.0, 1000.0))
+    runtime.time_trial.start()
+    runtime.time_trial.elapsed_seconds = 60.0 - 1.0 / float(Engine.physics_ticks_per_second)
+
+    runtime._physics_process(0.0)
+
+    assert_almost_eq(runtime.time_trial.elapsed_seconds, 60.0, 0.00001)
+
+
 func test_demo_controls_damp_native_horizontal_velocity_toward_route_speed() -> void:
     var runtime := _quick_fly_runtime()
     var body := CollisionProbeBody.new()

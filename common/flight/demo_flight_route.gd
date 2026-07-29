@@ -2,14 +2,14 @@ class_name DemoFlightRoute
 extends RefCounted
 
 const HOVER_END_SECONDS := 3.0
-const LOW_PASS_END_SECONDS := 15.0
-const ORBIT_END_SECONDS := 29.0
-const CLIMB_END_SECONDS := 38.0
-const RETURN_END_SECONDS := 52.0
+const LOW_PASS_END_SECONDS := 18.0
+const ORBIT_END_SECONDS := 38.0
+const CLIMB_END_SECONDS := 45.0
+const RETURN_END_SECONDS := 59.0
 const LAND_END_SECONDS := 60.0
-const CRUISE_SPEED_MPS := 0.75
-const CLIMB_SPEED_MPS := 0.75
-const LAND_SPEED_MPS := 0.75
+const CRUISE_SPEED_MPS := 4.0
+const CLIMB_SPEED_MPS := 4.0
+const LAND_SPEED_MPS := 4.0
 
 var _spawn := Vector3.ZERO
 var _elapsed_seconds := 0.0
@@ -71,16 +71,19 @@ func _hover_target() -> Vector3:
 
 
 func _low_pass_target() -> Vector3:
-    return _spawn + Vector3(5.5, 3.0, 6.0)
+    return _spawn + Vector3(25.0, 6.0, 46.0)
 
 
 func _orbit_target() -> Vector3:
     var orbit_points := [
         _low_pass_target(),
-        _spawn + Vector3(7.5, 3.0, 6.0),
-        _spawn + Vector3(7.5, 3.0, 8.0),
-        _spawn + Vector3(5.5, 3.0, 8.0),
-        _spawn + Vector3(4.0, 3.0, 7.0),
+        _spawn + Vector3(28.0, 7.0, 38.0),
+        _spawn + Vector3(36.0, 8.5, 35.0),
+        _spawn + Vector3(44.0, 10.0, 38.0),
+        _spawn + Vector3(47.0, 11.0, 46.0),
+        _spawn + Vector3(44.0, 11.5, 54.0),
+        _spawn + Vector3(36.0, 12.0, 57.0),
+        _spawn + Vector3(28.0, 12.3, 54.0),
         _orbit_finish(),
     ]
     var progress := inverse_lerp(LOW_PASS_END_SECONDS, ORBIT_END_SECONDS, _elapsed_seconds)
@@ -90,15 +93,15 @@ func _orbit_target() -> Vector3:
 
 
 func _orbit_finish() -> Vector3:
-    return _low_pass_target()
+    return _spawn + Vector3(25.0, 12.5, 46.0)
 
 
 func _climb_target() -> Vector3:
-    return _spawn + Vector3(6.0, 6.5, 6.0)
+    return _spawn + Vector3(25.0, 16.0, 46.0)
 
 
 func _return_target() -> Vector3:
-    return _spawn + Vector3(2.0, 3.0, 2.0)
+    return _spawn
 
 
 func _interpolate(start: Vector3, finish: Vector3, start_time: float, finish_time: float) -> Vector3:
