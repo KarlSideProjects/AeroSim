@@ -42,6 +42,7 @@ const elements = new Map();
 for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state", "sparkline", "focus-state",
     "rate", "vehicle", "authority", "tick", "latency", "registry", "position", "velocity", "attitude", "rates", "motors",
     "mode-armed", "config-hash", "endurance", "flight-diagnostics", "hardware-configuration", "hardware-derived", "telemetry-data",
+    "visualization-status", "flow-legend", "motor-rear-right", "motor-front-right", "motor-rear-left", "motor-front-left",
     "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
     "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report"]) {
     elements.set(id, new Element(id === "sparkline" ? "canvas" : "div"));
@@ -128,7 +129,13 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     t: "telemetry",
     tick: 1,
     d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1, config_hash: "config-fixture", armed: true,
-        hardware_configuration: { battery: { capacity_mah: 1300 } }, hardware_power_model: { hover_endurance_minutes: 4.2 },
+        hardware_configuration: { battery: { capacity_mah: 1300 }, spin_direction: ["cw", "ccw", "cw", "ccw"] },
+        hardware_power_model: { hover_endurance_minutes: 4.2, max_total_thrust_newtons: 40, max_total_current_a: 40 },
+        motor_order: ["rear_right", "front_right", "rear_left", "front_left"], rpm: [955, 1910, 2865, 3820],
+        motors: [
+            { thrust_newtons: 2, current_a: 1, saturated: false }, { thrust_newtons: 8.5, current_a: 1, saturated: false },
+            { thrust_newtons: 9.8, current_a: 1, saturated: false }, { thrust_newtons: 1, current_a: 1, saturated: true },
+        ],
         wind_world_mps: null, a3_operating_state: "disabled", a6_operating_state: "out_of_domain" },
 }) });
 assert.match(elements.get("telemetry-data").textContent, /a6_operating_state = out_of_domain/);
@@ -136,6 +143,10 @@ assert.match(elements.get("telemetry-data").textContent, /wind_world_mps = 未�
 assert.match(elements.get("hardware-configuration").textContent, /battery.capacity_mah = 1300/);
 assert.match(elements.get("hardware-derived").textContent, /derived.hover_endurance_minutes = 4.2/);
 assert.equal(elements.get("config-hash").textContent, "config-fixture");
+assert.equal(elements.get("motor-rear-right").dataset.motor, "rear_right");
+assert.match(elements.get("motor-rear-right").textContent, /M1[\s\S]*955[\s\S]*2\.00[\s\S]*1\.00/);
+assert.match(elements.get("motor-rear-left").textContent, /嚴重/);
+assert.match(elements.get("flow-legend").textContent, /FRD.*m\/s/);
 const pingRequest = FakeWebSocket.instance.sent.find((item) => item.t === "ping");
 perfNow = 3;
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
