@@ -33,11 +33,11 @@ func test_route_keeps_the_approved_three_minute_phase_boundaries() -> void:
     route.start(Vector3.ZERO)
 
     assert_eq(route.advance(5.0, Vector3.ZERO, Vector3.ZERO, 0.0).phase, "low_pass")
-    assert_eq(route.advance(40.0, Vector3.ZERO, Vector3.ZERO, 0.0).phase, "orbit")
-    assert_eq(route.advance(60.0, Vector3.ZERO, Vector3.ZERO, 0.0).phase, "climb")
-    assert_eq(route.advance(25.0, Vector3.ZERO, Vector3.ZERO, 0.0).phase, "return")
-    assert_eq(route.advance(35.0, Vector3.ZERO, Vector3.ZERO, 0.0).phase, "land")
-    assert_true(bool(route.advance(15.0, Vector3.ZERO, Vector3.ZERO, 0.0).complete))
+    assert_eq(route.advance(20.0, Vector3.ZERO, Vector3.ZERO, 0.0).phase, "orbit")
+    assert_eq(route.advance(85.0, Vector3.ZERO, Vector3.ZERO, 0.0).phase, "climb")
+    assert_eq(route.advance(15.0, Vector3.ZERO, Vector3.ZERO, 0.0).phase, "return")
+    assert_eq(route.advance(45.0, Vector3.ZERO, Vector3.ZERO, 0.0).phase, "land")
+    assert_true(bool(route.advance(10.0, Vector3.ZERO, Vector3.ZERO, 0.0).complete))
 
 
 func test_route_stays_bounded_and_finishes_at_spawn() -> void:
@@ -62,7 +62,7 @@ func test_route_orbits_the_control_tower_with_clearance_and_a_high_pass() -> voi
     route.start(spawn)
     var control_tower := Vector2(36.0, 46.0)
 
-    var low_pass: Dictionary = route.advance(44.9, spawn, Vector3.ZERO, 0.0)
+    var low_pass: Dictionary = route.advance(24.9, spawn, Vector3.ZERO, 0.0)
     assert_eq(low_pass.phase, "low_pass")
     var low_pass_horizontal := Vector2(low_pass.target_position.x, low_pass.target_position.z)
     assert_gte(low_pass_horizontal.distance_to(control_tower), 45.0)
@@ -75,7 +75,7 @@ func test_route_orbits_the_control_tower_with_clearance_and_a_high_pass() -> voi
     assert_lte(orbit_horizontal.distance_to(control_tower), 25.0)
     assert_lte(orbit_horizontal.length(), 80.0)
 
-    var climb: Dictionary = route.advance(70.9, spawn, Vector3.ZERO, 0.0)
+    var climb: Dictionary = route.advance(85.1, spawn, Vector3.ZERO, 0.0)
     assert_eq(climb.phase, "climb")
     assert_gt(climb.target_position.y, 23.0)
     assert_lte(climb.target_position.y, 26.0)
@@ -93,6 +93,20 @@ func test_route_targets_keep_clear_of_the_control_tower_and_workshop() -> void:
         var target := Vector2(state.target_position.x, state.target_position.z)
         assert_gte(target.distance_to(control_tower), 14.0)
         assert_gte(target.distance_to(workshop), 12.0)
+
+
+func test_orbit_target_never_outpaces_the_drone_cruise_speed() -> void:
+    var route := DemoFlightRoute.new()
+    route.start(Vector3.ZERO)
+    route.advance(DemoFlightRoute.LOW_PASS_END_SECONDS, Vector3.ZERO, Vector3.ZERO, 0.0)
+    var prior: Dictionary = route.snapshot()
+    var step := 1.0 / 60.0
+
+    for _tick in range(int((DemoFlightRoute.ORBIT_END_SECONDS - DemoFlightRoute.LOW_PASS_END_SECONDS) / step) - 1):
+        var current: Dictionary = route.advance(step, Vector3.ZERO, Vector3.ZERO, 0.0)
+        assert_eq(current.phase, "orbit")
+        assert_lte(prior.target_position.distance_to(current.target_position), DemoFlightRoute.CRUISE_SPEED_MPS * step + 0.0001)
+        prior = current
 
 
 func test_cancel_makes_the_route_inactive_immediately() -> void:

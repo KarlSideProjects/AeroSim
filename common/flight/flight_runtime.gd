@@ -51,7 +51,7 @@ const ASSISTED_MAX_YAW_RATE_DPS := 120.0
 const ASSISTED_MAX_VERTICAL_SPEED_MPS := 2.0
 const DEMO_MAX_TILT_DEGREES := 10.0
 const DEMO_MAX_ROUTE_SPEED_MPS := 4.0
-const DEMO_MAX_YAW_RATE_DPS := 5.0
+const DEMO_MAX_YAW_RATE_DPS := 20.0
 const DEMO_MAX_SPEED_MPS := 30.0
 const DEMO_MAX_RELATIVE_ALTITUDE_M := 32.0
 const DEMO_VERTICAL_POSITION_GAIN := 0.15
@@ -2389,13 +2389,16 @@ func _demo_needs_native_sync() -> bool:
 
 func _demo_controls_for_frame(_delta: float) -> Dictionary:
     _demo_flight_controls.clear()
+    if _demo_flight_finish_pending:
+        _demo_flight_controls = _demo_terminal_controls()
+        return _demo_flight_controls
     if not demo_flight_active() or drone_body == null:
         return _demo_flight_controls
     var route_step_seconds := 1.0 / float(Engine.physics_ticks_per_second)
     var state: Dictionary = demo_flight_route.advance(route_step_seconds, drone_body.global_position, drone_body.linear_velocity, drone_body.rotation.y)
     if bool(state.complete):
-        if not _demo_flight_finish_pending:
-            _demo_flight_finish_pending = true
+        _demo_flight_finish_pending = true
+        _demo_flight_controls = _demo_terminal_controls()
         return _demo_flight_controls
     var error_world: Vector3 = state.target_position - drone_body.global_position
     var horizontal_error := Vector3(error_world.x, 0.0, error_world.z)
@@ -2428,6 +2431,10 @@ func _demo_controls_for_frame(_delta: float) -> Dictionary:
         "yaw_rate": yaw_rate,
     }
     return _demo_flight_controls
+
+
+func _demo_terminal_controls() -> Dictionary:
+    return {"mode": "ANGLE", "throttle": _configured_hover_throttle(), "roll": 0.0, "pitch": 0.0, "yaw_rate": 0.0}
 
 
 func _demo_launching_active() -> bool:
@@ -6397,7 +6404,7 @@ func _refresh_gamepad_hud() -> void:
     if gamepad_hud_panel == null or gamepad_hud_display == null:
         return
     gamepad_hud_panel.visible = screen in ["flight", "error"]
-    var demo_controls_active := demo_flight_active() and not _demo_flight_controls.is_empty()
+    var demo_controls_active := (demo_flight_active() or _demo_flight_finish_pending) and not _demo_flight_controls.is_empty()
     var connected := demo_controls_active or (_has_active_gamepad_profile() and session_gamepad_device_id >= 0)
     var demo_throttle := clampf(float(_demo_flight_controls.get("throttle", 0.5)) * 2.0 - 1.0, -1.0, 1.0)
     gamepad_hud_display.call("set_controller_state", {

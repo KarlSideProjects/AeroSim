@@ -1086,7 +1086,7 @@ func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     assert_true(runtime.demo_flight_active())
     assert_eq(runtime.flight_mode, "ANGLE")
     assert_gt(absf(float(native.collision_angle_arguments.roll)) + absf(float(native.collision_angle_arguments.pitch)), 0.25)
-    assert_gt(float(native.collision_angle_arguments.yaw_rate), 0.0)
+    assert_gte(float(native.collision_angle_arguments.yaw_rate), 15.0)
     assert_gt(absf(float(native.collision_angle_arguments.throttle) * 2.0 - 1.0), 0.25)
     assert_eq(display.state.roll, float(native.collision_angle_arguments.roll) / FlightRuntime.DEMO_MAX_TILT_DEGREES)
     assert_eq(display.state.pitch, float(native.collision_angle_arguments.pitch) / FlightRuntime.DEMO_MAX_TILT_DEGREES)
@@ -1127,6 +1127,10 @@ func test_demo_completion_advances_the_hud_timer_to_three_minutes_before_exit() 
     runtime._physics_process(0.0)
 
     assert_almost_eq(runtime.time_trial.elapsed_seconds, 180.0, 0.00001)
+    assert_almost_eq(float(native.collision_angle_arguments.throttle), runtime._configured_hover_throttle(), 0.00001)
+    assert_eq(float(native.collision_angle_arguments.roll), 0.0)
+    assert_eq(float(native.collision_angle_arguments.pitch), 0.0)
+    assert_eq(float(native.collision_angle_arguments.yaw_rate), 0.0)
 
 
 func test_demo_controls_damp_native_horizontal_velocity_toward_route_speed() -> void:

@@ -2,10 +2,10 @@ class_name DemoFlightRoute
 extends RefCounted
 
 const HOVER_END_SECONDS := 5.0
-const LOW_PASS_END_SECONDS := 45.0
-const ORBIT_END_SECONDS := 105.0
-const CLIMB_END_SECONDS := 130.0
-const RETURN_END_SECONDS := 165.0
+const LOW_PASS_END_SECONDS := 25.0
+const ORBIT_END_SECONDS := 110.0
+const CLIMB_END_SECONDS := 125.0
+const RETURN_END_SECONDS := 170.0
 const LAND_END_SECONDS := 180.0
 const CRUISE_SPEED_MPS := 4.0
 const CLIMB_SPEED_MPS := 4.0
@@ -76,7 +76,21 @@ func _low_pass_target() -> Vector3:
 
 
 func _orbit_target() -> Vector3:
-    var orbit_points := [
+    var orbit_points := _orbit_points()
+    var total_distance := 0.0
+    for index in range(orbit_points.size() - 1):
+        total_distance += orbit_points[index].distance_to(orbit_points[index + 1])
+    var remaining_distance := total_distance * inverse_lerp(LOW_PASS_END_SECONDS, ORBIT_END_SECONDS, _elapsed_seconds)
+    for index in range(orbit_points.size() - 1):
+        var segment_length := orbit_points[index].distance_to(orbit_points[index + 1])
+        if remaining_distance <= segment_length:
+            return orbit_points[index].lerp(orbit_points[index + 1], remaining_distance / segment_length)
+        remaining_distance -= segment_length
+    return orbit_points.back()
+
+
+func _orbit_points() -> Array[Vector3]:
+    return [
         _low_pass_target(),
         _spawn + Vector3(5.0, 7.0, 55.0),
         _spawn + Vector3(20.0 - 2.0, 8.5, 62.0),
@@ -92,10 +106,6 @@ func _orbit_target() -> Vector3:
         _spawn + Vector3(-38.0, 13.5, 72.0),
         _orbit_finish(),
     ]
-    var progress := inverse_lerp(LOW_PASS_END_SECONDS, ORBIT_END_SECONDS, _elapsed_seconds)
-    var segment_position := progress * float(orbit_points.size() - 1)
-    var segment_index := mini(int(segment_position), orbit_points.size() - 2)
-    return orbit_points[segment_index].lerp(orbit_points[segment_index + 1], segment_position - float(segment_index))
 
 
 func _orbit_finish() -> Vector3:
