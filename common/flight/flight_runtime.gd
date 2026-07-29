@@ -119,7 +119,7 @@ var _reset_last_committed_generation := 0
 var _reset_last_failed_generation := 0
 var _quick_fly_route_pending := false
 var last_profile_status := ""
-var main_menu_entries := ["Quick Fly", "Demo Flight", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"]
+var main_menu_entries := ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Demo Flight", "Quit"]
 var screen := "main_menu"
 var flight_setup: Dictionary = {}
 var flight_setup_focus := "drone"
@@ -2301,7 +2301,7 @@ func start_demo_flight() -> void:
         _refresh_flight_hud()
         return
     demo_flight_route = DemoFlightRoute.new()
-    demo_flight_route.start(spawn.global_position)
+    demo_flight_route.start(spawn.global_position, true)
     third_person_view = true
     _reset_arm_after_commit = true
     _reset_after_commit_takeoff = true
@@ -2329,11 +2329,11 @@ func cancel_demo_flight() -> void:
     exit_requested = false
 
 
-func _demo_controls_for_frame(delta: float) -> Dictionary:
+func _demo_controls_for_frame(_delta: float) -> Dictionary:
     _demo_flight_controls.clear()
     if not demo_flight_active() or drone_body == null:
         return _demo_flight_controls
-    var state: Dictionary = demo_flight_route.advance(delta, drone_body.global_position, drone_body.linear_velocity, drone_body.rotation.y)
+    var state: Dictionary = demo_flight_route.advance(_delta, drone_body.global_position, drone_body.linear_velocity, drone_body.rotation.y)
     if bool(state.complete):
         if not _demo_flight_finish_pending:
             _demo_flight_finish_pending = true

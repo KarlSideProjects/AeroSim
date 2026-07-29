@@ -978,7 +978,9 @@ func test_demo_flight_menu_uses_industrial_yard_third_person_and_live_hud_contro
 
     (runtime.main_menu_layer.get_node("Entries/DemoFlight") as Button).pressed.emit()
     await _await_reset_commit()
-    var controls: Dictionary = runtime._demo_controls_for_frame(4.0)
+    runtime.demo_flight_route.start((runtime._current_spawn_marker() as Marker3D).global_position)
+    runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime.drone_body.rotation.y)
+    var controls: Dictionary = runtime._demo_controls_for_frame(0.0)
     runtime._refresh_gamepad_hud()
 
     var display := runtime.flight_hud_layer.get_node("GamepadHudMargin/GamepadHudPanel/GamepadTelemetryPanel") as Control
@@ -1001,6 +1003,22 @@ func test_demo_flight_exit_returns_to_menu_without_quitting_the_application() ->
     assert_false(runtime.demo_flight_active())
     assert_false(runtime.exit_requested)
     assert_null(runtime.loaded_map)
+
+
+func test_demo_flight_moves_the_native_drone_after_the_initial_hover() -> void:
+    if not _native_runtime_available():
+        return
+    var runtime := SmokeScene.instantiate() as FlightRuntime
+    get_tree().root.add_child(runtime)
+    autofree(runtime)
+    await get_tree().process_frame
+    runtime.start_demo_flight()
+    await get_tree().create_timer(8.0).timeout
+    var spawn := runtime._current_spawn_marker()
+    assert_not_null(spawn)
+    if spawn != null:
+        var displacement: Vector3 = runtime.drone_body.global_position - spawn.global_position
+        assert_gt(Vector2(displacement.x, displacement.z).length(), 1.0, "position=%s velocity=%s controls=%s authority=%s" % [runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime._demo_flight_controls, runtime.last_collision_authority])
 
 
 func test_controller_confirmation_keeps_the_selected_third_person_player_view() -> void:
@@ -1267,7 +1285,7 @@ func test_lab_mode_button_reuses_runtime_and_visible_back_control_returns_to_men
 
 func test_main_menu_exposes_the_ordered_cap006_entries_and_defaults() -> void:
     var runtime := _licensed_runtime()
-    assert_eq(runtime.main_menu_entries, ["Quick Fly", "Demo Flight", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Quit"])
+    assert_eq(runtime.main_menu_entries, ["Quick Fly", "Lab Mode", "Controller", "Drone", "Map", "Settings", "Demo Flight", "Quit"])
     assert_eq(runtime.default_flight_setup(), {
         "hardware_preset": "res://config/drones/5_inch_6s.json",
         "map_id": "terrain3d_range",

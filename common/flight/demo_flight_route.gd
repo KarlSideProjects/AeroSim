@@ -15,13 +15,17 @@ var _spawn := Vector3.ZERO
 var _elapsed_seconds := 0.0
 var _active := false
 var _complete := false
+var _wall_clock := false
+var _started_msec := 0
 
 
-func start(spawn: Vector3) -> void:
+func start(spawn: Vector3, wall_clock: bool = false) -> void:
     _spawn = spawn
     _elapsed_seconds = 0.0
     _active = true
     _complete = false
+    _wall_clock = wall_clock
+    _started_msec = Time.get_ticks_msec()
 
 
 func cancel() -> void:
@@ -30,7 +34,8 @@ func cancel() -> void:
 
 func advance(delta: float, _position: Vector3, _velocity: Vector3, _yaw_radians: float) -> Dictionary:
     if _active:
-        _elapsed_seconds = minf(_elapsed_seconds + maxf(delta, 0.0), LAND_END_SECONDS)
+        var elapsed := float(Time.get_ticks_msec() - _started_msec) / 1000.0 if _wall_clock else _elapsed_seconds + maxf(delta, 0.0)
+        _elapsed_seconds = minf(elapsed, LAND_END_SECONDS)
         if _elapsed_seconds >= LAND_END_SECONDS:
             _active = false
             _complete = true
