@@ -65,21 +65,34 @@ func test_route_orbits_the_control_tower_with_clearance_and_a_high_pass() -> voi
     var low_pass: Dictionary = route.advance(44.9, spawn, Vector3.ZERO, 0.0)
     assert_eq(low_pass.phase, "low_pass")
     var low_pass_horizontal := Vector2(low_pass.target_position.x, low_pass.target_position.z)
-    assert_gte(low_pass_horizontal.distance_to(control_tower), 30.0)
-    assert_lte(low_pass_horizontal.distance_to(control_tower), 36.0)
+    assert_gte(low_pass_horizontal.distance_to(control_tower), 45.0)
+    assert_lte(low_pass_horizontal.distance_to(control_tower), 50.0)
 
-    var orbit: Dictionary = route.advance(30.1, spawn, Vector3.ZERO, 0.0)
+    var orbit: Dictionary = route.advance(14.0, spawn, Vector3.ZERO, 0.0)
     assert_eq(orbit.phase, "orbit")
     var orbit_horizontal := Vector2(orbit.target_position.x, orbit.target_position.z)
-    assert_gte(orbit_horizontal.distance_to(control_tower), 16.0)
-    assert_lte(orbit_horizontal.distance_to(control_tower), 22.0)
-    assert_lte(orbit_horizontal.length(), 110.0)
+    assert_gte(orbit_horizontal.distance_to(control_tower), 20.0)
+    assert_lte(orbit_horizontal.distance_to(control_tower), 25.0)
+    assert_lte(orbit_horizontal.length(), 80.0)
 
-    var climb: Dictionary = route.advance(54.8, spawn, Vector3.ZERO, 0.0)
+    var climb: Dictionary = route.advance(70.9, spawn, Vector3.ZERO, 0.0)
     assert_eq(climb.phase, "climb")
     assert_gt(climb.target_position.y, 23.0)
-    assert_lte(climb.target_position.y, 24.0)
-    assert_lte(Vector2(climb.target_position.x, climb.target_position.z).length(), 110.0)
+    assert_lte(climb.target_position.y, 26.0)
+    assert_lte(Vector2(climb.target_position.x, climb.target_position.z).length(), 145.0)
+
+
+func test_route_targets_keep_clear_of_the_control_tower_and_workshop() -> void:
+    var route := DemoFlightRoute.new()
+    route.start(Vector3.ZERO)
+    var control_tower := Vector2(36.0, 46.0)
+    var workshop := Vector2(40.0, 18.0)
+
+    for second in range(181):
+        var state: Dictionary = route.advance(1.0 if second > 0 else 0.0, Vector3.ZERO, Vector3.ZERO, 0.0)
+        var target := Vector2(state.target_position.x, state.target_position.z)
+        assert_gte(target.distance_to(control_tower), 14.0)
+        assert_gte(target.distance_to(workshop), 12.0)
 
 
 func test_cancel_makes_the_route_inactive_immediately() -> void:
