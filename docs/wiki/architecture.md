@@ -40,7 +40,7 @@ flowchart TD
     Runtime --> AirSim[AirSim msgpack RPC\nLab Mode]
     Runtime --> PX4[PX4 MAVLink / HIL bridge]
     Runtime --> Dataset[Dataset Recording]
-    Runtime -. explicit --aerosim-gsp .-> GSP[Ground Station Panel\nindependent local file client]
+    Runtime -. debug-session local service .-> GSP[Ground Station Panel\nindependent local file client]
     GSP -. later loopback channel .-> Runtime
     PX4 --> Native
     Runtime --> Evidence[headless smoke / GUT]
@@ -63,8 +63,8 @@ flowchart TD
 Operations Dashboard 是 Godot 內的 operator-facing UI：它跟著 Player/Lab Mode、同一個
 simulation session 與 native authority，負責 vehicle、telemetry、sensor、recording 與
 environment 的狀態操作。GSP 是 development-only 的第二個 native Wayland client，供 paused、
-post-flight 或 second-screen tuning 使用；它由 `--aerosim-gsp` 明確啟用，啟用時才安裝並
-開啟 `common/gsp/gsp_panel.html` 的本機副本。GSP 不建立第二份 simulation、telemetry、
+post-flight 或 second-screen tuning 使用；debug session 啟動時會建立本機服務與
+`common/gsp/gsp_panel.html` 的副本，暫停選單的使用者動作才開啟面板。GSP 不建立第二份 simulation、telemetry、
 coordinate 或 replay authority。
 
 GSP 的瀏覽器開啟是 best-effort：Wayland 不允許應用程式強迫另一個應用程式取得焦點，因此

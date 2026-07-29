@@ -20,7 +20,10 @@ dl { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; margin: 0; }
 dt { color: #9fb0c5; } dd { margin: 0; font-variant-numeric: tabular-nums; }
 code, pre { color: #b9d8ff; overflow-wrap: anywhere; font: .78rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
 canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
-#airframe-3d { height: 260px; border: 1px solid #263a47; }
+#airframe-3d { display: block; height: 260px; border: 1px solid #263a47; }
+#position, #velocity, #attitude, #rates, #endurance, #motors { height: 1.5rem; overflow: hidden; white-space: nowrap; }
+#flight-diagnostics { height: 5rem; overflow: auto; scrollbar-gutter: stable; }
+#hardware-configuration, #hardware-derived { height: 10rem; overflow: auto; scrollbar-gutter: stable; }
 .muted { color: #9fb0c5; }
 .tuning-group { border-top: 1px solid #24364c; padding-top: 8px; margin-top: 10px; }
 .tuning-group:first-child { border-top: 0; margin-top: 0; }
@@ -40,7 +43,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 .toolbar button, summary { background: #172b3a; color: #dce7f5; border: 1px solid #31445d; border-radius: 3px; padding: 5px 9px; cursor: pointer; }
 .toolbar { display: flex; gap: 6px; align-items: center; }
 details.card { flex-basis: 100%; } details > summary { font-weight: 700; } details > *:not(summary) { margin-top: 10px; }
-.telemetry-table { max-height: 460px; overflow: auto; } .telemetry-table .unavailable { color: #ffcf78; }
+.telemetry-table { height: 28rem; overflow: auto; scrollbar-gutter: stable; } .telemetry-table .unavailable { color: #ffcf78; }
 .status-normal { color: #9ee6b1; } .status-low { color: #ffcf78; } .status-critical, .status-unavailable { color: #ff8aad; }
 @media (max-width: 720px) { main { padding: 10px; } .tuning-row { grid-template-columns: 1fr; } .quick-adjust-row { grid-template-columns: 1fr 1fr; } }
 </style>
@@ -641,6 +644,6 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   connect(); drawSparkline();
 }());
 </script>
-<script type="module" src="assets/gsp_visual.js"></script>
+<script src="assets/gsp_visual.js"></script>
 </body>
 </html>

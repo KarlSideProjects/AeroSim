@@ -1,13 +1,10 @@
 extends Node
 class_name GspLauncher
 
-const ENABLE_ARG := "--aerosim-gsp"
-const NO_OPEN_ARG := "--aerosim-gsp-no-open"
 const PANEL_RESOURCE_PATH := "res://common/gsp/gsp_panel.html"
 const PANEL_DIRECTORY := "gsp"
 const PANEL_ASSET_PATHS := [
     "res://common/gsp/assets/gsp_visual.js",
-    "res://common/gsp/assets/three-0.180.0.module.min.js",
 ]
 const GspServer = preload("res://common/gsp/gsp_server.gd")
 
@@ -16,20 +13,9 @@ var _panel_url := ""
 
 
 func _ready() -> void:
-    var options := parse_user_args(OS.get_cmdline_user_args())
-    if not bool(options.get("enabled", false)):
-        return
-    var result := launch(options)
+    var result := launch()
     if not bool(result.get("ok", false)):
-        push_error("GSP launch failed: %s" % String(result.get("error", "unknown error")))
-
-
-static func parse_user_args(args: Array[String]) -> Dictionary:
-    var enabled := OS.is_debug_build() and args.has(ENABLE_ARG)
-    return {
-        "enabled": enabled,
-        "open": enabled and not args.has(NO_OPEN_ARG),
-    }
+        print("GSP unavailable: %s" % String(result.get("error", "unknown error")))
 
 
 static func is_native_wayland(display_name: String) -> bool:
@@ -52,16 +38,26 @@ static func panel_url(panel_file_url: String, port: int, token: String) -> Strin
 
 
 func launch(options: Dictionary = {}) -> Dictionary:
-    var launch_options := options
-    if launch_options.is_empty():
-        launch_options = parse_user_args(OS.get_cmdline_user_args())
-    if not bool(launch_options.get("enabled", false)):
-        return {"ok": true, "enabled": false}
+    var open_requested := bool(options.get("open", false))
+    if not OS.is_debug_build():
+        return {"ok": false, "error": "GSP requires a debug build"}
+    if is_panel_ready():
+        var opened := open_panel(_panel_url) if open_requested else true
+        var shell_result := shell_open_result(open_requested, opened, _panel_url)
+        return {
+            "ok": bool(shell_result.get("ok", false)),
+            "enabled": true,
+            "opened": opened,
+            "panel_url": _panel_url,
+            "gsp_running": true,
+            "error": shell_result.get("error", ""),
+        }
 
     var display_name := get_display_name()
     if not is_native_wayland(display_name):
-        return {"ok": false, "enabled": true, "error": "native Wayland required; detected %s" % display_name}
+        return {"ok": false, "error": "native Wayland required; detected %s" % display_name}
 
+    _discard_unready_server()
     DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
     DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, true)
     _server = GspServer.new()
@@ -85,16 +81,16 @@ func launch(options: Dictionary = {}) -> Dictionary:
     var server_result := _server.start()
     if not bool(server_result.get("ok", false)):
         print("GSP unavailable: %s" % String(server_result.get("error", "listener failed")))
-        return {"ok": true, "enabled": true, "gsp_running": false, "error": server_result.get("error", "listener failed")}
+        _discard_unready_server()
+        return {"ok": false, "gsp_running": false, "error": server_result.get("error", "listener failed")}
 
     var installed := install_panel(OS.get_user_data_dir())
     if not bool(installed.get("ok", false)):
-        _server.stop()
+        _discard_unready_server()
         return installed
     var url := panel_url(file_uri(String(installed.path)), int(server_result.port), String(server_result.token))
     _panel_url = url
     print("GSP panel URL: %s" % url)
-    var open_requested := bool(launch_options.get("open", false))
     var opened := true
     if open_requested:
         opened = open_panel(url)
@@ -118,9 +114,15 @@ func launch(options: Dictionary = {}) -> Dictionary:
 
 
 func _exit_tree() -> void:
+    _discard_unready_server()
+    _panel_url = ""
+
+
+func _discard_unready_server() -> void:
     if _server != null:
         _server.stop()
-    _panel_url = ""
+        _server.queue_free()
+        _server = null
 
 
 func get_display_name() -> String:
@@ -137,13 +139,15 @@ func is_panel_ready() -> bool:
 
 func request_panel_open() -> Dictionary:
     if not is_panel_ready():
-        return {"ok": false, "error": "GSP panel is unavailable"}
+        return launch({"open": true})
     return shell_open_result(true, open_panel(_panel_url), _panel_url)
 
 
 func copy_panel_url() -> Dictionary:
     if not is_panel_ready():
-        return {"ok": false, "error": "GSP panel is unavailable"}
+        var launch_result := launch({"open": false})
+        if not bool(launch_result.get("ok", false)):
+            return launch_result
     DisplayServer.clipboard_set(_panel_url)
     return {"ok": true}
 

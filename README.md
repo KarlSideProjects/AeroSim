@@ -81,23 +81,9 @@ GODOT_CPP_DIR=third_party/godot-cpp scons target=template_debug platform=linux
 
 ## 外部 Ground Station Panel（GSP）
 
-GSP 是開發／調校用的獨立瀏覽器面板；飛行中的操作仍在 Godot 內完成。它只在 debug build 啟用，並要求 Godot 使用原生 Wayland。從 repo 根目錄啟動時，把 GSP 參數放在 Godot 的 `--` 之後：
+GSP 是開發／調校用的獨立瀏覽器面板；飛行中的操作仍在 Godot 內完成。它只在 debug build 啟用，並要求 Godot 使用原生 Wayland。無須設定啟動參數：模擬器會在啟動時改為 borderless windowed、在 `127.0.0.1` 的 8765–8769 間選一個可用埠，並將面板安裝到 Godot 的 user-data 目錄（Ubuntu 通常是 `~/.local/share/godot/app_userdata/AeroSim/gsp/`）；在暫停選單按 `OPEN GSP PANEL` 才開啟瀏覽器面板。
 
-```bash
-"$GODOT_BIN" --display-driver wayland --path . -- --aerosim-gsp
-```
-
-模擬器會改為 borderless windowed、在 `127.0.0.1` 的 8765–8769 間選一個可用埠，將單檔面板安裝到 Godot 的 user-data 目錄（Ubuntu 通常是 `~/.local/share/godot/app_userdata/AeroSim/gsp/`），並嘗試交給預設瀏覽器開啟它。Wayland 不允許程式強制讓其他 app 搶焦點，因此自動開啟僅是 best-effort；既有瀏覽器 session 可能在背景新增分頁。
-
-最可靠的工作流是在 Godot 暫停選單按 `OPEN GSP PANEL`。這是使用者觸發的開啟請求，較符合 Wayland 的焦點規則；若仍未看到瀏覽器分頁，按 `COPY GSP URL`，再將網址貼到既有瀏覽器的位址列。面板連線所需的 token 每次啟動都會重新產生。
-
-若不想自動開啟瀏覽器，使用：
-
-```bash
-"$GODOT_BIN" --display-driver wayland --path . -- --aerosim-gsp --aerosim-gsp-no-open
-```
-
-Godot 的 stdout 會印出 `GSP panel URL: file://...#port=...&token=...`。在 **模擬器仍在執行時**，複製完整 URL 到 Firefox 或 Chromium 的網址列即可開啟同一個面板。不要自行刪除 fragment 的 token，也不要把該 URL 分享給其他人；它授予本機模擬器這次執行期的控制權。停止模擬器後，該 URL 與 token 都會失效。
+這是使用者觸發的開啟請求，較符合 Wayland 的焦點規則；若仍未看到瀏覽器分頁，按 `COPY GSP URL`，再將網址貼到既有瀏覽器的位址列。面板連線所需的 token 每次啟動都會重新產生。Godot 的 stdout 會印出 `GSP panel URL: file://...#port=...&token=...`；在 **模擬器仍在執行時**，複製完整 URL 到 Firefox 或 Chromium 的網址列即可開啟同一個面板。不要自行刪除 fragment 的 token，也不要把該 URL 分享給其他人；它授予本機模擬器這次執行期的控制權。停止模擬器後，該 URL 與 token 都會失效。
 
 若 GSP 無法啟動（例如不是原生 Wayland 或埠已被佔用），模擬器本身仍可正常執行；請查看 Godot 輸出中的錯誤訊息。
 
