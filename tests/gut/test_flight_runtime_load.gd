@@ -101,6 +101,7 @@ class FakeNative:
             "roll": roll,
             "pitch": pitch,
             "yaw_rate": yaw_rate,
+            "touching": _touching,
         }
         var row := PackedFloat64Array()
         row.resize(17)
@@ -1118,6 +1119,31 @@ func test_demo_safety_rejects_injected_overspeed_and_altitude() -> void:
     runtime.drone_body.linear_velocity = Vector3.ZERO
     runtime.drone_body.global_position.y = runtime._demo_spawn_height + FlightRuntime.DEMO_MAX_RELATIVE_ALTITUDE_M + 1.0
     assert_eq(runtime._demo_safety_error(), "Demo Flight altitude limit exceeded")
+
+
+func test_demo_launch_ignores_only_the_initial_upward_platform_contact() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime._demo_launching = true
+    runtime.native = FakeNative.new()
+    runtime.native.armed = true
+    runtime.takeoff_requested = true
+    runtime.screen = "flight"
+    runtime.paused = false
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+
+    runtime._physics_process(1.0 / 60.0)
+
+    assert_false(bool(runtime.native.collision_angle_arguments.touching))
+    assert_almost_eq(float(runtime.native.collision_angle_arguments.throttle), 0.35, 0.000001)
+    runtime.drone_body.global_position.y = runtime._demo_spawn_height + FlightRuntime.AIRSIM_GROUND_BODY_CLEARANCE_M
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+    runtime._physics_process(1.0 / 60.0)
+    assert_true(bool(runtime.native.collision_angle_arguments.touching))
 
 
 func test_demo_collision_handoff_resyncs_native_state_on_the_next_frame() -> void:

@@ -145,6 +145,7 @@ var _demo_flight_finish_pending := false
 var _demo_flight_route_pending := false
 var _demo_native_state_synced := false
 var _demo_spawn_height := 0.0
+var _demo_launching := false
 var dashboard_layout_mode := "compact"
 var development_license_bypass := OS.is_debug_build()
 var status_diagram: CanvasLayer
@@ -1626,6 +1627,7 @@ func _physics_process(delta: float) -> void:
             cancel_demo_flight()
             return
     var row: PackedFloat64Array
+    var demo_launch_ground_contact := false
     if px4_sitl_bridge != null:
         var actuator_outputs := px4_sitl_bridge.actuator_outputs()
         if actuator_outputs.size() < 4:
@@ -1702,6 +1704,7 @@ func _physics_process(delta: float) -> void:
                 _demo_native_state_synced = true
         var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body)
         var energy_limit := _pre_impact_energy(drone_body)
+        demo_launch_ground_contact = _demo_launch_ground_contact()
         if flight_mode == "ACRO":
             row = native.call(
                 "step_collision_acro_mode",
@@ -1714,7 +1717,7 @@ func _physics_process(delta: float) -> void:
                 _acro_rate("rc_rate"),
                 _acro_rate("super_rate"),
                 _acro_rate("expo"),
-                drone_body.contact_seen,
+                drone_body.contact_seen and not demo_launch_ground_contact,
                 drone_body.contact_normal.x,
                 drone_body.contact_normal.y,
                 drone_body.contact_normal.z,
@@ -1740,7 +1743,7 @@ func _physics_process(delta: float) -> void:
                 angle_roll,
                 angle_pitch,
                 angle_yaw,
-                drone_body.contact_seen,
+                drone_body.contact_seen and not demo_launch_ground_contact,
                 drone_body.contact_normal.x,
                 drone_body.contact_normal.y,
                 drone_body.contact_normal.z,
@@ -1784,7 +1787,7 @@ func _physics_process(delta: float) -> void:
         return
     if px4_sitl_bridge != null:
         _record_replay_actuator_command(_airsim_vehicle_name, px4_sitl_bridge.actuator_outputs(), replay_timestamp_us)
-    if drone_body != null and drone_body.contact_seen:
+    if drone_body != null and drone_body.contact_seen and not demo_launch_ground_contact:
         _record_replay_collision(_airsim_vehicle_name, drone_body, int(row[12]) if row.size() >= 13 else 0, replay_timestamp_us)
         collision_handoff_count += 1
         _airsim_contact_this_frame = true
@@ -2356,6 +2359,7 @@ func _start_demo_route_after_reset() -> void:
         return
     _demo_native_state_synced = false
     _demo_spawn_height = spawn.global_position.y
+    _demo_launching = true
     demo_flight_route.start(spawn.global_position)
 
 
@@ -2365,6 +2369,7 @@ func cancel_demo_flight() -> void:
         demo_flight_route.cancel()
     _demo_flight_controls.clear()
     _demo_native_state_synced = false
+    _demo_launching = false
     _demo_flight_finish_pending = false
     var restore_quit_on_exit := quit_on_exit
     quit_on_exit = false
@@ -2402,14 +2407,29 @@ func _demo_controls_for_frame(delta: float) -> Dictionary:
     var roll := clampf(horizontal_velocity_error.z * 3.0, -DEMO_MAX_TILT_DEGREES, DEMO_MAX_TILT_DEGREES)
     var pitch := clampf(-horizontal_velocity_error.x * 3.0, -DEMO_MAX_TILT_DEGREES, DEMO_MAX_TILT_DEGREES)
     var tilt_cos := maxf(cos(deg_to_rad(roll)) * cos(deg_to_rad(pitch)), 0.8)
+    var throttle := clampf(hover / tilt_cos + (target_vertical_speed - drone_body.linear_velocity.y) * DEMO_VERTICAL_VELOCITY_GAIN, maxf(0.0, hover - DEMO_THROTTLE_RANGE), minf(1.0, hover + DEMO_THROTTLE_RANGE))
+    if _demo_launching_active():
+        throttle = minf(1.0, hover + DEMO_THROTTLE_RANGE)
     _demo_flight_controls = {
         "mode": "ANGLE",
-        "throttle": clampf(hover / tilt_cos + (target_vertical_speed - drone_body.linear_velocity.y) * DEMO_VERTICAL_VELOCITY_GAIN, maxf(0.0, hover - DEMO_THROTTLE_RANGE), minf(1.0, hover + DEMO_THROTTLE_RANGE)),
+        "throttle": throttle,
         "roll": roll,
         "pitch": pitch,
         "yaw_rate": clampf(yaw_error_degrees * 2.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS),
     }
     return _demo_flight_controls
+
+
+func _demo_launching_active() -> bool:
+    if not _demo_launching or drone_body == null:
+        return false
+    if drone_body.global_position.y - _demo_spawn_height >= AIRSIM_GROUND_BODY_CLEARANCE_M:
+        _demo_launching = false
+    return _demo_launching
+
+
+func _demo_launch_ground_contact() -> bool:
+    return _demo_launching_active() and drone_body.contact_seen and drone_body.contact_normal.dot(Vector3.UP) > 0.5
 
 
 func _demo_safety_error() -> String:
