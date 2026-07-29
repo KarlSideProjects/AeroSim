@@ -5,6 +5,8 @@ const PANEL_RESOURCE_PATH := "res://common/gsp/gsp_panel.html"
 const PANEL_DIRECTORY := "gsp"
 const DEMO_BROWSER_EXECUTABLE := "google-chrome"
 const DEMO_BROWSER_CLASS := "AeroSimGspDemo"
+const WINDOW_WIDTH_OVERRIDE := "display/window/size/window_width_override"
+const WINDOW_HEIGHT_OVERRIDE := "display/window/size/window_height_override"
 const PANEL_ASSET_PATHS := [
     "res://common/gsp/assets/gsp_visual.js",
 ]
@@ -12,6 +14,7 @@ const GspServer = preload("res://common/gsp/gsp_server.gd")
 
 var _server: GspServer
 var _panel_url := ""
+var _demo_window_restore: Dictionary = {}
 
 
 func _ready() -> void:
@@ -31,6 +34,15 @@ static func file_uri(path: String) -> String:
 
 static func panel_url(panel_file_url: String, port: int, token: String) -> String:
     return "%s#port=%d&token=%s" % [panel_file_url, port, token]
+
+
+static func demo_panel_split(game_position: Vector2i, game_size: Vector2i) -> Dictionary:
+    var game_height := game_size.y * 3 / 5
+    return {
+        "game_size": Vector2i(game_size.x, game_height),
+        "panel_position": Vector2i(game_position.x, game_position.y + game_height),
+        "panel_size": Vector2i(game_size.x, game_size.y - game_height),
+    }
 
 
 func launch(options: Dictionary = {}) -> Dictionary:
@@ -143,9 +155,18 @@ func open_demo_panel() -> Dictionary:
         return launch_result
     if DisplayServer.get_name() != "X11":
         return shell_open_result(true, open_panel(_panel_url), _panel_url)
-    var game_height := game_size.y * 3 / 5
+    var split := demo_panel_split(game_position, game_size)
+    if _demo_window_restore.is_empty():
+        _demo_window_restore = {
+            "position": game_position,
+            "size": game_size,
+            "width_override": ProjectSettings.get_setting(WINDOW_WIDTH_OVERRIDE),
+            "height_override": ProjectSettings.get_setting(WINDOW_HEIGHT_OVERRIDE),
+        }
+    ProjectSettings.set_setting(WINDOW_WIDTH_OVERRIDE, split.game_size.x)
+    ProjectSettings.set_setting(WINDOW_HEIGHT_OVERRIDE, split.game_size.y)
     DisplayServer.window_set_position(game_position)
-    DisplayServer.window_set_size(Vector2i(game_size.x, game_height))
+    DisplayServer.window_set_size(split.game_size)
     var browser_profile := OS.get_user_data_dir().path_join(PANEL_DIRECTORY).path_join("demo-browser")
     var demo_id := str(Time.get_ticks_msec())
     var demo_url := "%s&demo_title=%s" % [_panel_url, demo_id]
@@ -157,8 +178,8 @@ func open_demo_panel() -> Dictionary:
         return shell_open_result(true, open_panel(demo_url), demo_url)
     OS.create_process("xdotool", [
         "search", "--sync", "--onlyvisible", "--name", "AeroSim GSP Demo %s" % demo_id,
-        "windowmove", str(game_position.x), str(game_position.y + game_height),
-        "windowsize", str(game_size.x), str(game_size.y - game_height),
+        "windowmove", str(split.panel_position.x), str(split.panel_position.y),
+        "windowsize", str(split.panel_size.x), str(split.panel_size.y),
     ])
     return {"ok": true, "opened": true, "panel_url": demo_url, "split": true}
 
