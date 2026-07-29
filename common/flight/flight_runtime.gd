@@ -2387,7 +2387,7 @@ func _demo_controls_for_frame(_delta: float) -> Dictionary:
     _demo_flight_controls.clear()
     if not demo_flight_active() or drone_body == null:
         return _demo_flight_controls
-    var route_step_seconds := 1.0 / float(airsim_session.physics_hz) if airsim_session != null and airsim_session.physics_hz > 0 else 1.0 / float(Engine.physics_ticks_per_second)
+    var route_step_seconds := 1.0 / float(Engine.physics_ticks_per_second)
     var state: Dictionary = demo_flight_route.advance(route_step_seconds, drone_body.global_position, drone_body.linear_velocity, drone_body.rotation.y)
     if bool(state.complete):
         if not _demo_flight_finish_pending:
