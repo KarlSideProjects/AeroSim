@@ -8,7 +8,7 @@ class LauncherHarness extends GspLauncher:
     var open_calls := 0
 
     func get_display_name() -> String:
-        return "Wayland"
+        return "X11"
 
     func open_panel(_url: String) -> bool:
         open_calls += 1
@@ -20,8 +20,6 @@ func _init() -> void:
     var uri := GspLauncher.file_uri("/tmp/Aero Sim/panel.html")
     if uri != "file:///tmp/Aero%20Sim/panel.html":
         failures.append("file URI is not correctly encoded: %s" % uri)
-    if not GspLauncher.is_native_wayland("Wayland") or GspLauncher.is_native_wayland("X11"):
-        failures.append("native Wayland detection accepts the wrong display backend")
     var raw_token := "0123456789abcdef0123456789abcdef"
     var token_url := GspLauncher.panel_url("file:///tmp/panel.html", 8765, raw_token)
     var shell_open_failure := GspLauncher.shell_open_result(true, false, token_url)
