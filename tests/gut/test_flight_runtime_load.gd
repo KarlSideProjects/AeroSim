@@ -20,6 +20,16 @@ const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 
 
+class FakeDemoGspLauncher:
+    extends Node
+
+    var demo_open_calls := 0
+
+    func open_demo_panel() -> Dictionary:
+        demo_open_calls += 1
+        return {"ok": true}
+
+
 class FakeNative:
     extends RefCounted
 
@@ -975,6 +985,13 @@ func test_quick_fly_defaults_the_player_view_to_third_person_before_controller_r
 func test_demo_flight_menu_uses_industrial_yard_third_person_and_live_hud_controls() -> void:
     var runtime := _quick_fly_runtime()
     _attach_runtime_ui(runtime)
+    var installed_gsp_launcher := runtime.get_node_or_null("GspLauncher")
+    if installed_gsp_launcher != null:
+        runtime.remove_child(installed_gsp_launcher)
+        installed_gsp_launcher.queue_free()
+    var gsp_launcher := FakeDemoGspLauncher.new()
+    gsp_launcher.name = "GspLauncher"
+    runtime.add_child(gsp_launcher)
 
     (runtime.main_menu_layer.get_node("Entries/Map") as Button).pressed.emit()
     (runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/DemoFlight") as Button).pressed.emit()
@@ -986,6 +1003,7 @@ func test_demo_flight_menu_uses_industrial_yard_third_person_and_live_hud_contro
 
     var display := runtime.flight_hud_layer.get_node("GamepadHudMargin/GamepadHudPanel/GamepadTelemetryPanel") as Control
     assert_eq(runtime.loaded_map_id, "industrial_yard")
+    assert_eq(gsp_launcher.demo_open_calls, 1)
     assert_true(runtime.third_person_view)
     assert_true(runtime.demo_flight_active())
     assert_true(absf(float(controls.get("roll", 0.0))) > 0.01 or absf(float(controls.get("pitch", 0.0))) > 0.01)

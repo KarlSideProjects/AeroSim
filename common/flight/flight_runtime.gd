@@ -2305,6 +2305,9 @@ func start_demo_flight() -> void:
         return
     demo_flight_route = DemoFlightRoute.new()
     demo_flight_route.start(spawn.global_position, true)
+    var gsp_launcher := get_node_or_null("GspLauncher")
+    if gsp_launcher != null and gsp_launcher.has_method("open_demo_panel"):
+        gsp_launcher.call("open_demo_panel")
     third_person_view = true
     _reset_arm_after_commit = true
     _reset_after_commit_takeoff = true
