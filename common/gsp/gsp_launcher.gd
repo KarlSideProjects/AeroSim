@@ -5,6 +5,7 @@ const PANEL_RESOURCE_PATH := "res://common/gsp/gsp_panel.html"
 const PANEL_DIRECTORY := "gsp"
 const PANEL_ASSET_PATHS := [
     "res://common/gsp/assets/gsp_visual.js",
+    "res://common/gsp/assets/three-0.180.0.global.min.js",
 ]
 const GspServer = preload("res://common/gsp/gsp_server.gd")
 

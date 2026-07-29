@@ -21,6 +21,18 @@ dt { color: #9fb0c5; } dd { margin: 0; font-variant-numeric: tabular-nums; }
 code, pre { color: #b9d8ff; overflow-wrap: anywhere; font: .78rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
 canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 #airframe-3d { display: block; height: 260px; border: 1px solid #263a47; }
+.flight-health { flex: 1 1 100%; }
+.health-heading { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.health-grid { display: grid; grid-template-columns: minmax(13rem, .55fr) minmax(0, 1.45fr); gap: 12px; margin-top: 10px; }
+.motor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-content: start; }
+.motor-card { min-height: 5.5rem; border: 1px solid #31445d; border-radius: 8px; padding: 9px; background: #0c1219; font-variant-numeric: tabular-nums; }
+.motor-card[data-health="warning"] { border-style: dashed; }
+.motor-card[data-health="critical"] { border-style: double; }
+.motor-card[data-health="unavailable"] { border-style: dotted; }
+.motor-card strong, .motor-card span { display: block; }
+.motor-card span { margin-top: 4px; color: #9fb0c5; font-size: .8rem; }
+.visual-stage { min-width: 0; }
+.flow-legend { margin: 5px 0 0; font-size: .8rem; }
 #position, #velocity, #attitude, #rates, #endurance, #motors { height: 1.5rem; overflow: hidden; white-space: nowrap; }
 #flight-diagnostics { height: 5rem; overflow: auto; scrollbar-gutter: stable; }
 #hardware-configuration, #hardware-derived { height: 10rem; overflow: auto; scrollbar-gutter: stable; }
@@ -45,7 +57,7 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 details.card { flex-basis: 100%; } details > summary { font-weight: 700; } details > *:not(summary) { margin-top: 10px; }
 .telemetry-table { height: 28rem; overflow: auto; scrollbar-gutter: stable; } .telemetry-table .unavailable { color: #ffcf78; }
 .status-normal { color: #9ee6b1; } .status-low { color: #ffcf78; } .status-critical, .status-unavailable { color: #ff8aad; }
-@media (max-width: 720px) { main { padding: 10px; } .tuning-row { grid-template-columns: 1fr; } .quick-adjust-row { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 720px) { main { padding: 10px; } .health-grid, .motor-grid, .tuning-row { grid-template-columns: 1fr; } .quick-adjust-row { grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
 <body>
@@ -68,7 +80,18 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
 </dl></section>
 <section class="card"><strong>位置／速度（NED、SI）</strong><p id="position" class="muted">—</p><p id="velocity" class="muted">—</p><strong>姿態／角速度（FRD、SI）</strong><p id="attitude" class="muted">—</p><p id="rates" class="muted">—</p></section>
 <section class="card"><strong>電池／預估續航</strong><p id="endurance" class="muted">等待即時資料。</p><strong>飛控／空力狀態</strong><p id="flight-diagnostics" class="muted">等待即時資料。</p></section>
-<section class="card"><strong>機體／馬達／氣流</strong><p class="muted">程序化 Quad-X 視圖；NED／FRD／SI 即時遙測。</p><div class="toolbar"><button id="view-isometric" type="button">Isometric</button><button id="view-top" type="button">Top</button><button id="view-side" type="button">Side</button><button id="view-rear" type="button">Rear</button></div><canvas id="airframe-3d" aria-label="Quad-X telemetry visualization"></canvas><p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas></section>
+<section class="card flight-health" aria-label="Quad-X flight health">
+  <div class="health-heading"><strong>飛行健康：馬達／氣流</strong><span id="visualization-status" class="muted" aria-live="polite">Visualization unavailable</span></div>
+  <p id="flow-legend" class="muted flow-legend">FRD · SI · flow magnitude uses m/s</p>
+  <div class="health-grid">
+    <div class="motor-grid" aria-label="Motor health">
+      <div id="motor-rear-right" class="motor-card" data-motor="rear_right">M1 —</div><div id="motor-front-right" class="motor-card" data-motor="front_right">M2 —</div>
+      <div id="motor-rear-left" class="motor-card" data-motor="rear_left">M3 —</div><div id="motor-front-left" class="motor-card" data-motor="front_left">M4 —</div>
+    </div>
+    <div class="visual-stage"><p class="muted">程序化 Quad-X 視圖；NED／FRD／SI 即時遙測。</p><div class="toolbar"><button id="view-isometric" type="button">Isometric</button><button id="view-top" type="button">Top</button><button id="view-side" type="button">Side</button><button id="view-rear" type="button">Rear</button></div><canvas id="airframe-3d" aria-label="Quad-X telemetry visualization"></canvas></div>
+  </div>
+  <p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas>
+</section>
 <details class="card" open><summary>完整遙測（native TelemetrySnapshot；NED／FRD／SI）</summary><pre id="telemetry-data" class="telemetry-table muted">等待即時資料。</pre></details>
 <details class="card" open><summary>目前硬體設定（唯讀、canonical preset/schema）</summary><pre id="hardware-configuration" class="telemetry-table muted">等待硬體設定。</pre><pre id="hardware-derived" class="telemetry-table muted">等待衍生 power model。</pre></details>
 <details class="card" open><summary>Quick Adjust</summary><div id="tuning-rows" class="muted">Waiting for registry.</div></details>
@@ -81,6 +104,8 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
 </details>
 </div>
 </main>
+<script src="assets/three-0.180.0.global.min.js"></script>
+<script src="assets/gsp_visual.js"></script>
 <script>
 (function () {
   var protocolVersion = 2;
@@ -103,6 +128,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   var rateSamples = 0;
   var sparkValues = [];
   var pingTimer = null;
+  var lastTelemetrySample = null;
   var $ = function (id) { return document.getElementById(id); };
   var tuningRows = $("tuning-rows");
   var connection = $("connection");
@@ -128,7 +154,10 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   var maxPerformanceSamples = 512;
   var requestAnimationFrame = window.requestAnimationFrame || function (callback) { callback(performance.now()); return 0; };
   var language = "zh";
-  var translations = { zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…" }, en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…" } };
+  var translations = {
+    zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…", rear_right: "右後", front_right: "右前", rear_left: "左後", front_left: "左前", normal: "正常", warning: "警告", critical: "嚴重", unavailable: "未提供", visualization_unavailable: "視覺化未提供" },
+    en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…", rear_right: "Rear right", front_right: "Front right", rear_left: "Rear left", front_left: "Front left", normal: "Normal", warning: "Warning", critical: "Critical", unavailable: "Unavailable", visualization_unavailable: "Visualization unavailable" },
+  };
 
   function recordPerformanceSample(kind, value) {
     if (!Number.isFinite(value) || value < 0) return;
@@ -154,6 +183,9 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     if (document.documentElement) document.documentElement.lang = language === "en" ? "en" : "zh-Hant";
     var nodes = document.querySelectorAll ? document.querySelectorAll("[data-i18n]") : [];
     Array.prototype.forEach.call(nodes, function (node) { node.textContent = translate(node.dataset.i18n); });
+    var visual = window.__AEROSIM_GSP_VISUAL__;
+    if (visual && visual.set_labels) visual.set_labels(translations[language]);
+    if (lastTelemetrySample) renderMotorCards(lastTelemetrySample);
   }
   function listen(id, callback) { var element = $(id); if (element) element.addEventListener("click", callback); }
   listen("language-zh", function () { setLanguage("zh"); });
@@ -212,6 +244,36 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     var rows = []; flattenConfiguration(sample.hardware_configuration, "", rows); optionalText("hardware-configuration", rows.length ? rows.join("\n") : "未提供／模型未啟用");
     var derived = []; flattenConfiguration(sample.hardware_power_model, "derived", derived); optionalText("hardware-derived", derived.length ? derived.join("\n") : "未提供／模型未啟用");
     var telemetry = []; flattenConfiguration(sample, "", telemetry); optionalText("telemetry-data", telemetry.length ? telemetry.join("\n") : "未提供／模型未啟用");
+  }
+  function fallbackMotorState(sample) {
+    var motors = Array.isArray(sample.motors) ? sample.motors : [];
+    var order = Array.isArray(sample.motor_order) ? sample.motor_order : [];
+    var rpm = Array.isArray(sample.rpm) ? sample.rpm : [];
+    var power = sample.hardware_power_model || {};
+    var maxThrust = Number(power.max_total_thrust_newtons) / motors.length;
+    var maxCurrent = Number(power.max_total_current_a) / motors.length;
+    return { motors: motors.map(function (motor, index) {
+      var thrust = Number(motor.thrust_newtons); var current = Number(motor.current_a);
+      var ratio = Number.isFinite(maxThrust) && maxThrust > 0 && Number.isFinite(maxCurrent) && maxCurrent > 0 && Number.isFinite(thrust) && Number.isFinite(current) ? Math.max(thrust / maxThrust, current / maxCurrent) : NaN;
+      var health = !Number.isFinite(ratio) ? "unavailable" : motor.saturated || ratio >= .98 ? "critical" : ratio >= .85 ? "warning" : "normal";
+      return { id: String(order[index] || "motor_" + (index + 1)), index: index, rpm: Number.isFinite(Number(rpm[index])) ? Number(rpm[index]) : null, thrust_newtons: Number.isFinite(thrust) ? thrust : null, current_a: Number.isFinite(current) ? current : null, health: health };
+    }) };
+  }
+  function renderMotorCards(sample) {
+    var visual = window.__AEROSIM_GSP_VISUAL__;
+    var state = visual && visual.map_telemetry_to_view_state ? visual.map_telemetry_to_view_state(sample) : fallbackMotorState(sample);
+    state.motors.forEach(function (motor) {
+      var id = "motor-" + motor.id.replace(/_/g, "-");
+      var card = $(id); if (!card) return;
+      card.dataset.motor = motor.id; card.dataset.health = motor.health;
+      var rpm = motor.rpm == null ? "—" : Number(motor.rpm).toFixed(0);
+      var thrust = motor.thrust_newtons == null ? "—" : Number(motor.thrust_newtons).toFixed(2);
+      var current = motor.current_a == null ? "—" : Number(motor.current_a).toFixed(2);
+      card.textContent = "M" + (motor.index + 1) + " · " + translate(motor.id) + "\n" + rpm + " rpm · " + thrust + " N · " + current + " A\n" + translate(motor.health);
+    });
+    var status = visual && visual.status ? visual.status() : { available: false };
+    text("visualization-status", status.available ? translate("live") : translate("visualization_unavailable"));
+    text("flow-legend", "FRD · SI · flow magnitude uses m/s");
   }
   function send(type, data) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return null;
@@ -485,6 +547,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     if (!sample.sample_seq) return;
     if (!waitingForFresh && Number(sample.sample_seq) <= lastSampleSequence) return;
     lastSampleSequence = Number(sample.sample_seq);
+    lastTelemetrySample = sample;
     waitingForFresh = false;
     pendingFreshRequestSequence = null;
     snapshotReady = true;
@@ -510,6 +573,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     var motors = sample.motors || [];
     text("motors", motors.map(function (motor) { return Number(motor.thrust_newtons).toFixed(2) + " N"; }).join(" | ") || "—");
     renderDiagnostics(sample);
+    renderMotorCards(sample);
     window.__AEROSIM_GSP_TELEMETRY__ = sample;
     if (typeof CustomEvent === "function" && window.dispatchEvent) window.dispatchEvent(new CustomEvent("aerosim-gsp-telemetry", { detail: sample }));
     sparkValues.push((sample.rpm || []).reduce(function (sum, rpm) { return sum + Number(rpm || 0); }, 0) / 60000);
@@ -640,10 +704,10 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     window.__AEROSIM_PANEL_TEST__.renderPresets = renderPresets;
     window.__AEROSIM_PANEL_TEST__.renderPresetDiff = renderPresetDiff;
     window.__AEROSIM_PANEL_TEST__.renderMigrationReport = renderMigrationReport;
+    window.__AEROSIM_PANEL_TEST__.motorCards = function () { return [$("motor-rear-right"), $("motor-front-right"), $("motor-rear-left"), $("motor-front-left")]; };
   }
   connect(); drawSparkline();
 }());
 </script>
-<script src="assets/gsp_visual.js"></script>
 </body>
 </html>
