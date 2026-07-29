@@ -93,6 +93,10 @@ class GspIssue251ContractTests(unittest.TestCase):
         self.assertIn("sampleIndex < 100", runner)
         self.assertIn("sampleIndex", runner)
         self.assertIn("clock_sync", runner)
+        self.assertIn("AEROSIM_GSP_BROWSER_HEADLESS", runner)
+        self.assertIn("--headless=new", runner)
+        self.assertIn("THREE.REVISION", runner)
+        self.assertIn("rotor_count", runner)
         self.assertNotIn("timeOrigin", runner)
 
     def test_release_report_is_in_reports_directory(self) -> None:

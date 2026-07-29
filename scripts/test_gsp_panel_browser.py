@@ -125,9 +125,79 @@ def read_panel_url(process: subprocess.Popen[bytes], deadline: float) -> str:
     raise RuntimeError(f"timed out waiting for GSP URL: {output.decode(errors='replace')[-2000:]}")
 
 
+def run_headless_scene_smoke(output_path: Path) -> int:
+    result: dict = {"status": "deferred", "runner": "google-chrome-cdp-headless", "output": str(output_path)}
+    game: subprocess.Popen[bytes] | None = None
+    chrome: subprocess.Popen[bytes] | None = None
+    cdp: Cdp | None = None
+    try:
+        if not Path(CHROME).exists():
+            raise RuntimeError(f"Chrome executable unavailable: {CHROME}")
+        with tempfile.TemporaryDirectory(prefix="aerosim-gsp-webgl-") as temp_dir:
+            stop_path = Path(temp_dir) / "stop"
+            game = subprocess.Popen(
+                [GODOT, "--headless", "--path", str(ROOT), "--script", "res://tests/headless/gsp_launcher_harness.gd", "--", "--stop-file", str(stop_path)],
+                cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=os.environ.copy(),
+            )
+            panel_url = read_panel_url(game, time.monotonic() + 20.0)
+            debug_port = 9230
+            chrome = subprocess.Popen(
+                [CHROME, "--headless=new", "--use-angle=swiftshader", f"--remote-debugging-port={debug_port}", "--remote-debugging-address=127.0.0.1", f"--user-data-dir={temp_dir}", "--no-first-run", "--no-default-browser-check", "about:blank"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=os.environ.copy(),
+            )
+            target = wait_for_target(debug_port, time.monotonic() + 15.0)
+            cdp = Cdp(str(target["webSocketDebuggerUrl"]))
+            cdp.command("Page.enable")
+            cdp.command("Runtime.enable")
+            cdp.command("Page.navigate", {"url": panel_url})
+            evidence = cdp.evaluate(
+                """(async () => {
+                    const deadline = performance.now() + 5000;
+                    while (performance.now() < deadline) {
+                      const visual = window.__AEROSIM_GSP_VISUAL__;
+                      if (visual && visual.status().available) break;
+                      await new Promise(requestAnimationFrame);
+                    }
+                    const canvas = document.getElementById('airframe-3d');
+                    return {
+                      three_revision: window.THREE && window.THREE.REVISION,
+                      visual: window.__AEROSIM_GSP_VISUAL__ && window.__AEROSIM_GSP_VISUAL__.status(),
+                      webgl: !!canvas && (!!canvas.getContext('webgl2') || !!canvas.getContext('webgl')),
+                    };
+                })()"""
+            )
+            if not isinstance(evidence, dict) or evidence.get("three_revision") != "180" or not evidence.get("webgl") or evidence.get("visual", {}).get("rotor_count") != 4 or evidence.get("visual", {}).get("available") is not True:
+                result["evidence"] = evidence
+                raise RuntimeError("installed file:// GSP bundle did not expose WebGL Three.js flight health")
+            result.update({"status": "qualified", "panel_url": panel_url, "evidence": evidence})
+            stop_path.touch()
+    except Exception as error:
+        result["reason"] = str(error)
+    finally:
+        if cdp is not None:
+            cdp.close()
+        if chrome is not None:
+            chrome.terminate()
+            try:
+                chrome.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                chrome.kill()
+        if game is not None:
+            game.terminate()
+            try:
+                game.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                game.kill()
+        output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["status"] == "qualified" else 1
+
+
 def main() -> int:
     output_path = Path(os.environ.get("AEROSIM_GSP_BROWSER_OUTPUT", "build/gsp-browser/performance.raw.json"))
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if os.environ.get("AEROSIM_GSP_BROWSER_HEADLESS") == "1":
+        return run_headless_scene_smoke(output_path)
     result: dict = {"status": "deferred", "runner": "google-chrome-cdp", "output": str(output_path)}
     game: subprocess.Popen[bytes] | None = None
     chrome: subprocess.Popen[bytes] | None = None
