@@ -84,6 +84,21 @@ double rear_thrust(const std::array<double, 4> &t) {
     return t[kRearLeft] + t[kRearRight];
 }
 
+aerosim::RigidBodyState state_after_pitch_command(double pitch_degrees) {
+    aerosim::SimulationConfig config = shipped_5_inch_6s_config();
+    aerosim::FlightController controller;
+    aerosim::RigidBodyState state;
+    aerosim::SimulationClock clock;
+    controller.arm(0.0);
+    aerosim::FlightCommand command;
+    command.throttle = shipped_hover_throttle();
+    command.pitch_degrees = pitch_degrees;
+    for (int frame = 0; frame < config.physics_hz; ++frame) {
+        controller.step_angle_mode(state, clock, config, command, state.orientation);
+    }
+    return state;
+}
+
 }  // namespace
 
 int main() {
@@ -125,6 +140,12 @@ int main() {
     if (std::abs(left_thrust(pitch_up) - right_thrust(pitch_up)) >
             std::abs(front_thrust(pitch_up) - rear_thrust(pitch_up)) * 0.05) {
         return fail("a pitch command must not produce a rolling moment");
+    }
+
+    const aerosim::RigidBodyState stick_forward = state_after_pitch_command(-10.0);
+    if (!(stick_forward.position.x > 0.01 &&
+            std::abs(stick_forward.position.z) < stick_forward.position.x * 0.05)) {
+        return fail("a forward pitch command must move along FRD forward, not right");
     }
 
     std::cout << "stick axis convention ok\n";

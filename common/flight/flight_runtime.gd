@@ -49,10 +49,14 @@ const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const ASSISTED_MAX_YAW_RATE_DPS := 120.0
 const ASSISTED_MAX_VERTICAL_SPEED_MPS := 2.0
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
+const MAIN_MENU_ENTRIES_INSET := Vector2(24.0, 56.0)
 const COCKPIT_LEFT_RAIL_WIDTH := 360.0
 const COCKPIT_RIGHT_RAIL_WIDTH := 436.0
 const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
-const THIRD_PERSON_CAMERA_OFFSET := Vector3(0.0, 0.8, 1.8)
+# The simulation body is +X forward, +Z right, and +Y up, whereas Camera3D
+# looks along local -Z. This rotates the camera into the body convention.
+const FPV_CAMERA_BODY_ALIGNMENT := Basis(Vector3.UP, -PI * 0.5)
+const THIRD_PERSON_CAMERA_OFFSET := Vector3(-1.8, 0.8, 0.0)
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
@@ -3380,6 +3384,11 @@ func _build_main_menu() -> void:
 
     var entries := VBoxContainer.new()
     entries.name = "Entries"
+    # The entries used to sit flush at (0, 0). Wayland client-side decorations overlap the
+    # top of the viewport, which hid the whole first entry — Quick Fly — behind the title
+    # bar with no indication it existed. Inset the stack clear of the window edge.
+    entries.set_anchors_preset(Control.PRESET_TOP_LEFT)
+    entries.position = MAIN_MENU_ENTRIES_INSET
     main_menu_entries_container = entries
     layer.add_child(entries)
 
@@ -4741,11 +4750,11 @@ func _gsp_pause_launcher() -> Node:
 
 func _build_gsp_pause_actions(rows: VBoxContainer) -> void:
     var launcher := _gsp_pause_launcher()
-    if launcher == null or not bool(launcher.call("is_panel_ready")):
+    if launcher == null:
         return
     gsp_panel_status_label = Label.new()
     gsp_panel_status_label.name = "GspPanelStatus"
-    gsp_panel_status_label.text = _t("ui.gsp.ready")
+    gsp_panel_status_label.text = _t("ui.gsp.ready") if bool(launcher.call("is_panel_ready")) else _t("ui.gsp.unavailable")
     gsp_panel_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     rows.add_child(gsp_panel_status_label)
     var open := Button.new()
@@ -6422,10 +6431,21 @@ func _profile_throttle_raw() -> float:
     var axis := int(session_gamepad_profile.axis_for_role["throttle"])
     return Input.get_joy_axis(session_gamepad_device_id, axis)
 
+## A transmitter's throttle is ratcheted and stays where the pilot leaves it. A gamepad
+## stick self-centres, so a linear [0, 1] map made "hands off" mean 50 % against a ~33 %
+## hover point: the aircraft climbed faster than it advanced and never went where it was
+## pointed. Anchor the centre detent to hover instead, so releasing the stick holds
+## altitude, and keep both stick extremes at full range.
 func _flight_throttle() -> float:
     if not _has_active_gamepad_profile():
         return KEYBOARD_FLIGHT_THROTTLE
-    return clampf((_profile_axis("throttle") + 1.0) * 0.5, 0.0, 1.0)
+    var axis := _profile_axis("throttle")
+    var hover := _configured_hover_throttle()
+    if hover <= 0.0:
+        return clampf((axis + 1.0) * 0.5, 0.0, 1.0)
+    if axis >= 0.0:
+        return clampf(lerpf(hover, 1.0, axis), 0.0, 1.0)
+    return clampf(lerpf(hover, 0.0, -axis), 0.0, 1.0)
 
 func _configured_hover_throttle() -> float:
     if native != null and native.has_method("hardware_power_diagnostics"):
@@ -6474,14 +6494,21 @@ func _update_chase_camera() -> void:
     var player_map_view := _reset_pending_token == 0 and loaded_map != null and screen in ["preflight", "flight", "finish", "controller_confirmation", "fallback_prompt"]
     if player_map_view:
         chase_camera.global_position = drone_body.global_position + drone_body.global_basis * Vector3(0.0, 0.03, 0.0)
-        chase_camera.global_basis = drone_body.global_basis * Basis(Vector3.RIGHT, deg_to_rad(float(camera_profile.camera_angle_deg)))
+        chase_camera.global_basis = drone_body.global_basis * FPV_CAMERA_BODY_ALIGNMENT * Basis(Vector3.RIGHT, deg_to_rad(float(camera_profile.camera_angle_deg)))
         chase_camera.fov = float(camera_profile.fov_deg)
     else:
         chase_camera.global_position = drone_body.global_position + CHASE_CAMERA_OFFSET
         chase_camera.look_at(drone_body.global_position, Vector3.UP)
     if third_person_camera != null and third_person_view and screen in ["preflight", "flight", "finish", "controller_confirmation", "fallback_prompt"]:
-        third_person_camera.global_position = drone_body.global_position + drone_body.global_basis * THIRD_PERSON_CAMERA_OFFSET
-        third_person_camera.look_at(drone_body.global_position + drone_body.global_basis * Vector3(0.0, 0.2, 0.0), Vector3.UP)
+        var horizontal_forward := Vector3(drone_body.global_basis.x.x, 0.0, drone_body.global_basis.x.z)
+        if horizontal_forward.is_zero_approx():
+            var horizontal_right := Vector3(drone_body.global_basis.z.x, 0.0, drone_body.global_basis.z.z).normalized()
+            horizontal_forward = Vector3.UP.cross(horizontal_right)
+        else:
+            horizontal_forward = horizontal_forward.normalized()
+        var horizontal_body_basis := Basis(horizontal_forward, Vector3.UP, horizontal_forward.cross(Vector3.UP))
+        third_person_camera.global_position = drone_body.global_position + horizontal_body_basis * THIRD_PERSON_CAMERA_OFFSET
+        third_person_camera.look_at(drone_body.global_position + Vector3(0.0, 0.2, 0.0), Vector3.UP)
         third_person_camera.current = true
         chase_camera.current = false
     else:
@@ -6491,7 +6518,7 @@ func _update_chase_camera() -> void:
     if secondary_drone_body != null and secondary_chase_camera != null and secondary_drone_body.visible:
         if screen in ["preflight", "flight", "finish"]:
             secondary_chase_camera.global_position = secondary_drone_body.global_position + secondary_drone_body.global_basis * Vector3(0.0, 0.03, 0.0)
-            secondary_chase_camera.global_basis = secondary_drone_body.global_basis * Basis(Vector3.RIGHT, deg_to_rad(float(camera_profile.camera_angle_deg)))
+            secondary_chase_camera.global_basis = secondary_drone_body.global_basis * FPV_CAMERA_BODY_ALIGNMENT * Basis(Vector3.RIGHT, deg_to_rad(float(camera_profile.camera_angle_deg)))
             secondary_chase_camera.fov = float(camera_profile.fov_deg)
         else:
             secondary_chase_camera.global_position = secondary_drone_body.global_position + CHASE_CAMERA_OFFSET

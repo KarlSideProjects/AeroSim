@@ -2,8 +2,13 @@ class_name CameraProfile
 extends RefCounted
 
 const SCHEMA_VERSION := 1
-const DEFAULT_CAMERA_ANGLE_DEG := 30.0
-const DEFAULT_FOV_DEG := 150.0
+# Camera3D.fov is the vertical FOV under the default keep_aspect = KEEP_HEIGHT, so 150
+# rendered a ~163 degree horizontal view at 16:9. On a flat monitor that suppresses the
+# apparent forward translation the pilot needs to fly, while amplifying every attitude
+# change. 90 vertical is ~121 horizontal, still wide, and readable. Both values remain
+# pilot-adjustable from the in-flight camera panel.
+const DEFAULT_CAMERA_ANGLE_DEG := 0.0
+const DEFAULT_FOV_DEG := 90.0
 
 
 static func default_profile() -> Dictionary:
