@@ -44,6 +44,26 @@ func test_route_stays_bounded_and_finishes_at_spawn() -> void:
     assert_eq(terminal.target_position, spawn)
 
 
+func test_route_keeps_low_pass_orbit_and_climb_targets_reachable_at_demo_speed() -> void:
+    var route := DemoFlightRoute.new()
+    var spawn := Vector3.ZERO
+    route.start(spawn)
+
+    var low_pass: Dictionary = route.advance(14.9, spawn, Vector3.ZERO, 0.0)
+    assert_eq(low_pass.phase, "low_pass")
+    assert_lte(Vector2(low_pass.target_position.x, low_pass.target_position.z).length(), 10.0)
+
+    var orbit: Dictionary = route.advance(7.1, spawn, Vector3.ZERO, 0.0)
+    assert_eq(orbit.phase, "orbit")
+    assert_lte(Vector2(orbit.target_position.x, orbit.target_position.z).length(), 15.0)
+    assert_gt(Vector2(orbit.target_position.x, orbit.target_position.z).distance_to(Vector2(low_pass.target_position.x, low_pass.target_position.z)), 0.5)
+
+    var climb: Dictionary = route.advance(15.8, spawn, Vector3.ZERO, 0.0)
+    assert_eq(climb.phase, "climb")
+    assert_lte(climb.target_position.y, 7.0)
+    assert_gt(climb.target_position.y, low_pass.target_position.y + 2.0)
+
+
 func test_cancel_makes_the_route_inactive_immediately() -> void:
     var route := DemoFlightRoute.new()
     route.start(Vector3(0.0, 0.6, -24.0))

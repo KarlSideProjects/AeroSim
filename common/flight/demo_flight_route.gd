@@ -7,9 +7,9 @@ const ORBIT_END_SECONDS := 29.0
 const CLIMB_END_SECONDS := 38.0
 const RETURN_END_SECONDS := 52.0
 const LAND_END_SECONDS := 60.0
-const CRUISE_SPEED_MPS := 4.0
-const CLIMB_SPEED_MPS := 3.0
-const LAND_SPEED_MPS := 1.5
+const CRUISE_SPEED_MPS := 0.75
+const CLIMB_SPEED_MPS := 0.75
+const LAND_SPEED_MPS := 0.75
 
 var _spawn := Vector3.ZERO
 var _elapsed_seconds := 0.0
@@ -71,17 +71,16 @@ func _hover_target() -> Vector3:
 
 
 func _low_pass_target() -> Vector3:
-    return _spawn + Vector3(24.0, 4.0, 37.0)
+    return _spawn + Vector3(5.5, 3.0, 6.0)
 
 
 func _orbit_target() -> Vector3:
     var orbit_points := [
         _low_pass_target(),
-        _spawn + Vector3(17.5, 6.0, 35.0),
-        _spawn + Vector3(17.5, 8.0, 55.0),
-        _spawn + Vector3(30.0, 10.0, 65.0),
-        _spawn + Vector3(51.0, 10.0, 64.0),
-        _spawn + Vector3(57.0, 8.0, 50.0),
+        _spawn + Vector3(7.5, 3.0, 6.0),
+        _spawn + Vector3(7.5, 3.0, 8.0),
+        _spawn + Vector3(5.5, 3.0, 8.0),
+        _spawn + Vector3(4.0, 3.0, 7.0),
         _orbit_finish(),
     ]
     var progress := inverse_lerp(LOW_PASS_END_SECONDS, ORBIT_END_SECONDS, _elapsed_seconds)
@@ -91,15 +90,15 @@ func _orbit_target() -> Vector3:
 
 
 func _orbit_finish() -> Vector3:
-    return _spawn + Vector3(51.0, 7.0, 32.0)
+    return _low_pass_target()
 
 
 func _climb_target() -> Vector3:
-    return _spawn + Vector3(36.0, 24.0, 46.0)
+    return _spawn + Vector3(6.0, 6.5, 6.0)
 
 
 func _return_target() -> Vector3:
-    return _spawn + Vector3(0.0, 4.0, 0.0)
+    return _spawn + Vector3(2.0, 3.0, 2.0)
 
 
 func _interpolate(start: Vector3, finish: Vector3, start_time: float, finish_time: float) -> Vector3:
