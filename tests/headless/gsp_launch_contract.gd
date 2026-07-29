@@ -39,6 +39,9 @@ func _init() -> void:
 
     var action_harness := LauncherHarness.new()
     get_root().add_child(action_harness)
+    action_harness._ready()
+    if action_harness.is_panel_ready():
+        failures.append("launcher must remain inactive until an in-game GSP action is requested")
     var action_launch: Dictionary = action_harness.request_panel_open()
     if not bool(action_launch.get("ok", false)):
         failures.append("user action must start the launcher without a command-line argument")
