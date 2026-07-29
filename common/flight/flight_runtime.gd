@@ -28,6 +28,7 @@ const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
 const TimeTrialController = preload("res://common/flight/time_trial.gd")
 const ReplayIntegrationRunner = preload("res://common/flight/replay_integration_runner.gd")
 const LicenseProviderScript = preload("res://common/license/license_provider.gd")
+const DemoFlightRoute = preload("res://common/flight/demo_flight_route.gd")
 const DEFAULT_HARDWARE_PRESET := "res://config/drones/5_inch_6s.json"
 const LICENSE_PROVIDER_CONFIG_PATH := "res://config/license_provider.json"
 const DEFAULT_FREE_FLIGHT_MAP_ID := "terrain3d_range"
@@ -56,7 +57,7 @@ const CHASE_CAMERA_OFFSET := Vector3(-3.0, 1.4, 2.2)
 # The simulation body is +X forward, +Z right, and +Y up, whereas Camera3D
 # looks along local -Z. This rotates the camera into the body convention.
 const FPV_CAMERA_BODY_ALIGNMENT := Basis(Vector3.UP, -PI * 0.5)
-const THIRD_PERSON_CAMERA_OFFSET := Vector3(-1.8, 0.8, 0.0)
+const THIRD_PERSON_CAMERA_OFFSET := Vector3(-5.5, 2.4, 0.0)
 const WIND_PRESETS := ["calm", "light", "moderate", "severe"]
 
 @export var scene_steady_wind_mps := Vector3.ZERO
@@ -130,6 +131,11 @@ var flight_mode := "ANGLE"
 var acro_roll_stick := 0.0
 var acro_pitch_stick := 0.0
 var acro_yaw_stick := 0.0
+var demo_flight_route: DemoFlightRoute
+var _demo_flight_controls: Dictionary = {}
+var _demo_flight_finish_pending := false
+var _demo_flight_target := Vector3.ZERO
+var _demo_flight_heading := 0.0
 var dashboard_layout_mode := "compact"
 var development_license_bypass := OS.is_debug_build()
 var status_diagram: CanvasLayer
@@ -1447,6 +1453,10 @@ func _write_airsim_ready_marker(path: String) -> void:
     marker.close()
 
 func _unhandled_input(event: InputEvent) -> void:
+    if demo_flight_active():
+        if event.is_action_pressed("flight_exit"):
+            cancel_demo_flight()
+        return
     if event is InputEventKey:
         var key_event := event as InputEventKey
         _quick_adjust_pressed_keys[int(key_event.keycode)] = key_event.pressed
@@ -1588,17 +1598,18 @@ func _physics_process(delta: float) -> void:
     var acro_roll := _profile_axis("roll") if _has_active_gamepad_profile() else _acro_roll_stick()
     var acro_pitch := _profile_axis("pitch") if _has_active_gamepad_profile() else _acro_pitch_stick()
     var acro_yaw := _profile_axis("yaw") if _has_active_gamepad_profile() else _acro_yaw_stick()
-    var airsim_controls := _airsim_controls_for_frame()
-    if not airsim_controls.is_empty():
-        throttle = float(airsim_controls.get("throttle", throttle))
-        angle_roll = float(airsim_controls.get("roll", angle_roll))
-        angle_pitch = float(airsim_controls.get("pitch", angle_pitch))
-        angle_yaw = float(airsim_controls.get("yaw_rate", angle_yaw))
-        acro_roll = float(airsim_controls.get("acro_roll", acro_roll))
-        acro_pitch = float(airsim_controls.get("acro_pitch", acro_pitch))
-        acro_yaw = float(airsim_controls.get("acro_yaw", acro_yaw))
-        if airsim_controls.has("mode"):
-            flight_mode = String(airsim_controls["mode"])
+    var route_controls := _demo_controls_for_frame(delta)
+    var external_controls := route_controls if not route_controls.is_empty() else _airsim_controls_for_frame()
+    if not external_controls.is_empty():
+        throttle = float(external_controls.get("throttle", throttle))
+        angle_roll = float(external_controls.get("roll", angle_roll))
+        angle_pitch = float(external_controls.get("pitch", angle_pitch))
+        angle_yaw = float(external_controls.get("yaw_rate", angle_yaw))
+        acro_roll = float(external_controls.get("acro_roll", acro_roll))
+        acro_pitch = float(external_controls.get("acro_pitch", acro_pitch))
+        acro_yaw = float(external_controls.get("acro_yaw", acro_yaw))
+        if external_controls.has("mode"):
+            flight_mode = String(external_controls["mode"])
     var row: PackedFloat64Array
     if px4_sitl_bridge != null:
         var actuator_outputs := px4_sitl_bridge.actuator_outputs()
@@ -1796,6 +1807,7 @@ func _physics_process(delta: float) -> void:
             Vector3(row[8], row[9], row[10]),
             Vector3(row[14], row[15], row[16])
         )
+        _apply_demo_flight_pose()
     if defer_airsim_advance and airsim_session != null and not px4_lockstep_active:
         session_advanced = airsim_session.advance_frame()
         if not session_advanced and airsim_session.is_paused():
@@ -2270,6 +2282,86 @@ func quick_fly() -> void:
         if _reset_pending_token != 0:
             return
     _route_quick_fly_after_reset()
+
+
+func start_demo_flight() -> void:
+    if not can_start_quick_fly():
+        if screen != "license_blocked":
+            _show_license_blocked("Demo Flight unavailable: license %s" % String(get_license_snapshot().get("status", "invalid_token")))
+        return
+    _demo_flight_finish_pending = false
+    _demo_flight_controls.clear()
+    if loaded_map_id != "industrial_yard" or loaded_map == null:
+        if not load_map("industrial_yard"):
+            screen = "error"
+            _refresh_flight_hud()
+            return
+    current_spawn_index = 0
+    var spawn := _current_spawn_marker()
+    if spawn == null:
+        screen = "error"
+        last_error_message = "Demo Flight spawn is unavailable"
+        _refresh_flight_hud()
+        return
+    demo_flight_route = DemoFlightRoute.new()
+    demo_flight_route.start(spawn.global_position, true)
+    var gsp_launcher := get_node_or_null("GspLauncher")
+    if gsp_launcher != null and gsp_launcher.has_method("open_demo_panel"):
+        gsp_launcher.call("open_demo_panel")
+    third_person_view = true
+    _reset_arm_after_commit = true
+    _reset_after_commit_takeoff = true
+    if not reset_to_spawn():
+        demo_flight_route.cancel()
+        _reset_after_commit_takeoff = false
+        _reset_arm_after_commit = false
+        screen = "error"
+        _refresh_flight_hud()
+
+
+func demo_flight_active() -> bool:
+    return demo_flight_route != null and bool(demo_flight_route.snapshot().active)
+
+
+func cancel_demo_flight() -> void:
+    if demo_flight_route != null:
+        demo_flight_route.cancel()
+    _demo_flight_controls.clear()
+    _demo_flight_finish_pending = false
+    var restore_quit_on_exit := quit_on_exit
+    quit_on_exit = false
+    request_exit()
+    quit_on_exit = restore_quit_on_exit
+    exit_requested = false
+
+
+func _demo_controls_for_frame(_delta: float) -> Dictionary:
+    _demo_flight_controls.clear()
+    if not demo_flight_active() or drone_body == null:
+        return _demo_flight_controls
+    var state: Dictionary = demo_flight_route.advance(_delta, drone_body.global_position, drone_body.linear_velocity, drone_body.rotation.y)
+    if bool(state.complete):
+        if not _demo_flight_finish_pending:
+            _demo_flight_finish_pending = true
+            call_deferred("cancel_demo_flight")
+        return _demo_flight_controls
+    var target: Vector3 = state.target_position
+    var horizontal_delta := Vector3(target.x - drone_body.global_position.x, 0.0, target.z - drone_body.global_position.z)
+    var desired_horizontal := horizontal_delta.normalized() * minf(horizontal_delta.length() * 1.2, float(state.target_speed_mps))
+    var desired_vertical := clampf((target.y - drone_body.global_position.y) * 1.5, -2.0, 2.0)
+    var heading: float = atan2(horizontal_delta.z, horizontal_delta.x) if horizontal_delta.length_squared() > 0.01 else drone_body.rotation.y
+    var yaw_rate := clampf(rad_to_deg(wrapf(heading - drone_body.rotation.y, -PI, PI)) * 2.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS)
+    _demo_flight_target = target
+    _demo_flight_heading = heading
+    _demo_flight_controls = _airsim_velocity_controls(Vector3(desired_horizontal.x, desired_vertical, desired_horizontal.z), target.y - drone_body.global_position.y, {"is_rate": true, "yaw_or_rate": yaw_rate})
+    _demo_flight_controls["throttle"] = clampf(_configured_hover_throttle() + float(_demo_flight_controls.throttle) - float(_airsim_neutral_controls().throttle), 0.0, 1.0)
+    return _demo_flight_controls
+
+
+func _apply_demo_flight_pose() -> void:
+    if not demo_flight_active() or drone_body == null:
+        return
+    drone_body.apply_native_state(_demo_flight_target, Quaternion(Vector3.UP, _demo_flight_heading), Vector3.ZERO, Vector3.ZERO)
 
 
 func _route_quick_fly_after_reset() -> void:
@@ -3399,6 +3491,8 @@ func _build_main_menu() -> void:
         entries.add_child(button)
         if entry == "Quick Fly":
             button.pressed.connect(quick_fly)
+        elif entry == "Demo Flight":
+            button.pressed.connect(start_demo_flight)
         elif entry == "Lab Mode":
             button.pressed.connect(open_lab_mode)
         elif entry == "Drone":
@@ -3480,6 +3574,12 @@ func _build_flight_setup_panel() -> void:
     fly_button.text = _t("ui.action.fly")
     fly_button.pressed.connect(_fly_from_flight_setup)
     rows.add_child(fly_button)
+
+    var demo_button := Button.new()
+    demo_button.name = "DemoFlight"
+    demo_button.text = _t("ui.menu.demo_flight")
+    demo_button.pressed.connect(start_demo_flight)
+    rows.add_child(demo_button)
 
     var back_button := Button.new()
     back_button.name = "Back"
@@ -6206,7 +6306,9 @@ func _refresh_gamepad_hud() -> void:
     if gamepad_hud_panel == null or gamepad_hud_display == null:
         return
     gamepad_hud_panel.visible = screen in ["flight", "error"]
-    var connected := _has_active_gamepad_profile() and session_gamepad_device_id >= 0
+    var demo_controls_active := demo_flight_active() and not _demo_flight_controls.is_empty()
+    var connected := demo_controls_active or (_has_active_gamepad_profile() and session_gamepad_device_id >= 0)
+    var demo_throttle := clampf(float(_demo_flight_controls.get("throttle", 0.5)) * 2.0 - 1.0, -1.0, 1.0)
     gamepad_hud_display.call("set_controller_state", {
         "connected": connected,
         "title": _t("ui.gamepad_hud.title"),
@@ -6215,10 +6317,10 @@ func _refresh_gamepad_hud() -> void:
         "actions": _t("ui.gamepad_hud.actions"),
         "connection": _t("ui.gamepad_hud.connected") if connected else _t("ui.gamepad_hud.unavailable"),
         "mode": _localized_flight_mode(flight_mode),
-        "yaw": _profile_axis("yaw") if connected else 0.0,
-        "throttle": _profile_axis("throttle") if connected else 0.0,
-        "roll": _profile_axis("roll") if connected else 0.0,
-        "pitch": _profile_axis("pitch") if connected else 0.0,
+        "yaw": clampf(float(_demo_flight_controls.get("yaw_rate", 0.0)) / ANGLE_MAX_YAW_RATE_DPS, -1.0, 1.0) if demo_controls_active else (_profile_axis("yaw") if connected else 0.0),
+        "throttle": demo_throttle if demo_controls_active else (_profile_axis("throttle") if connected else 0.0),
+        "roll": clampf(float(_demo_flight_controls.get("roll", 0.0)) / ANGLE_MAX_TILT_DEGREES, -1.0, 1.0) if demo_controls_active else (_profile_axis("roll") if connected else 0.0),
+        "pitch": clampf(float(_demo_flight_controls.get("pitch", 0.0)) / ANGLE_MAX_TILT_DEGREES, -1.0, 1.0) if demo_controls_active else (_profile_axis("pitch") if connected else 0.0),
     })
 
 func _handle_primary_action() -> void:

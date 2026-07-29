@@ -3,6 +3,8 @@ class_name GspLauncher
 
 const PANEL_RESOURCE_PATH := "res://common/gsp/gsp_panel.html"
 const PANEL_DIRECTORY := "gsp"
+const DEMO_BROWSER_EXECUTABLE := "google-chrome"
+const DEMO_BROWSER_CLASS := "AeroSimGspDemo"
 const PANEL_ASSET_PATHS := [
     "res://common/gsp/assets/gsp_visual.js",
     "res://common/gsp/assets/three-0.180.0.global.min.js",
@@ -132,6 +134,32 @@ func request_panel_open() -> Dictionary:
     if not is_panel_ready():
         return launch({"open": true})
     return shell_open_result(true, open_panel(_panel_url), _panel_url)
+
+
+func open_demo_panel() -> Dictionary:
+    var game_position := DisplayServer.window_get_position()
+    var game_size := DisplayServer.window_get_size()
+    var launch_result := launch({"open": false}) if not is_panel_ready() else {"ok": true, "panel_url": _panel_url}
+    if not bool(launch_result.get("ok", false)):
+        return launch_result
+    if DisplayServer.get_name() != "X11":
+        return shell_open_result(true, open_panel(_panel_url), _panel_url)
+    var game_height := game_size.y * 3 / 5
+    DisplayServer.window_set_position(game_position)
+    DisplayServer.window_set_size(Vector2i(game_size.x, game_height))
+    var browser_profile := OS.get_user_data_dir().path_join(PANEL_DIRECTORY).path_join("demo-browser")
+    var browser_pid := OS.create_process(DEMO_BROWSER_EXECUTABLE, [
+        "--no-first-run", "--user-data-dir=%s" % browser_profile,
+        "--class=%s" % DEMO_BROWSER_CLASS, "--app=%s" % _panel_url,
+    ])
+    if browser_pid <= 0:
+        return shell_open_result(true, open_panel(_panel_url), _panel_url)
+    OS.create_process("xdotool", [
+        "search", "--sync", "--onlyvisible", "--class", DEMO_BROWSER_CLASS,
+        "windowmove", str(game_position.x), str(game_position.y + game_height),
+        "windowsize", str(game_size.x), str(game_size.y - game_height),
+    ])
+    return {"ok": true, "opened": true, "panel_url": _panel_url, "split": true}
 
 
 func copy_panel_url() -> Dictionary:

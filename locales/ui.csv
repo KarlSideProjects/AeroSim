@@ -2,6 +2,7 @@ keys,en,zh_TW
 ui.settings,SETTINGS,設定
 ui.render_scale,RENDER SCALE: %d%%,渲染比例：%d%%
 ui.menu.quick_fly,Quick Fly,快速飛行
+ui.menu.demo_flight,Demo Flight,示範飛行
 ui.menu.lab_mode,Lab Mode,實驗室模式
 ui.menu.controller,Controller,控制器
 ui.menu.drone,Drone,無人機
