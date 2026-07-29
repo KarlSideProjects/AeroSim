@@ -49,8 +49,13 @@ const ANGLE_MAX_TILT_DEGREES := 30.0
 const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const ASSISTED_MAX_YAW_RATE_DPS := 120.0
 const ASSISTED_MAX_VERTICAL_SPEED_MPS := 2.0
+const DEMO_MAX_TILT_DEGREES := 5.0
 const DEMO_MAX_SPEED_MPS := 30.0
 const DEMO_MAX_RELATIVE_ALTITUDE_M := 32.0
+const DEMO_VERTICAL_POSITION_GAIN := 0.15
+const DEMO_MAX_VERTICAL_TARGET_SPEED_MPS := 0.5
+const DEMO_VERTICAL_VELOCITY_GAIN := 0.02
+const DEMO_THROTTLE_RANGE := 0.05
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
 const MAIN_MENU_ENTRIES_INSET := Vector2(24.0, 56.0)
 const COCKPIT_LEFT_RAIL_WIDTH := 360.0
@@ -2369,7 +2374,7 @@ func cancel_demo_flight() -> void:
 
 
 func _demo_needs_native_sync() -> bool:
-    return not _demo_native_state_synced or (drone_body != null and drone_body.contact_seen)
+    return not _demo_native_state_synced or last_collision_authority == 1
 
 
 func _demo_controls_for_frame(delta: float) -> Dictionary:
@@ -2383,15 +2388,25 @@ func _demo_controls_for_frame(delta: float) -> Dictionary:
             call_deferred("cancel_demo_flight")
         return _demo_flight_controls
     var error_world: Vector3 = state.target_position - drone_body.global_position
-    var body_error: Vector3 = drone_body.global_transform.basis.inverse() * Vector3(error_world.x, 0.0, error_world.z)
+    var horizontal_error := Vector3(error_world.x, 0.0, error_world.z)
+    var target_speed := minf(float(state.target_speed_mps), horizontal_error.length() * 1.5)
+    var target_horizontal_velocity := horizontal_error.normalized() * target_speed if horizontal_error.length_squared() > 0.0001 else Vector3.ZERO
+    var yaw_basis := Basis(Vector3.UP, drone_body.rotation.y)
+    var body_target_velocity: Vector3 = yaw_basis.inverse() * target_horizontal_velocity
+    var body_velocity: Vector3 = yaw_basis.inverse() * Vector3(drone_body.linear_velocity.x, 0.0, drone_body.linear_velocity.z)
+    var horizontal_velocity_error := body_target_velocity - body_velocity
     var heading: float = atan2(error_world.z, error_world.x) if Vector2(error_world.x, error_world.z).length_squared() > 0.01 else drone_body.rotation.y
     var yaw_error_degrees := rad_to_deg(wrapf(heading - drone_body.rotation.y, -PI, PI))
     var hover := _configured_hover_throttle()
+    var target_vertical_speed := clampf(error_world.y * DEMO_VERTICAL_POSITION_GAIN, -DEMO_MAX_VERTICAL_TARGET_SPEED_MPS, DEMO_MAX_VERTICAL_TARGET_SPEED_MPS)
+    var roll := clampf(horizontal_velocity_error.z * 3.0, -DEMO_MAX_TILT_DEGREES, DEMO_MAX_TILT_DEGREES)
+    var pitch := clampf(-horizontal_velocity_error.x * 3.0, -DEMO_MAX_TILT_DEGREES, DEMO_MAX_TILT_DEGREES)
+    var tilt_cos := maxf(cos(deg_to_rad(roll)) * cos(deg_to_rad(pitch)), 0.8)
     _demo_flight_controls = {
         "mode": "ANGLE",
-        "throttle": clampf(hover + error_world.y * 0.08 - drone_body.linear_velocity.y * 0.04, 0.0, 1.0),
-        "roll": clampf(body_error.z * 1.5, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
-        "pitch": clampf(-body_error.x * 1.5, -ANGLE_MAX_TILT_DEGREES, ANGLE_MAX_TILT_DEGREES),
+        "throttle": clampf(hover / tilt_cos + (target_vertical_speed - drone_body.linear_velocity.y) * DEMO_VERTICAL_VELOCITY_GAIN, maxf(0.0, hover - DEMO_THROTTLE_RANGE), minf(1.0, hover + DEMO_THROTTLE_RANGE)),
+        "roll": roll,
+        "pitch": pitch,
         "yaw_rate": clampf(yaw_error_degrees * 2.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS),
     }
     return _demo_flight_controls

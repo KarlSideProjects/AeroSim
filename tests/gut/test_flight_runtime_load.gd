@@ -1073,6 +1073,47 @@ func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     assert_false(runtime.has_method("_apply_demo_flight_pose"))
 
 
+func test_demo_controls_damp_native_horizontal_velocity_toward_route_speed() -> void:
+    var runtime := _quick_fly_runtime()
+    var body := CollisionProbeBody.new()
+    get_tree().root.add_child(body)
+    autofree(body)
+    runtime.drone_body = body
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(Vector3.ZERO)
+    assert_true(runtime.demo_flight_active())
+    runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, Vector3.ZERO, runtime.drone_body.rotation.y)
+    runtime.drone_body.linear_velocity = Vector3.ZERO
+    var accelerating := runtime._demo_controls_for_frame(0.0).duplicate()
+    runtime.drone_body.linear_velocity = Vector3(30.0, 0.0, 0.0)
+    var braking := runtime._demo_controls_for_frame(0.0)
+
+    assert_lt(float(accelerating.get("pitch", 0.0)), 0.0)
+    assert_gt(float(braking.get("pitch", 0.0)), 0.0)
+
+
+func test_demo_safety_rejects_injected_overspeed_and_altitude() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime.drone_body.linear_velocity = Vector3(FlightRuntime.DEMO_MAX_SPEED_MPS + 1.0, 0.0, 0.0)
+    assert_eq(runtime._demo_safety_error(), "Demo Flight safety limit exceeded")
+    runtime.drone_body.linear_velocity = Vector3.ZERO
+    runtime.drone_body.global_position.y = runtime._demo_spawn_height + FlightRuntime.DEMO_MAX_RELATIVE_ALTITUDE_M + 1.0
+    assert_eq(runtime._demo_safety_error(), "Demo Flight altitude limit exceeded")
+
+
+func test_demo_native_sync_only_follows_reset_or_jolt_authority() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime._demo_native_state_synced = true
+    runtime.last_collision_authority = 0
+    assert_false(runtime._demo_needs_native_sync())
+    runtime.last_collision_authority = 1
+    assert_true(runtime._demo_needs_native_sync())
+    runtime._demo_native_state_synced = false
+    assert_true(runtime._demo_needs_native_sync())
+
+
 func test_demo_flight_exit_returns_to_menu_without_quitting_the_application() -> void:
     var runtime := _quick_fly_runtime()
     runtime.start_demo_flight()
@@ -1084,20 +1125,6 @@ func test_demo_flight_exit_returns_to_menu_without_quitting_the_application() ->
     assert_false(runtime.demo_flight_active())
     assert_false(runtime.exit_requested)
     assert_null(runtime.loaded_map)
-
-
-func test_demo_flight_cancels_on_native_safety_limit() -> void:
-    if not _native_runtime_available():
-        return
-    var runtime := SmokeScene.instantiate() as FlightRuntime
-    runtime._map_scene_paths["terrain3d_range"] = "res://tests/fixtures/maps/terrain_range_valid_minimal.tscn"
-    get_tree().root.add_child(runtime)
-    autofree(runtime)
-    await get_tree().process_frame
-    runtime.start_demo_flight()
-    await get_tree().create_timer(8.0).timeout
-    assert_false(runtime.demo_flight_active())
-    assert_eq(runtime.last_error_message, "Demo Flight safety limit exceeded")
 
 
 func test_controller_confirmation_keeps_the_selected_third_person_player_view() -> void:
