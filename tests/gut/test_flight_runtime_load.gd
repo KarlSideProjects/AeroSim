@@ -15,6 +15,7 @@ const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const TimeTrial = preload("res://common/flight/time_trial.gd")
 const OsdProfile = preload("res://common/flight/osd_profile.gd")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
+const DroneVisualLoader = preload("res://common/flight/drone_visual_loader.gd")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 const StatusDiagramDebug = preload("res://common/flight/status_diagram_debug.gd")
 
@@ -992,6 +993,139 @@ func test_controller_confirmation_keeps_the_selected_third_person_player_view() 
 
     assert_true(third_person.current)
     assert_false(chase.current)
+
+
+func test_player_cameras_align_with_the_frd_forward_axis() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := Node3D.new()
+    var chase := Camera3D.new()
+    var third_person := Camera3D.new()
+    var secondary_body := Node3D.new()
+    var secondary_chase := Camera3D.new()
+    var map := Node3D.new()
+    for node in [body, chase, third_person, secondary_body, secondary_chase, map]:
+        get_tree().root.add_child(node)
+        autofree(node)
+    runtime.drone_body = body
+    runtime.chase_camera = chase
+    runtime.third_person_camera = third_person
+    runtime.secondary_drone_body = secondary_body
+    runtime.secondary_chase_camera = secondary_chase
+    runtime.loaded_map = map
+    runtime.screen = "flight"
+
+    runtime.third_person_view = false
+    runtime._update_chase_camera()
+    var fpv_forward := (chase.global_basis * Vector3.FORWARD).normalized()
+    var fpv_horizontal_forward := Vector3(fpv_forward.x, 0.0, fpv_forward.z).normalized()
+    assert_gt(fpv_horizontal_forward.dot(body.global_basis.x), 0.99,
+        "FPV camera must look along the body +X forward axis, not body-left.")
+    assert_gt((chase.global_basis * Vector3.RIGHT).dot(body.global_basis.z), 0.99,
+        "FPV screen-right must align with the body +Z right axis.")
+    var secondary_forward := (secondary_chase.global_basis * Vector3.FORWARD).normalized()
+    var secondary_horizontal_forward := Vector3(secondary_forward.x, 0.0, secondary_forward.z).normalized()
+    assert_gt(secondary_horizontal_forward.dot(secondary_body.global_basis.x), 0.99,
+        "Secondary FPV camera must look along the body +X forward axis.")
+
+    runtime.third_person_view = true
+    runtime._update_chase_camera()
+    var third_person_offset := body.global_basis.inverse() * (third_person.global_position - body.global_position)
+    assert_lt(third_person_offset.x, 0.0,
+        "Third-person camera must sit behind the body -X aft axis.")
+    assert_almost_eq(third_person_offset.z, 0.0, 0.000001,
+        "Third-person camera must not sit on the body-right axis.")
+
+
+func test_imported_drone_nose_aligns_with_the_frd_forward_axis() -> void:
+    var body := Node3D.new()
+    var fallback_mesh := MeshInstance3D.new()
+    fallback_mesh.name = "DroneMesh"
+    body.add_child(fallback_mesh)
+    var loader := DroneVisualLoader.new()
+    body.add_child(loader)
+    get_tree().root.add_child(body)
+    autofree(body)
+    await get_tree().process_frame
+
+    var model := loader.get_node_or_null("ImportedDroneModel") as Node3D
+    assert_not_null(model)
+
+    # Measure the mesh, not the loader's own rotation constant. The previous version of
+    # this test asserted that model-space +Z lands on body +X, which only restated
+    # whatever rotation the loader applied and stayed green while the airframe sat
+    # sideways across the flight path.
+    # Measured at the shipped scale: 0.372 long x 0.263 wide x 0.101 tall, so the
+    # fore-aft axis leads the lateral one by 1.42x. A 1.2x margin passes that comfortably
+    # and still fails the 90-degree case, which reads 0.263 x 0.372 (0.71x).
+    var airframe := _model_aabb_in_body_space(model, body)
+    assert_gt(airframe.size.x, airframe.size.z * 1.2,
+        "The airframe's long axis must lie along the body's +X forward axis, not across it.")
+
+
+func _model_aabb_in_body_space(model: Node3D, body: Node3D) -> AABB:
+    var combined := AABB()
+    var seen := false
+    for node in _descendants(model):
+        if node is MeshInstance3D:
+            var mesh_instance := node as MeshInstance3D
+            var in_body: AABB = body.global_transform.affine_inverse() * (mesh_instance.global_transform * mesh_instance.get_aabb())
+            if seen:
+                combined = combined.merge(in_body)
+            else:
+                combined = in_body
+                seen = true
+    assert_true(seen, "The imported drone model must contain at least one mesh.")
+    return combined
+
+
+func _descendants(node: Node) -> Array:
+    var out: Array = [node]
+    for child in node.get_children():
+        out.append_array(_descendants(child))
+    return out
+
+
+func test_third_person_camera_does_not_orbit_with_body_pitch() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var body := Node3D.new()
+    var chase := Camera3D.new()
+    var camera := Camera3D.new()
+    var map := Node3D.new()
+    for node in [body, chase, camera, map]:
+        get_tree().root.add_child(node)
+        autofree(node)
+    runtime.drone_body = body
+    runtime.chase_camera = chase
+    runtime.third_person_camera = camera
+    runtime.loaded_map = map
+    runtime.screen = "flight"
+    runtime.third_person_view = true
+
+    runtime._update_chase_camera()
+    var level_offset := camera.global_position - body.global_position
+    var level_basis := camera.global_basis
+    body.global_basis = Basis(Vector3.BACK, deg_to_rad(30.0))
+    runtime._update_chase_camera()
+    var pitched_offset := camera.global_position - body.global_position
+
+    assert_lt(pitched_offset.distance_to(level_offset), 0.000001,
+        "Body pitch must not make the third-person camera orbit around the aircraft.")
+    assert_lt(
+        camera.global_basis.x.distance_to(level_basis.x) +
+        camera.global_basis.y.distance_to(level_basis.y) +
+        camera.global_basis.z.distance_to(level_basis.z),
+        0.000001,
+        "Body pitch must not rotate the third-person camera view."
+    )
+    body.global_basis = Basis(Vector3.BACK, PI * 0.5)
+    runtime._update_chase_camera()
+    assert_lt(
+        (camera.global_position - body.global_position).distance_to(level_offset),
+        0.000001,
+        "A vertical body attitude must preserve a finite horizontal camera heading."
+    )
 
 
 func test_controller_confirmation_from_menu_returns_to_menu() -> void:

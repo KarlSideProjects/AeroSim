@@ -150,7 +150,7 @@ func _run() -> void:
     var retained_terrain_range: Node3D = runtime.loaded_map
     if fallback_third_person_camera != null:
         var fallback_local_camera_offset: Vector3 = runtime.drone_body.global_basis.inverse() * (fallback_third_person_camera.global_position - runtime.drone_body.global_position)
-        _expect(fallback_local_camera_offset.y > 0.0 and fallback_local_camera_offset.z > 0.0, "no-controller Quick Fly keeps the third-person camera above and behind the drone")
+        _expect(fallback_local_camera_offset.y > 0.0 and fallback_local_camera_offset.x < 0.0, "no-controller Quick Fly keeps the third-person camera above and behind the drone")
     _tap(KEY_R)
     await _settle(2)
     _expect(runtime.screen == "fallback_prompt" and not runtime.takeoff_requested and not runtime.native.call("flight_control_armed"), "reset cannot bypass input confirmation")
@@ -334,7 +334,7 @@ func _run() -> void:
     _expect(player_view != null and player_view.text == "VIEW: THIRD PERSON" and runtime.key_hints_label.text.contains("BACK View"), "third-person view exposes the localized active-view label and controller hint")
     if third_person_camera != null:
         var local_camera_offset: Vector3 = runtime.drone_body.global_basis.inverse() * (third_person_camera.global_position - runtime.drone_body.global_position)
-        _expect(local_camera_offset.y > 0.0 and local_camera_offset.z > 0.0, "third-person camera remains above and behind the drone")
+        _expect(local_camera_offset.y > 0.0 and local_camera_offset.x < 0.0, "third-person camera remains above and behind the drone")
     var terrain_range_terrain: Node3D = runtime.loaded_map.get_node_or_null("Terrain3D") as Node3D if runtime.loaded_map != null else null
     var terrain_range_data: Variant = terrain_range_terrain.data if terrain_range_terrain != null else null
     var terrain_grass_sample: Vector3 = terrain_range_data.get_texture_id(TERRAIN_RANGE_GRASS_SAMPLE) if terrain_range_data != null else Vector3(-1.0, -1.0, -1.0)

@@ -109,6 +109,6 @@
   },
   "fpv": {
     "camera_angle_deg": 45,
-    "fov_deg": 150
+    "fov_deg": 90
   }
 }
