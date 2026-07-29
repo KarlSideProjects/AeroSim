@@ -2,6 +2,14 @@
 set -euo pipefail
 
 mkdir -p build/tests
+
+# Compiling the native sources writes large assembler temporaries. On a machine
+# whose /tmp is a quota-bounded tmpfs those spill over and the build dies with
+# "fatal error: error writing to /tmp/ccXXXXXX.s: Disk quota exceeded" — the same
+# trap the CI pip install already works around by pinning TMPDIR. Keep build
+# temporaries beside the build unless the caller has chosen a location.
+mkdir -p build/tmp
+export TMPDIR="${TMPDIR:-$PWD/build/tmp}"
 run_tests="${AEROSIM_RUN_NATIVE_TESTS:-1}"
 exe_suffix="${EXE_SUFFIX:-}"
 native_sources=(

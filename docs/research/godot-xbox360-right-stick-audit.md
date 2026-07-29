@@ -1,7 +1,13 @@
 # Godot 4.7 / Xbox 360 right-stick investigation
 
-Date: 2026-07-29 (revision 3, after the user retested from source)
-Status: **Resolved to a measured cause. The axis chain is correct end to end at every heading (see the r4 trace). The remaining defect is that a centred Xbox throttle stick commands 50 % against a 33 % hover point, so the aircraft climbs faster than it advances and does not go where it is pointed.**
+Date: 2026-07-29 (revision 5, closed on hardware)
+Status: **Closed.** The axis chain was correct end to end at every heading (see the r4
+trace). Four independent defects sat on top of it — a 90° body-frame mismatch in the
+presentation layer, a model nose 90° off the direction of travel, a centred gamepad
+throttle commanding 50 % against a 33 % hover point, and a main menu hidden under the
+window decoration. All four are corrected and merged; flight direction and airframe
+heading are both confirmed on hardware. Four separate defects found along the way remain
+open — see "Newly identified defects".
 
 Revision history:
 
@@ -558,21 +564,28 @@ corrections):
 | Native suite | `scripts/test_native.sh` | **Passes, exit 0**, including `stick axis convention ok` from `tests/native/test_stick_axis_convention.cpp` |
 | Runtime-actions smoke | `--runtime-only` | **Fails** at `headless_smoke.gd:1685` (D3) |
 | Full headless smoke | `scripts/run_headless_smoke.sh` | Not re-run in this revision. The previous report attributed its unusability to a Jolt job-pool hang; note that this path skips the runtime-actions block regardless (D1), so a green result here would not have covered the defect. |
-| Physical acceptance | `"$GODOT_BIN" --display-driver wayland --path .` | **Symptom reproduces on the corrected source tree.** This is what falsified the "wrong build" hypothesis and forced revision 3. |
-| User runtime config | `~/.local/share/godot/app_userdata/AeroSim/settings.json` | Gamepad profile canonical; `fov_deg = 150.0`, `camera_angle_deg = 30.0` |
+| Physical acceptance, r3 | `"$GODOT_BIN" --display-driver wayland --path .` | **Symptom reproduced on the corrected source tree.** This falsified the "wrong build" hypothesis and forced revision 3. |
+| Physical acceptance, final | same | **Both closed by the maintainer.** Flight direction correct once out of `ALTITUDE_HOLD`; airframe heading correct after the `-90°` model fix. Maintainer report, not command output. |
+| User runtime config | `~/.local/share/godot/app_userdata/AeroSim/settings.json` | Gamepad profile canonical; camera profile since changed to `fov_deg = 90.0`, `camera_angle_deg = 0.0` |
 
 ## Current conclusion
 
-The report confidently rejects swapping right-stick X and Y, and it is now confirmed on
-the user's own machine that the persisted profile is canonical.
+Resolved. The report rejects swapping right-stick X and Y — the axis chain was correct
+throughout, as the r4 trace shows end to end at every heading, and the maintainer's
+persisted profile is canonical.
 
-Two separate things were wrong. The first — a 90° body-frame mismatch between the
-simulation and every presentation surface — is proven and corrected, though still
-uncommitted. The second, which is what the user is still seeing, is not a defect in the
-axis chain at all: a 150° vertical field of view and a 30° camera uptilt, applied to the
-FPV camera only, on top of attitude-style control, make correct forward flight read as
-rotation while lateral flight reads normally.
+Four independent defects sat on top of that correct chain, all now corrected and merged:
 
-The next action is not more coordinate work and not more instrumentation. It is the
-30-second camera experiment in the ranked-hypothesis section. Every further coordinate
-change should wait for its result.
+1. A 90° body-frame mismatch between the simulation and every presentation surface.
+2. The imported airframe's nose pointing 90° off the direction of travel, because the
+   loader's rotation had been chosen from a bounding box dominated by the rotor arms.
+3. A centred gamepad throttle commanding 50% against a 0.330 hover throttle.
+4. The main menu sitting flush at `(0, 0)`, where Wayland decorations hid Quick Fly.
+
+Flight direction and airframe heading are both confirmed on hardware.
+
+What this investigation did not fix is listed under "Newly identified defects" and remains
+open: the runtime-actions smoke block is unreachable in CI and currently red, and
+`ALTITUDE_HOLD` can be entered on the ground with no way to climb. The wind-preset defect
+below is also unresolved. D1 is the one worth doing first — it is the reason defects 1–3
+survived as long as they did.
