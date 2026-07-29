@@ -9,6 +9,8 @@ sources:
   - src/native/register_types.cpp
   - common/flight/flight_runtime.gd
   - common/flight/hardware_config.gd
+  - common/flight/camera_profile.gd
+  - common/flight/drone_visual_loader.gd
   - common/rpc/airsim_coordinate_contract.gd
   - common/rpc/airsim_session.gd
   - common/rpc/airsim_sensor_suite.gd
@@ -20,7 +22,9 @@ sources:
   - assets/third_party/terrain3d/asset_notes.md
   - scripts/check_third_party_terrain_integrity.py
   - .github/workflows/ci.yml
-last_verified: 2026-07-28
+  - tests/gut/test_flight_runtime_load.gd
+  - tests/headless/gsp_launch_contract.gd
+last_verified: 2026-07-29
 ---
 
 # AeroSim 運行時架構
@@ -56,7 +60,7 @@ flowchart TD
 | AeroSimNative | simulation integration、flight controller、aerodynamics、IMU、collision authority handoff、telemetry、replay。 | Godot scene graph 與 UI。 |
 | HardwareConfig + drone JSON | 機體物理與硬體參數的來源與驗證。 | 任意 runtime hard-coded airframe constants。 |
 | AirSim / PX4 adapters | 把 external command、sensor payload、actuator output 轉進同一 runtime/vehicle context。 | 繞過 public coordinate contract 直接操作 Godot axes。 |
-| Ground Station Panel (GSP) | 明確啟用後，以獨立、自包含的本機 `file://` panel bundle 補充開發調參與後續 telemetry/replay 工作。 | 不取代 Godot 內的 Operations Dashboard，也不在未啟用時啟動。 |
+| Ground Station Panel (GSP) | 在 debug build 的 session 內，以獨立、自包含的本機 `file://` panel bundle 補充開發調參與後續 telemetry/replay 工作。 | 不取代 Godot 內的 Operations Dashboard，也不在 release build 或非原生 Wayland 環境下啟動。 |
 
 ### GSP 與 Operations Dashboard 的邊界
 
@@ -67,12 +71,31 @@ post-flight 或 second-screen tuning 使用；debug session 啟動時會建立�
 `common/gsp/gsp_panel.html` 的副本，暫停選單的使用者動作才開啟面板。GSP 不建立第二份 simulation、telemetry、
 coordinate 或 replay authority。
 
-GSP 的瀏覽器開啟是 best-effort：Wayland 不允許應用程式強迫另一個應用程式取得焦點，因此
-啟動時的自動開啟不能當成面板已顯示的證據。當 GSP server 已啟動且 launcher 保有這次執行的
-panel URL 時，暫停選單會額外出現 `OPEN GSP PANEL`、`COPY GSP URL` 兩個使用者觸發的入口與
-一個狀態標籤；GSP 未啟用或尚未就緒時，這三個控制項完全不建立。狀態標籤只顯示請求成功或
-不可用，帶 session token 的 URL 不會出現在 HUD。這些控制項屬於 paused／post-flight 的
-workstation 入口，不改變飛行中的控制路徑。
+GSP 沒有啟動參數：`GspLauncher` 在 debug build 的 `_ready()` 直接嘗試建立本機服務並安裝
+bundle，但不會自動開啟瀏覽器。Wayland 不允許應用程式強迫另一個應用程式取得焦點，因此
+面板一律由使用者動作開啟。只要 runtime 掛著 `GspLauncher`，暫停選單就會建立
+`OPEN GSP PANEL`、`COPY GSP URL` 兩個入口與一個狀態標籤；本機服務尚未就緒時這些控制項
+仍然存在，按下時才即時嘗試啟動。狀態標籤只顯示就緒、不可用、已送出開啟請求或已複製網址，
+帶 session token 的 URL 不會出現在 HUD。這些控制項屬於 paused／post-flight 的 workstation
+入口，不改變飛行中的控制路徑。
+
+### 機體軸與呈現層對齊
+
+runtime 內部的機體約定是 **+X forward、+Z right、+Y up**，而 Godot `Camera3D` 沿 local −Z
+看。兩者的差異只在呈現層的單一常數（`FPV_CAMERA_BODY_ALIGNMENT`）處理，主／副 FPV 相機
+共用同一個轉換，不各自翻軸。這與對外的 NED／FRD 契約是兩件事：這裡只描述 Godot 內的
+camera 與模型擺放。
+
+| 呈現元素 | 對齊規則 | 證據 |
+| --- | --- | --- |
+| FPV（主／副 chase camera） | 先轉進機體約定，再套用飛行員設定的 camera angle。 | `test_player_cameras_align_with_the_frd_forward_axis` |
+| 第三人稱相機 | 位於機體 −X 後上方，且只跟隨水平朝向；機體 pitch／roll 不會讓它繞著飛機轉，機體接近垂直時退回由 +Z right 推得的水平朝向。 | `test_third_person_camera_does_not_orbit_with_body_pitch`、headless smoke 的 body-frame offset 檢查 |
+| 匯入的機體模型 | 機鼻對齊機體 +X。模型 AABB 由四支外伸機臂主導，不是機鼻方向的證據；以 nose 側的頂點密度判定。 | `test_imported_drone_nose_aligns_with_the_frd_forward_axis` |
+
+FPV 的 camera angle 與 FOV 由 `config/drones/*.json` 的 `fpv` 區塊與 `HardwareConfig` 出廠
+預設提供，並且飛行中可由 camera 面板調整。`Camera3D.fov` 在預設 `keep_aspect = KEEP_HEIGHT`
+下是**垂直** FOV，因此設定值不可當成水平視角讀。目前出廠預設與 `5_inch_6s` 是 camera angle
+0°、vertical FOV 90°，`5_inch_6s_race` 維持 45° 傾角。
 
 ## 四個重要時序
 
@@ -153,6 +176,7 @@ sequenceDiagram
 | --- | --- | --- |
 | native flight / aero / collision / IMU / replay | native core 與 hardware config | `tests/native/test_*.cpp`、`scripts/test_native.sh` |
 | Godot ↔ GDExtension boundary | FlightRuntime、AeroSimNative binding | headless smoke |
+| 玩家相機、機體模型擺放與 FPV 預設 | 本頁「機體軸與呈現層對齊」、`common/flight/camera_profile.gd`、`common/flight/drone_visual_loader.gd` | `tests/gut/test_flight_runtime_load.gd` 的相機與機鼻對齊測試、headless smoke 的 body-frame offset 檢查 |
 | AirSim / PX4 / coordinates | coordinate contract、RPC server、PX4 bridge | 對應 GUT 與 headless integration harness |
 | Free Flight 地圖場景與視覺資產 | `levels/free_flight/` 的場景，以及 `assets/third_party/terrain3d/asset_notes.md` 記錄的 write boundary：third-party terrain 目錄為唯讀，authoring pass 只寫入 `assets/maps/terrain3d_range/data/` | `tests/headless/terrain3d_range_smoke.gd`、`tests/headless/industrial_yard_renderer_smoke.gd`（兩者除結構外，也檢查可見 Kenney 資產每個 surface 都帶 albedo texture）；`scripts/check_third_party_terrain_integrity.py` 在 CI 內把 vendored region 對照 asset_notes.md 記錄的 SHA-256，編輯器重存造成的位元改寫會讓 build 失敗 |
 | Linux 綜合 gate | CI 與驗收規則 | `scripts/verify_issue_11.sh` |
