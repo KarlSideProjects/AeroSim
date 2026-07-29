@@ -41,6 +41,18 @@ fi
 source "$(dirname "${BASH_SOURCE[0]}")/validate_native_provenance.sh"
 validate_native_provenance
 
+rpc_port="${AEROSIM_HEADLESS_RPC_PORT:-}"
+if [ -z "$rpc_port" ]; then
+    rpc_port="$(python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as socket_handle:
+    socket_handle.bind(("127.0.0.1", 0))
+    print(socket_handle.getsockname()[1])
+PY
+    )"
+fi
+
 mkdir -p "$(dirname "$output_path")"
 mkdir -p "$(dirname "$csv_output_path")"
 mkdir -p "$(dirname "$log_path")"
@@ -57,7 +69,8 @@ printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > .go
 
 "$godot_bin" --headless --fixed-fps 240 --path . --log-file "$log_path" \
     --script res://common/smoke/headless_smoke.gd -- \
-    --output "$output_path" --csv-output "$csv_output_path" --skip-runtime-map "${args[@]}" &
+    --output "$output_path" --csv-output "$csv_output_path" --skip-runtime-map \
+    --airsim-rpc-port "$rpc_port" "${args[@]}" &
 godot_pid="$!"
 deadline=$((SECONDS + ${AEROSIM_HEADLESS_TIMEOUT_SECONDS:-1800}))
 terminated_after_completion=false
@@ -135,4 +148,5 @@ fi
 printf '%s\n' \
     'res://extensions/aerosim_native/aerosim_native.gdextension' \
     'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
-"$godot_bin" --headless --fixed-fps 240 --path . --script res://tests/headless/terrain3d_runtime_smoke.gd
+"$godot_bin" --headless --fixed-fps 240 --path . --script res://tests/headless/terrain3d_runtime_smoke.gd -- \
+    --airsim-rpc-port "$rpc_port"

@@ -32,7 +32,7 @@ import sys
 args = sys.argv[1:]
 
 expected_fixed_fps = os.environ.get("FAKE_GODOT_EXPECT_FIXED_FPS")
-if expected_fixed_fps is not None:
+if expected_fixed_fps is not None and "--" in args:
     if args.count("--fixed-fps") != 1:
         raise SystemExit(23)
     fixed_fps_index = args.index("--fixed-fps")
@@ -48,6 +48,17 @@ if "--log-file" in args:
     log_path.write_text(os.environ.get("FAKE_GODOT_LOG", ""), encoding="utf-8")
 
 runner_args = args[args.index("--") + 1:] if "--" in args else []
+
+expected_rpc_port = os.environ.get("FAKE_GODOT_EXPECT_RPC_PORT")
+if expected_rpc_port is not None and runner_args:
+    if "--airsim-rpc-port" not in runner_args:
+        raise SystemExit(29)
+    rpc_port_index = runner_args.index("--airsim-rpc-port")
+    if (
+        rpc_port_index + 1 >= len(runner_args)
+        or runner_args[rpc_port_index + 1] != expected_rpc_port
+    ):
+        raise SystemExit(29)
 
 if "--out-dir" in runner_args:
     result_path = Path(runner_args[runner_args.index("--out-dir") + 1]) / "report.json"
@@ -68,12 +79,14 @@ if "--out-dir" in runner_args:
         "09_en_settings_roundtrip.png",
     ):
         (result_path.parent / screenshot).write_bytes(b"fake png")
-else:
+elif "--output" in runner_args:
     result_path = Path(runner_args[runner_args.index("--output") + 1])
     csv_path = Path(runner_args[runner_args.index("--csv-output") + 1])
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.write_text("time_s\\n0\\n", encoding="utf-8")
     result_key = "completed"
+else:
+    raise SystemExit(0)
 
 mode = os.environ["FAKE_GODOT_RESULT"]
 locale_elapsed_us = int(os.environ.get("FAKE_GODOT_LOCALE_SWITCH_US", "1000"))
@@ -407,6 +420,18 @@ class CiStrategyTest(unittest.TestCase):
         )
         self.assertEqual(0, completed.returncode)
 
+    def test_headed_runner_passes_its_rpc_port_to_godot(self):
+        completed, _ = self._run_runner(
+            HEADED_RUNNER,
+            "true",
+            "Godot Engine fake\n",
+            extra_environment={
+                "AEROSIM_HEADED_RPC_PORT": "42555",
+                "FAKE_GODOT_EXPECT_RPC_PORT": "42555",
+            },
+        )
+        self.assertEqual(0, completed.returncode)
+
     def test_headless_runner_retains_logs_and_requires_structured_completion(self):
         # Headless intentionally exercises HardwareConfig's push_error + fallback path.
         self._assert_runtime_runner_contract(HEADLESS_RUNNER, reject_console_errors=False)
@@ -417,6 +442,18 @@ class CiStrategyTest(unittest.TestCase):
             "true",
             "Godot Engine fake\n",
             expected_fixed_fps="240",
+        )
+        self.assertEqual(0, completed.returncode)
+
+    def test_headless_runner_passes_its_rpc_port_to_godot(self):
+        completed, _ = self._run_runner(
+            HEADLESS_RUNNER,
+            "true",
+            "Godot Engine fake\n",
+            extra_environment={
+                "AEROSIM_HEADLESS_RPC_PORT": "42556",
+                "FAKE_GODOT_EXPECT_RPC_PORT": "42556",
+            },
         )
         self.assertEqual(0, completed.returncode)
 
