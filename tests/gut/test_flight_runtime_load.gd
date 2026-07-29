@@ -1085,10 +1085,11 @@ func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     assert_true(runtime.demo_flight_active())
     assert_eq(runtime.flight_mode, "ANGLE")
     assert_gt(absf(float(native.collision_angle_arguments.roll)) + absf(float(native.collision_angle_arguments.pitch)), 0.25)
+    assert_lte(absf(float(native.collision_angle_arguments.yaw_rate)), FlightRuntime.DEMO_MAX_YAW_RATE_DPS)
     assert_gt(absf(float(native.collision_angle_arguments.yaw_rate)) + absf(float(native.collision_angle_arguments.throttle) * 2.0 - 1.0), 0.25)
     assert_eq(display.state.roll, float(native.collision_angle_arguments.roll) / FlightRuntime.ANGLE_MAX_TILT_DEGREES)
     assert_eq(display.state.pitch, float(native.collision_angle_arguments.pitch) / FlightRuntime.ANGLE_MAX_TILT_DEGREES)
-    assert_eq(display.state.yaw, float(native.collision_angle_arguments.yaw_rate) / FlightRuntime.ANGLE_MAX_YAW_RATE_DPS)
+    assert_eq(display.state.yaw, float(native.collision_angle_arguments.yaw_rate) / FlightRuntime.DEMO_MAX_YAW_RATE_DPS)
     assert_eq(display.state.throttle, float(native.collision_angle_arguments.throttle) * 2.0 - 1.0)
     assert_false(runtime.has_method("_apply_demo_flight_pose"))
 

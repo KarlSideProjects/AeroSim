@@ -50,6 +50,7 @@ const ANGLE_MAX_YAW_RATE_DPS := 180.0
 const ASSISTED_MAX_YAW_RATE_DPS := 120.0
 const ASSISTED_MAX_VERTICAL_SPEED_MPS := 2.0
 const DEMO_MAX_TILT_DEGREES := 5.0
+const DEMO_MAX_YAW_RATE_DPS := 5.0
 const DEMO_MAX_SPEED_MPS := 30.0
 const DEMO_MAX_RELATIVE_ALTITUDE_M := 32.0
 const DEMO_VERTICAL_POSITION_GAIN := 0.15
@@ -2418,7 +2419,7 @@ func _demo_controls_for_frame(delta: float) -> Dictionary:
         "throttle": throttle,
         "roll": roll,
         "pitch": pitch,
-        "yaw_rate": clampf(yaw_error_degrees * 2.0, -ANGLE_MAX_YAW_RATE_DPS, ANGLE_MAX_YAW_RATE_DPS),
+        "yaw_rate": clampf(yaw_error_degrees * 2.0, -DEMO_MAX_YAW_RATE_DPS, DEMO_MAX_YAW_RATE_DPS),
     }
     return _demo_flight_controls
 
@@ -6401,7 +6402,7 @@ func _refresh_gamepad_hud() -> void:
         "actions": _t("ui.gamepad_hud.actions"),
         "connection": _t("ui.gamepad_hud.connected") if connected else _t("ui.gamepad_hud.unavailable"),
         "mode": _localized_flight_mode(flight_mode),
-        "yaw": clampf(float(_demo_flight_controls.get("yaw_rate", 0.0)) / ANGLE_MAX_YAW_RATE_DPS, -1.0, 1.0) if demo_controls_active else (_profile_axis("yaw") if connected else 0.0),
+        "yaw": clampf(float(_demo_flight_controls.get("yaw_rate", 0.0)) / DEMO_MAX_YAW_RATE_DPS, -1.0, 1.0) if demo_controls_active else (_profile_axis("yaw") if connected else 0.0),
         "throttle": demo_throttle if demo_controls_active else (_profile_axis("throttle") if connected else 0.0),
         "roll": clampf(float(_demo_flight_controls.get("roll", 0.0)) / ANGLE_MAX_TILT_DEGREES, -1.0, 1.0) if demo_controls_active else (_profile_axis("roll") if connected else 0.0),
         "pitch": clampf(float(_demo_flight_controls.get("pitch", 0.0)) / ANGLE_MAX_TILT_DEGREES, -1.0, 1.0) if demo_controls_active else (_profile_axis("pitch") if connected else 0.0),
