@@ -135,6 +135,7 @@ var acro_yaw_stick := 0.0
 var demo_flight_route: DemoFlightRoute
 var _demo_flight_controls: Dictionary = {}
 var _demo_flight_finish_pending := false
+var _demo_flight_route_pending := false
 var _demo_flight_target := Vector3.ZERO
 var _demo_flight_heading := 0.0
 var dashboard_layout_mode := "compact"
@@ -2292,6 +2293,7 @@ func start_demo_flight() -> void:
         return
     _demo_flight_finish_pending = false
     _demo_flight_controls.clear()
+    _demo_flight_route_pending = false
     if not apply_flight_setup(default_flight_setup()):
         screen = "error"
         _refresh_flight_hud()
@@ -2309,6 +2311,7 @@ func start_demo_flight() -> void:
         _refresh_flight_hud()
         return
     demo_flight_route = DemoFlightRoute.new()
+    _demo_flight_route_pending = true
     var gsp_launcher := get_node_or_null("GspLauncher")
     if gsp_launcher != null and gsp_launcher.has_method("open_demo_panel"):
         gsp_launcher.call("open_demo_panel")
@@ -2317,6 +2320,7 @@ func start_demo_flight() -> void:
     _reset_after_commit_takeoff = true
     if not reset_to_spawn():
         demo_flight_route.cancel()
+        _demo_flight_route_pending = false
         _reset_after_commit_takeoff = false
         _reset_arm_after_commit = false
         screen = "error"
@@ -2328,6 +2332,9 @@ func demo_flight_active() -> bool:
 
 
 func _start_demo_route_after_reset() -> void:
+    if not _demo_flight_route_pending or demo_flight_route == null:
+        return
+    _demo_flight_route_pending = false
     var spawn := _current_spawn_marker()
     if spawn == null:
         cancel_demo_flight()
@@ -2336,6 +2343,7 @@ func _start_demo_route_after_reset() -> void:
 
 
 func cancel_demo_flight() -> void:
+    _demo_flight_route_pending = false
     if demo_flight_route != null:
         demo_flight_route.cancel()
     _demo_flight_controls.clear()
@@ -2897,6 +2905,7 @@ func _fail_reset_pending(message: String) -> void:
     _reset_pending_token = 0
     reset_hold_frames = 0
     _reset_after_commit_takeoff = false
+    _demo_flight_route_pending = false
     _reset_arm_after_commit = false
     _reset_last_failed_generation = failed_generation
     if _rpc_reset_owned_generation == failed_generation:

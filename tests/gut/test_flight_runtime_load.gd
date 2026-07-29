@@ -995,8 +995,8 @@ func test_demo_flight_menu_uses_quick_fly_terrain_third_person_and_live_hud_cont
 
     (runtime.main_menu_layer.get_node("Entries/Map") as Button).pressed.emit()
     (runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/DemoFlight") as Button).pressed.emit()
+    assert_false(runtime.demo_flight_active())
     await _await_reset_commit()
-    runtime.demo_flight_route.start((runtime._current_spawn_marker() as Marker3D).global_position)
     runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime.drone_body.rotation.y)
     runtime._demo_controls_for_frame(0.0)
     runtime._apply_demo_flight_pose()
@@ -1551,6 +1551,7 @@ func test_request_takeoff_does_not_inject_jump_velocity() -> void:
 
     runtime.request_takeoff()
 
+    assert_null(runtime.demo_flight_route)
     assert_true(runtime.takeoff_requested)
     assert_true(runtime.takeoff_assist_active)
     assert_eq(runtime.flight_mode, "ASSISTED_HOLD")
@@ -2308,6 +2309,7 @@ func test_respawn_rearms_only_after_the_reset_commit() -> void:
     runtime.respawn()
     await _await_runtime_reset_commit(runtime)
 
+    assert_null(runtime.demo_flight_route)
     assert_true(runtime.native.armed)
     assert_true(runtime.native.disarmed)
     assert_true(runtime.takeoff_requested)
