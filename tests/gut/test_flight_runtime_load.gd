@@ -1094,6 +1094,20 @@ func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     assert_false(runtime.has_method("_apply_demo_flight_pose"))
 
 
+func test_demo_route_requires_sixty_airsim_seconds_before_completion() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.airsim_session = AirSimSession.new(4)
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+
+    for _tick in range(4 * 60 - 1):
+        runtime._demo_controls_for_frame(0.0)
+
+    assert_true(runtime.demo_flight_active())
+    runtime._demo_controls_for_frame(0.0)
+    assert_false(runtime.demo_flight_active())
+
+
 func test_demo_controls_damp_native_horizontal_velocity_toward_route_speed() -> void:
     var runtime := _quick_fly_runtime()
     var body := CollisionProbeBody.new()
