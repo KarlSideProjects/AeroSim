@@ -147,18 +147,20 @@ func open_demo_panel() -> Dictionary:
     DisplayServer.window_set_position(game_position)
     DisplayServer.window_set_size(Vector2i(game_size.x, game_height))
     var browser_profile := OS.get_user_data_dir().path_join(PANEL_DIRECTORY).path_join("demo-browser")
+    var demo_id := str(Time.get_ticks_msec())
+    var demo_url := "%s&demo_title=%s" % [_panel_url, demo_id]
     var browser_pid := OS.create_process(DEMO_BROWSER_EXECUTABLE, [
         "--no-first-run", "--user-data-dir=%s" % browser_profile,
-        "--class=%s" % DEMO_BROWSER_CLASS, "--app=%s" % _panel_url,
+        "--class=%s" % DEMO_BROWSER_CLASS, "--app=%s" % demo_url,
     ])
     if browser_pid <= 0:
-        return shell_open_result(true, open_panel(_panel_url), _panel_url)
+        return shell_open_result(true, open_panel(demo_url), demo_url)
     OS.create_process("xdotool", [
-        "search", "--sync", "--onlyvisible", "--class", DEMO_BROWSER_CLASS,
+        "search", "--sync", "--onlyvisible", "--name", "AeroSim GSP Demo %s" % demo_id,
         "windowmove", str(game_position.x), str(game_position.y + game_height),
         "windowsize", str(game_size.x), str(game_size.y - game_height),
     ])
-    return {"ok": true, "opened": true, "panel_url": _panel_url, "split": true}
+    return {"ok": true, "opened": true, "panel_url": demo_url, "split": true}
 
 
 func copy_panel_url() -> Dictionary:

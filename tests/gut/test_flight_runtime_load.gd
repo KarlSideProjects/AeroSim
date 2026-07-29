@@ -982,7 +982,7 @@ func test_quick_fly_defaults_the_player_view_to_third_person_before_controller_r
     assert_true(runtime.third_person_view)
 
 
-func test_demo_flight_menu_uses_industrial_yard_third_person_and_live_hud_controls() -> void:
+func test_demo_flight_menu_uses_quick_fly_terrain_third_person_and_live_hud_controls() -> void:
     var runtime := _quick_fly_runtime()
     _attach_runtime_ui(runtime)
     var installed_gsp_launcher := runtime.get_node_or_null("GspLauncher")
@@ -1002,9 +1002,10 @@ func test_demo_flight_menu_uses_industrial_yard_third_person_and_live_hud_contro
     runtime._refresh_gamepad_hud()
 
     var display := runtime.flight_hud_layer.get_node("GamepadHudMargin/GamepadHudPanel/GamepadTelemetryPanel") as Control
-    assert_eq(runtime.loaded_map_id, "industrial_yard")
+    assert_eq(runtime.loaded_map_id, FlightRuntime.DEFAULT_FREE_FLIGHT_MAP_ID)
     assert_eq(gsp_launcher.demo_open_calls, 1)
     assert_true(runtime.third_person_view)
+    assert_true(runtime.third_person_camera.current)
     assert_true(runtime.demo_flight_active())
     assert_true(absf(float(controls.get("roll", 0.0))) > 0.01 or absf(float(controls.get("pitch", 0.0))) > 0.01)
     assert_true(absf(float(display.state.get("roll", 0.0))) > 0.01 or absf(float(display.state.get("pitch", 0.0))) > 0.01)
@@ -1028,6 +1029,7 @@ func test_demo_flight_moves_the_native_drone_after_the_initial_hover() -> void:
     if not _native_runtime_available():
         return
     var runtime := SmokeScene.instantiate() as FlightRuntime
+    runtime._map_scene_paths["terrain3d_range"] = "res://tests/fixtures/maps/terrain_range_valid_minimal.tscn"
     get_tree().root.add_child(runtime)
     autofree(runtime)
     await get_tree().process_frame

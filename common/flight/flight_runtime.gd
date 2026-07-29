@@ -2291,8 +2291,12 @@ func start_demo_flight() -> void:
         return
     _demo_flight_finish_pending = false
     _demo_flight_controls.clear()
-    if loaded_map_id != "industrial_yard" or loaded_map == null:
-        if not load_map("industrial_yard"):
+    if not apply_flight_setup(default_flight_setup()):
+        screen = "error"
+        _refresh_flight_hud()
+        return
+    if loaded_map_id != DEFAULT_FREE_FLIGHT_MAP_ID or loaded_map == null:
+        if not load_map(DEFAULT_FREE_FLIGHT_MAP_ID):
             screen = "error"
             _refresh_flight_hud()
             return
