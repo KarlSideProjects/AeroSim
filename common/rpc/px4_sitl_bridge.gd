@@ -95,6 +95,7 @@ func configure(vehicle_settings: Dictionary, authority_callback: Callable = Call
         "FailureTimeout": float(vehicle_settings.get("FailureTimeout", DEFAULT_FAILURE_TIMEOUT)),
         "ActuatorTimeout": float(vehicle_settings.get("ActuatorTimeout", 0.5)),
         "HilActuatorQuadXOrder": vehicle_settings.get("HilActuatorQuadXOrder", []),
+        "NativeMotorOrder": vehicle_settings.get("NativeMotorOrder", []),
     }
     _authority_callback = authority_callback
     var errors: Array[String] = []
@@ -572,16 +573,22 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
             # PX4's generated common dialect packs this message as time_usec
             # (8), flags (8), controls[16] (64), and mode (1).
             var armed := (int(frame[payload_offset + 80]) & 0x80) != 0
-            _actuators = PackedFloat32Array()
+            var raw_controls := PackedFloat32Array()
             for index in 4:
-                _actuators.append(clampf(frame.decode_float(payload_offset + 16 + index * 4), 0.0, 1.0) if armed else 0.0)
-            _last_actuator_time = now_seconds
-            var hil_sample := {"mapping_verified": _verified_quad_x_mapping()}
+                raw_controls.append(clampf(frame.decode_float(payload_offset + 16 + index * 4), 0.0, 1.0) if armed else 0.0)
+            var native_indices := _hil_to_native_motor_indices()
+            var hil_sample := {"mapping_verified": native_indices.size() == 4}
             if bool(hil_sample.mapping_verified):
+                _actuators = PackedFloat32Array()
+                for source_index in native_indices:
+                    _actuators.append(raw_controls[source_index])
+                _last_actuator_time = now_seconds
                 hil_sample["command_normalized"] = {
                     "m1": float(_actuators[0]), "m2": float(_actuators[1]),
                     "m3": float(_actuators[2]), "m4": float(_actuators[3]),
                 }
+            else:
+                _actuators = PackedFloat32Array()
             _record_px4_message("hil_actuator_controls", hil_sample, now_seconds)
             var state_before := state
             var authority_before := _authority_active
@@ -589,9 +596,13 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
                 _refresh_authority(now_seconds, true)
             _trace_qualification_event("hil_actuator_controls", now_seconds, {
                 "mode_byte": int(frame[payload_offset + 80]),
+                "flags": _payload_u64(frame, payload_offset, payload_size, 8),
                 "armed": armed,
+                "raw_outputs": Array(raw_controls),
                 "outputs": Array(_actuators),
                 "mapping_verified": bool(hil_sample.mapping_verified),
+                "source_motor_order": _config.get("HilActuatorQuadXOrder", []),
+                "native_motor_order": _config.get("NativeMotorOrder", []),
                 "state_before": state_before,
                 "authority_before": authority_before,
             })
@@ -698,7 +709,35 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
 
 
 func _verified_quad_x_mapping() -> bool:
-    return _config.get("HilActuatorQuadXOrder", []) == ["rear_right", "front_right", "rear_left", "front_left"]
+    return _hil_to_native_motor_indices().size() == 4
+
+
+func _hil_to_native_motor_indices() -> Array[int]:
+    var source_order: Variant = _config.get("HilActuatorQuadXOrder", [])
+    var native_order: Variant = _config.get("NativeMotorOrder", [])
+    if not _valid_motor_order(source_order) or not _valid_motor_order(native_order):
+        return []
+    var indices: Array[int] = []
+    for motor_name_value in native_order:
+        var source_index: int = source_order.find(motor_name_value)
+        if source_index < 0:
+            return []
+        indices.append(source_index)
+    return indices
+
+
+func _valid_motor_order(order: Variant) -> bool:
+    if not order is Array or order.size() != 4:
+        return false
+    var names := {}
+    for motor_name_value in order:
+        if typeof(motor_name_value) != TYPE_STRING:
+            return false
+        var motor_name := String(motor_name_value)
+        if motor_name.is_empty() or names.has(motor_name):
+            return false
+        names[motor_name] = true
+    return true
 
 
 func _find_mavlink_start(rx_buffer: PackedByteArray) -> int:

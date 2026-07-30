@@ -390,7 +390,6 @@ func _ready() -> void:
         get_tree().quit(1)
         return
     else:
-        _configure_px4_sitl_bridge()
         var sensor_result := airsim_sensor_suite.configure(airsim_rpc_server.settings, _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name])
         if not sensor_result.ok:
             push_error("AirSim sensor startup failed: %s" % sensor_result.error)
@@ -422,6 +421,7 @@ func _ready() -> void:
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
     motor_hud_spin_directions = hardware_config.current.get("spin_direction", [])
     _activate_hardware_configuration(hardware_config)
+    _configure_px4_sitl_bridge()
     if not _configure_secondary_native(hardware_config):
         push_error("Named vehicle runtime setup failed: %s" % last_error_message)
         if airsim_rpc_server != null and airsim_rpc_server.is_running():
@@ -7421,8 +7421,10 @@ func _configure_px4_sitl_bridge() -> void:
     var vehicle_settings: Dictionary = vehicles.get(_airsim_vehicle_name, {})
     if String(vehicle_settings.get("VehicleType", "SimpleFlight")) != "PX4Multirotor":
         return
+    var bridge_settings := vehicle_settings.duplicate(true)
+    bridge_settings["NativeMotorOrder"] = _active_hardware_configuration.get("motor_order", [])
     px4_sitl_bridge = Px4SitlBridge.new()
-    var configure_result := px4_sitl_bridge.configure(vehicle_settings, Callable(self, "_on_px4_authority_changed"))
+    var configure_result := px4_sitl_bridge.configure(bridge_settings, Callable(self, "_on_px4_authority_changed"))
     if not configure_result.ok:
         last_error_message = String(configure_result.error)
         paused = true

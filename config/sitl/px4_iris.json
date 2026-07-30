@@ -20,7 +20,7 @@
       "ControlPortLocal": 14540,
       "ControlPortRemote": 14580,
       "LockStep": true,
-      "HilActuatorQuadXOrder": ["rear_right", "front_right", "rear_left", "front_left"],
+      "HilActuatorQuadXOrder": ["front_right", "rear_left", "front_left", "rear_right"],
       "LocalHostIp": "127.0.0.1",
       "UdpIp": "127.0.0.1",
       "UdpPort": 14560,

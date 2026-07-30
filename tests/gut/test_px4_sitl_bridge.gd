@@ -213,7 +213,7 @@ func test_real_parser_keeps_armed_hil_actuator_controls() -> void:
     bridge._consume_mavlink(frame, 0.01, PackedByteArray())
 
     assert_eq(bridge.state, "armed")
-    assert_eq(bridge.actuator_outputs(), PackedFloat32Array([0.25, 0.5, 0.75, 1.0]))
+    assert_eq(bridge.actuator_outputs(), PackedFloat32Array([1.0, 0.25, 0.5, 0.75]))
 
 
 func test_qualification_trace_records_incoming_mode_armed_and_authority_transition() -> void:
@@ -234,6 +234,19 @@ func test_qualification_trace_records_incoming_mode_armed_and_authority_transiti
     assert_false(bool(heartbeat.failsafe))
     assert_true(bool(authority_transition.active))
     assert_true(bool(authority_transition.callback_fired))
+    var hil_payload := bridge._u64_bytes(1000) + bridge._u64_bytes(1)
+    for value in [0.25, 0.5, 0.75, 1.0]:
+        hil_payload.append_array(bridge._float_bytes(value))
+    for _index in 12:
+        hil_payload.append_array(bridge._float_bytes(0.0))
+    hil_payload.append(0x81)
+    bridge._consume_mavlink(_mavlink_frame(bridge, 93, hil_payload), 0.02, PackedByteArray())
+
+    var actuator := _qualification_trace_entry(bridge.qualification_trace(), "hil_actuator_controls")
+    assert_eq(actuator.flags, 1)
+    assert_eq(actuator.raw_outputs, [0.25, 0.5, 0.75, 1.0])
+    assert_eq(actuator.outputs, [1.0, 0.25, 0.5, 0.75])
+    assert_true(bool(actuator.mapping_verified))
 
 
 func test_nav_takeoff_uses_current_global_position_and_absolute_altitude() -> void:
@@ -344,7 +357,7 @@ func test_real_parser_exposes_only_crc_valid_px4_observability() -> void:
     assert_almost_eq(bridge.px4_observability(3.0).attitude.sample.roll_rad, 0.1, 0.00001)
 
 
-func test_px4_actuator_commands_are_m1_to_m4_and_fail_closed_when_stale() -> void:
+func test_px4_actuator_commands_map_iris_wire_order_to_native_motor_order_and_fail_closed_when_stale() -> void:
     var bridge := _new_fake_bridge(1.0, 0.1)
     bridge.start()
     bridge.inject_heartbeat(false)
@@ -362,7 +375,8 @@ func test_px4_actuator_commands_are_m1_to_m4_and_fail_closed_when_stale() -> voi
     payload.append(0x81)
     bridge._consume_mavlink(_mavlink_frame(bridge, 93, payload), 0.01, PackedByteArray())
 
-    assert_eq(bridge.px4_observability(0.02).hil_actuator_controls.sample.command_normalized, {"m1": 0.25, "m2": 0.5, "m3": 0.75, "m4": 1.0})
+    assert_eq(bridge.px4_observability(0.02).hil_actuator_controls.sample.command_normalized, {"m1": 1.0, "m2": 0.25, "m3": 0.5, "m4": 0.75})
+    assert_eq(Array(bridge.actuator_outputs()), [1.0, 0.25, 0.5, 0.75])
     bridge.poll(0.12)
     assert_eq(bridge.actuator_outputs().size(), 0)
     assert_true(bridge.px4_observability(0.12).hil_actuator_controls.stale)
@@ -370,7 +384,7 @@ func test_px4_actuator_commands_are_m1_to_m4_and_fail_closed_when_stale() -> voi
 
 func test_px4_target_masks_and_unverified_hil_mapping_remain_unavailable() -> void:
     var bridge := _new_fake_bridge(1.0)
-    bridge._config.HilActuatorQuadXOrder = []
+    bridge._config.HilActuatorQuadXOrder = ["front_right", "front_right", "front_left", "rear_right"]
     bridge.start()
     var attitude_payload := _floats([14.0, 1.0, 0.2, 0.3, 0.4, 0.1, 0.2, 0.3, 0.7]) + PackedByteArray([0x87])
     var position_payload := _floats([15.0, 7.0, 8.0, -9.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.4, 0.5]) + bridge._u16_bytes(0x0007) + PackedByteArray([1])
@@ -392,6 +406,16 @@ func test_px4_target_masks_and_unverified_hil_mapping_remain_unavailable() -> vo
     assert_false(observed.position_target_local_ned.sample.has("position_ned"))
     assert_false(observed.hil_actuator_controls.sample.has("command_normalized"))
     assert_false(bool(observed.hil_actuator_controls.sample.mapping_verified))
+    assert_eq(bridge.actuator_outputs().size(), 0)
+
+
+func test_px4_hil_actuator_mapping_fails_closed_for_missing_or_unknown_motor_names() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    bridge._config.HilActuatorQuadXOrder = ["front_right", "rear_left", "front_left"]
+    bridge.start()
+    assert_false(bridge._verified_quad_x_mapping())
+    bridge._config.HilActuatorQuadXOrder = ["front_right", "rear_left", "front_left", "unknown"]
+    assert_false(bridge._verified_quad_x_mapping())
 
 
 func test_real_parser_accepts_crc_valid_mavlink_v2_trailing_zero_truncation() -> void:
@@ -469,7 +493,8 @@ func _new_fake_bridge(heartbeat_timeout: float, actuator_timeout: float = -1.0) 
         "ActuatorTimeout": actuator_timeout,
         "UseSerial": false,
         "LockStep": true,
-        "HilActuatorQuadXOrder": ["rear_right", "front_right", "rear_left", "front_left"],
+        "HilActuatorQuadXOrder": ["front_right", "rear_left", "front_left", "rear_right"],
+        "NativeMotorOrder": ["rear_right", "front_right", "rear_left", "front_left"],
     }, Callable(self, "_on_authority_changed"))
     return bridge
 

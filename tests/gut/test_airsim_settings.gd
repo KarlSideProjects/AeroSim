@@ -199,7 +199,7 @@ func test_accepts_px4_sitl_transport_settings() -> void:
                 "ControlPortLocal": 14540,
                 "ControlPortRemote": 14580,
                 "LockStep": true,
-                "HilActuatorQuadXOrder": ["rear_right", "front_right", "rear_left", "front_left"],
+                "HilActuatorQuadXOrder": ["front_right", "rear_left", "front_left", "rear_right"],
                 "LocalHostIp": "127.0.0.1",
                 "UdpIp": "127.0.0.1",
                 "UdpPort": 14560
@@ -211,20 +211,20 @@ func test_accepts_px4_sitl_transport_settings() -> void:
     assert_eq(result.settings["Vehicles"]["Drone1"]["TcpPort"], 4560)
 
 
-func test_rejects_unverified_px4_quad_x_actuator_mapping() -> void:
+func test_rejects_invalid_px4_quad_x_actuator_mapping() -> void:
     var result := AirSimSettings.validate({
         "SettingsVersion": 1.2,
         "SimMode": "Multirotor",
         "Vehicles": {
             "Drone1": {
                 "VehicleType": "PX4Multirotor",
-                "HilActuatorQuadXOrder": ["front_right", "rear_right", "rear_left", "front_left"]
+                "HilActuatorQuadXOrder": ["front_right", "front_right", "rear_left", "front_left"]
             }
         }
     })
 
     assert_false(result.ok)
-    assert_string_contains(result.error, "HilActuatorQuadXOrder must be the verified Quad-X order")
+    assert_string_contains(result.error, "HilActuatorQuadXOrder must name four distinct motors")
 
 
 func test_rejects_px4_serial_transport_and_invalid_ports() -> void:
