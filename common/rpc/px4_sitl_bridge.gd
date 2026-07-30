@@ -46,6 +46,7 @@ var _last_actuator_time := -1.0
 # HIL_ACTUATOR_CONTROLS is timestamped in PX4's simulator clock. Keep it
 # separate from Godot's wall-clock receive time for LockStep freshness.
 var _last_actuator_simulation_time := -1.0
+var _last_actuator_time_usec := -1
 var _last_sensor_time := -1.0
 var _hil_sensor_reset_sent := false
 var _start_time := -1.0
@@ -125,6 +126,7 @@ func start() -> Dictionary:
     _last_heartbeat_time = -1.0
     _last_actuator_time = -1.0
     _last_actuator_simulation_time = -1.0
+    _last_actuator_time_usec = -1
     _last_sensor_time = -1.0
     _hil_sensor_reset_sent = false
     _armed_since = -1.0
@@ -482,6 +484,7 @@ func diagnostics() -> Dictionary:
         "last_heartbeat_time": _last_heartbeat_time,
         "last_actuator_time": _last_actuator_time,
         "last_actuator_simulation_time": _last_actuator_simulation_time,
+        "last_actuator_time_usec": _last_actuator_time_usec,
         "last_sensor_time": _last_sensor_time,
         "actuator_freshness_age_seconds": _actuator_freshness_age_seconds(_last_poll_time),
         "estimator_ready": estimator_ready(_last_poll_time),
@@ -628,6 +631,13 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
             # PX4's generated common dialect packs this message as time_usec
             # (8), flags (8), controls[16] (64), and mode (1).
             var actuator_time_usec := _payload_u64(frame, payload_offset, payload_size, 0)
+            if _last_actuator_time_usec >= 0 and actuator_time_usec < _last_actuator_time_usec:
+                _trace_qualification_event("hil_actuator_controls_rejected", now_seconds, {
+                    "time_usec": actuator_time_usec,
+                    "last_time_usec": _last_actuator_time_usec,
+                    "error": "HIL actuator source timestamp regressed",
+                })
+                continue
             var armed := (int(frame[payload_offset + 80]) & 0x80) != 0
             var raw_controls := PackedFloat32Array()
             for index in 4:
@@ -640,6 +650,7 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
                     _actuators.append(raw_controls[source_index])
                 _last_actuator_time = now_seconds
                 _last_actuator_simulation_time = float(actuator_time_usec) / 1_000_000.0
+                _last_actuator_time_usec = actuator_time_usec
                 hil_sample["command_normalized"] = {
                     "m1": float(_actuators[0]), "m2": float(_actuators[1]),
                     "m3": float(_actuators[2]), "m4": float(_actuators[3]),
@@ -947,14 +958,20 @@ func _uses_source_clock_for_actuator_freshness() -> bool:
     return lockstep_enabled() \
         and _config.get("Transport") != "Fake" \
         and _last_sensor_time >= 0.0 \
-        and _last_actuator_simulation_time >= 0.0
+        and _last_actuator_simulation_time >= 0.0 \
+        and _last_actuator_time_usec >= 0
 
 
 func _actuator_freshness_age_seconds(now_seconds: float) -> float:
     if _uses_source_clock_for_actuator_freshness():
-        if _last_sensor_time < _last_actuator_simulation_time:
+        # HIL_ACTUATOR_CONTROLS.time_usec is the authoritative wire clock.
+        # Canonicalize the locally published fractional seconds to that same
+        # integer microsecond domain before comparing: a floating-point value
+        # such as 8.716666666... represents the exact 8_716_667us sample.
+        var sensor_time_usec := int(round(_last_sensor_time * 1_000_000.0))
+        if sensor_time_usec < _last_actuator_time_usec:
             return INF
-        return _last_sensor_time - _last_actuator_simulation_time
+        return float(sensor_time_usec - _last_actuator_time_usec) / 1_000_000.0
     return maxf(0.0, now_seconds - _last_actuator_time) if _last_actuator_time >= 0.0 else INF
 
 

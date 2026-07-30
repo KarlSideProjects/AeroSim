@@ -118,6 +118,7 @@ func test_real_lockstep_actuator_freshness_uses_hil_simulation_time_not_wall_clo
     bridge._last_heartbeat_time = 0.0
     bridge._last_actuator_time = 0.01
     bridge._last_actuator_simulation_time = 40.0
+    bridge._last_actuator_time_usec = 40_000_000
     bridge._last_sensor_time = 40.05
 
     assert_almost_eq(bridge._actuator_freshness_age_seconds(999.0), 0.05, 0.000001)
@@ -127,6 +128,16 @@ func test_real_lockstep_actuator_freshness_uses_hil_simulation_time_not_wall_clo
     bridge._last_sensor_time = 40.11
     bridge.poll(999.0)
     assert_eq(bridge.state, "stale", "Advancing HIL simulation time beyond ActuatorTimeout must fail closed.")
+
+
+func test_real_lockstep_canonicalizes_fractional_seconds_to_hil_microseconds() -> void:
+    var bridge := _new_fake_bridge(1.0, 0.1)
+    bridge._config.Transport = "Real"
+    bridge._last_actuator_simulation_time = 8.716667
+    bridge._last_actuator_time_usec = 8_716_667
+    bridge._last_sensor_time = 8.71666666666667
+
+    assert_almost_eq(bridge._actuator_freshness_age_seconds(999.0), 0.0, 0.000001)
 
 
 func test_lockstep_bootstrap_without_a_hil_actuator_timestamp_keeps_wall_clock_timeout() -> void:
@@ -266,6 +277,7 @@ func test_real_parser_keeps_armed_hil_actuator_controls() -> void:
     assert_eq(bridge.state, "armed")
     assert_eq(bridge.actuator_outputs(), PackedFloat32Array([1.0, 0.25, 0.5, 0.75]))
     assert_almost_eq(bridge.diagnostics().last_actuator_simulation_time, 0.001, 0.000001)
+    assert_eq(bridge.diagnostics().last_actuator_time_usec, 1000)
 
 
 func test_qualification_trace_records_incoming_mode_armed_and_authority_transition() -> void:
