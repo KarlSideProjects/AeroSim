@@ -55,9 +55,10 @@ No #302, #305, or #306 implementation was changed. #303's authoritative wind
 event was consumed only through the existing runtime wind path; no #303 code
 was modified.
 
-## Commit
+## Commits
 
-`60a647b feat: expose validated PX4 MAVLink telemetry (#304)`
+- `60a647b feat: expose validated PX4 MAVLink telemetry (#304)` — original implementation.
+- `e231f31 fix: accept truncated PX4 MAVLink telemetry (#304)` — truncation and cached-freshness fix.
 
 ## Fix round 1
 
