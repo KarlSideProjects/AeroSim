@@ -14,6 +14,7 @@ scripts/test_native.sh
 scripts/test_license_scan.sh
 node tests/test_gsp_panel_behavior.js
 node tests/test_gsp_panel_recovery.js
+node tests/test_gsp_visual_state.js
 GODOT_BIN="${GODOT_BIN:-godot}" python3 scripts/test_gsp_transport_boundary.py
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_backpressure_contract.gd
 "${GODOT_BIN:-godot}" --headless --path . --script res://tests/headless/gsp_launch_contract.gd

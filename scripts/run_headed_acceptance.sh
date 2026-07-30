@@ -109,10 +109,22 @@ printf '%s\n' \
     'res://addons/terrain_3d/terrain.gdextension' > .godot/extension_list.cfg
 export AEROSIM_HEADED_COMMIT_SHA="$(git rev-parse HEAD)"
 log_path="$out_dir/godot.log"
+rpc_port="${AEROSIM_HEADED_RPC_PORT:-}"
+if [ -z "$rpc_port" ]; then
+    rpc_port="$(python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as socket_handle:
+    socket_handle.bind(("127.0.0.1", 0))
+    print(socket_handle.getsockname()[1])
+PY
+    )"
+fi
 rm -f "$out_dir"/*.png "$out_dir/report.json" "$log_path" "$out_dir/xvfb.log"
 timeout 180s "${launcher[@]}" "$godot_bin" "${display_driver_args[@]}" --path . --resolution 1280x720 \
     --log-file "$log_path" \
-    --script res://tests/headed/headed_acceptance.gd -- --out-dir "$out_dir"
+    --script res://tests/headed/headed_acceptance.gd -- \
+    --airsim-rpc-port "$rpc_port" --out-dir "$out_dir"
 
 python3 - "$out_dir/report.json" "$gdextension_sha256" "$native_source_sha256" <<'PY'
 import json

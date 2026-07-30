@@ -76,9 +76,9 @@ func test_unready_gsp_exposes_actions_that_start_the_panel() -> void:
     assert_eq(launcher.copy_calls, 1)
 
 
-func test_demo_panel_split_reserves_the_upper_four_fifths_for_the_game() -> void:
+func test_demo_panel_split_reserves_the_upper_three_fifths_for_the_game() -> void:
     var split := GspLauncher.demo_panel_split(Vector2i(100, 50), Vector2i(1920, 900))
 
-    assert_eq(split.game_size, Vector2i(1920, 720))
-    assert_eq(split.panel_position, Vector2i(100, 770))
-    assert_eq(split.panel_size, Vector2i(1920, 180))
+    assert_eq(split.game_size, Vector2i(1920, 540))
+    assert_eq(split.panel_position, Vector2i(100, 590))
+    assert_eq(split.panel_size, Vector2i(1920, 360))

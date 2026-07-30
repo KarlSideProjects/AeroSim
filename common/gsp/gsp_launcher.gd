@@ -9,6 +9,7 @@ const WINDOW_WIDTH_OVERRIDE := "display/window/size/window_width_override"
 const WINDOW_HEIGHT_OVERRIDE := "display/window/size/window_height_override"
 const PANEL_ASSET_PATHS := [
     "res://common/gsp/assets/gsp_visual.js",
+    "res://common/gsp/assets/three-0.180.0.global.min.js",
 ]
 const GspServer = preload("res://common/gsp/gsp_server.gd")
 
@@ -37,7 +38,7 @@ static func panel_url(panel_file_url: String, port: int, token: String) -> Strin
 
 
 static func demo_panel_split(game_position: Vector2i, game_size: Vector2i) -> Dictionary:
-    var game_height := game_size.y * 4 / 5
+    var game_height := game_size.y * 3 / 5
     return {
         "game_size": Vector2i(game_size.x, game_height),
         "panel_position": Vector2i(game_position.x, game_position.y + game_height),
