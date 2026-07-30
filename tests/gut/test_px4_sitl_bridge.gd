@@ -268,6 +268,22 @@ func test_px4_actuator_commands_are_m1_to_m4_and_fail_closed_when_stale() -> voi
     assert_true(bridge.px4_observability(0.12).hil_actuator_controls.stale)
 
 
+func test_real_parser_accepts_crc_valid_mavlink_v2_trailing_zero_truncation() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    bridge.start()
+    bridge._consume_mavlink(_mavlink_v2_frame(bridge, 30, _floats([17.0, 0.1, 0.2, 0.3])), 2.0, PackedByteArray())
+    bridge._consume_mavlink(_mavlink_v2_frame(bridge, 32, _floats([18.0, 1.0, 2.0, -3.0])), 2.0, PackedByteArray())
+    bridge._consume_mavlink(_mavlink_v2_frame(bridge, 231, bridge._u64_bytes(19_000) + _floats([4.0, 5.0, 6.0])), 2.0, PackedByteArray())
+
+    var observed := bridge.px4_observability(2.0)
+    assert_almost_eq(observed.attitude.sample.roll_rad, 0.1, 0.00001)
+    assert_eq(observed.attitude.sample.body_rates_frd_rad_s, Vector3.ZERO)
+    assert_eq(observed.local_position_ned.sample.position_ned, Vector3(1.0, 2.0, -3.0))
+    assert_eq(observed.local_position_ned.sample.velocity_ned_mps, Vector3.ZERO)
+    assert_eq(observed.wind_cov.sample.wind_ned_mps, Vector3(4.0, 5.0, 6.0))
+    assert_eq(observed.wind_cov.sample.horizontal_variance, 0.0)
+
+
 func _floats(values: Array) -> PackedByteArray:
     var bytes := PackedByteArray()
     for value in values:
@@ -277,6 +293,15 @@ func _floats(values: Array) -> PackedByteArray:
 
 func _mavlink_frame(bridge: Px4SitlBridge, message_id: int, payload: PackedByteArray) -> PackedByteArray:
     var frame := PackedByteArray([0xFE, payload.size(), 0, 1, 1, message_id])
+    frame.append_array(payload)
+    var crc := bridge._mavlink_crc(frame.slice(1), bridge._crc_extra(message_id))
+    frame.append(crc & 0xFF)
+    frame.append((crc >> 8) & 0xFF)
+    return frame
+
+
+func _mavlink_v2_frame(bridge: Px4SitlBridge, message_id: int, payload: PackedByteArray) -> PackedByteArray:
+    var frame := PackedByteArray([0xFD, payload.size(), 0, 0, 0, 1, 1, message_id, 0, 0])
     frame.append_array(payload)
     var crc := bridge._mavlink_crc(frame.slice(1), bridge._crc_extra(message_id))
     frame.append(crc & 0xFF)

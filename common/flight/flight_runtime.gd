@@ -6326,7 +6326,10 @@ func gsp_telemetry_snapshot() -> Dictionary:
     var snapshot: Dictionary = native.call("telemetry_snapshot")
     var publish_count := int(snapshot.get("publish_count", -1))
     if publish_count == _gsp_telemetry_publish_count and not _gsp_telemetry_cache.is_empty():
-        return _gsp_telemetry_cache.duplicate(true)
+        var cached := _gsp_telemetry_cache.duplicate(true)
+        if px4_sitl_bridge != null:
+            cached["px4_mavlink"] = px4_sitl_bridge.px4_observability(Time.get_ticks_usec() / 1_000_000.0)
+        return cached
     var position: Vector3 = drone_body.global_position if drone_body != null else _spawn_position()
     var orientation: Quaternion = drone_body.global_transform.basis.get_rotation_quaternion() if drone_body != null else Quaternion.IDENTITY
     var velocity: Vector3 = drone_body.linear_velocity if drone_body != null else Vector3.ZERO

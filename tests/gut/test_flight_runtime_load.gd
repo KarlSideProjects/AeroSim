@@ -109,6 +109,11 @@ class FakeNative:
         return row
 
 
+class FakeTelemetryNative extends FakeNative:
+    func telemetry_snapshot() -> Dictionary:
+        return {"publish_count": 1, "timestamp_us": 1, "motors": []}
+
+
 class CollisionHandoffNative extends FakeNative:
     var sync_calls := 0
     var step_calls := 0
@@ -1656,6 +1661,7 @@ func test_px4_hud_localizes_finite_state_and_diagnostic() -> void:
     assert_false(status.contains("STARTING"))
     assert_false(status.contains("waiting for PX4 heartbeat"))
 
+
     var visible_messages := [
         "PX4 disarmed",
         "PX4 is not connected",
@@ -1687,6 +1693,20 @@ func test_px4_hud_localizes_finite_state_and_diagnostic() -> void:
     var heartbeat_with_semicolon := runtime._localize_fallback_message("PX4 heartbeat received; awaiting actuator output")
     assert_false(heartbeat_with_semicolon.contains("awaiting actuator output"))
     assert_true(heartbeat_with_semicolon.contains("等待致動器輸出"))
+
+
+func test_gsp_cached_native_snapshot_refreshes_px4_observability() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime.native = FakeTelemetryNative.new()
+    var bridge := Px4SitlBridge.new()
+    bridge.configure({"VehicleType": "PX4Multirotor", "Transport": "Fake", "HeartbeatTimeout": 1.0, "FailureTimeout": 3.0, "ActuatorTimeout": 0.1})
+    bridge._record_px4_message("attitude", {"roll_rad": 0.0}, Time.get_ticks_usec() / 1_000_000.0 - 2.0)
+    runtime.px4_sitl_bridge = bridge
+
+    assert_true(runtime.gsp_telemetry_snapshot().px4_mavlink.attitude.stale)
+    bridge._record_px4_message("attitude", {"roll_rad": 0.0}, Time.get_ticks_usec() / 1_000_000.0)
+    assert_false(runtime.gsp_telemetry_snapshot().px4_mavlink.attitude.stale)
 
 
 func test_finite_settings_messages_are_localized_without_generic_error_prefix() -> void:

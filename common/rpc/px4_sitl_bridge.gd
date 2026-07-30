@@ -524,20 +524,20 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
             if _armed_since >= 0.0:
                 _refresh_authority(now_seconds, true)
         elif message_id == MAVLINK_ATTITUDE:
-            if payload_size < 28:
+            if not v2 and payload_size < 28:
                 continue
             _record_px4_message("attitude", {
-                "roll_rad": frame.decode_float(payload_offset + 4),
-                "pitch_rad": frame.decode_float(payload_offset + 8),
-                "yaw_rad": frame.decode_float(payload_offset + 12),
-                "body_rates_frd_rad_s": Vector3(frame.decode_float(payload_offset + 16), frame.decode_float(payload_offset + 20), frame.decode_float(payload_offset + 24)),
+                "roll_rad": _payload_float(frame, payload_offset, payload_size, 4),
+                "pitch_rad": _payload_float(frame, payload_offset, payload_size, 8),
+                "yaw_rad": _payload_float(frame, payload_offset, payload_size, 12),
+                "body_rates_frd_rad_s": Vector3(_payload_float(frame, payload_offset, payload_size, 16), _payload_float(frame, payload_offset, payload_size, 20), _payload_float(frame, payload_offset, payload_size, 24)),
             }, now_seconds)
         elif message_id == MAVLINK_LOCAL_POSITION_NED:
-            if payload_size < 28:
+            if not v2 and payload_size < 28:
                 continue
             _record_px4_message("local_position_ned", {
-                "position_ned": Vector3(frame.decode_float(payload_offset + 4), frame.decode_float(payload_offset + 8), frame.decode_float(payload_offset + 12)),
-                "velocity_ned_mps": Vector3(frame.decode_float(payload_offset + 16), frame.decode_float(payload_offset + 20), frame.decode_float(payload_offset + 24)),
+                "position_ned": Vector3(_payload_float(frame, payload_offset, payload_size, 4), _payload_float(frame, payload_offset, payload_size, 8), _payload_float(frame, payload_offset, payload_size, 12)),
+                "velocity_ned_mps": Vector3(_payload_float(frame, payload_offset, payload_size, 16), _payload_float(frame, payload_offset, payload_size, 20), _payload_float(frame, payload_offset, payload_size, 24)),
             }, now_seconds)
         elif message_id == MAVLINK_ATTITUDE_TARGET:
             if payload_size < 37:
@@ -557,12 +557,12 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
                 "yaw_rate_rad_s": frame.decode_float(payload_offset + 44),
             }, now_seconds)
         elif message_id == MAVLINK_WIND_COV:
-            if payload_size < 40:
+            if not v2 and payload_size < 40:
                 continue
             _record_px4_message("wind_cov", {
-                "wind_ned_mps": Vector3(frame.decode_float(payload_offset + 8), frame.decode_float(payload_offset + 12), frame.decode_float(payload_offset + 16)),
-                "horizontal_variance": frame.decode_float(payload_offset + 20),
-                "vertical_variance": frame.decode_float(payload_offset + 24),
+                "wind_ned_mps": Vector3(_payload_float(frame, payload_offset, payload_size, 8), _payload_float(frame, payload_offset, payload_size, 12), _payload_float(frame, payload_offset, payload_size, 16)),
+                "horizontal_variance": _payload_float(frame, payload_offset, payload_size, 20),
+                "vertical_variance": _payload_float(frame, payload_offset, payload_size, 24),
             }, now_seconds)
         elif message_id == MAVLINK_COMMAND_ACK:
             if payload_size < 3:
@@ -595,6 +595,10 @@ func _find_mavlink_start(rx_buffer: PackedByteArray) -> int:
 
 func _record_px4_message(name: String, sample: Dictionary, now_seconds: float) -> void:
     _px4_messages[name] = {"received_at_seconds": now_seconds, "sample": sample}
+
+
+func _payload_float(frame: PackedByteArray, payload_offset: int, payload_size: int, field_offset: int) -> float:
+    return frame.decode_float(payload_offset + field_offset) if field_offset + 4 <= payload_size else 0.0
 
 
 func _message_id(frame: PackedByteArray) -> int:

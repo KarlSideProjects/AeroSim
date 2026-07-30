@@ -57,4 +57,18 @@ was modified.
 
 ## Commit
 
-`392128d feat: expose validated PX4 MAVLink telemetry (#304)`
+`60a647b feat: expose validated PX4 MAVLink telemetry (#304)`
+
+## Fix round 1
+
+- MAVLink 2 `ATTITUDE`, `LOCAL_POSITION_NED`, and `WIND_COV` now accept
+  CRC-valid trailing-zero-truncated payloads and decode omitted trailing float
+  fields as zero. Synthetic MAVLink 2 frames cover that behavior.
+- The cached native GSP snapshot now refreshes the separate `px4_mavlink`
+  observability block on every read, so source age and stale state continue to
+  advance without a new native telemetry publish.
+- Focused evidence: bridge tests are 13/13 and the new cached-snapshot
+  freshness test passes (overall GUT: 314 passed, 11 recovery-mode pending).
+  `scripts/test_px4_sitl_launcher.sh --check --fake-smoke` again passed;
+  the same absent native library warning remains. No authentic PX4 stream or
+  motor-mapping claim was added.
