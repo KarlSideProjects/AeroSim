@@ -30,6 +30,8 @@ const DEFAULT_CONTROL_PORT_LOCAL := 14540
 const DEFAULT_CONTROL_PORT_REMOTE := 14580
 const DEFAULT_UDP_PORT := 14560
 const QUALIFICATION_TRACE_MAX_ENTRIES := 20000
+const OFFBOARD_SETPOINT_PERIOD_SECONDS := 0.1
+const OFFBOARD_PREWARM_SECONDS := 1.0
 const HIL_SENSOR_IMU_UPDATED_MASK := 0x003F
 const HIL_SENSOR_MAGNETOMETER_UPDATED_MASK := 0x01C0
 const HIL_SENSOR_BAROMETER_UPDATED_MASK := 0x1A00
@@ -60,6 +62,9 @@ var _arm_requested := false
 var _arm_command_sent := false
 var _hil_mode_requested := false
 var _offboard_requested := false
+var _offboard_target_active := false
+var _offboard_prewarm_since := -1.0
+var _last_position_setpoint_time := -1.0
 var _takeoff_pending := false
 var _takeoff_altitude := 0.0
 var _estimator_ready_report_count := 0
@@ -141,6 +146,9 @@ func start() -> Dictionary:
     _arm_command_sent = false
     _hil_mode_requested = false
     _offboard_requested = false
+    _offboard_target_active = false
+    _offboard_prewarm_since = -1.0
+    _last_position_setpoint_time = -1.0
     _takeoff_pending = false
     _takeoff_altitude = 0.0
     _estimator_ready_report_count = 0
@@ -205,8 +213,10 @@ func poll(now_seconds: float) -> void:
     _progress_arm_readiness(now_seconds)
     if state == "failed":
         return
+    _advance_offboard_setpoint_publisher(now_seconds)
     var actuator_started_after_arm := _actuator_received_after_arm()
     if state == "armed" and actuator_started_after_arm and _actuator_freshness_age_seconds(now_seconds) + 0.000001 >= _config.ActuatorTimeout:
+        _clear_offboard_target()
         _trace_qualification_event("actuator_freshness_expired", now_seconds, {
             "age_seconds": _actuator_freshness_age_seconds(now_seconds),
             "uses_source_clock": _uses_source_clock_for_actuator_freshness(),
@@ -392,6 +402,7 @@ func arm_disarm(armed: bool) -> Dictionary:
         return {"ok": true}
     _arm_requested = armed
     if not armed:
+        _clear_offboard_target()
         _send_command_long(400, 0.0)
     return {"ok": true, "armed": state == "armed" if armed else state == "connected"}
 
@@ -430,6 +441,7 @@ func land() -> Dictionary:
     if not is_authority_active():
         return {"ok": false, "error": "PX4 authority is inactive"}
     mission_phase = "land"
+    _clear_offboard_target()
     if _config.get("Transport") != "Fake":
         _send_command_long(21, 0.0, 0.0)
     return {"ok": true}
@@ -448,13 +460,33 @@ func setpoint_ned_frd(position_ned: Vector3, body_rates_frd: Vector3) -> Diction
         "mission_phase": mission_phase,
     })
     if _config.get("Transport") != "Fake":
-        if not _offboard_requested:
-            for _attempt in 3:
-                _send_position_setpoint(position_ned)
-            _send_command_long_parameters(MAV_CMD_DO_SET_MODE, [MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, PX4_CUSTOM_MAIN_MODE_OFFBOARD])
-            _offboard_requested = true
-        _send_position_setpoint(position_ned)
+        _offboard_target_active = true
+        _offboard_prewarm_since = -1.0
+        _last_position_setpoint_time = -1.0
     return {"ok": true}
+
+
+func _advance_offboard_setpoint_publisher(now_seconds: float) -> void:
+    if _config.get("Transport") == "Fake" or not _offboard_target_active:
+        return
+    if not is_authority_active() or not estimator_ready(now_seconds):
+        _clear_offboard_target()
+        return
+    if _offboard_prewarm_since < 0.0:
+        _offboard_prewarm_since = now_seconds
+    if _last_position_setpoint_time < 0.0 or now_seconds - _last_position_setpoint_time >= OFFBOARD_SETPOINT_PERIOD_SECONDS:
+        _send_position_setpoint(last_setpoint.position_ned)
+        _last_position_setpoint_time = now_seconds
+    if not _offboard_requested and now_seconds - _offboard_prewarm_since >= OFFBOARD_PREWARM_SECONDS:
+        _send_command_long_parameters(MAV_CMD_DO_SET_MODE, [MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, PX4_CUSTOM_MAIN_MODE_OFFBOARD])
+        _offboard_requested = true
+
+
+func _clear_offboard_target() -> void:
+    _offboard_target_active = false
+    _offboard_prewarm_since = -1.0
+    _last_position_setpoint_time = -1.0
+    _offboard_requested = false
 
 
 func _send_position_setpoint(position_ned: Vector3) -> void:
@@ -1131,6 +1163,8 @@ func _set_state(next_state: String, authority: bool, message: String) -> void:
     var state_before := state
     state = next_state
     _message = message
+    if state in ["stale", "failed", "disconnected"]:
+        _clear_offboard_target()
     if state_before != state:
         _trace_qualification_event("state_transition", _last_poll_time, {
             "state_before": state_before,

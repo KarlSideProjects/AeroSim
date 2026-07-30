@@ -125,6 +125,29 @@ func test_fake_armed_authority_expires_when_actuators_stop() -> void:
     assert_eq(bridge.actuator_outputs().size(), 0)
 
 
+func test_offboard_publisher_prewarm_cadence_and_stale_stop_fail_closed() -> void:
+    var bridge := _new_fake_bridge(2.0)
+    bridge._config.Transport = "Real"
+    bridge.set_qualification_trace_enabled(true)
+    bridge.state = "armed"
+    bridge._authority_active = true
+    bridge._last_heartbeat_time = 0.0
+    bridge._estimator_ready_report_count = 2
+    bridge._last_estimator_ready_report_time = 0.0
+    assert_true(bridge.setpoint_ned_frd(Vector3(1.0, 2.0, -3.0), Vector3.ZERO).ok)
+
+    bridge.poll(0.0)
+    bridge.poll(0.5)
+    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size(), 2)
+    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_command_long").size(), 0)
+    bridge.poll(1.0)
+    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_command_long").back().command, 176)
+
+    bridge._set_state("stale", false, "test")
+    bridge.poll(1.2)
+    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size(), 3)
+
+
 func test_real_lockstep_actuator_freshness_uses_hil_simulation_time_not_wall_clock() -> void:
     var bridge := _new_fake_bridge(1.0, 0.1)
     bridge._config.Transport = "Real"
@@ -606,3 +629,11 @@ func _qualification_trace_entry(trace: Array, kind: String) -> Dictionary:
         if String(entry.get("kind", "")) == kind:
             return entry
     return {}
+
+
+func _qualification_trace_entries(trace: Array, kind: String) -> Array:
+    var entries: Array = []
+    for entry in trace:
+        if String(entry.get("kind", "")) == kind:
+            entries.append(entry)
+    return entries
