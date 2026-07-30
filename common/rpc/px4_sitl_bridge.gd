@@ -442,6 +442,11 @@ func setpoint_ned_frd(position_ned: Vector3, body_rates_frd: Vector3) -> Diction
         "position_ned": position_ned,
         "body_rates_frd": body_rates_frd,
     }
+    _trace_qualification_event("setpoint_requested", _last_poll_time, {
+        "position_ned": position_ned,
+        "body_rates_frd": body_rates_frd,
+        "mission_phase": mission_phase,
+    })
     if _config.get("Transport") != "Fake":
         if not _offboard_requested:
             for _attempt in 3:
@@ -466,6 +471,13 @@ func _send_position_setpoint(position_ned: Vector3) -> void:
     payload.append(_target_system)
     payload.append(_target_component)
     payload.append(1)
+    _trace_qualification_event("outgoing_position_setpoint", _last_poll_time, {
+        "position_ned": position_ned,
+        "type_mask": 3576,
+        "target_system": _target_system,
+        "target_component": _target_component,
+        "offboard_requested": _offboard_requested,
+    })
     _send_mavlink(payload, 84, _control_peer)
 
 
