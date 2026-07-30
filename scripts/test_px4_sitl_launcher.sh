@@ -7,6 +7,7 @@ PX4_REVISION="1dacb4cdef2d7145754fc788fa8dc482eed74b40"
 PX4_SOURCE_DIR="${PX4_SOURCE_DIR:-$ROOT_DIR/build/px4}"
 mode="check"
 fake_smoke=false
+wind_step_qualification=false
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -22,8 +23,12 @@ while [ "$#" -gt 0 ]; do
             fake_smoke=true
             shift
             ;;
+        --wind-step-qualification)
+            wind_step_qualification=true
+            shift
+            ;;
         *)
-            echo "usage: $0 [--check|--run] [--fake-smoke]" >&2
+            echo "usage: $0 [--check|--run] [--fake-smoke] [--wind-step-qualification]" >&2
             exit 2
             ;;
     esac
@@ -216,5 +221,17 @@ fi
 if ! "$venv_dir/bin/python" -u "$ROOT_DIR/scripts/px4_sitl_mission.py" --port 41451 >"$mission_log" 2>&1; then
     cat "$mission_log" >&2
     exit 1
+fi
+if [ "$wind_step_qualification" = true ]; then
+    qualification_log="$log_dir/wind_step_qualification.json"
+    evidence_path="${AEROSIM_PX4_WIND_STEP_EVIDENCE:-}"
+    qualification_args=(--output "$qualification_log")
+    if [ -n "$evidence_path" ]; then
+        qualification_args+=(--evidence "$evidence_path")
+    fi
+    if ! python3 "$ROOT_DIR/scripts/px4_wind_step_qualification.py" "${qualification_args[@]}"; then
+        echo "PX4 wind-step qualification unavailable or failed; no authentic result is claimed" >&2
+        exit 1
+    fi
 fi
 printf '{"ok":true,"mode":"run","revision":"%s","px4_log":"%s","mission_log":"%s"}\n' "$PX4_REVISION" "$px4_log" "$mission_log"

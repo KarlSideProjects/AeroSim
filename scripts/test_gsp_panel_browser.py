@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 GODOT = os.environ.get("GODOT_BIN", "godot")
 CHROME = os.environ.get("CHROME_BIN", "/usr/bin/google-chrome")
 URL_PATTERN = re.compile(r"GSP panel URL: (?P<url>file://[^\s]+#port=(?P<port>\d+)&token=(?P<token>[0-9a-f]{32}))")
+PORTRAIT_SIZES = [(480, 854), (560, 996), (640, 1138)]
 
 
 def cdp_frame(value: str) -> bytes:
@@ -125,6 +126,40 @@ def read_panel_url(process: subprocess.Popen[bytes], deadline: float) -> str:
     raise RuntimeError(f"timed out waiting for GSP URL: {output.decode(errors='replace')[-2000:]}")
 
 
+def check_portrait_console(cdp: Cdp) -> list[dict]:
+    """Exercise the installed file:// panel; never substitute a DOM fake here."""
+    checks = []
+    for width, height in PORTRAIT_SIZES:
+        cdp.command("Emulation.setDeviceMetricsOverride", {"width": width, "height": height, "deviceScaleFactor": 1, "mobile": False})
+        check = cdp.evaluate(
+            """(() => {
+                const live = document.getElementById('live-console');
+                const controls = [...live.querySelectorAll('button,input')];
+                const before = document.activeElement && document.activeElement.id;
+                document.getElementById('language-en').click();
+                const english = document.documentElement.lang === 'en' || document.body.textContent.includes('Ground Station');
+                document.getElementById('language-zh').click();
+                controls[0] && controls[0].focus();
+                const keyboard = document.activeElement === controls[0] && controls.every(control => control.getBoundingClientRect().width > 0);
+                const bounds = [...live.querySelectorAll('*')].every(node => {
+                  const rect = node.getBoundingClientRect();
+                  return rect.left >= -0.5 && rect.right <= innerWidth + 0.5 && rect.top >= -0.5 && rect.bottom <= innerHeight + 0.5;
+                });
+                const resources = performance.getEntriesByType('resource').map(entry => entry.name);
+                const offline = location.protocol === 'file:' && resources.every(name => name.startsWith('file:') || name.startsWith('data:'));
+                window.__AEROSIM_PANEL_TEST__.renderLiveConsole({ fresh: true, px4_mavlink: { hil_actuator_controls: { stale: true, age_seconds: 1, sample: { mapping_verified: true, command_normalized: { m1: .2, m2: .2, m3: .2, m4: .2 } } } } }, { tick: 1 });
+                const sourceText = document.getElementById('source-commanded').textContent;
+                const staleSource = sourceText.includes('Stale') || sourceText.includes('過期');
+                return { scroll: document.documentElement.scrollHeight <= innerHeight && live.scrollHeight <= innerHeight, bounds, keyboard, english, offline, stale_source: staleSource, before };
+            })()"""
+        )
+        if not isinstance(check, dict) or not all(check.get(key) for key in ("scroll", "bounds", "keyboard", "english", "offline", "stale_source")):
+            raise RuntimeError(f"portrait layout scroll/bounds failure at {width}x{height}: {check!r}; keyboard traversal failed or offline fallback/stale-source check failed")
+        checks.append({"size": [width, height], **check})
+    cdp.command("Emulation.clearDeviceMetricsOverride")
+    return checks
+
+
 def run_headless_scene_smoke(output_path: Path) -> int:
     result: dict = {"status": "deferred", "runner": "google-chrome-cdp-headless", "output": str(output_path)}
     game: subprocess.Popen[bytes] | None = None
@@ -149,6 +184,7 @@ def run_headless_scene_smoke(output_path: Path) -> int:
             cdp = Cdp(str(target["webSocketDebuggerUrl"]))
             cdp.command("Page.enable")
             cdp.command("Runtime.enable")
+            cdp.command("Page.addScriptToEvaluateOnNewDocument", {"source": "window.__AEROSIM_PANEL_TEST__ = {};"})
             cdp.command("Page.navigate", {"url": panel_url})
             evidence = cdp.evaluate(
                 """(async () => {
@@ -169,7 +205,7 @@ def run_headless_scene_smoke(output_path: Path) -> int:
             if not isinstance(evidence, dict) or evidence.get("three_revision") != "180" or not evidence.get("webgl") or evidence.get("visual", {}).get("rotor_count") != 4 or evidence.get("visual", {}).get("available") is not True:
                 result["evidence"] = evidence
                 raise RuntimeError("installed file:// GSP bundle did not expose WebGL Three.js flight health")
-            result.update({"status": "qualified", "panel_url": panel_url, "evidence": evidence})
+            result.update({"status": "qualified", "panel_url": panel_url, "evidence": evidence, "portrait": check_portrait_console(cdp)})
             stop_path.touch()
     except Exception as error:
         result["reason"] = str(error)
@@ -227,6 +263,7 @@ def main() -> int:
             cdp = Cdp(str(target["webSocketDebuggerUrl"]))
             cdp.command("Page.enable")
             cdp.command("Runtime.enable")
+            cdp.command("Page.addScriptToEvaluateOnNewDocument", {"source": "window.__AEROSIM_PANEL_TEST__ = {};"})
             cdp.command("Page.bringToFront")
             cdp.command("Page.navigate", {"url": panel_url})
             visual = cdp.evaluate(
@@ -247,6 +284,7 @@ def main() -> int:
             if not isinstance(visual, dict) or not visual.get("loaded") or not isinstance(visual.get("visible_pixels"), int) or visual["visible_pixels"] <= 0:
                 result["visual"] = visual
                 raise RuntimeError("production GSP visual module did not render visible pixels")
+            result["portrait"] = check_portrait_console(cdp)
             layout = cdp.evaluate(
                 """(() => {
                     const heights = () => [
