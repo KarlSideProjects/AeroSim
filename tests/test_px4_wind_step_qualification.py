@@ -90,9 +90,31 @@ class Px4WindStepQualificationTests(unittest.TestCase):
                 {"state": "armed", "authority_active": True},
                 {"kind": "hil_actuator_controls", "authority_active": True, "outputs": [0.2, 0.2, 0.2, 0.2]},
             ],
-            "runtime_authority_events": [{"px4_collision_input": {"touching": False}}],
+            "runtime_authority_events": [{"px4_collision_input": {"touching": True}, "px4_launch_handoff_events": [
+                {"phase": "support_held", "contact_support": True},
+                {"phase": "release_probe", "authority_jolt": False, "vertical_velocity_mps": 0.2},
+                {"phase": "cleared"},
+            ]}],
         }
 
         self.assertIn("estimator readiness", qualification_readiness_failure(trace))
         trace["bridge_events"].insert(1, {"kind": "estimator_status", "estimator_ready": True})
+        self.assertEqual(qualification_readiness_failure(trace), "")
+
+    def test_runner_rejects_wind_step_until_launch_support_probe_and_clearance_are_all_traced(self):
+        trace = {
+            "bridge_events": [
+                {"kind": "command_ack", "command": 22, "result": 0},
+                {"kind": "estimator_status", "estimator_ready": True},
+                {"state": "armed", "authority_active": True},
+                {"kind": "hil_actuator_controls", "authority_active": True, "outputs": [0.3, 0.3, 0.3, 0.3]},
+            ],
+            "runtime_authority_events": [{"px4_collision_input": {"touching": True}, "px4_launch_handoff_events": [
+                {"phase": "support_held", "contact_support": True},
+                {"phase": "release_probe", "authority_jolt": False, "vertical_velocity_mps": 0.2},
+            ]}],
+        }
+
+        self.assertIn("clearance", qualification_readiness_failure(trace))
+        trace["runtime_authority_events"][0]["px4_launch_handoff_events"].append({"phase": "cleared"})
         self.assertEqual(qualification_readiness_failure(trace), "")

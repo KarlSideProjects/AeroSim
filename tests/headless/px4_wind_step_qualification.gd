@@ -117,6 +117,7 @@ func _write_trace(force: bool = false) -> void:
         "bridge_authority_active": bridge.is_authority_active(),
         "bridge_state": String(bridge.state),
         "px4_takeoff_ground_release_pending": _smoke._px4_takeoff_ground_release_pending,
+        "px4_launch_handoff_events": _smoke._px4_launch_handoff_events.duplicate(true),
         "last_collision_authority": _smoke.last_collision_authority,
         "px4_collision_input": _smoke._last_px4_collision_input,
     }

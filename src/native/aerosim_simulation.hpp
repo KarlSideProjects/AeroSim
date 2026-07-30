@@ -83,6 +83,15 @@ struct MotorCommands {
     std::array<double, 4> normalized = {0.0, 0.0, 0.0, 0.0};
 };
 
+struct Px4SupportLiftReadiness {
+    bool valid = false;
+    bool ready = false;
+    double command_thrust_newtons = 0.0;
+    double projected_lift_newtons = 0.0;
+    double required_lift_newtons = 0.0;
+    double thrust_scale = 0.0;
+};
+
 struct SimulationConfig {
     double seconds = 1.0;
     std::int32_t physics_hz = 240;
@@ -316,6 +325,10 @@ Vec3 frd_to_y_up(const Vec3 &frd);
 Vec3 y_up_to_frd(const Vec3 &y_up);
 double first_order_motor_response(double current, double target, double tau_s, double dt_s);
 double available_thrust_cap_newtons(const SimulationConfig &config, double throttle);
+Px4SupportLiftReadiness px4_support_lift_readiness(
+        const SimulationConfig &config,
+        const RigidBodyState &state,
+        const MotorCommands &commands);
 double motor_speed_rad_s_from_thrust(
         double thrust_newtons,
         double max_thrust_per_motor_newtons,

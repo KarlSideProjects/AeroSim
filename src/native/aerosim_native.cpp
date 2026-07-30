@@ -405,6 +405,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_external_authority_active", "active"), &AeroSimNative::set_external_authority_active);
     ClassDB::bind_method(D_METHOD("flight_tuning_contract"), &AeroSimNative::flight_tuning_contract);
     ClassDB::bind_method(D_METHOD("flight_tuning_configuration"), &AeroSimNative::flight_tuning_configuration);
+    ClassDB::bind_method(
+            D_METHOD("px4_support_lift_readiness", "motor_0", "motor_1", "motor_2", "motor_3"),
+            &AeroSimNative::px4_support_lift_readiness);
     ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_per_motor_diagnostics"), &AeroSimNative::hardware_per_motor_diagnostics);
     ClassDB::bind_method(D_METHOD("telemetry_snapshot"), &AeroSimNative::telemetry_snapshot);
@@ -1979,6 +1982,24 @@ Dictionary AeroSimNative::hardware_power_diagnostics() const {
     diagnostics["altitude_hold_noise_deadband_m"] = config.altitude_hold_noise_deadband_m;
     diagnostics["battery_remaining_mah"] = config.battery_remaining_mah;
     return diagnostics;
+}
+
+Dictionary AeroSimNative::px4_support_lift_readiness(
+        double motor_0,
+        double motor_1,
+        double motor_2,
+        double motor_3) const {
+    const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
+    const aerosim::Px4SupportLiftReadiness readiness = aerosim::px4_support_lift_readiness(
+            hardware_config_.simulation_config(), simulation_state_, commands);
+    Dictionary result;
+    result["valid"] = readiness.valid;
+    result["ready"] = readiness.ready;
+    result["command_thrust_newtons"] = readiness.command_thrust_newtons;
+    result["projected_lift_newtons"] = readiness.projected_lift_newtons;
+    result["required_lift_newtons"] = readiness.required_lift_newtons;
+    result["thrust_scale"] = readiness.thrust_scale;
+    return result;
 }
 
 Dictionary AeroSimNative::hardware_per_motor_diagnostics() const {

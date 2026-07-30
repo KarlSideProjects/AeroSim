@@ -41,6 +41,10 @@ const MAP_SCENE_PATHS := {
 }
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const AIRSIM_GROUND_BODY_CLEARANCE_M := 0.25
+const PX4_LAUNCH_PHASE_IDLE := "idle"
+const PX4_LAUNCH_PHASE_SUPPORT_HELD := "support_held"
+const PX4_LAUNCH_PHASE_RELEASE_PROBE := "release_probe"
+const PX4_LAUNCH_PHASE_RELEASED := "released"
 ## Altitude the AirSim `takeoff` command climbs to, above the spawn origin.
 const AIRSIM_TAKEOFF_ALTITUDE_M := 3.0
 const KEYBOARD_FLIGHT_THROTTLE := 0.75
@@ -304,6 +308,9 @@ var _airsim_angular_acceleration := Vector3.ZERO
 var _airsim_environment_catalog_loaded := false
 var _px4_lockstep_sensor_pending := false
 var _px4_takeoff_ground_release_pending := false
+var _px4_launch_phase := PX4_LAUNCH_PHASE_IDLE
+var _px4_launch_support_frame_required := false
+var _px4_launch_handoff_events: Array[Dictionary] = []
 var _last_px4_collision_input := {}
 var _airsim_collision_seen := false
 var _airsim_contact_this_frame := false
@@ -1715,7 +1722,36 @@ func _physics_process(delta: float) -> void:
             if not _sync_native_from_drone():
                 return
         var px4_launch_ground_contact := _px4_launch_ground_contact()
-        var px4_collision_touching: bool = drone_body != null and drone_body.contact_seen and not px4_launch_ground_contact
+        var px4_lift_readiness := {}
+        var px4_launch_phase_for_step := _px4_launch_phase
+        var px4_collision_touching: bool = drone_body != null and drone_body.contact_seen
+        if px4_launch_ground_contact:
+            if _px4_launch_phase == PX4_LAUNCH_PHASE_SUPPORT_HELD:
+                if _px4_launch_support_frame_required:
+                    _px4_launch_support_frame_required = false
+                    px4_collision_touching = true
+                else:
+                    px4_lift_readiness = _px4_support_lift_readiness(actuator_outputs)
+                    if bool(px4_lift_readiness.get("valid", false)) and bool(px4_lift_readiness.get("ready", false)):
+                        _px4_launch_phase = PX4_LAUNCH_PHASE_RELEASE_PROBE
+                        px4_launch_phase_for_step = PX4_LAUNCH_PHASE_RELEASE_PROBE
+                        px4_collision_touching = false
+                        _record_px4_launch_handoff({
+                            "phase": PX4_LAUNCH_PHASE_RELEASE_PROBE,
+                            "projected_lift_newtons": px4_lift_readiness.get("projected_lift_newtons"),
+                            "required_lift_newtons": px4_lift_readiness.get("required_lift_newtons"),
+                        })
+                    else:
+                        px4_collision_touching = true
+                        _record_px4_launch_handoff({"phase": PX4_LAUNCH_PHASE_SUPPORT_HELD, "contact_support": true})
+            elif _px4_launch_phase == PX4_LAUNCH_PHASE_RELEASE_PROBE:
+                px4_collision_touching = false
+            else:
+                # FlightCore proved an upward response on this same initial
+                # spawn-floor contact. Retain that authority only until the
+                # normal clearance test closes this launch window; side, later
+                # floor, airborne, and landing contacts never enter this branch.
+                px4_collision_touching = false
         _last_px4_collision_input = {
             "caller": "FlightRuntime._physics_process.px4",
             "contact_seen": drone_body != null and drone_body.contact_seen,
@@ -1728,6 +1764,9 @@ func _physics_process(delta: float) -> void:
             "spawn_y": _spawn_position().y,
             "clearance_m": AIRSIM_GROUND_BODY_CLEARANCE_M,
             "initial_ground_contact": px4_launch_ground_contact,
+            "launch_phase_for_step": px4_launch_phase_for_step,
+            "launch_phase": _px4_launch_phase,
+            "lift_readiness": px4_lift_readiness.duplicate(true),
             "touching": px4_collision_touching,
         }
         var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body) if drone_body != null else Vector3.ZERO
@@ -1757,6 +1796,12 @@ func _physics_process(delta: float) -> void:
         )
         if _handle_native_step_failure(native, row, true):
             return
+        _resolve_px4_launch_release_probe(row, px4_launch_ground_contact)
+        _last_px4_collision_input["launch_phase"] = _px4_launch_phase
+        if row.size() > 12:
+            _last_px4_collision_input["probe_authority_jolt"] = row[12] > 0.5
+        if row.size() > 9:
+            _last_px4_collision_input["probe_vertical_velocity_mps"] = row[9]
     elif drone_body != null:
         if not demo_flight_active() or _demo_needs_native_sync():
             if not _sync_native_from_drone():
@@ -2900,6 +2945,9 @@ func reset_to_spawn(rpc_owned_reset: bool = false) -> bool:
     screen = "reset_pending"
     takeoff_requested = false
     _px4_takeoff_ground_release_pending = false
+    _px4_launch_phase = PX4_LAUNCH_PHASE_IDLE
+    _px4_launch_support_frame_required = false
+    _px4_launch_handoff_events.clear()
     takeoff_assist_active = false
     assisted_throttle_waiting_for_neutral = false
     # Quiesce private simulation/body state while retaining the public AirSim
@@ -7392,6 +7440,9 @@ func _configure_px4_sitl_bridge() -> void:
 func _on_px4_authority_changed(active: bool) -> void:
     if not active:
         _px4_takeoff_ground_release_pending = false
+        _px4_launch_phase = PX4_LAUNCH_PHASE_IDLE
+        _px4_launch_support_frame_required = false
+        _px4_launch_handoff_events.clear()
     if native != null and native.has_method("set_external_authority_active") and _native_external_authority_state != active:
         native.call("set_external_authority_active", active)
         _native_external_authority_state = active
@@ -7423,8 +7474,14 @@ func _airsim_px4_command(method: String, args: Array) -> Dictionary:
         return result
     if method == "takeoff":
         _px4_takeoff_ground_release_pending = true
+        _px4_launch_phase = PX4_LAUNCH_PHASE_SUPPORT_HELD
+        _px4_launch_support_frame_required = false
+        _px4_launch_handoff_events.clear()
     elif method == "land":
         _px4_takeoff_ground_release_pending = false
+        _px4_launch_phase = PX4_LAUNCH_PHASE_IDLE
+        _px4_launch_support_frame_required = false
+        _px4_launch_handoff_events.clear()
     _airsim_command_state = {"method": method, "args": args, "waypoint_index": 0}
     _airsim_command_remaining_frames = maxi(1, int(30.0 * float(Engine.physics_ticks_per_second)))
     takeoff_requested = true
@@ -7437,11 +7494,58 @@ func _px4_launch_ground_contact() -> bool:
         return false
     if px4_sitl_bridge == null or not px4_sitl_bridge.is_authority_active():
         _px4_takeoff_ground_release_pending = false
+        _px4_launch_phase = PX4_LAUNCH_PHASE_IDLE
+        _px4_launch_support_frame_required = false
         return false
     if drone_body.global_position.y - _spawn_position().y >= AIRSIM_GROUND_BODY_CLEARANCE_M:
         _px4_takeoff_ground_release_pending = false
+        _px4_launch_phase = PX4_LAUNCH_PHASE_IDLE
+        _px4_launch_support_frame_required = false
+        _record_px4_launch_handoff({"phase": "cleared"})
         return false
     return drone_body.contact_seen and drone_body.contact_normal.dot(Vector3.UP) > 0.5
+
+
+func _px4_support_lift_readiness(actuator_outputs: Array) -> Dictionary:
+    if native == null or not native.has_method("px4_support_lift_readiness") or actuator_outputs.size() < 4:
+        return {"valid": false, "ready": false}
+    var readiness: Variant = native.call(
+        "px4_support_lift_readiness",
+        clampf(float(actuator_outputs[0]), 0.0, 1.0),
+        clampf(float(actuator_outputs[1]), 0.0, 1.0),
+        clampf(float(actuator_outputs[2]), 0.0, 1.0),
+        clampf(float(actuator_outputs[3]), 0.0, 1.0)
+    )
+    return readiness if readiness is Dictionary else {"valid": false, "ready": false}
+
+
+func _resolve_px4_launch_release_probe(row: PackedFloat64Array, launch_ground_contact: bool) -> void:
+    if (_px4_launch_phase != PX4_LAUNCH_PHASE_RELEASE_PROBE and _px4_launch_phase != PX4_LAUNCH_PHASE_RELEASED) or not launch_ground_contact:
+        return
+    # CollisionAuthoritySwitch remains in Jolt for its configured clear frames.
+    # FlightCore must provide a real upward response on every initial-floor
+    # frame before clearance. A stopped response returns to support rather than
+    # allowing the body to pass through the floor.
+    if row.size() <= 12 or row[12] > 0.5:
+        return
+    var vertical_velocity := row[9] if row.size() > 9 else NAN
+    _record_px4_launch_handoff({
+        "phase": _px4_launch_phase,
+        "authority_jolt": false,
+        "vertical_velocity_mps": vertical_velocity,
+    })
+    if is_finite(vertical_velocity) and vertical_velocity > 0.0:
+        _px4_launch_phase = PX4_LAUNCH_PHASE_RELEASED
+        return
+    _px4_launch_phase = PX4_LAUNCH_PHASE_SUPPORT_HELD
+    _px4_launch_support_frame_required = true
+
+
+func _record_px4_launch_handoff(event: Dictionary) -> void:
+    if not event.is_empty() and (_px4_launch_handoff_events.is_empty() or _px4_launch_handoff_events.back() != event):
+        _px4_launch_handoff_events.append(event.duplicate(true))
+    while _px4_launch_handoff_events.size() > 32:
+        _px4_launch_handoff_events.pop_front()
 
 
 func _advance_px4_path() -> void:

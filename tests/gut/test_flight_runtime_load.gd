@@ -134,12 +134,25 @@ class CollisionHandoffNative extends FakeNative:
 
 class Px4CollisionBoundaryNative extends FakeNative:
     var px4_touching_arguments: Array[bool] = []
+    var lift_readiness := {
+        "valid": true,
+        "ready": false,
+        "projected_lift_newtons": 0.0,
+        "required_lift_newtons": 1.0,
+    }
+    var probe_vertical_velocity := 0.0
+    var probe_is_jolt := false
+
+    func px4_support_lift_readiness(..._arguments) -> Dictionary:
+        return lift_readiness.duplicate(true)
 
     func step_collision_px4_actuator_mode(...arguments) -> PackedFloat64Array:
         px4_touching_arguments.append(bool(arguments[6]))
         var row := PackedFloat64Array()
         row.resize(17)
         row[7] = 1.0
+        row[9] = probe_vertical_velocity
+        row[12] = 1.0 if probe_is_jolt else 0.0
         return row
 
 
@@ -1331,7 +1344,7 @@ func test_demo_launch_ignores_only_the_initial_upward_platform_contact() -> void
     assert_true(bool(runtime.native.collision_angle_arguments.touching))
 
 
-func test_px4_takeoff_releases_only_the_initial_upward_spawn_floor_contact() -> void:
+func test_px4_takeoff_holds_the_initial_upward_spawn_floor_contact_until_hardware_lift_is_ready() -> void:
     var fixture := _px4_collision_boundary_runtime()
     var runtime: FlightRuntime = fixture.runtime
     var native: Px4CollisionBoundaryNative = fixture.native
@@ -1340,7 +1353,101 @@ func test_px4_takeoff_releases_only_the_initial_upward_spawn_floor_contact() -> 
 
     runtime._physics_process(1.0 / 240.0)
 
+    assert_eq(native.px4_touching_arguments, [true])
+    assert_eq(runtime._px4_launch_phase, "support_held")
+
+
+func test_px4_takeoff_runs_one_hardware_ready_release_probe_and_marks_upward_motion_released() -> void:
+    var fixture := _px4_collision_boundary_runtime()
+    var runtime: FlightRuntime = fixture.runtime
+    var native: Px4CollisionBoundaryNative = fixture.native
+    native.lift_readiness = {
+        "valid": true,
+        "ready": true,
+        "projected_lift_newtons": 8.0,
+        "required_lift_newtons": 7.0,
+    }
+    native.probe_vertical_velocity = 0.2
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+
+    runtime._physics_process(1.0 / 240.0)
+
     assert_eq(native.px4_touching_arguments, [false])
+    assert_eq(runtime._px4_launch_phase, "released")
+    assert_true(runtime._px4_takeoff_ground_release_pending)
+    # A successful FlightCore probe owns only the initial spawn-floor contact
+    # until the normal clearance path observes actual lift-off.
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+    runtime._physics_process(1.0 / 240.0)
+    assert_eq(native.px4_touching_arguments, [false, false])
+
+
+func test_px4_takeoff_returns_released_spawn_floor_contact_to_support_when_upward_motion_stops() -> void:
+    var fixture := _px4_collision_boundary_runtime()
+    var runtime: FlightRuntime = fixture.runtime
+    var native: Px4CollisionBoundaryNative = fixture.native
+    native.lift_readiness = {
+        "valid": true,
+        "ready": true,
+        "projected_lift_newtons": 8.0,
+        "required_lift_newtons": 7.0,
+    }
+    native.probe_vertical_velocity = 0.2
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+
+    runtime._physics_process(1.0 / 240.0)
+    native.probe_vertical_velocity = 0.0
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(native.px4_touching_arguments, [false, false])
+    assert_eq(runtime._px4_launch_phase, "support_held")
+    assert_true(runtime._px4_launch_support_frame_required)
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+    runtime._physics_process(1.0 / 240.0)
+    assert_eq(native.px4_touching_arguments, [false, false, true])
+
+
+func test_px4_takeoff_keeps_a_released_drone_side_contact_in_the_collision_boundary() -> void:
+    var fixture := _px4_collision_boundary_runtime()
+    var runtime: FlightRuntime = fixture.runtime
+    var native: Px4CollisionBoundaryNative = fixture.native
+    runtime._px4_launch_phase = "released"
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.RIGHT
+
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(native.px4_touching_arguments, [true])
+
+
+func test_px4_takeoff_returns_a_non_upward_release_probe_to_jolt_support() -> void:
+    var fixture := _px4_collision_boundary_runtime()
+    var runtime: FlightRuntime = fixture.runtime
+    var native: Px4CollisionBoundaryNative = fixture.native
+    native.lift_readiness = {
+        "valid": true,
+        "ready": true,
+        "projected_lift_newtons": 8.0,
+        "required_lift_newtons": 7.0,
+    }
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(native.px4_touching_arguments, [false])
+    assert_eq(runtime._px4_launch_phase, "support_held")
+    assert_true(runtime._px4_launch_support_frame_required)
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+    runtime._physics_process(1.0 / 240.0)
+    assert_eq(native.px4_touching_arguments, [false, true])
 
 
 func test_px4_takeoff_keeps_side_contact_in_the_collision_boundary() -> void:
@@ -1368,8 +1475,9 @@ func test_px4_takeoff_closes_ground_release_after_clearance_and_keeps_later_floo
 
     runtime._physics_process(1.0 / 240.0)
 
-    assert_eq(native.px4_touching_arguments, [false, true])
+    assert_eq(native.px4_touching_arguments, [true, true])
     assert_false(runtime._px4_takeoff_ground_release_pending)
+    assert_eq(runtime._px4_launch_phase, "idle")
 
 
 func test_px4_takeoff_ground_release_clears_for_land_reset_and_authority_loss() -> void:
@@ -1378,15 +1486,18 @@ func test_px4_takeoff_ground_release_clears_for_land_reset_and_authority_loss() 
     assert_true(runtime._px4_takeoff_ground_release_pending)
     assert_true(runtime._airsim_px4_command("land", []).ok)
     assert_false(runtime._px4_takeoff_ground_release_pending)
+    assert_eq(runtime._px4_launch_phase, "idle")
     assert_true(runtime._airsim_px4_command("takeoff", []).ok)
     runtime._on_px4_authority_changed(false)
     assert_false(runtime._px4_takeoff_ground_release_pending)
+    assert_eq(runtime._px4_launch_phase, "idle")
     assert_true(runtime._airsim_px4_command("takeoff", []).ok)
     assert_true(runtime._px4_takeoff_ground_release_pending)
 
     assert_true(runtime.reset_to_spawn())
 
     assert_false(runtime._px4_takeoff_ground_release_pending)
+    assert_eq(runtime._px4_launch_phase, "idle")
 
 
 func test_demo_launch_commands_level_sticks() -> void:

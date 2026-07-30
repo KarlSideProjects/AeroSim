@@ -245,6 +245,36 @@ def qualification_readiness_failure(trace: dict[str, Any]) -> str:
         return "post-takeoff nonzero PX4 actuator output was not observed"
     if not any(isinstance(event.get("px4_collision_input"), dict) and event["px4_collision_input"] for event in runtime_events if isinstance(event, dict)):
         return "PX4 collision input was not observed"
+    handoff_events = [
+        handoff
+        for runtime_event in runtime_events
+        if isinstance(runtime_event, dict) and isinstance(runtime_event.get("px4_launch_handoff_events"), list)
+        for handoff in runtime_event["px4_launch_handoff_events"]
+        if isinstance(handoff, dict)
+    ]
+    support_index = next((
+        index for index, event in enumerate(handoff_events)
+        if event.get("phase") == "support_held" and event.get("contact_support") is True
+    ), -1)
+    if support_index < 0:
+        return "PX4 launch support hold was not observed"
+    probe_index = next((
+        index for index, event in enumerate(handoff_events)
+        if index > support_index
+        and event.get("phase") == "release_probe"
+        and event.get("authority_jolt") is False
+        and isinstance(event.get("vertical_velocity_mps"), (int, float))
+        and not isinstance(event.get("vertical_velocity_mps"), bool)
+        and math.isfinite(event["vertical_velocity_mps"])
+        and event["vertical_velocity_mps"] > 0.0
+    ), -1)
+    if probe_index < 0:
+        return "PX4 launch release probe with upward FlightCore motion was not observed"
+    if not any(
+        index > probe_index and event.get("phase") == "cleared"
+        for index, event in enumerate(handoff_events)
+    ):
+        return "PX4 launch clearance after the release probe was not observed"
     return ""
 
 

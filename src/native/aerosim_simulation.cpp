@@ -296,25 +296,29 @@ bool valid_motor_commands(const MotorCommands &commands) {
     return true;
 }
 
+double per_motor_thrust_scale(const SimulationConfig &config, const MotorCommands &commands) {
+    const double average_command = std::accumulate(
+            commands.normalized.begin(), commands.normalized.end(), 0.0) /
+            static_cast<double>(commands.normalized.size());
+    if (config.battery_nominal_voltage_v <= 0.0 || config.battery_cells <= 0.0 ||
+            config.battery_cell_resistance_ohm <= 0.0) {
+        return 1.0;
+    }
+    const double total_current = config.per_motor.max_current_per_motor_a *
+            static_cast<double>(commands.normalized.size()) * average_command;
+    const double loaded_voltage = config.battery_nominal_voltage_v -
+            total_current * config.battery_cell_resistance_ohm * config.battery_cells;
+    const double voltage_ratio = std::clamp(loaded_voltage / config.battery_nominal_voltage_v, 0.0, 1.0);
+    return voltage_ratio * voltage_ratio;
+}
+
 AerodynamicStepValues integrate_per_motor(
         RigidBodyState &state,
         const SimulationConfig &config,
         const MotorCommands &commands,
         const Vec3 &external_force_world,
         double dt) {
-    const double average_command = std::accumulate(
-            commands.normalized.begin(), commands.normalized.end(), 0.0) /
-            static_cast<double>(commands.normalized.size());
-    const double total_current = config.per_motor.max_current_per_motor_a *
-            static_cast<double>(commands.normalized.size()) * average_command;
-    double voltage_ratio = 1.0;
-    if (config.battery_nominal_voltage_v > 0.0 && config.battery_cells > 0.0 &&
-            config.battery_cell_resistance_ohm > 0.0) {
-        const double loaded_voltage = config.battery_nominal_voltage_v -
-                total_current * config.battery_cell_resistance_ohm * config.battery_cells;
-        voltage_ratio = std::clamp(loaded_voltage / config.battery_nominal_voltage_v, 0.0, 1.0);
-    }
-    const double thrust_scale = voltage_ratio * voltage_ratio;
+    const double thrust_scale = per_motor_thrust_scale(config, commands);
 
     Vec3 body_force;
     Vec3 body_torque;
@@ -432,6 +436,34 @@ double available_thrust_cap_newtons(const SimulationConfig &config, double throt
             current_a * config.battery_cell_resistance_ohm * config.battery_cells;
     const double voltage_ratio = std::clamp(loaded_voltage / config.battery_nominal_voltage_v, 0.0, 1.0);
     return raw_cap * voltage_ratio * voltage_ratio;
+}
+
+Px4SupportLiftReadiness px4_support_lift_readiness(
+        const SimulationConfig &config,
+        const RigidBodyState &state,
+        const MotorCommands &commands) {
+    Px4SupportLiftReadiness readiness;
+    if (!std::isfinite(config.mass_kg) || config.mass_kg <= 0.0 ||
+            !std::isfinite(config.gravity_mps2) || config.gravity_mps2 < 0.0 ||
+            !validate_per_motor_config(config.per_motor) || !valid_motor_commands(commands) ||
+            !std::isfinite(state.orientation.x) || !std::isfinite(state.orientation.y) ||
+            !std::isfinite(state.orientation.z) || !std::isfinite(state.orientation.w) ||
+            quat_norm(state.orientation) <= 0.0) {
+        return readiness;
+    }
+    readiness.thrust_scale = per_motor_thrust_scale(config, commands);
+    for (double command : commands.normalized) {
+        readiness.command_thrust_newtons += config.per_motor.max_thrust_per_motor_newtons * command * readiness.thrust_scale;
+    }
+    readiness.projected_lift_newtons = rotate(
+            state.orientation, {0.0, readiness.command_thrust_newtons, 0.0}).y;
+    readiness.required_lift_newtons = config.mass_kg * config.gravity_mps2;
+    readiness.valid = std::isfinite(readiness.thrust_scale) &&
+            std::isfinite(readiness.command_thrust_newtons) &&
+            std::isfinite(readiness.projected_lift_newtons) &&
+            std::isfinite(readiness.required_lift_newtons);
+    readiness.ready = readiness.valid && readiness.projected_lift_newtons > readiness.required_lift_newtons;
+    return readiness;
 }
 
 double motor_speed_rad_s_from_thrust(
