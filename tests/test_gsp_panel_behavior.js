@@ -130,7 +130,7 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     v: 2,
     t: "telemetry",
     tick: 1,
-    d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1, config_hash: "config-fixture", armed: true,
+    d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1, config_hash: "config-fixture", authority: "flight_controller", armed: true,
         hardware_configuration: { battery: { capacity_mah: 1300 }, spin_direction: ["cw", "ccw", "cw", "ccw"] },
         hardware_power_model: { hover_endurance_minutes: 4.2, max_total_thrust_newtons: 40, max_total_current_a: 40 },
         motor_order: ["rear_right", "front_right", "rear_left", "front_left"], rpm: [955, 1910, 2865, 3820],
@@ -151,7 +151,7 @@ assert.match(elements.get("motor-rear-left").textContent, /嚴重/);
 assert.match(elements.get("flow-legend").textContent, /FRD.*m\/s/);
 assert.match(elements.get("source-commanded").textContent, /命令.*未提供/);
 assert.match(elements.get("source-truth").textContent, /地面真值/);
-assert.match(elements.get("live-m1").textContent, /955 rpm.*2\.00 N.*1\.00 A.*cw/);
+assert.match(elements.get("live-m1").textContent, /955 轉\/分.*2\.00 N.*1\.00 A.*cw.*位置 未提供/);
 elements.get("wind-from").value = "90"; elements.get("wind-speed").value = "3"; elements.get("wind-apply").click();
 const windRequest = FakeWebSocket.instance.sent.at(-1);
 assert.equal(windRequest.t, "set_wind"); assert.equal(elements.get("wind-apply").disabled, true);

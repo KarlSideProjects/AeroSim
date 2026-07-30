@@ -55,3 +55,10 @@ No physics authority, replay timing, flight-control behavior, transport validati
 - The only renderer is now the live renderer; view controls moved there, avoiding hidden duplicate engineering controls/canvas.
 
 Fresh focused verification: `node tests/test_gsp_panel_behavior.js`, `node tests/test_gsp_issue305_console.js`, `node tests/test_gsp_visual_state.js`, `node tests/test_gsp_panel_recovery.js`, and `python3 -m unittest tests.test_gsp_issue251_contract` all passed. The browser harness remains blocked by missing `godot`.
+
+## Fix round 2 evidence
+
+- A single `windMutationSafe()` predicate now gates every wind control on readiness, fresh non-stale telemetry, non-replay state, available authority, and no pending ACK. It runs both after telemetry and ACK/rejection, so a stale/replay/unavailable authority cannot briefly re-enable mutation.
+- Added zh-TW/en labels for the wind direction/control state, view controls, plot labels/legend, source suffixes, and motor detail fields.
+- Motor location is emitted only from authoritative `motor.location` or configured `motor_positions`; otherwise the card explicitly says unavailable. Nominal visual positions are never presented as telemetry.
+- Focused panel behavior now checks the request lock/rejection path and unavailable motor location. Focused tests passed as listed above; browser evidence remains blocked by the absent Godot binary.
