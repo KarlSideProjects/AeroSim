@@ -47,7 +47,7 @@ for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state
     "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
     "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report",
     "wind-from", "wind-speed", "wind-preview", "wind-apply", "wind-status", "source-commanded", "source-truth", "source-estimated", "source-measured",
-    "live-connection", "live-authority", "live-mode", "live-fresh", "live-vehicle", "live-tick", "live-failure", "live-m1", "live-m2", "live-m3", "live-m4", "command-chart", "rpm-chart", "language-zh", "language-en"]) {
+    "live-connection", "live-authority", "live-mode", "live-fresh", "live-vehicle", "live-tick", "live-failure", "live-m1", "live-m2", "live-m3", "live-m4", "command-chart", "rpm-chart", "language-zh", "language-en", "px4-link", "px4-estimator", "px4-mode", "px4-safety", "px4-sensors", "px4-cue"]) {
     elements.set(id, new Element(["sparkline", "command-chart", "rpm-chart"].includes(id) ? "canvas" : "div"));
 }
 elements.get("sparkline").width = 840;
@@ -162,7 +162,19 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1, config_hash: "config-fixture", authority: "flight_controller", armed: true,
         hardware_configuration: hardwareConfiguration,
         hardware_power_model: { hover_endurance_minutes: 4.2, max_total_thrust_newtons: 40, max_total_current_a: 40, max_motor_rpm: 15000 },
-        px4_mavlink: { hil_actuator_controls: { source: "px4_mavlink", age_seconds: 0.02, stale: false, sample: { mapping_verified: true, command_normalized: { m1: 0.1, m2: 0.2, m3: 0.3, m4: 0.4 } } } },
+        px4_mavlink: {
+            bridge_diagnostics: { source: "px4_bridge", age_seconds: 0.01, stale: false, sample: { state: "active", authority_active: true, estimator_ready: true, mission_phase: "hold" } },
+            heartbeat: { source: "px4_mavlink", age_seconds: 0.01, stale: false, sample: { flight_mode: "OFFBOARD" } },
+            autopilot_status: { source: "px4_mavlink", age_seconds: 0.01, stale: false, sample: { automatic_takeoff: true, position_hold: true, anti_wind_active: false } },
+            estimator_status: { source: "px4_mavlink", age_seconds: 0.02, stale: false, sample: { estimator_ready: true } },
+            system_status: { source: "px4_mavlink", age_seconds: 0.03, stale: true, sample: { failsafe: "RTL" } },
+            gps: { source: "px4_mavlink", age_seconds: 0.04, stale: false, sample: {} },
+            highres_imu: { source: "px4_mavlink", age_seconds: 0.05, stale: false, sample: {} },
+            scaled_pressure: { source: "px4_mavlink", age_seconds: 0.06, stale: false, sample: {} },
+            mag: { source: "px4_mavlink", age_seconds: 0.07, stale: true, sample: {} },
+            position_target_local_ned: { source: "px4_mavlink", age_seconds: 0.08, stale: false, sample: { position_ned: { x_val: 1, y_val: 2, z_val: -3 } } },
+            hil_actuator_controls: { source: "px4_mavlink", age_seconds: 0.02, stale: false, sample: { mapping_verified: true, command_normalized: { m1: 0.1, m2: 0.2, m3: 0.3, m4: 0.4 } } },
+        },
         motor_order: ["rear_right", "front_right", "rear_left", "front_left"], rpm: [955, 1910, 2865, 3820],
         motors: [
             { thrust_newtons: 2, current_a: 1, saturated: false }, { thrust_newtons: 8.5, current_a: 1, saturated: false },
@@ -181,6 +193,17 @@ assert.match(elements.get("motor-rear-left").textContent, /嚴重/);
 assert.match(elements.get("flow-legend").textContent, /FRD.*m\/s/);
 assert.match(elements.get("source-commanded").textContent, /命令.*PX4 MAVLink.*新鮮/);
 assert.match(elements.get("source-truth").textContent, /地面真值/);
+assert.match(elements.get("px4-link").textContent, /PX4 bridge active.*bridge authority 啟用.*新鮮 0\.01 s/,
+    "bridge diagnostics stay explicitly distinct from PX4 MAVLink telemetry");
+assert.match(elements.get("px4-estimator").textContent, /估測器 已接收.*0\.02 s/);
+assert.match(elements.get("px4-mode").textContent, /模式 OFFBOARD/);
+assert.match(elements.get("px4-safety").textContent, /安全 RTL/);
+assert.match(elements.get("px4-sensors").textContent, /GPS 新鮮 0\.04 s.*磁力計 過期…凍結 0\.07 s/);
+assert.match(elements.get("px4-cue").textContent, /自動起飛 啟用.*定點保持 啟用.*抗風 未啟用/);
+elements.get("language-en").click();
+assert.match(elements.get("px4-estimator").textContent, /Estimator Received.*0\.02 s/,
+    "language switching rerenders the live health rail");
+elements.get("language-zh").click();
 assert.match(elements.get("live-m1").textContent, /955 轉\/分.*2\.00 N.*1\.00 A.*cw.*位置 未提供/);
 assert.match(elements.get("live-m1").textContent, /0\.10 命令/);
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({

@@ -11,7 +11,7 @@ main { max-width: 1440px; margin: 0 auto; padding: 16px; }
 header, .state, .grid { display: flex; gap: 12px; align-items: start; }
 header { justify-content: space-between; border-bottom: 1px solid #31445d; padding-bottom: 12px; }
 h1 { margin: 0; font-size: 1.25rem; }
-.badge { color: #9ee6b1; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; }
+.badge { color: #9ee6b1; font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; }
 /* Geometry honesty is carried by text plus border style, never colour alone. */
 .badge[data-classification] { border: 1px solid currentColor; border-radius: 4px; padding: 1px 6px; }
 .badge[data-classification="real"] { color: #9ee6b1; border-style: solid; }
@@ -35,9 +35,9 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 .motor-card[data-health="critical"] { border-style: double; }
 .motor-card[data-health="unavailable"] { border-style: dotted; }
 .motor-card strong, .motor-card span { display: block; }
-.motor-card span { margin-top: 4px; color: #9fb0c5; font-size: .8rem; }
+.motor-card span { margin-top: 4px; color: #9fb0c5; font-size: .75rem; }
 .visual-stage { min-width: 0; }
-.flow-legend { margin: 5px 0 0; font-size: .8rem; }
+.flow-legend { margin: 5px 0 0; font-size: .75rem; }
 #position, #velocity, #attitude, #rates, #endurance, #motors { height: 1.5rem; overflow: hidden; white-space: nowrap; }
 #flight-diagnostics { height: 5rem; overflow: auto; scrollbar-gutter: stable; }
 #hardware-configuration, #hardware-derived { height: 10rem; overflow: auto; scrollbar-gutter: stable; }
@@ -68,28 +68,38 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
 /* Operational page stays a single portrait instrument surface; engineering may scroll. */
 #live-console { height: 100vh; box-sizing: border-box; overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 7px; }
 .live-strip, .live-grid, .wind-row, .source-row { display: grid; gap: 6px; }
-.live-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #31445d; padding: 6px; font: .68rem/1.15 ui-monospace, monospace; }
+.live-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #31445d; padding: 6px; font: .75rem/1.15 ui-monospace, monospace; }
+.flight-rail { display: grid; grid-template-columns: 1.15fr 1.15fr 1.7fr; gap: 6px; border: 1px solid #31445d; padding: 6px; min-width: 0; }
+.flight-rail section { min-width: 0; } .flight-rail h2, .flight-rail h3 { margin: 0 0 3px; font-size: .75rem; letter-spacing: .06em; text-transform: uppercase; }
+.flight-rail p { margin: 0; font: .75rem/1.25 ui-monospace, monospace; overflow-wrap: anywhere; } .flight-rail .rail-detail { color: #9fb0c5; }
+.flight-rail [data-state="stale"], .flight-rail [data-state="unavailable"] { outline: 1px dotted #ffcf78; outline-offset: 2px; }
+.flight-rail [data-state="warning"] { outline: 1px dashed #ffcf78; outline-offset: 2px; }
 .live-grid { grid-template-columns: minmax(0, 1.08fr) minmax(8.5rem, .92fr); min-height: 0; }
 .pit { background: #101923; border: 1px solid #31445d; padding: 7px; min-width: 0; }
-.pit h2, .pit h3 { margin: 0 0 5px; font-size: .76rem; letter-spacing: .06em; text-transform: uppercase; }
-.wind-row { grid-template-columns: 1fr 1fr auto; align-items: end; } .wind-row label { display: grid; gap: 2px; font-size: .7rem; }
+.pit h2, .pit h3 { margin: 0 0 5px; font-size: .75rem; letter-spacing: .06em; text-transform: uppercase; }
+.wind-row { grid-template-columns: 1fr 1fr auto; align-items: end; } .wind-row label { display: grid; gap: 2px; font-size: .75rem; }
 .wind-row input, .wind-row button, .live-tabs button { background: #0c1219; color: #dce7f5; border: 1px solid #52697c; border-radius: 2px; padding: 4px; }
-#airframe-3d { height: clamp(130px, 29vh, 255px); width: 100%; } .live-motors { grid-template-columns: repeat(2, 1fr); font-size: .72rem; }
-.source-row { grid-template-columns: repeat(4, 1fr); font: .67rem/1.2 ui-monospace, monospace; } .source-row span { border-left: 3px solid #52697c; padding-left: 4px; }
+#airframe-3d { height: clamp(130px, 29vh, 255px); width: 100%; } .live-motors { grid-template-columns: repeat(2, 1fr); font-size: .75rem; }
+.source-row { grid-template-columns: repeat(4, 1fr); font: .75rem/1.2 ui-monospace, monospace; } .source-row span { border: 1px solid #52697c; padding: 3px 4px; }
 .source-row .commanded { border-style: dashed; } .source-row .truth { border-style: double; } .source-row .estimated { border-color: #9ee6b1; } .source-row .measured { border-color: #ffcf78; }
 .motor-plots { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; } .motor-plots canvas { height: 72px; width: 100%; border: 1px solid #31445d; }
 #engineering[hidden] { display: none; } #engineering { max-width: 1440px; margin: 0 auto; padding: 16px; }
 @media (prefers-reduced-motion: reduce) { #airframe-3d { outline: 2px dashed #9ee6b1; } }
-@media (max-width: 500px) { .live-strip { grid-template-columns: repeat(2, 1fr); } #airframe-3d { height: 120px; } }
+@media (max-width: 500px) { .live-strip { grid-template-columns: repeat(2, 1fr); } .flight-rail { grid-template-columns: 1fr 1fr; } .flight-rail section:last-child { grid-column: span 2; } #airframe-3d { height: 120px; } }
 </style>
 </head>
 <body>
 <main id="live-console" aria-label="即時狀態">
 <header><h1 data-i18n="title">AeroSim 地面站開發面板</h1><div class="toolbar"><button id="language-zh" type="button">繁中</button><button id="language-en" type="button">English</button><span class="badge" id="focus-state">panel focus</span></div></header>
-<section class="live-strip" aria-live="polite"><span>SIM <b id="live-connection">WAIT</b></span><span>PX4 <b id="live-authority">—</b></span><span>MODE <b id="live-mode">—</b></span><span>FRESH <b id="live-fresh">WAIT</b></span><span>VEH <b id="live-vehicle">—</b></span><span>TICK <b id="live-tick">—</b></span><span>FAIL <b id="live-failure">—</b></span><span data-i18n="geometry">GEOMETRY · Nominal geometry</span></section>
+<section class="live-strip" aria-live="polite"><span>SIM <b id="live-connection">WAIT</b></span><span>PX4 <b id="live-authority">…</b></span><span>MODE <b id="live-mode">…</b></span><span>FRESH <b id="live-fresh">WAIT</b></span><span>VEH <b id="live-vehicle">…</b></span><span>TICK <b id="live-tick">…</b></span><span>FAIL <b id="live-failure">…</b></span><span data-i18n="geometry">GEOMETRY · Nominal geometry</span></section>
+<section class="flight-rail" aria-label="Flight Health / 飛行健康" aria-live="polite">
+  <section><h2 data-i18n="flight_health">Flight health</h2><p id="px4-link">PX4 …</p><p id="px4-estimator" class="rail-detail">Estimator …</p></section>
+  <section><h3 data-i18n="autopilot">Autopilot</h3><p id="px4-mode">…</p><p id="px4-safety" class="rail-detail">…</p></section>
+  <section><h3 data-i18n="sensor_sources">Sensor / source age</h3><p id="px4-sensors" class="rail-detail">GPS … · IMU … · Baro … · Mag …</p><p id="px4-cue" class="rail-detail">…</p></section>
+</section>
 <section class="live-grid">
-  <div class="pit"><h2 data-i18n="wind">Wind / 風場</h2><div class="wind-row"><label><span data-i18n="from">FROM°</span><input id="wind-from" type="number" min="0" max="359" value="0"></label><label>m/s<input id="wind-speed" type="number" min="0" step="0.1" value="0"></label><button id="wind-preview" type="button" data-i18n="preview">Preview</button><button id="wind-apply" type="button" data-i18n="apply">Apply</button></div><p id="wind-status" class="muted" data-i18n="preview_initial">Preview only; no physical mutation.</p><div class="source-row" id="source-classes"><span id="source-commanded" class="commanded">Commanded —</span><span id="source-truth" class="truth">Ground truth —</span><span id="source-estimated" class="estimated">Estimated —</span><span id="source-measured" class="measured">Measured —</span></div><h3><span data-i18n="drone">Drone / 無人機</span> <small>Estimated · truth ghost</small> <span class="badge" id="geometry-classification" aria-live="polite">幾何未提供</span></h3><div class="toolbar"><button id="view-isometric" type="button" data-i18n="isometric">Isometric</button><button id="view-top" type="button" data-i18n="top">Top</button><button id="view-side" type="button" data-i18n="side">Side</button><button id="view-rear" type="button" data-i18n="rear">Rear</button></div><canvas id="airframe-3d" aria-label="Estimated Drone with ground-truth ghost"></canvas><p id="geometry-identity" class="muted">等待硬體設定。</p></div>
-  <div class="pit"><h2>M1–M4</h2><div class="motor-grid live-motors"><div id="live-m1">M1 —</div><div id="live-m2">M2 —</div><div id="live-m3">M3 —</div><div id="live-m4">M4 —</div></div><div class="motor-plots"><label><span data-i18n="command_plot">Commanded normalized</span><canvas id="command-chart" width="320" height="90"></canvas></label><label><span data-i18n="rpm_plot">Measured RPM</span><canvas id="rpm-chart" width="320" height="90"></canvas></label></div><p class="muted" data-i18n="plot_legend">Solid=estimate/measured; dashed=commanded; double border=truth ghost.</p></div>
+  <div class="pit"><h2 data-i18n="wind">Wind / 風場</h2><div class="wind-row"><label><span data-i18n="from">FROM°</span><input id="wind-from" type="number" min="0" max="359" value="0"></label><label>m/s<input id="wind-speed" type="number" min="0" step="0.1" value="0"></label><button id="wind-preview" type="button" data-i18n="preview">Preview</button><button id="wind-apply" type="button" data-i18n="apply">Apply</button></div><p id="wind-status" class="muted" data-i18n="preview_initial">Preview only; no physical mutation.</p><div class="source-row" id="source-classes"><span id="source-commanded" class="commanded">Commanded …</span><span id="source-truth" class="truth">Ground truth …</span><span id="source-estimated" class="estimated">Estimated …</span><span id="source-measured" class="measured">Measured …</span></div><h3><span data-i18n="drone">Drone / 無人機</span> <small>Estimated · truth ghost</small> <span class="badge" id="geometry-classification" aria-live="polite">幾何未提供</span></h3><div class="toolbar"><button id="view-isometric" type="button" data-i18n="isometric">Isometric</button><button id="view-top" type="button" data-i18n="top">Top</button><button id="view-side" type="button" data-i18n="side">Side</button><button id="view-rear" type="button" data-i18n="rear">Rear</button></div><canvas id="airframe-3d" aria-label="Estimated Drone with ground-truth ghost"></canvas><p id="geometry-identity" class="muted">等待硬體設定。</p></div>
+  <div class="pit"><h2>M1–M4</h2><div class="motor-grid live-motors"><div id="live-m1">M1 …</div><div id="live-m2">M2 …</div><div id="live-m3">M3 …</div><div id="live-m4">M4 …</div></div><div class="motor-plots"><label><span data-i18n="command_plot">Commanded normalized</span><canvas id="command-chart" width="320" height="90"></canvas></label><label><span data-i18n="rpm_plot">Measured RPM</span><canvas id="rpm-chart" width="320" height="90"></canvas></label></div><p class="muted" data-i18n="plot_legend">Solid=estimate/measured; dashed=commanded; double border=truth ghost.</p></div>
 </section>
 <div class="live-tabs"><button id="open-engineering" type="button">工程設定 / Engineering</button></div>
 </main>
@@ -100,28 +110,28 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
 </section>
 <div class="grid">
 <section class="card"><dl>
-  <dt data-i18n="vehicle">Vehicle Instance</dt><dd id="vehicle">—</dd>
-  <dt data-i18n="authority">Authority</dt><dd id="authority">—</dd>
-  <dt>Mode / Armed</dt><dd id="mode-armed">—</dd>
-  <dt>Tick</dt><dd id="tick">—</dd>
+  <dt data-i18n="vehicle">Vehicle Instance</dt><dd id="vehicle">…</dd>
+  <dt data-i18n="authority">Authority</dt><dd id="authority">…</dd>
+  <dt>Mode / Armed</dt><dd id="mode-armed">…</dd>
+  <dt>Tick</dt><dd id="tick">…</dd>
   <dt data-i18n="rate">Actual telemetry rate</dt><dd id="rate">0 Hz</dd>
-  <dt>WebSocket RTT</dt><dd id="latency">—</dd>
-  <dt>Config hash</dt><dd id="config-hash">—</dd>
-  <dt>Registry hash</dt><dd id="registry">—</dd>
+  <dt>WebSocket RTT</dt><dd id="latency">…</dd>
+  <dt>Config hash</dt><dd id="config-hash">…</dd>
+  <dt>Registry hash</dt><dd id="registry">…</dd>
 </dl></section>
-<section class="card"><strong>位置／速度（NED、SI）</strong><p id="position" class="muted">—</p><p id="velocity" class="muted">—</p><strong>姿態／角速度（FRD、SI）</strong><p id="attitude" class="muted">—</p><p id="rates" class="muted">—</p></section>
+<section class="card"><strong>位置／速度（NED、SI）</strong><p id="position" class="muted">…</p><p id="velocity" class="muted">…</p><strong>姿態／角速度（FRD、SI）</strong><p id="attitude" class="muted">…</p><p id="rates" class="muted">…</p></section>
 <section class="card"><strong>電池／預估續航</strong><p id="endurance" class="muted">等待即時資料。</p><strong>飛控／空力狀態</strong><p id="flight-diagnostics" class="muted">等待即時資料。</p></section>
 <section class="card flight-health" aria-label="Quad-X flight health">
   <div class="health-heading"><strong>飛行健康：馬達／氣流</strong><span id="visualization-status" class="muted" aria-live="polite">Visualization unavailable</span></div>
   <p id="flow-legend" class="muted flow-legend">FRD · SI · flow magnitude uses m/s</p>
   <div class="health-grid">
     <div class="motor-grid" aria-label="Motor health">
-      <div id="motor-rear-right" class="motor-card" data-motor="rear_right">M1 —</div><div id="motor-front-right" class="motor-card" data-motor="front_right">M2 —</div>
-      <div id="motor-rear-left" class="motor-card" data-motor="rear_left">M3 —</div><div id="motor-front-left" class="motor-card" data-motor="front_left">M4 —</div>
+      <div id="motor-rear-right" class="motor-card" data-motor="rear_right">M1 …</div><div id="motor-front-right" class="motor-card" data-motor="front_right">M2 …</div>
+      <div id="motor-rear-left" class="motor-card" data-motor="rear_left">M3 …</div><div id="motor-front-left" class="motor-card" data-motor="front_left">M4 …</div>
     </div>
     <div class="visual-stage"><p class="muted">依作用中硬體設定建模的 Quad-X 視圖；詳細模型與操控位於即時狀態頁。NED／FRD／SI 即時遙測。</p></div>
   </div>
-  <p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas>
+  <p id="motors" class="muted">…</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas>
 </section>
 <details class="card" open><summary>完整遙測（native TelemetrySnapshot；NED／FRD／SI）</summary><pre id="telemetry-data" class="telemetry-table muted">等待即時資料。</pre></details>
 <details class="card" open><summary>幾何模型（來源：作用中硬體設定）</summary>
@@ -168,6 +178,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   var sparkValues = [];
   var pingTimer = null;
   var lastTelemetrySample = null;
+  var lastTelemetryEnvelope = null;
   var $ = function (id) { return document.getElementById(id); };
   var tuningRows = $("tuning-rows");
   var connection = $("connection");
@@ -194,8 +205,8 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   var requestAnimationFrame = window.requestAnimationFrame || function (callback) { callback(performance.now()); return 0; };
   var language = "zh";
   var translations = {
-    zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…", rear_right: "右後", front_right: "右前", rear_left: "左後", front_left: "左前", normal: "正常", warning: "警告", critical: "嚴重", unavailable: "未提供", visualization_unavailable: "視覺化未提供", geometry_real: "真實幾何", geometry_nominal: "名義幾何", geometry_unavailable: "幾何未提供", geometry_waiting: "等待硬體設定。", geometry_cw: "順時針", geometry_ccw: "逆時針", wind: "風場", preview: "預覽", apply: "套用", drone: "無人機", pending: "等待權威 ACK", stale: "過期—凍結", fresh: "新鮮", rejected: "風場被拒絕", wind_applied: "模擬已套用：來自 %s° → 前往 %s°，%.1f m/s（ACK #%s）", wind_rejected: "風場被拒絕：%s", source_commanded: "命令", source_truth: "地面真值", source_estimated: "估計", source_measured: "量測", from: "來自°", isometric: "等角", top: "頂視", side: "側視", rear: "後視", command_plot: "命令歸一化", rpm_plot: "量測 RPM", plot_legend: "實線=估計/量測；虛線=命令；雙線框=真值殘影。", geometry: "幾何 · 名義幾何", local: "本地模擬", command: "命令", rpm: "轉/分", saturation: "飽和", not_saturated: "未飽和", fault: "故障", location: "位置", source: "來源", invalid_preview: "預覽值無效。", preview_status: "預覽：來自 %s° → 前往 %s°，%.1f m/s；尚未套用。", invalid_wind: "風場數值無效。", preview_initial: "僅預覽；不會變更物理狀態。", px4_mavlink: "PX4 MAVLink", measured_rpm: "轉/分" },
-    en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…", rear_right: "Rear right", front_right: "Front right", rear_left: "Rear left", front_left: "Front left", normal: "Normal", warning: "Warning", critical: "Critical", unavailable: "Unavailable", visualization_unavailable: "Visualization unavailable", geometry_real: "Real geometry", geometry_nominal: "Nominal geometry", geometry_unavailable: "Geometry unavailable", geometry_waiting: "Waiting for hardware configuration.", geometry_cw: "Clockwise", geometry_ccw: "Counter-clockwise", wind: "Wind", preview: "Preview", apply: "Apply", drone: "Drone", pending: "Pending authoritative ACK", stale: "Stale — frozen", fresh: "Fresh", rejected: "Wind rejected", wind_applied: "Applied by simulation: from %s° → toward %s° at %.1f m/s (ACK #%s)", wind_rejected: "Wind rejected: %s", source_commanded: "Commanded", source_truth: "Ground truth", source_estimated: "Estimated", source_measured: "Measured", from: "FROM°", isometric: "Isometric", top: "Top", side: "Side", rear: "Rear", command_plot: "Commanded normalized", rpm_plot: "Measured RPM", plot_legend: "Solid=estimate/measured; dashed=commanded; double border=truth ghost.", geometry: "GEOMETRY · nominal geometry", local: "local simulation", command: "cmd", rpm: "rpm", saturation: "SAT", not_saturated: "not SAT", fault: "fault", location: "location", source: "source", invalid_preview: "Invalid preview.", preview_status: "Preview: from %s° → toward %s° at %.1f m/s; not applied.", invalid_wind: "Invalid wind values.", preview_initial: "Preview only; no physical mutation.", px4_mavlink: "PX4 MAVLink", measured_rpm: "RPM" },
+    zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…", rear_right: "右後", front_right: "右前", rear_left: "左後", front_left: "左前", normal: "正常", warning: "警告", critical: "嚴重", unavailable: "未提供", visualization_unavailable: "視覺化未提供", geometry_real: "真實幾何", geometry_nominal: "名義幾何", geometry_unavailable: "幾何未提供", geometry_waiting: "等待硬體設定。", geometry_cw: "順時針", geometry_ccw: "逆時針", wind: "風場", preview: "預覽", apply: "套用", drone: "無人機", pending: "等待權威 ACK", stale: "過期…凍結", fresh: "新鮮", rejected: "風場被拒絕", wind_applied: "模擬已套用：來自 %s° → 前往 %s°，%.1f m/s（ACK #%s）", wind_rejected: "風場被拒絕：%s", source_commanded: "命令", source_truth: "地面真值", source_estimated: "估計", source_measured: "量測", from: "來自°", isometric: "等角", top: "頂視", side: "側視", rear: "後視", command_plot: "命令歸一化", rpm_plot: "量測 RPM", plot_legend: "實線=估計/量測；虛線=命令；雙線框=真值殘影。", geometry: "幾何 · 名義幾何", local: "本地模擬", command: "命令", rpm: "轉/分", saturation: "飽和", not_saturated: "未飽和", fault: "故障", location: "位置", source: "來源", invalid_preview: "預覽值無效。", preview_status: "預覽：來自 %s° → 前往 %s°，%.1f m/s；尚未套用。", invalid_wind: "風場數值無效。", preview_initial: "僅預覽；不會變更物理狀態。", px4_mavlink: "PX4 MAVLink", px4_bridge: "PX4 bridge", bridge_authority: "bridge authority", measured_rpm: "轉/分", flight_health: "飛行健康", autopilot: "自動駕駛", sensor_sources: "感測器／來源年齡", estimator: "估測器", estimator_not_ready: "未就緒", mode: "模式", safety: "安全", target: "位置目標 NED", mission: "任務", takeoff: "自動起飛", position_hold: "定點保持", anti_wind: "抗風", active: "啟用", inactive: "未啟用", received: "已接收", gps: "GPS", imu: "IMU", baro: "氣壓計", mag: "磁力計" },
+    en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…", rear_right: "Rear right", front_right: "Front right", rear_left: "Rear left", front_left: "Front left", normal: "Normal", warning: "Warning", critical: "Critical", unavailable: "Unavailable", visualization_unavailable: "Visualization unavailable", geometry_real: "Real geometry", geometry_nominal: "Nominal geometry", geometry_unavailable: "Geometry unavailable", geometry_waiting: "Waiting for hardware configuration.", geometry_cw: "Clockwise", geometry_ccw: "Counter-clockwise", wind: "Wind", preview: "Preview", apply: "Apply", drone: "Drone", pending: "Pending authoritative ACK", stale: "Stale … frozen", fresh: "Fresh", rejected: "Wind rejected", wind_applied: "Applied by simulation: from %s° → toward %s° at %.1f m/s (ACK #%s)", wind_rejected: "Wind rejected: %s", source_commanded: "Commanded", source_truth: "Ground truth", source_estimated: "Estimated", source_measured: "Measured", from: "FROM°", isometric: "Isometric", top: "Top", side: "Side", rear: "Rear", command_plot: "Commanded normalized", rpm_plot: "Measured RPM", plot_legend: "Solid=estimate/measured; dashed=commanded; double border=truth ghost.", geometry: "GEOMETRY · nominal geometry", local: "local simulation", command: "cmd", rpm: "rpm", saturation: "SAT", not_saturated: "not SAT", fault: "fault", location: "location", source: "source", invalid_preview: "Invalid preview.", preview_status: "Preview: from %s° → toward %s° at %.1f m/s; not applied.", invalid_wind: "Invalid wind values.", preview_initial: "Preview only; no physical mutation.", px4_mavlink: "PX4 MAVLink", px4_bridge: "PX4 bridge", bridge_authority: "bridge authority", measured_rpm: "RPM", flight_health: "Flight health", autopilot: "Autopilot", sensor_sources: "Sensor / source age", estimator: "Estimator", estimator_not_ready: "Not ready", mode: "Mode", safety: "Safety", target: "Position target NED", mission: "Mission", takeoff: "Auto takeoff", position_hold: "Position hold", anti_wind: "Wind compensation", active: "Active", inactive: "Inactive", received: "Received", gps: "GPS", imu: "IMU", baro: "Baro", mag: "Mag" },
   };
 
   function recordPerformanceSample(kind, value) {
@@ -224,7 +235,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     Array.prototype.forEach.call(nodes, function (node) { node.textContent = translate(node.dataset.i18n); });
     var visual = window.__AEROSIM_GSP_VISUAL__;
     if (visual && visual.set_labels) visual.set_labels(translations[language]);
-    if (lastTelemetrySample) renderMotorCards(lastTelemetrySample);
+    if (lastTelemetrySample) { renderMotorCards(lastTelemetrySample); renderLiveConsole(lastTelemetrySample, lastTelemetryEnvelope || {}); }
   }
   function listen(id, callback) { var element = $(id); if (element) element.addEventListener("click", callback); }
   window.addEventListener("aerosim-gsp-visual", function () {
@@ -273,11 +284,11 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   }
   setControlsEnabled(false);
   function vector(value, unit) {
-    if (!value) return "—";
+    if (!value) return "…";
     return "[" + Number(value.x_val).toFixed(3) + ", " + Number(value.y_val).toFixed(3) + ", " + Number(value.z_val).toFixed(3) + "] " + unit;
   }
   function euler(value) {
-    if (!value || value.length !== 3) return "—";
+    if (!value || value.length !== 3) return "…";
     return "[roll " + Number(value[0]).toFixed(2) + "°, pitch " + Number(value[1]).toFixed(2) + "°, yaw " + Number(value[2]).toFixed(2) + "°] Z-Y-X";
   }
   function optionalText(id, value) { var element = $(id); if (element) element.textContent = value; }
@@ -319,9 +330,9 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
       var id = "motor-" + motor.id.replace(/_/g, "-");
       var card = $(id); if (!card) return;
       card.dataset.motor = motor.id; card.dataset.health = motor.health;
-      var rpm = motor.rpm == null ? "—" : Number(motor.rpm).toFixed(0);
-      var thrust = motor.thrust_newtons == null ? "—" : Number(motor.thrust_newtons).toFixed(2);
-      var current = motor.current_a == null ? "—" : Number(motor.current_a).toFixed(2);
+      var rpm = motor.rpm == null ? "…" : Number(motor.rpm).toFixed(0);
+      var thrust = motor.thrust_newtons == null ? "…" : Number(motor.thrust_newtons).toFixed(2);
+      var current = motor.current_a == null ? "…" : Number(motor.current_a).toFixed(2);
       card.textContent = "M" + (motor.index + 1) + " · " + translate(motor.id) + "\n" + rpm + " rpm · " + thrust + " N · " + current + " A\n" + translate(motor.health);
     });
     var status = visual && visual.status ? visual.status() : { available: false };
@@ -329,7 +340,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     text("flow-legend", "FRD · SI · flow magnitude uses m/s");
     renderGeometry(state.geometry, visual);
   }
-  function metres(value) { return Number.isFinite(Number(value)) ? (Number(value) * 1000).toFixed(1) + " mm" : "—"; }
+  function metres(value) { return Number.isFinite(Number(value)) ? (Number(value) * 1000).toFixed(1) + " mm" : "…"; }
   function renderGeometry(derived, visual) {
     // Prefer what the renderer actually built; fall back to the derived spec so
     // the mapping stays inspectable in a page without WebGL.
@@ -370,13 +381,13 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     var evidence = provenance.dimensional_evidence || {};
     var license = provenance.license || {};
     var lines = [
-      "source = " + String(provenance.model_source || "—"),
-      "source_url = " + String(provenance.source_url || "—"),
-      "dimensional_evidence = " + String(evidence.evidence_class || "—")
+      "source = " + String(provenance.model_source || "…"),
+      "source_url = " + String(provenance.source_url || "…"),
+      "dimensional_evidence = " + String(evidence.evidence_class || "…")
         + " (" + ((evidence.documents || []).length) + " documents)",
-      "license = " + String(license.spdx || "—") + " · " + String(license.holder || "—"),
-      "attribution = " + (license.attribution_required ? String(license.attribution || "—") : "not required"),
-      "redistribution = " + String(provenance.redistribution || "—"),
+      "license = " + String(license.spdx || "…") + " · " + String(license.holder || "…"),
+      "attribution = " + (license.attribution_required ? String(license.attribution || "…") : "not required"),
+      "redistribution = " + String(provenance.redistribution || "…"),
     ];
     (provenance.assets || []).forEach(function (asset) { lines.push("asset = " + asset.path + " sha256:" + asset.sha256); });
     if (report.classification !== "real") lines.push("nominal_because = " + report.classification_reasons.join(", "));
@@ -404,7 +415,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
       select.textContent = "";
       select.appendChild(new Option("Current", ""));
       (Array.isArray(presets) ? presets : []).forEach(function (preset) {
-        select.appendChild(new Option(preset.name + " — " + (preset.sim_version || "unavailable") + " — " + (preset.created_at || "unknown time"), preset.name));
+        select.appendChild(new Option(preset.name + " … " + (preset.sim_version || "unavailable") + " … " + (preset.created_at || "unknown time"), preset.name));
       });
     });
     presetStatus.textContent = (presets || []).length + " preset(s) available.";
@@ -561,7 +572,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     for (let index = 0; index < 8; index += 1) {
       let row = document.createElement("div"); row.className = "quick-adjust-row";
       let parameter = document.createElement("select");
-      parameter.appendChild(new Option("Slot " + (index + 1) + " — off", ""));
+      parameter.appendChild(new Option("Slot " + (index + 1) + " … off", ""));
       parameters.forEach(function (item) { parameter.appendChild(new Option(item.key, item.key)); });
       let type = document.createElement("select"); ["axis", "key_pair"].forEach(function (item) { type.appendChild(new Option(item, item)); });
       let mode = document.createElement("select"); ["absolute", "relative"].forEach(function (item) { mode.appendChild(new Option(item, item)); });
@@ -665,6 +676,50 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     if (plot.setLineDash) plot.setLineDash([]);
   }
   var commandHistory = [[], [], [], []], rpmHistory = [[], [], [], []];
+  function px4Entry(px4, names) {
+    for (var index = 0; index < names.length; index += 1) if (px4 && px4[names[index]]) return px4[names[index]];
+    return null;
+  }
+  function px4Age(entry) {
+    if (!entry) return translate("unavailable");
+    var age = Number(entry.age_seconds);
+    return (entry.stale ? translate("stale") : translate("fresh")) + (Number.isFinite(age) ? " " + age.toFixed(2) + " s" : "");
+  }
+  function px4SampleValue(entry, names) {
+    var data = entry && entry.sample;
+    for (var index = 0; data && index < names.length; index += 1) if (data[names[index]] !== undefined && data[names[index]] !== null) return String(data[names[index]]);
+    return null;
+  }
+  function renderFlightHealth(sample) {
+    var px4 = sample.px4_mavlink || {};
+    var bridge = px4Entry(px4, ["bridge_diagnostics"]);
+    var heartbeat = px4Entry(px4, ["heartbeat", "autopilot_status", "vehicle_status"]);
+    var estimator = px4Entry(px4, ["estimator_status"]);
+    var safety = px4Entry(px4, ["system_status", "extended_sys_state"]);
+    var target = px4Entry(px4, ["position_target_local_ned"]);
+    var mission = px4Entry(px4, ["mission_status", "mission_current"]);
+    var bridgeState = px4SampleValue(bridge, ["state"]);
+    var bridgeAuthority = px4SampleValue(bridge, ["authority_active"]);
+    var link = bridge ? translate("px4_bridge") + " " + (bridgeState || translate("unavailable")) + " · " + translate("bridge_authority") + " " + (bridgeAuthority === "true" ? translate("active") : bridgeAuthority === "false" ? translate("inactive") : translate("unavailable")) + " · " + px4Age(bridge) : translate("px4_mavlink") + " " + px4Age(heartbeat);
+    text("px4-link", link);
+    var ready = px4SampleValue(estimator, ["estimator_ready"]);
+    if (ready === null) { ready = px4SampleValue(bridge, ["estimator_ready"]); estimator = estimator || bridge; }
+    text("px4-estimator", translate("estimator") + " " + (ready === null ? px4Age(estimator) : ready === "true" ? translate("received") + " · " + px4Age(estimator) : translate("estimator_not_ready") + " · " + px4Age(estimator)));
+    var mode = px4SampleValue(heartbeat, ["flight_mode", "mode", "state"]);
+    text("px4-mode", translate("mode") + " " + (mode || translate("unavailable")));
+    var safetyState = px4SampleValue(safety, ["failsafe", "safety_state", "landed_state", "system_status"]);
+    text("px4-safety", translate("safety") + " " + (safetyState || px4Age(safety)));
+    var sensors = [["gps", ["gps", "gps_raw_int", "global_position_int"]], ["imu", ["imu", "highres_imu", "scaled_imu"]], ["baro", ["baro", "scaled_pressure"]], ["mag", ["mag", "raw_imu", "scaled_imu"]]];
+    text("px4-sensors", sensors.map(function (sensor) { return translate(sensor[0]) + " " + px4Age(px4Entry(px4, sensor[1])); }).join(" · "));
+    var autopilot = px4Entry(px4, ["autopilot_status", "flight_status", "extended_sys_state"]);
+    var cues = [["takeoff", "automatic_takeoff"], ["position_hold", "position_hold"], ["anti_wind", "anti_wind_active"]].map(function (cue) {
+      var value = px4SampleValue(autopilot, [cue[1]]); return value === null ? null : translate(cue[0]) + " " + (value === "true" ? translate("active") : value === "false" ? translate("inactive") : value);
+    }).filter(Boolean);
+    var missionPhase = px4SampleValue(bridge, ["mission_phase"]);
+    var cue = cues.join(" · ") || (target ? translate("target") + " · " + px4Age(target) : mission ? translate("mission") + " · " + px4Age(mission) : missionPhase ? translate("mission") + " " + missionPhase + " · " + translate("px4_bridge") : translate("unavailable"));
+    text("px4-cue", cue);
+    [["px4-link", bridge || heartbeat], ["px4-estimator", estimator], ["px4-safety", safety]].forEach(function (row) { var element = $(row[0]); if (element) element.dataset.state = !row[1] ? "unavailable" : row[1].stale ? "stale" : ""; });
+  }
   function px4Commands(sample) {
     var hil = sample.px4_mavlink && sample.px4_mavlink.hil_actuator_controls;
     var command = hil && hil.sample && hil.sample.mapping_verified && hil.sample.command_normalized;
@@ -672,10 +727,11 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   }
   function renderLiveConsole(sample, envelope) {
     var fresh = telemetryFreshForControls(sample);
-    text("live-connection", fresh ? translate("live") : translate("stale")); text("live-authority", sample.authority || sample.control_authority || "—");
-    text("live-mode", String(sample.mode || "—") + "/" + (sample.armed ? "ARMED" : "DISARMED")); text("live-fresh", fresh ? translate("fresh") : translate("stale") + (sample.age_seconds == null ? "" : " " + Number(sample.age_seconds).toFixed(2) + " s"));
-    text("live-vehicle", sample.vehicle_instance || "—"); text("live-tick", envelope.tick == null ? "—" : envelope.tick); text("live-failure", sample.failure_state || sample.last_error || "—");
+    text("live-connection", fresh ? translate("live") : translate("stale")); text("live-authority", sample.authority || sample.control_authority || "…");
+    text("live-mode", String(sample.mode || "…") + "/" + (sample.armed ? "ARMED" : "DISARMED")); text("live-fresh", fresh ? translate("fresh") : translate("stale") + (sample.age_seconds == null ? "" : " " + Number(sample.age_seconds).toFixed(2) + " s"));
+    text("live-vehicle", sample.vehicle_instance || "…"); text("live-tick", envelope.tick == null ? "…" : envelope.tick); text("live-failure", sample.failure_state || sample.last_error || "…");
     var px4Command = px4Commands(sample);
+    renderFlightHealth(sample);
     text("source-commanded", translate("source_commanded") + " " + (px4Command.command ? translate("px4_mavlink") + " " + (px4Command.stale ? translate("stale") : translate("fresh")) + (Number.isFinite(Number(px4Command.age)) ? " " + Number(px4Command.age).toFixed(2) + " s" : "") : translate("unavailable")));
     text("source-truth", translate("source_truth") + " " + translate("local")); text("source-estimated", translate("source_estimated") + " " + (sample.px4_mavlink && sample.px4_mavlink.local_position_ned ? translate("px4_mavlink") : translate("unavailable"))); text("source-measured", translate("source_measured") + " " + translate("measured_rpm") + " " + translate("local"));
     var commands = px4Command.command ? [px4Command.command.m1, px4Command.command.m2, px4Command.command.m3, px4Command.command.m4] : [];
@@ -687,7 +743,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
       if (commandHistory[index].length > 40) commandHistory[index].shift(); if (rpmHistory[index].length > 40) rpmHistory[index].shift();
       var motor = (sample.motors || [])[index] || {}, spin = ((sample.hardware_configuration || {}).spin_direction || [])[index];
       var location = motor.location || ((sample.hardware_configuration || {}).motor_positions || [])[index];
-      var fields = [Number.isFinite(command) ? command.toFixed(2) + " " + translate("command") : translate("command") + " —", Number.isFinite(rpm) ? rpm.toFixed(0) + " " + translate("rpm") : translate("rpm") + " —"];
+      var fields = [Number.isFinite(command) ? command.toFixed(2) + " " + translate("command") : translate("command") + " …", Number.isFinite(rpm) ? rpm.toFixed(0) + " " + translate("rpm") : translate("rpm") + " …"];
       if (Number.isFinite(Number(motor.thrust_newtons))) fields.push(Number(motor.thrust_newtons).toFixed(2) + " N"); if (Number.isFinite(Number(motor.current_a))) fields.push(Number(motor.current_a).toFixed(2) + " A"); if (motor.saturated != null) fields.push(motor.saturated ? translate("saturation") : translate("not_saturated")); if (spin === "cw" || spin === "ccw") fields.push(spin); if (Array.isArray(location) && location.length === 3 && location.every(Number.isFinite)) fields.push(translate("location") + " [" + location.join(",") + "]"); else fields.push(translate("location") + " " + translate("unavailable")); if (motor.fault != null) fields.push(translate("fault") + " " + motor.fault); fields.push(translate("source") + " " + translate("source_measured") + "/" + translate("local") + " " + (fresh ? translate("fresh") : translate("stale")));
       text("live-m" + (index + 1), "M" + (index + 1) + " " + fields.join(" · "));
     }
@@ -712,6 +768,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     if (!waitingForFresh && Number(sample.sample_seq) <= lastSampleSequence) return;
     lastSampleSequence = Number(sample.sample_seq);
     lastTelemetrySample = sample;
+    lastTelemetryEnvelope = message;
     waitingForFresh = false;
     pendingFreshRequestSequence = null;
     snapshotReady = true;
@@ -721,12 +778,12 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     }
     connection.textContent = translate("connected");
     freshState.textContent = translate("live");
-    text("vehicle", sample.vehicle_instance || "—");
-    text("authority", sample.authority || sample.control_authority || "—");
-    text("tick", message.tick == null ? "—" : message.tick);
+    text("vehicle", sample.vehicle_instance || "…");
+    text("authority", sample.authority || sample.control_authority || "…");
+    text("tick", message.tick == null ? "…" : message.tick);
     rateSamples += 1;
     var elapsed = performance.now() - rateStartedAt;
-    text("rate", elapsed > 0 ? (rateSamples * 1000 / elapsed).toFixed(1) + " Hz" : "—");
+    text("rate", elapsed > 0 ? (rateSamples * 1000 / elapsed).toFixed(1) + " Hz" : "…");
     text("registry", sample.registry_hash || "unavailable");
     text("config-hash", sample.config_hash || "unavailable");
     text("mode-armed", String(sample.mode || "未提供") + " / " + (sample.armed == null ? "未提供" : (sample.armed ? "ARMED" : "DISARMED")));
@@ -735,7 +792,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     text("attitude", "attitude: " + euler(sample.att_euler_deg));
     text("rates", "rates: " + vector(sample.gyro_body, "rad/s FRD"));
     var motors = sample.motors || [];
-    text("motors", motors.map(function (motor) { return Number(motor.thrust_newtons).toFixed(2) + " N"; }).join(" | ") || "—");
+    text("motors", motors.map(function (motor) { return Number(motor.thrust_newtons).toFixed(2) + " N"; }).join(" | ") || "…");
     renderDiagnostics(sample);
     renderMotorCards(sample);
     window.__AEROSIM_GSP_TELEMETRY__ = sample;
@@ -836,7 +893,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
         delete pendingPresets[Number(presetAck.request_seq)];
         if (!presetAck.ok) { presetStatus.textContent = String(presetAck.error || "Preset request rejected"); return; }
         if (operation === "list_presets" || operation === "save_preset") renderPresets(presetAck.presets || []);
-        if (operation === "retrieve_preset" && presetAck.preset) presetStatus.textContent = presetAck.preset.name + " — " + (presetAck.preset.note || "no note");
+        if (operation === "retrieve_preset" && presetAck.preset) presetStatus.textContent = presetAck.preset.name + " … " + (presetAck.preset.note || "no note");
         if (operation === "compare_presets") { presetStatus.textContent = "Comparison ready."; renderPresetDiff(presetAck); }
         if (operation === "preview_preset_migration") {
           renderMigrationReport(presetAck);
