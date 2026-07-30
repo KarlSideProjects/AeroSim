@@ -355,6 +355,22 @@ func test_estimator_status_requires_two_fresh_valid_reports_before_readiness() -
     assert_false(bridge.estimator_ready(2.21))
 
 
+func test_bridge_diagnostics_observability_is_source_labeled_and_not_mavlink() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    bridge.start()
+    bridge.state = "armed"
+    bridge.mission_phase = "takeoff"
+    bridge._authority_active = true
+    bridge._last_command_result = 0
+
+    var diagnostics: Dictionary = bridge.px4_observability(1.0).bridge_diagnostics
+    assert_eq(diagnostics.source, "px4_bridge")
+    assert_eq(diagnostics.sample.state, "armed")
+    assert_true(bool(diagnostics.sample.authority_active))
+    assert_eq(diagnostics.sample.mission_phase, "takeoff")
+    assert_eq(diagnostics.sample.last_command_result, 0)
+
+
 func test_estimator_status_rejects_incomplete_flags_and_real_bootstrap_fails_closed() -> void:
     var bridge := _new_fake_bridge(1.0)
     bridge.set_qualification_trace_enabled(true)

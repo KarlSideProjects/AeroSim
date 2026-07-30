@@ -200,6 +200,13 @@ func poll(now_seconds: float) -> void:
         return
     var actuator_started_after_arm := _actuator_received_after_arm()
     if state == "armed" and actuator_started_after_arm and _actuator_freshness_age_seconds(now_seconds) + 0.000001 >= _config.ActuatorTimeout:
+        _trace_qualification_event("actuator_freshness_expired", now_seconds, {
+            "age_seconds": _actuator_freshness_age_seconds(now_seconds),
+            "uses_source_clock": _uses_source_clock_for_actuator_freshness(),
+            "last_sensor_time": _last_sensor_time,
+            "last_actuator_simulation_time": _last_actuator_simulation_time,
+            "last_actuator_time_usec": _last_actuator_time_usec,
+        })
         _actuators = PackedFloat32Array()
         _set_state("stale", false, "PX4 actuator output is stale")
         return
@@ -474,6 +481,23 @@ func px4_observability(now_seconds: float) -> Dictionary:
             "stale": age_seconds >= freshness_timeout,
             "sample": entry.sample.duplicate(true),
         }
+    var actuator_age_seconds := _actuator_freshness_age_seconds(now_seconds)
+    observed["bridge_diagnostics"] = {
+        # This entry is bridge-owned runtime state, deliberately not a PX4
+        # MAVLink message. Consumers must retain the source label rather than
+        # rendering it as an FCU telemetry sample.
+        "source": "px4_bridge",
+        "age_seconds": actuator_age_seconds,
+        "stale": state in ["stale", "failed"],
+        "sample": {
+            "state": state,
+            "authority_active": _authority_active,
+            "estimator_ready": estimator_ready(now_seconds),
+            "mission_phase": mission_phase,
+            "last_command_result": _last_command_result,
+            "actuator_freshness_age_seconds": actuator_age_seconds,
+        },
+    }
     return observed
 
 
