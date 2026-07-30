@@ -174,6 +174,14 @@ assert.match(elements.get("source-commanded").textContent, /命令.*PX4 MAVLink.
 assert.match(elements.get("source-truth").textContent, /地面真值/);
 assert.match(elements.get("live-m1").textContent, /955 轉\/分.*2\.00 N.*1\.00 A.*cw.*位置 未提供/);
 assert.match(elements.get("live-m1").textContent, /0\.10 命令/);
+FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "telemetry",
+    tick: 2,
+    d: { sample_seq: 2, authority: "flight_controller", armed: true, rpm: [955, 1910, 2865, 3820], motors: [] },
+}) });
+assert.equal(elements.get("wind-apply").disabled, false,
+    "regular telemetry after an accepted fresh snapshot keeps wind control safe to use");
 elements.get("wind-from").value = "90"; elements.get("wind-speed").value = "3"; elements.get("wind-apply").click();
 const windRequest = FakeWebSocket.instance.sent.at(-1);
 assert.equal(windRequest.t, "set_wind"); assert.equal(elements.get("wind-apply").disabled, true);

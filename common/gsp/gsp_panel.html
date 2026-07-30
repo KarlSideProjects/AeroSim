@@ -231,9 +231,14 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     return { static: staticControls.slice(), tuning: tuning, groups: tuningGroupControls.slice(), quick: quick, wind: [$("wind-from"), $("wind-speed"), $("wind-preview"), $("wind-apply")].filter(Boolean) };
   }
   var windPending = false;
+  function telemetryFreshForControls(sample) {
+    if (!sample || sample.stale) return false;
+    if (Object.prototype.hasOwnProperty.call(sample, "fresh")) return !!sample.fresh;
+    return snapshotReady && !waitingForFresh;
+  }
   function windMutationSafe() {
     var sample = lastTelemetrySample || {};
-    return panelReady() && !!sample.fresh && !sample.stale && !sample.replay_active && String(sample.authority || sample.control_authority || "unavailable").toLowerCase() !== "unavailable" && !windPending;
+    return panelReady() && telemetryFreshForControls(sample) && !sample.replay_active && String(sample.authority || sample.control_authority || "unavailable").toLowerCase() !== "unavailable" && !windPending;
   }
   function setControlsEnabled(enabled) {
     var inventory = readinessControls();
@@ -594,7 +599,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     return { command: command || null, stale: !hil || !!hil.stale, age: hil && hil.age_seconds };
   }
   function renderLiveConsole(sample, envelope) {
-    var fresh = sample.fresh && !sample.stale;
+    var fresh = telemetryFreshForControls(sample);
     text("live-connection", fresh ? translate("live") : translate("stale")); text("live-authority", sample.authority || sample.control_authority || "—");
     text("live-mode", String(sample.mode || "—") + "/" + (sample.armed ? "ARMED" : "DISARMED")); text("live-fresh", fresh ? translate("fresh") : translate("stale") + (sample.age_seconds == null ? "" : " " + Number(sample.age_seconds).toFixed(2) + " s"));
     text("live-vehicle", sample.vehicle_instance || "—"); text("live-tick", envelope.tick == null ? "—" : envelope.tick); text("live-failure", sample.failure_state || sample.last_error || "—");
