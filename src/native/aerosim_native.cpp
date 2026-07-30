@@ -1297,6 +1297,7 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
+    config.px4_actuator_rpm_mapping = true;
     if (config.mass_kg <= 0.0 || !aerosim::validate_per_motor_config(config.per_motor)) {
         set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidConfig, "hardware");
         return {};
@@ -1391,6 +1392,7 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
+    config.px4_actuator_rpm_mapping = true;
     config.a4_ground_effect = a4_ground_effect_config_;
     config.external_force_world = external_force_world_;
     apply_downwash_provider(config);
@@ -1990,8 +1992,10 @@ Dictionary AeroSimNative::px4_support_lift_readiness(
         double motor_2,
         double motor_3) const {
     const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    config.px4_actuator_rpm_mapping = true;
     const aerosim::Px4SupportLiftReadiness readiness = aerosim::px4_support_lift_readiness(
-            hardware_config_.simulation_config(), simulation_state_, commands);
+            config, simulation_state_, commands);
     Dictionary result;
     result["valid"] = readiness.valid;
     result["ready"] = readiness.ready;

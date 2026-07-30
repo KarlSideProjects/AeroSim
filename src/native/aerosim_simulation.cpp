@@ -35,6 +35,7 @@ bool valid_frame_timing(const SimulationConfig &config, const SimulationClock &c
     return config.physics_hz > 0 && config.substep_hz >= config.physics_hz &&
             static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz) <= kMaxSubstepsPerFrame &&
             std::isfinite(config.mass_kg) && config.mass_kg > 0.0 && std::isfinite(config.gravity_mps2) &&
+            (!config.px4_actuator_rpm_mapping || (std::isfinite(config.max_motor_rpm) && config.max_motor_rpm > 0.0)) &&
             std::isfinite(clock.substep_accumulator) &&
             clock.substep_accumulator >= 0.0 && clock.substep_accumulator < 1.0;
 }
@@ -50,6 +51,8 @@ bool finite_state(const RigidBodyState &state) {
             finite_vec3(state.angular_velocity) && finite_vec3(state.propwash_disturbance_rad_s2) &&
             std::all_of(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(), [](double value) {
                 return std::isfinite(value);
+            }) && std::all_of(state.motor_rpm.begin(), state.motor_rpm.end(), [](double value) {
+                return std::isfinite(value) && value >= 0.0;
             });
 }
 
@@ -334,10 +337,26 @@ AerodynamicStepValues integrate_per_motor(
     Vec3 motor_torque_frd;
     const auto columns = quad_x_mixer_columns(config.per_motor);
     for (std::size_t index = 0; index < commands.normalized.size(); ++index) {
-        const double target_thrust = config.per_motor.max_thrust_per_motor_newtons *
-                commands.normalized[index] * thrust_scale;
-        const double thrust = first_order_motor_response(
-                state.motor_thrust_newtons[index], target_thrust, config.motor_tau_s, dt);
+        double thrust = 0.0;
+        if (config.px4_actuator_rpm_mapping) {
+            // The preset derives max thrust from its RPM² prop table.  PX4 HIL
+            // controls are normalized requested RPM, and battery voltage acts
+            // on RPM before the RPM² thrust conversion.
+            const double target_rpm = config.max_motor_rpm * commands.normalized[index] * std::sqrt(thrust_scale);
+            const double rpm = first_order_motor_response(state.motor_rpm[index], target_rpm, config.motor_tau_s, dt);
+            state.motor_rpm[index] = rpm;
+            const double rpm_ratio = std::clamp(rpm / config.max_motor_rpm, 0.0, 1.0);
+            thrust = config.per_motor.max_thrust_per_motor_newtons * rpm_ratio * rpm_ratio;
+        } else {
+            const double target_thrust = config.per_motor.max_thrust_per_motor_newtons *
+                    commands.normalized[index] * thrust_scale;
+            thrust = first_order_motor_response(
+                    state.motor_thrust_newtons[index], target_thrust, config.motor_tau_s, dt);
+            state.motor_rpm[index] = config.max_motor_rpm > 0.0
+                    ? config.max_motor_rpm * std::sqrt(std::clamp(
+                            thrust / config.per_motor.max_thrust_per_motor_newtons, 0.0, 1.0))
+                    : 0.0;
+        }
         state.motor_thrust_newtons[index] = thrust;
         const Vec3 force{0.0, thrust, 0.0};
         body_force = body_force + force;
@@ -462,7 +481,10 @@ Px4SupportLiftReadiness px4_support_lift_readiness(
     }
     readiness.thrust_scale = per_motor_thrust_scale(config, commands);
     for (double command : commands.normalized) {
-        readiness.command_thrust_newtons += config.per_motor.max_thrust_per_motor_newtons * command * readiness.thrust_scale;
+        const double command_thrust_scale = config.px4_actuator_rpm_mapping
+                ? command * command * readiness.thrust_scale
+                : command * readiness.thrust_scale;
+        readiness.command_thrust_newtons += config.per_motor.max_thrust_per_motor_newtons * command_thrust_scale;
     }
     readiness.projected_lift_newtons = rotate(
             state.orientation, {0.0, readiness.command_thrust_newtons, 0.0}).y;

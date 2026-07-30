@@ -42,7 +42,7 @@ bool same_state(const aerosim::RigidBodyState &left, const aerosim::RigidBodySta
             left.orientation.z == right.orientation.z && left.orientation.w == right.orientation.w &&
             left.angular_velocity.x == right.angular_velocity.x && left.angular_velocity.y == right.angular_velocity.y &&
             left.angular_velocity.z == right.angular_velocity.z &&
-            left.motor_thrust_newtons == right.motor_thrust_newtons;
+            left.motor_thrust_newtons == right.motor_thrust_newtons && left.motor_rpm == right.motor_rpm;
 }
 
 } // namespace
@@ -89,6 +89,29 @@ int main() {
     expected_sideways_state.orientation = {kRootHalf, 0.0, 0.0, kRootHalf};
     if (!same_state(sideways_state, expected_sideways_state)) {
         return fail("lift readiness must not normalize or otherwise mutate the sampled attitude");
+    }
+
+    // The PX4 Iris profile derives these values from its checked-in prop table:
+    // 1.5 kg, 10,504.23 max RPM, and 7.0664 N maximum thrust per rotor.
+    aerosim::SimulationConfig iris = nominal;
+    iris.mass_kg = 1.5;
+    iris.battery_cell_resistance_ohm = 0.0;
+    iris.max_motor_rpm = 10504.23;
+    iris.per_motor.max_thrust_per_motor_newtons = 7.0664;
+    iris.px4_actuator_rpm_mapping = true;
+    const aerosim::MotorCommands iris_hover{{0.721400079425549, 0.721400079425549,
+            0.721400079425549, 0.721400079425549}};
+    const aerosim::MotorCommands iris_linear_hover{{0.5204196974414129, 0.5204196974414129,
+            0.5204196974414129, 0.5204196974414129}};
+    const aerosim::Px4SupportLiftReadiness iris_hover_readiness =
+            aerosim::px4_support_lift_readiness(iris, initial_state, iris_hover);
+    const aerosim::Px4SupportLiftReadiness iris_early_readiness =
+            aerosim::px4_support_lift_readiness(iris, initial_state, iris_linear_hover);
+    if (!iris_hover_readiness.valid || !iris_hover_readiness.ready ||
+            std::abs(iris_hover_readiness.command_thrust_newtons - iris_hover_readiness.required_lift_newtons) > 1.0e-3 ||
+            !iris_early_readiness.valid || iris_early_readiness.ready ||
+            !(iris_early_readiness.command_thrust_newtons < iris_early_readiness.required_lift_newtons)) {
+        return fail("PX4 Iris RPM-mapped hover and support-release thresholds must follow the derived prop table");
     }
 
     return EXIT_SUCCESS;

@@ -29,6 +29,9 @@ struct RigidBodyState {
     Vec3 angular_velocity;
     Vec3 propwash_disturbance_rad_s2;
     std::array<double, 4> motor_thrust_newtons = {0.0, 0.0, 0.0, 0.0};
+    // PX4 HIL actuator outputs are requested rotor-speed ratios.  Keep their
+    // lag state in the same physical domain rather than lagging thrust.
+    std::array<double, 4> motor_rpm = {0.0, 0.0, 0.0, 0.0};
 };
 
 struct A3DragConfig {
@@ -108,6 +111,7 @@ struct SimulationConfig {
     double battery_remaining_mah = 0.0;
     double max_total_current_a = 0.0;
     double max_motor_rpm = 0.0;
+    bool px4_actuator_rpm_mapping = false;
     double altitude_hold_noise_deadband_m = 0.0;
     PerMotorPhysicsConfig per_motor;
     A3DragConfig a3_drag;
