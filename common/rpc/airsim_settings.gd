@@ -360,6 +360,8 @@ static func _validate_px4_transport(vehicle: Dictionary, scope: String, errors: 
     for key in ["ControlIp", "LocalHostIp", "UdpIp"]:
         if vehicle.has(key) and (typeof(vehicle[key]) != TYPE_STRING or String(vehicle[key]).is_empty()):
             errors.append("%s.%s must be a non-empty string" % [scope, key])
+    if vehicle.has("HardwarePreset") and (typeof(vehicle["HardwarePreset"]) != TYPE_STRING or not String(vehicle["HardwarePreset"]).begins_with("res://config/drones/")):
+        errors.append("%s.HardwarePreset must be a drone preset resource path" % scope)
     if vehicle.has("HilActuatorQuadXOrder"):
         var motor_order: Variant = vehicle["HilActuatorQuadXOrder"]
         var motor_names := {}

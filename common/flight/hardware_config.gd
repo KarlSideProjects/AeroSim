@@ -339,6 +339,8 @@ func derive_per_motor_model(config: Dictionary, power_model: Dictionary) -> Dict
     var aircraft: Dictionary = config.get("aircraft", {})
     var layout: Array = aircraft.get("motor_layout", [])
     var spin_direction: Array = config.get("spin_direction", [])
+    var allocation_yaw_sign: Array = aircraft.get("allocation_yaw_torque_sign", [])
+    var allocation_yaw_torque_per_newton: Variant = aircraft.get("allocation_yaw_torque_per_newton", null)
     var motor_count := int(motor.get("count", 0))
     if motor_count != 4 or layout.size() != 4 or spin_direction.size() != 4:
         return {"ok": false, "error": "per-motor model requires four ordered motors"}
@@ -351,13 +353,23 @@ func derive_per_motor_model(config: Dictionary, power_model: Dictionary) -> Dict
         if direction != "cw" and direction != "ccw":
             return {"ok": false, "error": "spin direction must be cw or ccw"}
         position_frd.append(Vector3(float(position.get("x", NAN)), float(position.get("y", NAN)), float(position.get("z", NAN))))
-        spin_values.append(1.0 if direction == "cw" else -1.0)
+        var spin_value := 1.0 if direction == "cw" else -1.0
+        if not allocation_yaw_sign.is_empty():
+            if allocation_yaw_sign.size() != 4 or not (allocation_yaw_sign[index] is float or allocation_yaw_sign[index] is int) or absf(float(allocation_yaw_sign[index])) != 1.0:
+                return {"ok": false, "error": "aircraft allocation yaw signs must be four +/-1 values"}
+            spin_value = float(allocation_yaw_sign[index])
+        spin_values.append(spin_value)
 
     var inertia: Dictionary = aircraft.get("inertia_kg_m2", {})
     var max_thrust_total := float(power_model.get("max_total_thrust_n", 0.0))
     var max_current_total := float(power_model.get("max_total_current_a", 0.0))
     if max_thrust_total <= 0.0 or max_current_total <= 0.0:
         return {"ok": false, "error": "power model has no usable per-motor limits"}
+    var yaw_torque_per_newton := float(power_model.get("k_q_nm_per_rpm2", 0.0)) / float(power_model.get("k_t_n_per_rpm2", 0.0))
+    if allocation_yaw_torque_per_newton != null:
+        if not (allocation_yaw_torque_per_newton is float or allocation_yaw_torque_per_newton is int) or not is_finite(float(allocation_yaw_torque_per_newton)) or float(allocation_yaw_torque_per_newton) <= 0.0:
+            return {"ok": false, "error": "aircraft allocation yaw torque must be finite and positive"}
+        yaw_torque_per_newton = float(allocation_yaw_torque_per_newton)
     return {
         "ok": true,
         "inertia_frd": Vector3(float(inertia.get("x", NAN)), float(inertia.get("y", NAN)), float(inertia.get("z", NAN))),
@@ -365,7 +377,7 @@ func derive_per_motor_model(config: Dictionary, power_model: Dictionary) -> Dict
         "spin_direction": spin_values,
         "max_thrust_per_motor_newtons": max_thrust_total / float(motor_count),
         "max_current_per_motor_a": max_current_total / float(motor_count),
-        "yaw_torque_per_newton": float(power_model.get("k_q_nm_per_rpm2", 0.0)) / float(power_model.get("k_t_n_per_rpm2", 0.0))
+        "yaw_torque_per_newton": yaw_torque_per_newton
     }
 
 func _apply_current_to_runtime(runtime: Object, path: String) -> bool:
@@ -571,7 +583,7 @@ func _validate(config: Dictionary, schema: Dictionary) -> String:
     var curve_error := _validate_discharge_curve(config.battery.discharge_curve, schema.discharge_curve_ranges)
     if curve_error != "":
         return curve_error
-    var layout_error := _validate_motor_layout(config.aircraft.motor_layout)
+    var layout_error := _validate_motor_layout(config.aircraft.motor_layout, config.motor_order, config.spin_direction)
     if layout_error != "":
         return layout_error
     var a3_error := _validate_a3(config.aerodynamics.a3)
@@ -727,15 +739,41 @@ func _validate_discharge_curve(curve: Array, ranges: Dictionary) -> String:
             return "battery.discharge_curve row out of range"
     return ""
 
-func _validate_motor_layout(layout: Array) -> String:
+func _validate_motor_layout(layout: Array, motor_order: Array, spin_direction: Array) -> String:
     if layout.size() != 4:
         return "aircraft.motor_layout must describe 4 motors"
-    for row in layout:
+    if motor_order.size() != 4 or spin_direction.size() != 4:
+        return "aircraft.motor_layout requires four named motors and spin directions"
+    var expected_quadrants := {
+        "rear_right": Vector2(-1.0, 1.0), "front_right": Vector2(1.0, 1.0),
+        "rear_left": Vector2(-1.0, -1.0), "front_left": Vector2(1.0, -1.0)
+    }
+    var names := {}
+    var positive_spin_count := 0
+    for index in range(layout.size()):
+        var row: Dictionary = layout[index]
         for key in ["x", "y", "z"]:
             if not row.has(key) or not (row[key] is float or row[key] is int):
                 return "aircraft.motor_layout row is incomplete"
-            if float(row[key]) < -1.0 or float(row[key]) > 1.0:
+            if not is_finite(float(row[key])) or float(row[key]) < -1.0 or float(row[key]) > 1.0:
                 return "aircraft.motor_layout row out of range"
+        var motor_name := String(motor_order[index])
+        if not expected_quadrants.has(motor_name) or names.has(motor_name):
+            return "aircraft.motor_layout requires each Quad-X motor name exactly once"
+        names[motor_name] = true
+        var quadrant: Vector2 = expected_quadrants[motor_name]
+        if absf(float(row.x)) <= 0.0 or absf(float(row.y)) <= 0.0 or absf(float(row.z)) > 0.000000001 or float(row.x) * quadrant.x <= 0.0 or float(row.y) * quadrant.y <= 0.0:
+            return "aircraft.motor_layout must keep each named motor in its Quad-X quadrant"
+        var direction := String(spin_direction[index])
+        if direction != "cw" and direction != "ccw":
+            return "spin direction must be cw or ccw"
+        positive_spin_count += 1 if direction == "cw" else 0
+        for other in range(index):
+            var other_row: Dictionary = layout[other]
+            if is_equal_approx(float(row.x), float(other_row.x)) and is_equal_approx(float(row.y), float(other_row.y)):
+                return "aircraft.motor_layout positions must be unique"
+    if positive_spin_count != 2:
+        return "aircraft.motor_layout requires two cw and two ccw motors"
     return ""
 
 func _in_range(value: Variant, spec: Dictionary) -> bool:

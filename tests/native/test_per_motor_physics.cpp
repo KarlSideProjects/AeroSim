@@ -51,6 +51,36 @@ int main() {
         return fail("Quad-X mixer columns must expose the canonical motor torque basis");
     }
 
+    // PX4 10016_none_iris allocation, mapped by motor name to AeroSim's stable
+    // [rear_right, front_right, rear_left, front_left] order.  The Iris is not a
+    // square frame: the right arms intentionally differ fore/aft.
+    auto iris = config.per_motor;
+    iris.position_frd = {{
+            {-0.1515, 0.1875, 0.0},
+            {0.1515, 0.2450, 0.0},
+            {-0.1515, -0.1875, 0.0},
+            {0.1515, -0.2450, 0.0},
+    }};
+    iris.spin_direction = {{-1.0, 1.0, 1.0, -1.0}};
+    iris.yaw_torque_per_newton = 0.05;
+    if (!aerosim::validate_per_motor_config(iris)) {
+        return fail("the named PX4 Iris asymmetric Quad-X allocation must be accepted");
+    }
+    const auto iris_columns = aerosim::quad_x_mixer_columns(iris);
+    const std::array<std::array<double, 4>, 4> expected_iris_columns = {{
+            {{1.0, 1.0, 1.0, 1.0}},
+            {{-0.1875, -0.2450, 0.1875, 0.2450}},
+            {{-0.1515, 0.1515, -0.1515, 0.1515}},
+            {{-0.05, 0.05, 0.05, -0.05}},
+    }};
+    for (std::size_t axis = 0; axis < iris_columns.size(); ++axis) {
+        for (std::size_t motor = 0; motor < iris_columns[axis].size(); ++motor) {
+            if (!near(iris_columns[axis][motor], expected_iris_columns[axis][motor], 1e-12)) {
+                return fail("each named PX4 Iris allocation coefficient must match the source contract");
+            }
+        }
+    }
+
     aerosim::MotorCommands equal_commands{{1.0, 1.0, 1.0, 1.0}};
     aerosim::RigidBodyState equal_state;
     aerosim::SimulationClock equal_clock;

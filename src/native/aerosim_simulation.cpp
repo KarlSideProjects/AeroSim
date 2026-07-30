@@ -215,43 +215,42 @@ bool validate_per_motor_config(const PerMotorPhysicsConfig &config) {
         }
     }
     const double max_abs_position = std::max({
-            std::abs(config.position_frd[0].x),
-            std::abs(config.position_frd[0].y),
-            std::abs(config.position_frd[1].x),
-            std::abs(config.position_frd[1].y),
-            std::abs(config.position_frd[2].x),
-            std::abs(config.position_frd[2].y),
-            std::abs(config.position_frd[3].x),
-            std::abs(config.position_frd[3].y),
+            std::abs(config.position_frd[0].x), std::abs(config.position_frd[0].y),
+            std::abs(config.position_frd[1].x), std::abs(config.position_frd[1].y),
+            std::abs(config.position_frd[2].x), std::abs(config.position_frd[2].y),
+            std::abs(config.position_frd[3].x), std::abs(config.position_frd[3].y),
     });
     const double position_tolerance = 1e-9 * std::max(1.0, max_abs_position);
-    const double forward_arm = std::abs(config.position_frd[0].x);
-    const double right_arm = std::abs(config.position_frd[0].y);
-    if (forward_arm <= position_tolerance || right_arm <= position_tolerance ||
-            forward_arm > 1.0 || right_arm > 1.0) {
-        return false;
-    }
-    const std::array<Vec3, 4> expected_positions = {{
-            {-forward_arm, right_arm, 0.0},
-            {forward_arm, right_arm, 0.0},
-            {-forward_arm, -right_arm, 0.0},
-            {forward_arm, -right_arm, 0.0},
+    const std::array<Vec3, 4> expected_quadrants = {{
+            {-1.0, 1.0, 0.0}, {1.0, 1.0, 0.0},
+            {-1.0, -1.0, 0.0}, {1.0, -1.0, 0.0},
     }};
-    const std::array<double, 4> expected_spin = {1.0, -1.0, -1.0, 1.0};
-    for (std::size_t index = 0; index < expected_positions.size(); ++index) {
+    std::size_t positive_yaw_motors = 0;
+    for (std::size_t index = 0; index < expected_quadrants.size(); ++index) {
         const Vec3 &actual = config.position_frd[index];
-        const Vec3 &expected = expected_positions[index];
-        if (std::abs(actual.x - expected.x) > position_tolerance ||
-                std::abs(actual.y - expected.y) > position_tolerance ||
-                std::abs(actual.z) > position_tolerance ||
-                config.spin_direction[index] != expected_spin[index]) {
+        const Vec3 &quadrant = expected_quadrants[index];
+        if (std::abs(actual.z) > position_tolerance || std::abs(actual.x) <= position_tolerance ||
+                std::abs(actual.y) <= position_tolerance || std::abs(actual.x) > 1.0 ||
+                std::abs(actual.y) > 1.0 || actual.x * quadrant.x <= 0.0 ||
+                actual.y * quadrant.y <= 0.0) {
             return false;
         }
+        positive_yaw_motors += config.spin_direction[index] > 0.0 ? 1U : 0U;
+        for (std::size_t other = 0; other < index; ++other) {
+            const Vec3 &other_position = config.position_frd[other];
+            if (std::abs(actual.x - other_position.x) <= position_tolerance &&
+                    std::abs(actual.y - other_position.y) <= position_tolerance) {
+                return false;
+            }
+        }
+    }
+    if (positive_yaw_motors != 2U) {
+        return false;
     }
 
     const auto columns = quad_x_mixer_columns(config);
     std::array<double, 4> scales{};
-    std::array<double, 4> diagonal{};
+    std::array<std::array<double, 4>, 4> normalized{};
     for (std::size_t axis = 0; axis < columns.size(); ++axis) {
         for (double coefficient : columns[axis]) {
             scales[axis] = std::max(scales[axis], std::abs(coefficient));
@@ -259,28 +258,38 @@ bool validate_per_motor_config(const PerMotorPhysicsConfig &config) {
         if (!std::isfinite(scales[axis]) || scales[axis] <= 0.0) {
             return false;
         }
-        for (double coefficient : columns[axis]) {
-            const double normalized_coefficient = coefficient / scales[axis];
-            diagonal[axis] += normalized_coefficient * normalized_coefficient;
-        }
-        if (!std::isfinite(diagonal[axis]) || diagonal[axis] <= 0.0) {
-            return false;
+        for (std::size_t index = 0; index < columns[axis].size(); ++index) {
+            normalized[axis][index] = columns[axis][index] / scales[axis];
         }
     }
-    for (std::size_t left = 0; left < columns.size(); ++left) {
-        for (std::size_t right = left + 1; right < columns.size(); ++right) {
-            double cross = 0.0;
-            for (std::size_t index = 0; index < columns[left].size(); ++index) {
-                cross += (columns[left][index] / scales[left]) *
-                        (columns[right][index] / scales[right]);
-            }
-            const double correlation = std::abs(cross) /
-                    std::sqrt(diagonal[left]) /
-                    std::sqrt(diagonal[right]);
-            if (!std::isfinite(correlation) || correlation > 1e-9) {
-                return false;
+    // Iris is intentionally fore/aft asymmetric.  Require a full-rank allocation
+    // matrix, not the former square-frame orthogonality shortcut.
+    double determinant = 1.0;
+    for (std::size_t pivot = 0; pivot < normalized.size(); ++pivot) {
+        std::size_t best_row = pivot;
+        for (std::size_t row = pivot + 1; row < normalized.size(); ++row) {
+            if (std::abs(normalized[row][pivot]) > std::abs(normalized[best_row][pivot])) {
+                best_row = row;
             }
         }
+        if (std::abs(normalized[best_row][pivot]) <= 1e-9) {
+            return false;
+        }
+        if (best_row != pivot) {
+            std::swap(normalized[best_row], normalized[pivot]);
+            determinant = -determinant;
+        }
+        const double pivot_value = normalized[pivot][pivot];
+        determinant *= pivot_value;
+        for (std::size_t row = pivot + 1; row < normalized.size(); ++row) {
+            const double factor = normalized[row][pivot] / pivot_value;
+            for (std::size_t column = pivot; column < normalized[row].size(); ++column) {
+                normalized[row][column] -= factor * normalized[pivot][column];
+            }
+        }
+    }
+    if (!std::isfinite(determinant) || std::abs(determinant) <= 1e-9) {
+        return false;
     }
     return true;
 }

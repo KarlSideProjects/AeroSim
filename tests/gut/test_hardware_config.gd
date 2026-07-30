@@ -88,6 +88,21 @@ func test_derives_the_preset_backed_per_motor_model() -> void:
     assert_almost_eq(per_motor.yaw_torque_per_newton, 0.1575 / 16.2, 0.000001)
 
 
+func test_derives_the_named_px4_iris_allocation_contract() -> void:
+    var iris: Dictionary = loader.load_preset("res://config/drones/px4_iris.json")
+    assert_true(loader.last_ok, loader.last_error)
+    var power_model := loader.derive_power_model(iris)
+    var per_motor := loader.derive_per_motor_model(iris, power_model)
+
+    assert_true(per_motor.ok, String(per_motor.get("error", "")))
+    assert_eq(per_motor.spin_direction, [-1.0, 1.0, 1.0, -1.0])
+    assert_almost_eq(per_motor.position_frd[0].x, -0.1515, 0.000001)
+    assert_almost_eq(per_motor.position_frd[1].y, 0.2450, 0.000001)
+    assert_almost_eq(per_motor.yaw_torque_per_newton, 0.05, 0.000001)
+    assert_almost_eq(iris.aircraft.mass_kg, 1.5, 0.000001)
+    assert_almost_eq(iris.aircraft.inertia_kg_m2.z, 0.055225, 0.000001)
+
+
 func test_schema_requires_static_a3_coefficients_without_dynamic_rpm() -> void:
     var config: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
 

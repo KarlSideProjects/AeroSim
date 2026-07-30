@@ -416,7 +416,7 @@ func _ready() -> void:
     if not hardware_config.initialize_tuning(self):
         last_error_message = hardware_config.last_error
         push_error("Default tuning initialization failed: %s" % hardware_config.last_error)
-    if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
+    if not hardware_config.apply_to_runtime(self, _hardware_preset_for_vehicle(_airsim_vehicle_name)):
         last_error_message = hardware_config.last_error
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
     motor_hud_spin_directions = hardware_config.current.get("spin_direction", [])
@@ -699,7 +699,7 @@ func _configure_secondary_native(hardware_config: RefCounted) -> bool:
         native = primary_native
         last_error_message = "second named vehicle tuning initialization failed"
         return false
-    var applied_result: Variant = hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET)
+    var applied_result: Variant = hardware_config.apply_to_runtime(self, _hardware_preset_for_vehicle(String(_airsim_vehicle_names[1])))
     var applied: bool = bool(applied_result)
     native = primary_native
     if not applied:
@@ -7437,6 +7437,15 @@ func _configure_px4_sitl_bridge() -> void:
         paused = true
         airsim_session.set_paused(true)
         push_error(last_error_message)
+
+
+func _hardware_preset_for_vehicle(vehicle_name: String) -> String:
+    if airsim_rpc_server == null:
+        return DEFAULT_HARDWARE_PRESET
+    var vehicles: Dictionary = airsim_rpc_server.settings.get("Vehicles", {})
+    var vehicle: Dictionary = vehicles.get(vehicle_name, {})
+    var preset := String(vehicle.get("HardwarePreset", DEFAULT_HARDWARE_PRESET))
+    return preset if preset.begins_with("res://config/drones/") else DEFAULT_HARDWARE_PRESET
 
 
 func _on_px4_authority_changed(active: bool) -> void:

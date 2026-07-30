@@ -1,0 +1,57 @@
+{
+  "version": "px4-iris-allocation-contract-v1",
+  "units": {"mass":"kg","length":"m","area":"m^2","thrust":"N","torque":"Nm","rpm":"rpm","current":"A","resistance":"ohm","time":"s","frequency":"Hz","angle":"deg","a3_drag_coefficient":"kg"},
+  "coordinate_frame": {"world":"Godot Y-up","body":"FRD: +X forward, +Y right, +Z down"},
+  "motor_order": ["rear_right", "front_right", "rear_left", "front_left"],
+  "spin_direction": ["cw", "ccw", "ccw", "cw"],
+  "prop_table_interpolation": "linear_no_extrapolation",
+  "frame": {"wheelbase_m":0.47,"arm_length_m":0.26,"dry_mass_kg":1.5,"frontal_area_m2":{"x":0.052,"y":0.052,"z":0.221},"layout":"x"},
+  "geometry": {
+    "identity": {"designation":"PX4 Gazebo Classic Iris","airframe_class":"quad_x_px4_iris","frame_reference":"PX4 sitl_gazebo Iris SDF"},
+    "body": {"center_plate_length_m":0.47,"center_plate_width_m":0.47,"plate_thickness_m":0.11,"bottom_plate_thickness_m":0.11,"stack_width_m":0.12,"stack_height_m":0.11,"standoff_height_m":0.11,"standoff_diameter_m":0.012,"canopy_length_m":0.47,"canopy_width_m":0.47,"canopy_height_m":0.11,"camera_width_m":0.03,"camera_height_m":0.03,"camera_depth_m":0.04,"camera_lens_diameter_m":0.012,"battery_length_m":0.14,"battery_width_m":0.05,"battery_height_m":0.035,"arm_root_width_m":0.035,"arm_tip_width_m":0.025,"arm_thickness_m":0.012,"landing_foot_height_m":0.08,"landing_foot_diameter_m":0.012,"antenna_length_m":0.08,"antenna_diameter_m":0.003},
+    "motor": {"bell_diameter_m":0.050,"bell_height_m":0.023,"base_diameter_m":0.050,"base_height_m":0.010,"shaft_diameter_m":0.005,"shaft_height_m":0.008},
+    "propeller": {"hub_diameter_m":0.030,"hub_height_m":0.005,"blade_root_chord_m":0.020,"blade_max_chord_m":0.035,"blade_tip_chord_m":0.010,"blade_thickness_m":0.002,"blade_root_offset_m":0.012,"blade_root_twist_deg":20.0,"blade_tip_twist_deg":8.0},
+    "provenance": {
+      "model_source":"PX4 sitl_gazebo Iris SDF; non-flight shell dimensions are parametric visual proxies.",
+      "source_url":"https://github.com/PX4/sitl_gazebo/blob/main/models/iris/iris.sdf.jinja",
+      "dimensional_evidence":{"evidence_class":"parametric_from_configuration","documents":[{"title":"PX4 Iris SDF","url":"https://github.com/PX4/sitl_gazebo/blob/main/models/iris/iris.sdf.jinja"}],"notes":"The flight contract uses the pinned PX4 none_iris allocation geometry and the Iris SDF mass/inertia, rotor radius, rotation, motor thrust coefficient and response constants. This profile deliberately does not claim that its display shell is a redistributable Iris mesh."},
+      "license":{"spdx":"BSD-3-Clause","holder":"PX4 Development Team","attribution_required":true,"attribution":"PX4 sitl_gazebo Iris model, BSD-3-Clause."},
+      "redistribution":"release",
+      "assets":[{"path":"common/gsp/assets/three-0.180.0.global.min.js","sha256":"9e80ed95a3bcbb77bb1d6024de9f7f4cc7d6a9745a322f88052edd29e9faa737"},{"path":"common/gsp/assets/gsp_drone_geometry.js","sha256":"4cc058a6f8ad00360520a5f2277360f98850caafe4617a4de2b99ee01028e60c"}]
+    }
+  },
+  "motor": {"stator":"PX4 Iris Gazebo motor","kv":1000,"resistance_ohm":0.050,"max_current_a":20,"tau_m_s":0.0125,"count":4},
+  "propeller": {
+    "diameter_in":10.0787,"pitch_in":4.5,"blades":2,"mass_kg":0.005,
+    "table":[
+      {"rpm":5252.11,"thrust_n":1.7666,"torque_nm":0.105996,"current_a":4.0},
+      {"rpm":7878.17,"thrust_n":3.9749,"torque_nm":0.238494,"current_a":8.0},
+      {"rpm":10504.23,"thrust_n":7.0664,"torque_nm":0.423984,"current_a":14.0}
+    ]
+  },
+  "battery": {"cells":3,"capacity_mah":5000,"c_rating":20,"cell_resistance_ohm":0.0001,"nominal_voltage_v":11.1,"discharge_curve":[{"remaining":1.0,"voltage_v":12.6},{"remaining":0.5,"voltage_v":11.1},{"remaining":0.0,"voltage_v":9.6}]},
+  "esc": {"current_limit_a":20,"protocol":"PWM","update_rate_hz":400},
+  "aerodynamics": {
+    "a3":{"enabled":false,"coefficient_kg":{"x":0.0,"y":0.0,"z":0.0}},
+    "body_drag":{"enabled":false,"drag_coefficient":{"x":0.0,"y":0.0,"z":0.0},"center_of_pressure_frd_m":{"x":0.0,"y":0.0,"z":0.0},"air_density_kg_m3":1.225},
+    "a6":{"enabled":false,"full_collective_angular_accel_rad_s2":0.0,"minimum_wake_entry_speed_mps":0.0,"minimum_transverse_rate_rad_s":0.0},
+    "a5":{"enabled":false,"prop_radius_m":0.128,"coeff_1":0.0,"coeff_2":0.0,"coeff_3":0.0}
+  },
+  "environment":{"wind_speed_mps":{"max":30.0}},
+  "aircraft": {
+    "mass_kg":1.5,
+    "inertia_kg_m2":{"x":0.029125,"y":0.029125,"z":0.055225},
+    "cg_offset_m":{"x":0.0,"y":0.0,"z":0.0},
+    "motor_layout":[
+      {"x":-0.1515,"y":0.1875,"z":0.0},
+      {"x":0.1515,"y":0.2450,"z":0.0},
+      {"x":-0.1515,"y":-0.1875,"z":0.0},
+      {"x":0.1515,"y":-0.2450,"z":0.0}
+    ],
+    "allocation_yaw_torque_sign":[-1,1,1,-1],
+    "allocation_yaw_torque_per_newton":0.05,
+    "allocation_source":"PX4 ROMFS 10016_none_iris: rotor positions/axis/KM; named into AeroSim motor_order."
+  },
+  "sensors":{"gyro_hz":250,"imu_noise_density":0.005,"bias_drift":0.0002,"random_walk":0.0001,"barometer_noise_m":0.10},
+  "fpv":{"camera_angle_deg":0,"fov_deg":90}
+}
