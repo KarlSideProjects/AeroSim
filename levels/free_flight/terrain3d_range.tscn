@@ -1,8 +1,9 @@
-[gd_scene load_steps=29 format=3]
+[gd_scene load_steps=30 format=3]
 
 [ext_resource type="Terrain3DAssets" path="res://assets/third_party/terrain3d_demo/demo/data/assets.tres" id="1"]
 [ext_resource type="PackedScene" path="res://addons/terrain_3d/extras/particle_example/Terrain3DParticles.tscn" id="2"]
 [ext_resource type="Material" path="res://assets/maps/terrain3d_range/grass_process_material.tres" id="8"]
+[ext_resource type="Material" path="res://assets/maps/terrain3d_range/grass_blade_material.tres" id="9"]
 [ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-a.glb" id="3"]
 [ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-f.glb" id="4"]
 [ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-l.glb" id="5"]
@@ -227,7 +228,11 @@ metadata/airsim_segmentation_id = 1
 [node name="Terrain3DParticles" parent="Terrain3D" node_paths=PackedStringArray("terrain") instance=ExtResource("2")]
 process_material = ExtResource("8")
 mesh = SubResource("23")
+mesh_material_override = ExtResource("9")
 terrain = NodePath("..")
+
+[node name="VisualWindSample" type="Marker3D" parent="."]
+position = Vector3(540, 80.3, -760)
 
 [node name="SpawnNorthPlatform" type="StaticBody3D" parent="."]
 position = Vector3(520, 79.85, -790)

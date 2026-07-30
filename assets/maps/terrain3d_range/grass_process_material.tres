@@ -1,6 +1,6 @@
 [gd_resource type="ShaderMaterial" load_steps=4 format=3]
 
-[ext_resource type="Shader" path="res://addons/terrain_3d/extras/particle_example/particles.gdshader" id="1"]
+[ext_resource type="Shader" path="res://assets/maps/terrain3d_range/grass_process.gdshader" id="1"]
 
 [sub_resource type="FastNoiseLite" id="1"]
 noise_type = 2
