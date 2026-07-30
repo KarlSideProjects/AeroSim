@@ -9,7 +9,11 @@ sources:
   - docs/adr/0002-air-sim-client-compatibility-surface.md
   - docs/adr/0003-px4-sitl-in-minimum.md
   - docs/adr/0011-freeze-external-coordinate-contract.md
-last_verified: 2026-07-26
+  - common/rpc/airsim_settings.gd
+  - common/rpc/airsim_rpc_server.gd
+  - config/sitl/px4_iris_wind_qualification.json
+  - config/drones/px4_iris.json
+last_verified: 2026-07-31
 ---
 
 # AeroSim 飛控與相容性
@@ -53,6 +57,21 @@ Cars、arbitrary vehicle creation、runtime material replacement、debug plottin
 settings fields 都不是「可能可用」的 fallback。`VehicleType` 初版只容許 built-in `SimpleFlight`
 與 PX4 SITL 的 `PX4Multirotor`。
 
+### PX4 HIL 專用 vehicle settings 欄位
+
+manifest 的 `vehicle` 允許欄位新增 `HilGpsIntervalSeconds`、`HilActuatorQuadXOrder` 與
+`HardwarePreset`，供 PX4 HIL bridge 指定 GPS 發佈間隔、Quad-X actuator 對應順序與機體
+preset 路徑。`airsim_settings.gd` 的 PX4 transport 驗證要求 `HardwarePreset` 指向
+`res://config/drones/` 下的 preset、`HilGpsIntervalSeconds` 為有限且非負、
+`HilActuatorQuadXOrder` 恰好列出四個相異 motor 名稱。這些是 AeroSim 對 PX4 SITL 的擴充
+欄位，不代表上游 `airsim==1.8.1` 有相同設定。
+
+### MultirotorState 的回傳邊界
+
+`getMultirotorState` 只回傳 AirSim public MultirotorState schema 的欄位。內部 PX4 HIL bridge
+需要的 `magnetometer` 與 `barometer` 樣本會在回應前移除，不會外洩成相容表面的一部分；
+需要這些量測時走 Baseline Sensor Suite 的 sensor API，而不是 vehicle state。
+
 ## 座標與網路邊界
 
 - 所有 public positions、velocities、orientations、angular rates 與 forces 使用 **NED world**、
@@ -67,3 +86,8 @@ settings fields 都不是「可能可用」的 fallback。`VehicleType` 初版�
 PX4 SITL 的成功標準不是「能連上」，而是 pinned PX4 能 arm、take off、完成 deterministic
 mission、land，並提供可操作的 connection state。ArduPilot SITL 與 hardware-in-the-loop 是
 第一個 AirSim-class minimum 的 out of scope。
+
+目前 repository 已有 `config/sitl/px4_iris_wind_qualification.json` 這組 PX4 風場
+qualification settings，以及 `config/drones/px4_iris.json` 的 allocation preset（其
+`allocation_source` 記錄取自 PX4 ROMFS `10016_none_iris`）。CAP-011 的狀態仍是 target，
+不因為單一 qualification 場景而變成 verified。
