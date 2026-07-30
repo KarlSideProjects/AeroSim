@@ -14,10 +14,82 @@ from typing import Any, Callable
 PX4_REVISION = "1dacb4cdef2d7145754fc788fa8dc482eed74b40"
 WIND_FROM_DEG = 270.0
 WIND_SPEED_MPS = 7.0
-TARGET_NED = (2.0, -1.0, -3.0)
+# The smoke scene starts Drone1 one metre north of RuntimeWall.  Keep this
+# qualification route on the clear, negative-north side of the wall: the
+# mission must exercise PX4 takeoff, position hold, and the wind step without
+# treating an intentional obstacle collision as a flight-control failure.
+QUALIFICATION_TAKEOFF_NED = (0.0, 0.0, -3.0)
+TARGET_NED = (-2.0, -1.0, -3.0)
+# RuntimeWall is a 0.2 m-thick 2 m cube at the smoke-scene origin.  These
+# bounds include the 0.1 m drone collision radius, expressed relative to the
+# qualification spawn point in local NED coordinates.
+RUNTIME_WALL_NED_MIN = (0.8, -1.1, -1.1)
+RUNTIME_WALL_NED_MAX = (1.2, 1.1, 1.1)
+QUALIFICATION_DRONE1_SPAWN_WORLD = (-1.0, 0.0, 0.0)
+QUALIFICATION_DRONE2_SPAWN_WORLD = (-1.0, 0.0, 2.0)
+QUALIFICATION_DRONE2_CLEARANCE_M = 0.2
 POSITION_RMS_LIMIT_M = 0.75
 POSITION_MAX_LIMIT_M = 1.25
 ASYNC_COMMAND_TIMEOUT_SECONDS = 45.0
+
+
+def segment_intersects_runtime_wall(start: tuple[float, float, float], end: tuple[float, float, float]) -> bool:
+    """Return whether a local-NED segment enters RuntimeWall's safe envelope."""
+    entry = 0.0
+    exit = 1.0
+    for axis in range(3):
+        delta = end[axis] - start[axis]
+        lower = RUNTIME_WALL_NED_MIN[axis]
+        upper = RUNTIME_WALL_NED_MAX[axis]
+        if abs(delta) < 1e-9:
+            if start[axis] < lower or start[axis] > upper:
+                return False
+            continue
+        first = (lower - start[axis]) / delta
+        last = (upper - start[axis]) / delta
+        entry = max(entry, min(first, last))
+        exit = min(exit, max(first, last))
+        if entry > exit:
+            return False
+    return True
+
+
+def qualification_corridor_is_clear() -> bool:
+    """Ensure the test-only command route stays out of RuntimeWall.
+
+    PX4 can accept the target command before the bridge has observed altitude
+    change, so validate the conservative spawn-to-target fallback as well as
+    the nominal takeoff-to-target leg.
+    """
+    spawn = (0.0, 0.0, 0.0)
+    return (
+        not segment_intersects_runtime_wall(spawn, QUALIFICATION_TAKEOFF_NED)
+        and not segment_intersects_runtime_wall(QUALIFICATION_TAKEOFF_NED, TARGET_NED)
+        and not segment_intersects_runtime_wall(spawn, TARGET_NED)
+        and qualification_route_clears_drone2()
+    )
+
+
+def qualification_route_clears_drone2() -> bool:
+    """Keep the test-only parked Drone2 out of Drone1's takeoff/target path."""
+    spawn = QUALIFICATION_DRONE1_SPAWN_WORLD
+    takeoff = (spawn[0], spawn[1] - QUALIFICATION_TAKEOFF_NED[2], spawn[2])
+    target = (spawn[0] + TARGET_NED[0], spawn[1] - TARGET_NED[2], spawn[2] + TARGET_NED[1])
+    return (
+        _point_to_segment_distance(QUALIFICATION_DRONE2_SPAWN_WORLD, spawn, takeoff) > QUALIFICATION_DRONE2_CLEARANCE_M
+        and _point_to_segment_distance(QUALIFICATION_DRONE2_SPAWN_WORLD, takeoff, target) > QUALIFICATION_DRONE2_CLEARANCE_M
+    )
+
+
+def _point_to_segment_distance(point: tuple[float, float, float], start: tuple[float, float, float], end: tuple[float, float, float]) -> float:
+    direction = tuple(end[axis] - start[axis] for axis in range(3))
+    length_squared = sum(component * component for component in direction)
+    if length_squared == 0.0:
+        return math.dist(point, start)
+    offset = tuple(point[axis] - start[axis] for axis in range(3))
+    fraction = max(0.0, min(1.0, sum(offset[axis] * direction[axis] for axis in range(3)) / length_squared))
+    closest = tuple(start[axis] + fraction * direction[axis] for axis in range(3))
+    return math.dist(point, closest)
 
 
 def wait_for_async_command(command: Callable[[], Any], stage: str, timeout_seconds: float = ASYNC_COMMAND_TIMEOUT_SECONDS) -> None:
@@ -190,6 +262,8 @@ def wait_for_qualification_readiness(path: Path, timeout_seconds: float = 5.0) -
 def main() -> int:
     global airsim, arm_with_startup_retry, disarm_with_retry, wait_for_landed
     global receive_frame, send_text, websocket_connect
+    if not qualification_corridor_is_clear():
+        raise RuntimeError("PX4 wind-step qualification route intersects RuntimeWall")
     import airsim as airsim_module
     from px4_sitl_mission import arm_with_startup_retry as arm_with_startup_retry_impl
     from px4_sitl_mission import disarm_with_retry as disarm_with_retry_impl

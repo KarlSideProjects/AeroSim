@@ -1,7 +1,16 @@
 import unittest
+from pathlib import Path
 
 from scripts.px4_wind_step_qualification import PX4_REVISION, evaluate
-from scripts.px4_wind_step_mission import qualification_readiness_failure, wait_for_async_command
+from scripts.px4_wind_step_mission import (
+    QUALIFICATION_TAKEOFF_NED,
+    TARGET_NED,
+    qualification_corridor_is_clear,
+    qualification_route_clears_drone2,
+    qualification_readiness_failure,
+    segment_intersects_runtime_wall,
+    wait_for_async_command,
+)
 
 
 def evidence(**overrides):
@@ -21,6 +30,21 @@ def evidence(**overrides):
 
 
 class Px4WindStepQualificationTests(unittest.TestCase):
+    def test_qualification_takeoff_and_target_path_stay_in_the_clear_side_of_runtime_wall(self):
+        self.assertTrue(qualification_corridor_is_clear())
+        self.assertLess(TARGET_NED[0], QUALIFICATION_TAKEOFF_NED[0])
+        self.assertFalse(segment_intersects_runtime_wall(QUALIFICATION_TAKEOFF_NED, TARGET_NED))
+        self.assertTrue(qualification_route_clears_drone2())
+
+    def test_runtime_wall_path_guard_rejects_a_low_altitude_segment_through_the_wall(self):
+        self.assertTrue(segment_intersects_runtime_wall((0.0, 0.0, 0.0), (2.0, 0.0, 0.0)))
+
+    def test_headless_qualification_places_drone_one_at_the_normal_negative_x_spawn(self):
+        source = Path("tests/headless/px4_wind_step_qualification.gd").read_text(encoding="utf-8")
+        self.assertIn("QualificationSpawnWorld := Vector3(-1.0, 0.0, 0.0)", source)
+        self.assertIn("QualificationSecondarySpawnWorld := Vector3(-1.0, 0.0, 2.0)", source)
+        self.assertIn("_place_qualification_vehicles_in_clear_corridor()", source)
+
     def test_async_command_timeout_names_the_stage_without_waiting_forever(self):
         class NeverCompletes:
             def join(self):

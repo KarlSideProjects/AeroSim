@@ -1,6 +1,10 @@
 extends SceneTree
 
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
+const TraceWriter = preload("res://common/diagnostics/px4_qualification_trace_writer.gd")
+const QualificationSupport = preload("res://tests/headless/px4_qualification_support.gd")
+const QualificationSpawnWorld := Vector3(-1.0, 0.0, 0.0)
+const QualificationSecondarySpawnWorld := Vector3(-1.0, 0.0, 2.0)
 
 var _ready_path := ""
 var _stop_path := ""
@@ -28,6 +32,8 @@ func _init() -> void:
 func _start() -> void:
     _smoke = SmokeScene.instantiate()
     get_root().add_child(_smoke)
+    QualificationSupport.install(_smoke)
+    _place_qualification_vehicles_in_clear_corridor()
     var bridge = _smoke.px4_sitl_bridge
     if bridge == null or not bridge.has_method("set_qualification_trace_enabled"):
         push_error("PX4 wind qualification cannot enable bridge diagnostics")
@@ -58,6 +64,27 @@ func _start() -> void:
     }))
     ready.flush()
     ready.close()
+
+
+func _place_qualification_vehicles_in_clear_corridor() -> void:
+    # This headless qualification scene does not load a Free Flight map, so it
+    # must explicitly use FlightRuntime's normal fallback spawn rather than
+    # the authored smoke-scene origin, which is inside RuntimeWall. Drone1
+    # starts on the negative-x side and the mission keeps moving farther away;
+    # the parked Drone2 is kept clear of that flight path.
+    if _smoke.drone_body == null or not _smoke.drone_body.has_method("apply_native_state"):
+        push_error("PX4 wind qualification cannot place Drone1 in its clear corridor")
+        quit(1)
+        return
+    _smoke.drone_body.reset_contact()
+    _smoke.drone_body.apply_native_state(QualificationSpawnWorld, Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+    _smoke.drone_body.freeze = false
+    if _smoke.native != null and _smoke.native.has_method("reset_flight"):
+        _smoke.native.call("reset_flight")
+    if _smoke.secondary_drone_body != null and _smoke.secondary_drone_body.has_method("apply_native_state"):
+        _smoke.secondary_drone_body.reset_contact()
+        _smoke.secondary_drone_body.apply_native_state(QualificationSecondarySpawnWorld, Quaternion.IDENTITY, Vector3.ZERO, Vector3.ZERO)
+        _smoke.secondary_drone_body.freeze = true
 
 
 func _process(_delta: float) -> bool:
@@ -105,14 +132,11 @@ func _write_trace(force: bool = false) -> void:
     _last_trace_write_msec = now_msec
     _last_trace_count = trace.size()
     _last_runtime_authority = native_authority
-    var output := FileAccess.open(_trace_path, FileAccess.WRITE)
-    if output == null:
-        return
-    output.store_string(JSON.stringify({
+    var write_result: Dictionary = TraceWriter.replace_json(_trace_path, {
         "kind": "aerosim.px4_bridge_qualification_trace",
         "bridge_events": trace,
         "runtime": runtime,
         "runtime_authority_events": _runtime_authority_events,
-    }))
-    output.flush()
-    output.close()
+    })
+    if not bool(write_result.get("ok", false)):
+        push_warning("PX4 qualification trace was not published: %s" % String(write_result.get("error", "unknown error")))

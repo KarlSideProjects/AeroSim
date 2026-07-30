@@ -56,6 +56,12 @@ class Px4SitlLauncherTests(unittest.TestCase):
         self.assertIn('scripts/px4_wind_step_mission.py', source)
         self.assertIn('runtime_ready_file="$gsp_ready_file"', source)
 
+    def test_wind_qualification_cleanup_has_a_fixed_trace_publish_deadline(self):
+        source = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn('touch "$stop_file"', source)
+        self.assertIn('for _attempt in $(seq 1 50)', source)
+        self.assertIn('sleep 0.1', source)
+
     def test_wind_step_qualification_does_not_pass_without_authentic_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             environment = os.environ | {

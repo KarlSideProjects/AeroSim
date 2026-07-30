@@ -134,6 +134,17 @@ cleanup() {
         wait "$PX4_PID" 2>/dev/null || true
     fi
     touch "$stop_file"
+    # A qualification trace can be several MiB.  Allow its temp-write and
+    # atomic rename to finish after the cooperative stop signal, but retain a
+    # fixed deadline before the existing TERM/KILL fallback.
+    if [ "$wind_step_qualification" = true ] && [ -n "$GODOT_PID" ]; then
+        for _attempt in $(seq 1 50); do
+            if ! kill -0 "$GODOT_PID" 2>/dev/null; then
+                break
+            fi
+            sleep 0.1
+        done
+    fi
     if [ -n "$GODOT_PID" ] && kill -0 "$GODOT_PID" 2>/dev/null; then
         kill "$GODOT_PID" 2>/dev/null || true
         sleep 0.2
