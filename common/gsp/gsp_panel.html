@@ -114,6 +114,8 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   var fragment = new URLSearchParams(window.location.hash.slice(1));
   var port = Number(fragment.get("port"));
   var token = fragment.get("token") || "";
+  var demoTitle = fragment.get("demo_title") || "";
+  if (/^\d+$/.test(demoTitle)) document.title = "AeroSim GSP Demo " + demoTitle;
   var socket = null;
   var socketGeneration = 0;
   var reconnectTimer = null;

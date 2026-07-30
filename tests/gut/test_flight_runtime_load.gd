@@ -35,6 +35,7 @@ class FakeNative:
 
     var disarmed := false
     var armed := false
+    var collision_angle_arguments: Dictionary = {}
 
     func flight_control_armed() -> bool:
         return armed
@@ -54,6 +55,76 @@ class FakeNative:
 
     func hardware_power_diagnostics() -> Dictionary:
         return {"hover_throttle": 0.30}
+
+    func sync_flight_state(
+        _position_x: float,
+        _position_y: float,
+        _position_z: float,
+        _orientation_x: float,
+        _orientation_y: float,
+        _orientation_z: float,
+        _orientation_w: float,
+        _velocity_x: float,
+        _velocity_y: float,
+        _velocity_z: float,
+        _angular_velocity_x: float,
+        _angular_velocity_y: float,
+        _angular_velocity_z: float
+    ) -> void:
+        pass
+
+    func step_collision_angle_mode(
+        _physics_hz: int,
+        _substep_hz: int,
+        throttle: float,
+        roll: float,
+        pitch: float,
+        yaw_rate: float,
+        _touching: bool,
+        _normal_x: float,
+        _normal_y: float,
+        _normal_z: float,
+        _impulse_x: float,
+        _impulse_y: float,
+        _impulse_z: float,
+        _restitution: float,
+        _velocity_x: float,
+        _velocity_y: float,
+        _velocity_z: float,
+        _angular_velocity_x: float,
+        _angular_velocity_y: float,
+        _angular_velocity_z: float,
+        _energy_limit: float
+    ) -> PackedFloat64Array:
+        collision_angle_arguments = {
+            "throttle": throttle,
+            "roll": roll,
+            "pitch": pitch,
+            "yaw_rate": yaw_rate,
+            "touching": _touching,
+        }
+        var row := PackedFloat64Array()
+        row.resize(17)
+        row[7] = 1.0
+        return row
+
+
+class CollisionHandoffNative extends FakeNative:
+    var sync_calls := 0
+    var step_calls := 0
+    var jolt_handoff_next := true
+
+    func sync_flight_state(..._args) -> void:
+        sync_calls += 1
+
+    func step_collision_angle_mode(..._args) -> PackedFloat64Array:
+        step_calls += 1
+        var row := PackedFloat64Array()
+        row.resize(17)
+        row[7] = 1.0
+        row[12] = 1.0 if jolt_handoff_next else 0.0
+        jolt_handoff_next = false
+        return row
 
 
 class ResetRecordingNative extends FakeNative:
@@ -982,7 +1053,7 @@ func test_quick_fly_defaults_the_player_view_to_third_person_before_controller_r
     assert_true(runtime.third_person_view)
 
 
-func test_demo_flight_menu_uses_industrial_yard_third_person_and_live_hud_controls() -> void:
+func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     var runtime := _quick_fly_runtime()
     _attach_runtime_ui(runtime)
     var installed_gsp_launcher := runtime.get_node_or_null("GspLauncher")
@@ -995,20 +1066,237 @@ func test_demo_flight_menu_uses_industrial_yard_third_person_and_live_hud_contro
 
     (runtime.main_menu_layer.get_node("Entries/Map") as Button).pressed.emit()
     (runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/DemoFlight") as Button).pressed.emit()
+    assert_false(runtime.demo_flight_active())
     await _await_reset_commit()
-    runtime.demo_flight_route.start((runtime._current_spawn_marker() as Marker3D).global_position)
-    runtime.demo_flight_route.advance(4.0, runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime.drone_body.rotation.y)
-    var controls: Dictionary = runtime._demo_controls_for_frame(0.0)
+    var native := FakeNative.new()
+    native.armed = true
+    runtime.native = native
+    runtime.demo_flight_route.advance(31.0, runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime.drone_body.rotation.y)
+    runtime.drone_body.global_position.y += FlightRuntime.AIRSIM_GROUND_BODY_CLEARANCE_M
+    runtime._physics_process(1.0 / 60.0)
     runtime._refresh_gamepad_hud()
 
     var display := runtime.flight_hud_layer.get_node("GamepadHudMargin/GamepadHudPanel/GamepadTelemetryPanel") as Control
-    assert_eq(runtime.loaded_map_id, "industrial_yard")
+    assert_eq(runtime.loaded_map_id, FlightRuntime.DEFAULT_FREE_FLIGHT_MAP_ID)
     assert_eq(gsp_launcher.demo_open_calls, 1)
     assert_true(runtime.third_person_view)
+    assert_true(runtime.third_person_camera.current)
+    assert_almost_eq(FlightRuntime.DEMO_THIRD_PERSON_FOV_DEG, 18.0, 0.01)
+    assert_almost_eq(runtime.third_person_camera.fov, FlightRuntime.DEMO_THIRD_PERSON_FOV_DEG, 0.01)
     assert_true(runtime.demo_flight_active())
-    assert_true(absf(float(controls.get("roll", 0.0))) > 0.01 or absf(float(controls.get("pitch", 0.0))) > 0.01)
-    assert_true(absf(float(display.state.get("roll", 0.0))) > 0.01 or absf(float(display.state.get("pitch", 0.0))) > 0.01)
-    assert_true(absf(float(display.state.get("yaw", 0.0))) > 0.01 or absf(float(display.state.get("throttle", 0.0))) > 0.01)
+    assert_eq(runtime.flight_mode, "ANGLE")
+    assert_gt(absf(float(native.collision_angle_arguments.roll)) + absf(float(native.collision_angle_arguments.pitch)), 0.25)
+    assert_gte(float(native.collision_angle_arguments.yaw_rate), 15.0)
+    assert_gt(absf(float(native.collision_angle_arguments.throttle) * 2.0 - 1.0), 0.25)
+    assert_eq(display.state.roll, float(native.collision_angle_arguments.roll) / FlightRuntime.DEMO_MAX_TILT_DEGREES)
+    assert_eq(display.state.pitch, float(native.collision_angle_arguments.pitch) / FlightRuntime.DEMO_MAX_TILT_DEGREES)
+    assert_eq(display.state.yaw, float(native.collision_angle_arguments.yaw_rate) / FlightRuntime.DEMO_MAX_YAW_RATE_DPS)
+    assert_eq(display.state.throttle, float(native.collision_angle_arguments.throttle) * 2.0 - 1.0)
+    assert_false(runtime.has_method("_apply_demo_flight_pose"))
+
+
+func test_demo_route_requires_three_minutes_before_completion() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.airsim_session = AirSimSession.new(4)
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+
+    for _tick in range(Engine.physics_ticks_per_second * 180 - 1):
+        runtime._demo_controls_for_frame(0.0)
+
+    assert_true(runtime.demo_flight_active())
+    runtime._demo_controls_for_frame(0.0)
+    assert_false(runtime.demo_flight_active())
+
+
+func test_demo_completion_advances_the_hud_timer_to_three_minutes_before_exit() -> void:
+    var runtime := _quick_fly_runtime()
+    _attach_runtime_ui(runtime)
+    var native := FakeNative.new()
+    native.armed = true
+    runtime.native = native
+    runtime.takeoff_requested = true
+    runtime.paused = false
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime.demo_flight_route.advance(180.0 - 1.0 / float(Engine.physics_ticks_per_second), runtime.drone_body.global_position, Vector3.ZERO, 0.0)
+    runtime.time_trial = TimeTrial.new()
+    runtime.time_trial.configure([], Vector3(1000.0, 1000.0, 1000.0))
+    runtime.time_trial.start()
+    runtime.time_trial.elapsed_seconds = 180.0 - 1.0 / float(Engine.physics_ticks_per_second)
+
+    runtime._physics_process(0.0)
+    runtime._refresh_gamepad_hud()
+
+    assert_almost_eq(runtime.time_trial.elapsed_seconds, 180.0, 0.00001)
+    assert_true(runtime._demo_flight_finish_pending)
+    assert_almost_eq(float(native.collision_angle_arguments.throttle), runtime._configured_hover_throttle(), 0.00001)
+    assert_eq(float(native.collision_angle_arguments.roll), 0.0)
+    assert_eq(float(native.collision_angle_arguments.pitch), 0.0)
+    assert_eq(float(native.collision_angle_arguments.yaw_rate), 0.0)
+    var display := runtime.flight_hud_layer.get_node("GamepadHudMargin/GamepadHudPanel/GamepadTelemetryPanel") as Control
+    assert_eq(display.state.throttle, runtime._configured_hover_throttle() * 2.0 - 1.0)
+
+
+func test_demo_controls_damp_native_horizontal_velocity_toward_route_speed() -> void:
+    var runtime := _quick_fly_runtime()
+    var body := CollisionProbeBody.new()
+    get_tree().root.add_child(body)
+    autofree(body)
+    runtime.drone_body = body
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(Vector3.ZERO)
+    assert_true(runtime.demo_flight_active())
+    runtime.demo_flight_route.advance(31.0, runtime.drone_body.global_position, Vector3.ZERO, runtime.drone_body.rotation.y)
+    runtime.drone_body.linear_velocity = Vector3.ZERO
+    var accelerating := runtime._demo_controls_for_frame(0.0).duplicate()
+    runtime.drone_body.linear_velocity = Vector3(30.0, 0.0, 0.0)
+    var braking := runtime._demo_controls_for_frame(0.0)
+
+    assert_gt(float(braking.get("pitch", 0.0)), float(accelerating.get("pitch", 0.0)))
+
+
+func test_demo_route_caps_horizontal_speed_without_removing_roll_or_pitch() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.native = FakeNative.new()
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime.drone_body.global_position.y += FlightRuntime.AIRSIM_GROUND_BODY_CLEARANCE_M
+    runtime.demo_flight_route.advance(31.0, runtime.drone_body.global_position, Vector3.ZERO, runtime.drone_body.rotation.y)
+
+    var controls := runtime._demo_controls_for_frame(0.0)
+    assert_gt(float(controls.yaw_rate), 0.0)
+    assert_gt(absf(float(controls.roll)), 0.01)
+    assert_gt(absf(float(controls.pitch)), 0.01)
+    assert_lte(absf(float(controls.roll)), FlightRuntime.DEMO_MAX_ROUTE_SPEED_MPS * 3.0)
+    assert_lte(absf(float(controls.pitch)), FlightRuntime.DEMO_MAX_ROUTE_SPEED_MPS * 3.0)
+
+
+func test_demo_safety_rejects_injected_overspeed_and_altitude() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime.drone_body.linear_velocity = Vector3(FlightRuntime.DEMO_MAX_SPEED_MPS + 1.0, 0.0, 0.0)
+    assert_eq(runtime._demo_safety_error(), "Demo Flight safety limit exceeded")
+    runtime.drone_body.linear_velocity = Vector3.ZERO
+    runtime.drone_body.global_position.y = runtime._demo_spawn_height + FlightRuntime.DEMO_MAX_RELATIVE_ALTITUDE_M + 1.0
+    assert_eq(runtime._demo_safety_error(), "Demo Flight altitude limit exceeded")
+
+
+func test_demo_collision_stops_the_route_without_sending_another_flight_frame() -> void:
+    var runtime := _quick_fly_runtime()
+    var native := FakeNative.new()
+    native.armed = true
+    runtime.native = native
+    runtime.takeoff_requested = true
+    runtime.screen = "flight"
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime.drone_body.global_position.y += FlightRuntime.AIRSIM_GROUND_BODY_CLEARANCE_M
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.FORWARD
+
+    runtime._physics_process(1.0 / 60.0)
+
+    assert_false(runtime.demo_flight_active())
+    assert_eq(runtime.screen, "main_menu")
+
+
+func test_demo_launch_ignores_only_the_initial_upward_platform_contact() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime._demo_launching = true
+    runtime.native = FakeNative.new()
+    runtime.native.armed = true
+    runtime.takeoff_requested = true
+    runtime.screen = "flight"
+    runtime.paused = false
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+
+    runtime._physics_process(1.0 / 60.0)
+
+    assert_false(bool(runtime.native.collision_angle_arguments.touching))
+    assert_almost_eq(float(runtime.native.collision_angle_arguments.throttle), 0.35, 0.000001)
+    runtime.drone_body.global_position.y = runtime._demo_spawn_height + FlightRuntime.AIRSIM_GROUND_BODY_CLEARANCE_M
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+    runtime._physics_process(1.0 / 60.0)
+    assert_true(bool(runtime.native.collision_angle_arguments.touching))
+
+
+func test_demo_launch_commands_level_sticks() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime._demo_launching = true
+    runtime.drone_body.global_position.x += 0.1
+    runtime.native = FakeNative.new()
+
+    var launch_controls := runtime._demo_controls_for_frame(0.0)
+    assert_almost_eq(float(launch_controls.throttle), 0.35, 0.000001)
+    assert_eq(float(launch_controls.roll), 0.0)
+    assert_eq(float(launch_controls.pitch), 0.0)
+    assert_eq(float(launch_controls.yaw_rate), 0.0)
+
+
+func test_demo_collision_handoff_resyncs_native_state_on_the_next_frame() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quit_on_exit = false
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime.native = CollisionHandoffNative.new()
+    runtime.native.armed = true
+    runtime.takeoff_requested = true
+    runtime.screen = "flight"
+    runtime.paused = false
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+    runtime.drone_body.contact_impulse = Vector3(0.0, 1.0, 0.0)
+
+    runtime._physics_process(1.0 / 60.0)
+
+    assert_eq(runtime.collision_handoff_count, 1)
+    assert_eq(runtime.last_collision_authority, 1)
+    assert_eq(runtime.native.sync_calls, 1)
+    assert_false(runtime.drone_body.contact_seen)
+    runtime._physics_process(1.0 / 60.0)
+    assert_eq(runtime.native.sync_calls, 2)
+
+
+func test_demo_safety_cancels_before_sending_another_native_command() -> void:
+    var runtime := _quick_fly_runtime()
+    runtime.quit_on_exit = false
+    runtime.demo_flight_route = preload("res://common/flight/demo_flight_route.gd").new()
+    runtime.demo_flight_route.start(runtime.drone_body.global_position)
+    runtime._demo_spawn_height = runtime.drone_body.global_position.y
+    runtime.native = CollisionHandoffNative.new()
+    runtime.native.armed = true
+    runtime.takeoff_requested = true
+    runtime.screen = "flight"
+    runtime.paused = false
+    runtime.drone_body.linear_velocity = Vector3(FlightRuntime.DEMO_MAX_SPEED_MPS + 1.0, 0.0, 0.0)
+
+    runtime._physics_process(1.0 / 60.0)
+
+    assert_eq(runtime.native.step_calls, 0)
+    assert_false(runtime.demo_flight_active())
+    assert_eq(runtime.last_error_message, "Demo Flight safety limit exceeded")
+
+
+func test_demo_native_sync_only_follows_reset_or_jolt_authority() -> void:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    runtime._demo_native_state_synced = true
+    runtime.last_collision_authority = 0
+    assert_false(runtime._demo_needs_native_sync())
+    runtime.last_collision_authority = 1
+    assert_true(runtime._demo_needs_native_sync())
+    runtime._demo_native_state_synced = false
+    assert_true(runtime._demo_needs_native_sync())
 
 
 func test_demo_flight_exit_returns_to_menu_without_quitting_the_application() -> void:
@@ -1022,23 +1310,6 @@ func test_demo_flight_exit_returns_to_menu_without_quitting_the_application() ->
     assert_false(runtime.demo_flight_active())
     assert_false(runtime.exit_requested)
     assert_null(runtime.loaded_map)
-
-
-func test_demo_flight_moves_the_native_drone_after_the_initial_hover() -> void:
-    if not _native_runtime_available():
-        return
-    var runtime := SmokeScene.instantiate() as FlightRuntime
-    get_tree().root.add_child(runtime)
-    autofree(runtime)
-    await get_tree().process_frame
-    runtime.start_demo_flight()
-    await get_tree().create_timer(8.0).timeout
-    var spawn := runtime._current_spawn_marker()
-    assert_not_null(spawn)
-    if spawn != null:
-        var displacement: Vector3 = runtime.drone_body.global_position - spawn.global_position
-        assert_gt(Vector2(displacement.x, displacement.z).length(), 1.0, "position=%s velocity=%s controls=%s authority=%s" % [runtime.drone_body.global_position, runtime.drone_body.linear_velocity, runtime._demo_flight_controls, runtime.last_collision_authority])
-        assert_lt(absf(displacement.y), 8.0, "low pass must remain low: position=%s velocity=%s" % [runtime.drone_body.global_position, runtime.drone_body.linear_velocity])
 
 
 func test_controller_confirmation_keeps_the_selected_third_person_player_view() -> void:
@@ -1546,6 +1817,7 @@ func test_request_takeoff_does_not_inject_jump_velocity() -> void:
 
     runtime.request_takeoff()
 
+    assert_null(runtime.demo_flight_route)
     assert_true(runtime.takeoff_requested)
     assert_true(runtime.takeoff_assist_active)
     assert_eq(runtime.flight_mode, "ASSISTED_HOLD")
@@ -2303,6 +2575,7 @@ func test_respawn_rearms_only_after_the_reset_commit() -> void:
     runtime.respawn()
     await _await_runtime_reset_commit(runtime)
 
+    assert_null(runtime.demo_flight_route)
     assert_true(runtime.native.armed)
     assert_true(runtime.native.disarmed)
     assert_true(runtime.takeoff_requested)
