@@ -362,6 +362,8 @@ static func _validate_px4_transport(vehicle: Dictionary, scope: String, errors: 
             errors.append("%s.%s must be a non-empty string" % [scope, key])
     if vehicle.has("HardwarePreset") and (typeof(vehicle["HardwarePreset"]) != TYPE_STRING or not String(vehicle["HardwarePreset"]).begins_with("res://config/drones/")):
         errors.append("%s.HardwarePreset must be a drone preset resource path" % scope)
+    if vehicle.has("HilGpsIntervalSeconds") and (not _is_finite_number(vehicle["HilGpsIntervalSeconds"]) or float(vehicle["HilGpsIntervalSeconds"]) < 0.0):
+        errors.append("%s.HilGpsIntervalSeconds must be finite and non-negative" % scope)
     if vehicle.has("HilActuatorQuadXOrder"):
         var motor_order: Variant = vehicle["HilActuatorQuadXOrder"]
         var motor_names := {}

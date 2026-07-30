@@ -54,6 +54,7 @@ var _last_actuator_time := -1.0
 var _last_actuator_simulation_time := -1.0
 var _last_actuator_time_usec := -1
 var _last_sensor_time := -1.0
+var _last_hil_gps_publish_simulation_time := -1.0
 var _hil_sensor_reset_sent := false
 var _last_magnetometer_sample_time_ns := -1
 var _last_barometer_sample_time_ns := -1
@@ -113,6 +114,9 @@ func configure(vehicle_settings: Dictionary, authority_callback: Callable = Call
         "HeartbeatTimeout": float(vehicle_settings.get("HeartbeatTimeout", DEFAULT_HEARTBEAT_TIMEOUT)),
         "FailureTimeout": float(vehicle_settings.get("FailureTimeout", DEFAULT_FAILURE_TIMEOUT)),
         "ActuatorTimeout": float(vehicle_settings.get("ActuatorTimeout", 0.5)),
+        # Zero preserves the original bridge behavior: emit HIL_GPS every
+        # physics snapshot. Qualification profiles may opt into a cadence.
+        "HilGpsIntervalSeconds": float(vehicle_settings.get("HilGpsIntervalSeconds", 0.0)),
         "HilActuatorQuadXOrder": vehicle_settings.get("HilActuatorQuadXOrder", []),
         "NativeMotorOrder": vehicle_settings.get("NativeMotorOrder", []),
     }
@@ -126,6 +130,8 @@ func configure(vehicle_settings: Dictionary, authority_callback: Callable = Call
         errors.append("PX4 SITL bridge ports must be in the range 1..65535")
     if _config.HeartbeatTimeout <= 0.0 or _config.ActuatorTimeout <= 0.0 or _config.FailureTimeout <= _config.HeartbeatTimeout:
         errors.append("PX4 SITL bridge timeouts must be positive and ordered")
+    if not is_finite(_config.HilGpsIntervalSeconds) or _config.HilGpsIntervalSeconds < 0.0:
+        errors.append("PX4 SITL bridge HilGpsIntervalSeconds must be finite and non-negative")
     if not errors.is_empty():
         _message = "; ".join(errors)
         state = "failed"
@@ -143,6 +149,7 @@ func start() -> Dictionary:
     _last_actuator_simulation_time = -1.0
     _last_actuator_time_usec = -1
     _last_sensor_time = -1.0
+    _last_hil_gps_publish_simulation_time = -1.0
     _hil_sensor_reset_sent = false
     _last_magnetometer_sample_time_ns = -1
     _last_barometer_sample_time_ns = -1
@@ -293,15 +300,16 @@ func publish_sensor_snapshot(snapshot: Dictionary, simulation_time_seconds: floa
     system_time_payload.append_array(_u32_bytes(int(round(simulation_time_seconds * 1_000.0))))
     _send_mavlink(system_time_payload, 2, _tcp)
 
-    var velocity_ned: Vector3 = measurements.velocity_ned
-    var gps: Dictionary = snapshot.get("gps_location", {})
-    var gps_payload := _hil_gps_payload(
-        int(round(simulation_time_seconds * 1_000_000.0)),
-        float(gps.get("latitude", 0.0)),
-        float(gps.get("longitude", 0.0)),
-        float(gps.get("altitude", 0.0)),
-        velocity_ned)
-    _send_mavlink(gps_payload, 113, _tcp)
+    if _should_publish_hil_gps(simulation_time_seconds):
+        var velocity_ned: Vector3 = measurements.velocity_ned
+        var gps: Dictionary = snapshot.get("gps_location", {})
+        var gps_payload := _hil_gps_payload(
+            int(round(simulation_time_seconds * 1_000_000.0)),
+            float(gps.get("latitude", 0.0)),
+            float(gps.get("longitude", 0.0)),
+            float(gps.get("altitude", 0.0)),
+            velocity_ned)
+        _send_mavlink(gps_payload, 113, _tcp)
 
 
 func hil_sensor_measurements(snapshot: Dictionary) -> Dictionary:
@@ -388,6 +396,16 @@ func _hil_gps_payload(time_usec: int, latitude: float, longitude: float, altitud
     payload.append(0)
     payload.append_array(_u16_bytes(0))
     return payload
+
+
+func _should_publish_hil_gps(simulation_time_seconds: float) -> bool:
+    var interval_seconds := float(_config.get("HilGpsIntervalSeconds", 0.0))
+    if interval_seconds <= 0.0:
+        return true
+    if _last_hil_gps_publish_simulation_time >= 0.0 and simulation_time_seconds < _last_hil_gps_publish_simulation_time + interval_seconds - 0.0000001:
+        return false
+    _last_hil_gps_publish_simulation_time = simulation_time_seconds
+    return true
 
 
 func inject_heartbeat(armed: bool) -> void:

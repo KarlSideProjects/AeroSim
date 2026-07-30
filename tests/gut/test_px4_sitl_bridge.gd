@@ -429,6 +429,24 @@ func test_hil_gps_payload_matches_the_mavlink_wire_layout() -> void:
     assert_eq(int(payload[34]), 3)
 
 
+func test_hil_gps_interval_gate_preserves_default_and_emits_once_per_fifty_milliseconds() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    var every_snapshot := []
+    for tick in range(13):
+        if bridge._should_publish_hil_gps(float(tick) / 240.0):
+            every_snapshot.append(float(tick) / 240.0)
+    assert_eq(every_snapshot.size(), 13, "The absent setting deliberately preserves the previous 240 Hz snapshot behavior.")
+
+    bridge._config.HilGpsIntervalSeconds = 0.05
+    bridge._last_hil_gps_publish_simulation_time = -1.0
+    var j_mavsim_cadence := []
+    for tick in range(25):
+        var simulation_time := float(tick) / 240.0
+        if bridge._should_publish_hil_gps(simulation_time):
+            j_mavsim_cadence.append(simulation_time)
+    assert_eq(j_mavsim_cadence, [0.0, 0.05, 0.1], "A 50 ms PX4 transport cadence sends one raw HIL_GPS frame at 20 Hz.")
+
+
 func test_estimator_status_requires_two_fresh_valid_reports_before_readiness() -> void:
     var bridge := _new_fake_bridge(1.0)
     bridge.start()
