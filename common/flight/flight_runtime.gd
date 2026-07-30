@@ -144,6 +144,7 @@ var acro_yaw_stick := 0.0
 var demo_flight_route: DemoFlightRoute
 var _demo_flight_controls: Dictionary = {}
 var _demo_flight_finish_pending := false
+var _demo_finish_hud_frame_seen := false
 var _demo_flight_route_pending := false
 var _demo_native_state_synced := false
 var _demo_spawn_height := 0.0
@@ -1514,6 +1515,12 @@ func _process(_delta: float) -> void:
     _refresh_controller_confirmation()
     _refresh_controller_settings()
     _refresh_flight_hud()
+    if _demo_flight_finish_pending:
+        if _demo_finish_hud_frame_seen:
+            _demo_flight_finish_pending = false
+            call_deferred("cancel_demo_flight")
+        else:
+            _demo_finish_hud_frame_seen = true
 
 func _physics_process(delta: float) -> void:
     if _replay_recording_active:
@@ -1796,6 +1803,10 @@ func _physics_process(delta: float) -> void:
         _airsim_collision_seen = true
         _airsim_collision_normal = drone_body.contact_normal
         _airsim_collision_point = drone_body.global_position
+        if demo_flight_active():
+            last_error_message = "Demo Flight collision detected"
+            cancel_demo_flight()
+            return
         if flight_mode == "ASSISTED_HOLD" and assisted_vertical_velocity < -0.05 and absf(drone_body.linear_velocity.y) <= 0.25:
             native.call("disarm_flight_control")
             _airsim_disarm_requested = true
@@ -1863,9 +1874,6 @@ func _physics_process(delta: float) -> void:
     _airsim_last_velocity = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
     if time_trial != null and drone_body != null:
         time_trial.advance(drone_body.global_position, 1.0 / float(Engine.physics_ticks_per_second))
-    if _demo_flight_finish_pending:
-        _demo_flight_finish_pending = false
-        call_deferred("cancel_demo_flight")
     _advance_airsim_sensors()
     _update_status_diagram()
 
@@ -2315,6 +2323,7 @@ func start_demo_flight() -> void:
             _show_license_blocked("Demo Flight unavailable: license %s" % String(get_license_snapshot().get("status", "invalid_token")))
         return
     _demo_flight_finish_pending = false
+    _demo_finish_hud_frame_seen = false
     _demo_flight_controls.clear()
     _demo_flight_route_pending = false
     if not apply_flight_setup(default_flight_setup()):
@@ -2376,6 +2385,7 @@ func cancel_demo_flight() -> void:
     _demo_native_state_synced = false
     _demo_launching = false
     _demo_flight_finish_pending = false
+    _demo_finish_hud_frame_seen = false
     var restore_quit_on_exit := quit_on_exit
     quit_on_exit = false
     request_exit()
@@ -2398,6 +2408,7 @@ func _demo_controls_for_frame(_delta: float) -> Dictionary:
     var state: Dictionary = demo_flight_route.advance(route_step_seconds, drone_body.global_position, drone_body.linear_velocity, drone_body.rotation.y)
     if bool(state.complete):
         _demo_flight_finish_pending = true
+        _demo_finish_hud_frame_seen = false
         _demo_flight_controls = _demo_terminal_controls()
         return _demo_flight_controls
     var error_world: Vector3 = state.target_position - drone_body.global_position
