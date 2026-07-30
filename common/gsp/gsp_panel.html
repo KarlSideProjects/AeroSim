@@ -12,6 +12,11 @@ header, .state, .grid { display: flex; gap: 12px; align-items: start; }
 header { justify-content: space-between; border-bottom: 1px solid #31445d; padding-bottom: 12px; }
 h1 { margin: 0; font-size: 1.25rem; }
 .badge { color: #9ee6b1; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; }
+/* Geometry honesty is carried by text plus border style, never colour alone. */
+.badge[data-classification] { border: 1px solid currentColor; border-radius: 4px; padding: 1px 6px; }
+.badge[data-classification="real"] { color: #9ee6b1; border-style: solid; }
+.badge[data-classification="nominal"] { color: #ffcf78; border-style: dashed; }
+.badge[data-classification="unavailable"] { color: #9fb0c5; border-style: dotted; }
 .state, .card { border: 1px solid #31445d; border-radius: 4px; padding: 12px; margin-top: 14px; background: #101923; }
 .state { justify-content: space-between; flex-wrap: wrap; }
 .grid { flex-wrap: wrap; }
@@ -56,6 +61,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 .toolbar { display: flex; gap: 6px; align-items: center; }
 details.card { flex-basis: 100%; } details > summary { font-weight: 700; } details > *:not(summary) { margin-top: 10px; }
 .telemetry-table { height: 28rem; overflow: auto; scrollbar-gutter: stable; } .telemetry-table .unavailable { color: #ffcf78; }
+/* Geometry blocks are short; cap them instead of reserving a fixed height. */
+.geometry-table { max-height: 16rem; overflow: auto; scrollbar-gutter: stable; margin: 0; }
 .status-normal { color: #9ee6b1; } .status-low { color: #ffcf78; } .status-critical, .status-unavailable { color: #ff8aad; }
 @media (max-width: 720px) { main { padding: 10px; } .health-grid, .motor-grid, .tuning-row { grid-template-columns: 1fr; } .quick-adjust-row { grid-template-columns: 1fr 1fr; } }
 </style>
@@ -88,11 +95,16 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
       <div id="motor-rear-right" class="motor-card" data-motor="rear_right">M1 —</div><div id="motor-front-right" class="motor-card" data-motor="front_right">M2 —</div>
       <div id="motor-rear-left" class="motor-card" data-motor="rear_left">M3 —</div><div id="motor-front-left" class="motor-card" data-motor="front_left">M4 —</div>
     </div>
-    <div class="visual-stage"><p class="muted">程序化 Quad-X 視圖；NED／FRD／SI 即時遙測。</p><div class="toolbar"><button id="view-isometric" type="button">Isometric</button><button id="view-top" type="button">Top</button><button id="view-side" type="button">Side</button><button id="view-rear" type="button">Rear</button></div><canvas id="airframe-3d" aria-label="Quad-X telemetry visualization"></canvas></div>
+    <div class="visual-stage"><p class="muted">依作用中硬體設定建模的 Quad-X 視圖；NED／FRD／SI 即時遙測。</p><div class="toolbar"><button id="view-isometric" type="button">Isometric</button><button id="view-top" type="button">Top</button><button id="view-side" type="button">Side</button><button id="view-rear" type="button">Rear</button><span class="badge" id="geometry-classification" aria-live="polite">幾何未提供</span></div><canvas id="airframe-3d" aria-label="Quad-X telemetry visualization"></canvas><p id="geometry-identity" class="muted">等待硬體設定。</p></div>
   </div>
   <p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas>
 </section>
 <details class="card" open><summary>完整遙測（native TelemetrySnapshot；NED／FRD／SI）</summary><pre id="telemetry-data" class="telemetry-table muted">等待即時資料。</pre></details>
+<details class="card" open><summary>幾何模型（來源：作用中硬體設定）</summary>
+  <p id="geometry-scale" class="muted">等待硬體設定。</p>
+  <pre id="geometry-motors" class="geometry-table muted">等待 M1–M4 對應。</pre>
+  <pre id="geometry-provenance" class="geometry-table muted">等待幾何來源與授權。</pre>
+</details>
 <details class="card" open><summary>目前硬體設定（唯讀、canonical preset/schema）</summary><pre id="hardware-configuration" class="telemetry-table muted">等待硬體設定。</pre><pre id="hardware-derived" class="telemetry-table muted">等待衍生 power model。</pre></details>
 <details class="card" open><summary>Quick Adjust</summary><div id="tuning-rows" class="muted">Waiting for registry.</div></details>
 <details class="card"><summary>In-flight Quick Adjust</summary><div id="quick-adjust-rows" class="muted">Waiting for registry.</div></details>
@@ -105,6 +117,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
 </div>
 </main>
 <script src="assets/three-0.180.0.global.min.js"></script>
+<script src="assets/gsp_drone_geometry.js"></script>
 <script src="assets/gsp_visual.js"></script>
 <script>
 (function () {
@@ -157,8 +170,8 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   var requestAnimationFrame = window.requestAnimationFrame || function (callback) { callback(performance.now()); return 0; };
   var language = "zh";
   var translations = {
-    zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…", rear_right: "右後", front_right: "右前", rear_left: "左後", front_left: "左前", normal: "正常", warning: "警告", critical: "嚴重", unavailable: "未提供", visualization_unavailable: "視覺化未提供" },
-    en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…", rear_right: "Rear right", front_right: "Front right", rear_left: "Rear left", front_left: "Front left", normal: "Normal", warning: "Warning", critical: "Critical", unavailable: "Unavailable", visualization_unavailable: "Visualization unavailable" },
+    zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…", rear_right: "右後", front_right: "右前", rear_left: "左後", front_left: "左前", normal: "正常", warning: "警告", critical: "嚴重", unavailable: "未提供", visualization_unavailable: "視覺化未提供", geometry_real: "真實幾何", geometry_nominal: "名義幾何", geometry_unavailable: "幾何未提供", geometry_waiting: "等待硬體設定。", geometry_cw: "順時針", geometry_ccw: "逆時針" },
+    en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…", rear_right: "Rear right", front_right: "Front right", rear_left: "Rear left", front_left: "Front left", normal: "Normal", warning: "Warning", critical: "Critical", unavailable: "Unavailable", visualization_unavailable: "Visualization unavailable", geometry_real: "Real geometry", geometry_nominal: "Nominal geometry", geometry_unavailable: "Geometry unavailable", geometry_waiting: "Waiting for hardware configuration.", geometry_cw: "Clockwise", geometry_ccw: "Counter-clockwise" },
   };
 
   function recordPerformanceSample(kind, value) {
@@ -190,6 +203,9 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     if (lastTelemetrySample) renderMotorCards(lastTelemetrySample);
   }
   function listen(id, callback) { var element = $(id); if (element) element.addEventListener("click", callback); }
+  window.addEventListener("aerosim-gsp-visual", function () {
+    if (lastTelemetrySample) renderMotorCards(lastTelemetrySample);
+  });
   listen("language-zh", function () { setLanguage("zh"); });
   listen("language-en", function () { setLanguage("en"); });
   function panelReady() { return helloReady && snapshotReady; }
@@ -276,6 +292,62 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     var status = visual && visual.status ? visual.status() : { available: false };
     text("visualization-status", status.available ? translate("live") : translate("visualization_unavailable"));
     text("flow-legend", "FRD · SI · flow magnitude uses m/s");
+    renderGeometry(state.geometry, visual);
+  }
+  function metres(value) { return Number.isFinite(Number(value)) ? (Number(value) * 1000).toFixed(1) + " mm" : "—"; }
+  function renderGeometry(derived, visual) {
+    // Prefer what the renderer actually built; fall back to the derived spec so
+    // the mapping stays inspectable in a page without WebGL.
+    var report = visual && visual.geometry ? visual.geometry() : null;
+    if (!report || !report.available) report = derived && derived.available ? derived : null;
+    var badge = $("geometry-classification");
+    if (!report) {
+      if (badge) { badge.textContent = translate("geometry_unavailable"); badge.dataset.classification = "unavailable"; }
+      text("geometry-identity", (derived && derived.reason) || translate("geometry_waiting"));
+      text("geometry-scale", translate("geometry_waiting"));
+      text("geometry-motors", translate("geometry_waiting"));
+      text("geometry-provenance", translate("geometry_waiting"));
+      return;
+    }
+    if (badge) {
+      badge.textContent = translate(report.classification === "real" ? "geometry_real" : "geometry_nominal");
+      badge.dataset.classification = report.classification;
+    }
+    text("geometry-identity", report.identity.designation + " · " + report.identity.airframe_class
+      + (report.identity.frame_reference ? " · " + report.identity.frame_reference : ""));
+    var pitch = report.propeller.pitch_in == null ? "" : " × " + report.propeller.pitch_in + "\" pitch";
+    text("geometry-scale", "wheelbase " + metres(report.scale.wheelbase_m)
+      + " (layout " + metres(report.scale.layout_wheelbase_m) + ")"
+      + " · motor radius " + metres(report.scale.motor_radius_m)
+      + " · span " + metres(report.scale.span_m)
+      + " · prop ⌀" + metres(report.propeller.diameter_m) + pitch + " × " + report.propeller.blades
+      + " · prop clearance " + metres(report.scale.propeller_clearance_m)
+      + " · CoM FRD (" + report.center_of_mass_frd_m.x + ", " + report.center_of_mass_frd_m.y + ", " + report.center_of_mass_frd_m.z + ") m");
+    var rows = report.motors.map(function (motor) {
+      var spin = motor.spin_direction === "cw" ? translate("geometry_cw")
+        : motor.spin_direction === "ccw" ? translate("geometry_ccw") : translate("unavailable");
+      return motor.label + " · " + translate(motor.id) + " · " + spin
+        + " · FRD (" + motor.frd.x.toFixed(4) + ", " + motor.frd.y.toFixed(4) + ", " + motor.frd.z.toFixed(4) + ") m"
+        + " · radius " + metres(motor.radius_m);
+    });
+    text("geometry-motors", rows.join("\n"));
+    var provenance = report.provenance || {};
+    var evidence = provenance.dimensional_evidence || {};
+    var license = provenance.license || {};
+    var lines = [
+      "source = " + String(provenance.model_source || "—"),
+      "source_url = " + String(provenance.source_url || "—"),
+      "dimensional_evidence = " + String(evidence.evidence_class || "—")
+        + " (" + ((evidence.documents || []).length) + " documents)",
+      "license = " + String(license.spdx || "—") + " · " + String(license.holder || "—"),
+      "attribution = " + (license.attribution_required ? String(license.attribution || "—") : "not required"),
+      "redistribution = " + String(provenance.redistribution || "—"),
+    ];
+    (provenance.assets || []).forEach(function (asset) { lines.push("asset = " + asset.path + " sha256:" + asset.sha256); });
+    if (report.classification !== "real") lines.push("nominal_because = " + report.classification_reasons.join(", "));
+    if (report.warnings && report.warnings.length) lines.push("warnings = " + report.warnings.join(", "));
+    if (evidence.notes) lines.push("notes = " + String(evidence.notes));
+    text("geometry-provenance", lines.join("\n"));
   }
   function send(type, data) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return null;
@@ -707,6 +779,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     window.__AEROSIM_PANEL_TEST__.renderPresetDiff = renderPresetDiff;
     window.__AEROSIM_PANEL_TEST__.renderMigrationReport = renderMigrationReport;
     window.__AEROSIM_PANEL_TEST__.motorCards = function () { return [$("motor-rear-right"), $("motor-front-right"), $("motor-rear-left"), $("motor-front-left")]; };
+    window.__AEROSIM_PANEL_TEST__.displayTelemetry = displayTelemetry;
   }
   connect(); drawSparkline();
 }());

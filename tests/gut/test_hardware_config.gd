@@ -10,10 +10,19 @@ class FakeHardwareNative extends RefCounted:
     var altitude_hold_noise_deadband_m := -1.0
     var config_hash_calls := 0
     var hash_applied_after_a5 := false
+    var mass_kg := -1.0
+    var power_model: Array = []
+    var per_motor_model := {}
 
-    func set_hardware_mass_kg(_value: float) -> bool: return true
-    func set_hardware_power_model(_a: float, _b: float, _c: float, _d: float, _e: float, _f: float, _g: float) -> bool: return true
-    func set_hardware_per_motor_model(_value: Dictionary) -> bool: return true
+    func set_hardware_mass_kg(value: float) -> bool:
+        mass_kg = value
+        return true
+    func set_hardware_power_model(a: float, b: float, c: float, d: float, e: float, f: float, g: float) -> bool:
+        power_model = [a, b, c, d, e, f, g]
+        return true
+    func set_hardware_per_motor_model(value: Dictionary) -> bool:
+        per_motor_model = value.duplicate(true)
+        return true
     func set_hardware_telemetry_model(_a: float, _b: float) -> bool: return true
     func set_hardware_altitude_hold_noise_deadband(value: float) -> bool:
         altitude_hold_noise_deadband_m = value
@@ -131,3 +140,72 @@ func test_schema_rejects_invalid_a3_values() -> void:
     var missing: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
     missing.aerodynamics.a3.erase("coefficient_kg")
     assert_true(loader.validate_config(missing).contains("coefficient_kg"))
+
+
+func test_schema_accepts_the_shipped_geometry_package() -> void:
+    assert_eq(loader.validate_config(HardwareConfig.FACTORY_DEFAULT.duplicate(true)), "")
+
+    var freestyle: Dictionary = loader.load_preset("res://config/drones/5_inch_6s.json")
+    assert_true(loader.last_ok, loader.last_error)
+    assert_eq(String(freestyle.geometry.identity.airframe_class), "quad_x_5_inch_freestyle")
+    var race: Dictionary = loader.load_preset("res://config/drones/5_inch_6s_race.json")
+    assert_true(loader.last_ok, loader.last_error)
+    assert_ne(String(race.geometry.identity.designation), String(freestyle.geometry.identity.designation))
+
+
+func test_schema_rejects_incomplete_geometry() -> void:
+    var missing_section: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    missing_section.erase("geometry")
+    assert_true(loader.validate_config(missing_section).contains("geometry"))
+
+    var missing_identity: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    missing_identity.geometry.identity.designation = ""
+    assert_true(loader.validate_config(missing_identity).contains("geometry.identity.designation"))
+
+    var out_of_range: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    out_of_range.geometry.body.arm_thickness_m = 0.0
+    assert_true(loader.validate_config(out_of_range).contains("geometry.body.arm_thickness_m"))
+
+    var bad_angle: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    bad_angle.geometry.propeller.blade_root_twist_deg = 95.0
+    assert_true(loader.validate_config(bad_angle).contains("blade_root_twist_deg"))
+
+
+func test_schema_rejects_unprovable_geometry_provenance() -> void:
+    var unknown_evidence: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    unknown_evidence.geometry.provenance.dimensional_evidence.evidence_class = "vibes"
+    assert_true(loader.validate_config(unknown_evidence).contains("evidence_class"))
+
+    var unknown_disposition: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    unknown_disposition.geometry.provenance.redistribution = "maybe"
+    assert_true(loader.validate_config(unknown_disposition).contains("redistribution"))
+
+    var missing_attribution: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    missing_attribution.geometry.provenance.license.attribution = ""
+    assert_true(loader.validate_config(missing_attribution).contains("attribution"))
+
+    var short_hash: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    short_hash.geometry.provenance.assets[0].sha256 = "abc"
+    assert_true(loader.validate_config(short_hash).contains("sha256"))
+
+    var no_assets: Dictionary = HardwareConfig.FACTORY_DEFAULT.duplicate(true)
+    no_assets.geometry.provenance.assets = []
+    assert_true(loader.validate_config(no_assets).contains("assets"))
+
+
+func test_geometry_does_not_reach_the_physics_runtime() -> void:
+    var runtime := FakeHardwareRuntime.new()
+
+    assert_true(loader.apply_to_runtime(runtime, "res://config/drones/5_inch_6s.json"))
+
+    var visual_only := FakeHardwareRuntime.new()
+    loader.current.geometry.body.canopy_height_m = 0.1
+    loader.current.geometry.propeller.blade_max_chord_m = 0.02
+    loader.current.geometry.identity.designation = "different shell"
+    assert_true(loader._apply_current_to_runtime(visual_only, "res://config/drones/5_inch_6s.json"))
+
+    assert_eq(visual_only.native.a5, runtime.native.a5)
+    assert_eq(visual_only.native.mass_kg, runtime.native.mass_kg)
+    assert_eq(visual_only.native.power_model, runtime.native.power_model)
+    assert_eq(visual_only.native.per_motor_model, runtime.native.per_motor_model)
+    assert_eq(visual_only.native.altitude_hold_noise_deadband_m, runtime.native.altitude_hold_noise_deadband_m)

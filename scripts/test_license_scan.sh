@@ -37,3 +37,16 @@ fi
 
 grep -q "license denied: bad-flight-controller 0.0.0 (GPL-3.0)" "$err_file"
 echo "GPL fixture failed as expected"
+
+python3 scripts/check_gsp_drone_geometry.py --expect-nominal
+
+geometry_err="$(mktemp)"
+trap 'rm -f "$out_file" "$err_file" "$geometry_err"' EXIT
+if python3 scripts/check_gsp_drone_geometry.py \
+    --preset tests/fixtures/geometry_not_redistributable.json >/dev/null 2>"$geometry_err"; then
+    echo "non-redistributable geometry fixture unexpectedly passed" >&2
+    exit 1
+fi
+grep -q "geometry is not release-redistributable" "$geometry_err"
+grep -q "geometry license is not on the release allowlist" "$geometry_err"
+echo "non-redistributable geometry fixture failed as expected"
