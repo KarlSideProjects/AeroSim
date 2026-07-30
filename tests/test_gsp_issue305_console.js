@@ -7,6 +7,8 @@ for (const text of ["即時狀態", "工程設定", "Nominal geometry", "Command
     assert.match(panel, new RegExp(text));
 }
 assert.match(panel, /#live-console\s*\{[^}]*overflow:\s*hidden/);
+assert.match(panel, /@media \(max-width: 500px\) \{[\s\S]*?#airframe-3d \{ height: 120px; \}/,
+    "the 480px portrait layout reserves space for live motor detail");
 assert.match(panel, /@media \(prefers-reduced-motion: reduce\)/);
 assert.doesNotMatch(panel, /https?:\/\//);
 assert.doesNotMatch(panel, /<script[^>]+src="(?!assets\/)/);
