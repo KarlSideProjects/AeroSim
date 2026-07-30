@@ -20,6 +20,9 @@ class PerformanceRunnerTest(unittest.TestCase):
         self.assertIn('if [ "$benchmark_mode" = "smoke" ]; then', runner_source)
         self.assertIn('rendering_args=(--rendering-method gl_compatibility)', runner_source)
         self.assertIn('timeout 180s "$godot_bin" "${rendering_args[@]}"', runner_source)
+        self.assertIn('func _hide_compatibility_grass_for_smoke(runtime: Node) -> void:', BENCHMARK_SOURCE)
+        self.assertIn('_benchmark_mode != "smoke" or RenderingServer.get_current_rendering_method() != "gl_compatibility"', BENCHMARK_SOURCE)
+        self.assertIn('particles.visible = false', BENCHMARK_SOURCE)
 
     def test_benchmark_source_activates_the_complete_effect_workload(self):
         for method in (

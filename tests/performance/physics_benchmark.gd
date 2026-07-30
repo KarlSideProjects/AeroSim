@@ -219,6 +219,7 @@ func _run() -> void:
         return
     runtime.quick_fly()
     await process_frame
+    _hide_compatibility_grass_for_smoke(runtime)
     if runtime.screen == "controller_confirmation":
         runtime.accept_controller_confirmation()
         await process_frame
@@ -305,6 +306,17 @@ func _run() -> void:
     output.close()
     runtime.queue_free()
     quit(0)
+
+
+func _hide_compatibility_grass_for_smoke(runtime: Node) -> void:
+    if _benchmark_mode != "smoke" or RenderingServer.get_current_rendering_method() != "gl_compatibility":
+        return
+    var map_root := runtime.get("loaded_map") as Node
+    if map_root == null:
+        return
+    var particles := map_root.get_node_or_null("Terrain3D/Terrain3DParticles") as Node3D
+    if particles != null:
+        particles.visible = false
 
 
 func _configure_effects(native: Object) -> bool:

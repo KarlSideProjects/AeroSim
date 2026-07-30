@@ -1,8 +1,10 @@
-[gd_scene load_steps=29 format=3]
+[gd_scene load_steps=31 format=3]
 
 [ext_resource type="Terrain3DAssets" path="res://assets/third_party/terrain3d_demo/demo/data/assets.tres" id="1"]
 [ext_resource type="PackedScene" path="res://addons/terrain_3d/extras/particle_example/Terrain3DParticles.tscn" id="2"]
 [ext_resource type="Material" path="res://assets/maps/terrain3d_range/grass_process_material.tres" id="8"]
+[ext_resource type="Material" path="res://assets/maps/terrain3d_range/grass_blade_material.tres" id="9"]
+[ext_resource type="Script" path="res://common/maps/terrain_range_visual_wind.gd" id="10"]
 [ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-a.glb" id="3"]
 [ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-f.glb" id="4"]
 [ext_resource type="PackedScene" path="res://assets/third_party/kenney_city_kit_industrial/Models/GLB/building-l.glb" id="5"]
@@ -170,7 +172,7 @@ height = 2.1
 [sub_resource type="RibbonTrailMesh" id="23"]
 shape = 0
 section_length = 0.055
-section_segments = 1
+section_segments = 3
 
 [node name="Terrain3DRange" type="Node3D"]
 
@@ -227,7 +229,17 @@ metadata/airsim_segmentation_id = 1
 [node name="Terrain3DParticles" parent="Terrain3D" node_paths=PackedStringArray("terrain") instance=ExtResource("2")]
 process_material = ExtResource("8")
 mesh = SubResource("23")
+mesh_material_override = ExtResource("9")
 terrain = NodePath("..")
+
+[node name="VisualWindSample" type="Marker3D" parent="."]
+position = Vector3(480, 79.7, -740)
+
+[node name="VisualWindController" type="Node" parent="."]
+script = ExtResource("10")
+process_material = ExtResource("8")
+blade_material = ExtResource("9")
+sample_position = Vector3(480, 79.7, -740)
 
 [node name="SpawnNorthPlatform" type="StaticBody3D" parent="."]
 position = Vector3(520, 79.85, -790)

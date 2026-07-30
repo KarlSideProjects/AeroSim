@@ -25,6 +25,7 @@ const SceneObjectCatalog = preload("res://common/rpc/scene_object_catalog.gd")
 const EnvironmentState = preload("res://common/rpc/environment_state.gd")
 const Px4SitlBridge = preload("res://common/rpc/px4_sitl_bridge.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
+const TerrainRangeWindProfile = preload("res://common/maps/terrain_range_wind_profile.gd")
 const TimeTrialController = preload("res://common/flight/time_trial.gd")
 const ReplayIntegrationRunner = preload("res://common/flight/replay_integration_runner.gd")
 const LicenseProviderScript = preload("res://common/license/license_provider.gd")
@@ -1472,7 +1473,9 @@ func _unhandled_input(event: InputEvent) -> void:
     if demo_flight_active():
         if event.is_action_pressed("flight_exit"):
             cancel_demo_flight()
-        return
+            return
+        if not event.is_action_pressed("flight_pause"):
+            return
     if event is InputEventKey:
         var key_event := event as InputEventKey
         _quick_adjust_pressed_keys[int(key_event.keycode)] = key_event.pressed
@@ -1584,6 +1587,7 @@ func _physics_process(delta: float) -> void:
                     set_paused(true, false)
                     return
             _publish_px4_lockstep_sensor_if_needed()
+        _advance_visual_wind(session_advanced)
         _advance_airsim_sensors()
         return
     _airsim_contact_this_frame = false
@@ -1654,6 +1658,7 @@ func _physics_process(delta: float) -> void:
                         set_paused(true, false)
                         return
                 _publish_px4_lockstep_sensor_if_needed()
+            _advance_visual_wind(session_advanced)
             _advance_airsim_sensors()
             return
         var actuator_has_thrust := false
@@ -1676,6 +1681,7 @@ func _physics_process(delta: float) -> void:
                         set_paused(true, false)
                         return
                 _publish_px4_lockstep_sensor_if_needed()
+            _advance_visual_wind(session_advanced)
             _advance_airsim_sensors()
             return
         if drone_body != null:
@@ -1877,6 +1883,7 @@ func _physics_process(delta: float) -> void:
     _airsim_last_velocity = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
     if time_trial != null and drone_body != null:
         time_trial.advance(drone_body.global_position, 1.0 / float(Engine.physics_ticks_per_second))
+    _advance_visual_wind(session_advanced)
     _advance_airsim_sensors()
     _update_status_diagram()
 
@@ -1889,6 +1896,14 @@ func _advance_airsim_sensors() -> void:
         var sensor_state := _airsim_state(String(name))
         if bool(sensor_state.get("ok", false)):
             airsim_sensor_suite.advance(airsim_session.simulation_time_seconds, String(name), sensor_state.state)
+
+
+func _advance_visual_wind(session_advanced: bool) -> void:
+    if not session_advanced or _reset_pending_token != 0 or paused or loaded_map_id != "terrain3d_range" or loaded_map == null or native == null or airsim_session == null:
+        return
+    var controller := loaded_map.get_node_or_null("VisualWindController")
+    if controller != null and controller.has_method("advance"):
+        controller.call("advance", native, airsim_session.simulation_time_seconds, true)
 
 
 func _step_secondary_airsim_vehicle(vehicle_name: String, replay_timestamp_us: int = -1) -> void:
@@ -2329,7 +2344,8 @@ func start_demo_flight() -> void:
     _demo_finish_hud_frame_seen = false
     _demo_flight_controls.clear()
     _demo_flight_route_pending = false
-    if not apply_flight_setup(default_flight_setup()):
+    var setup := flight_setup if not flight_setup.is_empty() else default_flight_setup()
+    if not apply_flight_setup(setup):
         screen = "error"
         _refresh_flight_hud()
         return
@@ -2638,15 +2654,16 @@ func select_map(map_id: String, wind_preset: String) -> void:
     if map_id != DEFAULT_FREE_FLIGHT_MAP_ID or not WIND_PRESETS.has(wind_preset):
         return
     selected_wind_preset = wind_preset
+    var steady_wind := TerrainRangeWindProfile.steady_wind_for_preset(wind_preset)
     if environment_state != null:
         _apply_environment_result(environment_state.apply({
             "wind_preset": wind_preset,
-            "steady_wind": scene_steady_wind_mps,
+            "steady_wind": steady_wind,
         }))
     elif native != null:
         var wind_config := {
             "preset": wind_preset,
-            "steady_wind": scene_steady_wind_mps,
+            "steady_wind": steady_wind,
         }
         native.call("configure_wind", wind_config)
         if _airsim_secondary_native != null:
@@ -2810,15 +2827,8 @@ func load_map(map_id: String) -> bool:
         loaded_spawn_names.append(String(spawn.name))
     current_spawn_index = 0
     _refresh_loaded_map_localization()
-    if native != null:
-        var applied_wind_preset := selected_wind_preset if not selected_wind_preset.is_empty() else str(descriptor.wind_preset)
-        var wind_config := {
-            "preset": applied_wind_preset,
-            "steady_wind": scene_steady_wind_mps,
-        }
-        native.call("configure_wind", wind_config)
-        if _airsim_secondary_native != null:
-            _airsim_secondary_native.call("configure_wind", wind_config)
+    if environment_state != null:
+        _apply_environment_result({"ok": true, "state": environment_state.snapshot()})
     _configure_time_trial(map_root)
     return true
 
@@ -2900,7 +2910,7 @@ func _commit_reset_publication() -> Dictionary:
         var baseline_preset := selected_wind_preset if not selected_wind_preset.is_empty() else loaded_map_wind_preset
         var baseline_environment := _apply_environment_result(environment_state.apply({
             "wind_preset": baseline_preset,
-            "steady_wind": scene_steady_wind_mps,
+            "steady_wind": TerrainRangeWindProfile.steady_wind_for_preset(baseline_preset),
         }))
         if not baseline_environment.ok:
             _apply_environment_result(environment_state.apply(_reset_environment_snapshot))

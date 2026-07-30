@@ -50,6 +50,7 @@ var _motor_hud_evidence: Dictionary = {}
 var _known_xbox_physical_evidence: Dictionary = {}
 var _assisted_hover_evidence: Dictionary = {}
 var _layout_audit_evidence: Dictionary = {}
+var _visual_wind_evidence: Dictionary = {}
 var _screenshot_comparison: Dictionary = {}
 var _ui_animation_count := 0
 var _locale_switch_evidence: Array[Dictionary] = []
@@ -346,6 +347,22 @@ func _run() -> void:
     var east_ridge_collision := east_ridge_rock.get_node_or_null("CollisionShape3D") as CollisionShape3D if east_ridge_rock != null else null
     _expect(terrain_range_terrain != null and terrain_range_data != null and int(terrain_grass_sample.x) == 1 and int(terrain_soil_sample.y) == 2 and terrain_soil_sample.z >= 0.99 and int(terrain_rock_sample.y) == 0 and terrain_rock_sample.z >= 0.99 and terrain_range_data.get_height(TERRAIN_RANGE_RELIEF_SAMPLE) >= 3.0 and north_platform != null and north_platform_collision != null and north_platform_collision.shape is BoxShape3D and spawn != null and north_platform.global_position.distance_to(Vector3(spawn.global_position.x, north_platform.global_position.y, spawn.global_position.z)) <= 1e-6 and north_ridge_rock != null and north_ridge_collision != null and north_ridge_collision.shape != null and east_ridge_rock != null and east_ridge_collision != null and east_ridge_collision.shape != null and natural_environment != null and natural_environment.environment != null and natural_environment.environment.background_mode == Environment.BG_SKY and natural_environment.environment.fog_enabled and third_person_camera != null and root.get_camera_3d() == third_person_camera and runtime._airsim_camera_source() == runtime.chase_camera, "canonical Terrain Range preflight combines colored ground, elevated natural landmarks, the SpawnNorth platform, authored sky/fog, and separate third-person player and FPV AirSim cameras")
     await _snapshot("01_third_person_preflight")
+    var visual_wind: Node = runtime.loaded_map.get_node_or_null("VisualWindController") if runtime.loaded_map != null else null
+    var wind_camera := root.get_camera_3d()
+    var wind_camera_transform := wind_camera.global_transform if wind_camera != null else Transform3D.IDENTITY
+    runtime.select_map("terrain3d_range", "calm")
+    await _settle_physics(240)
+    var calm_wind: Dictionary = visual_wind.call("snapshot") if visual_wind != null else {}
+    await _snapshot("01_terrain_range_calm_wind")
+    runtime.select_map("terrain3d_range", "severe")
+    await _settle_physics(240)
+    var severe_wind: Dictionary = visual_wind.call("snapshot") if visual_wind != null else {}
+    await _snapshot("01_terrain_range_severe_wind")
+    var calm_force := (calm_wind.get("smoothed_horizontal_wind", Vector2.ZERO) as Vector2).length()
+    var severe_force := (severe_wind.get("smoothed_horizontal_wind", Vector2.ZERO) as Vector2).length()
+    var same_view := wind_camera != null and root.get_camera_3d() == wind_camera and wind_camera.global_transform.origin.distance_to(wind_camera_transform.origin) <= 0.000001 and wind_camera.global_transform.basis.is_equal_approx(wind_camera_transform.basis)
+    _expect(calm_force <= 0.001 and severe_force > 0.5 and (severe_wind.get("target_horizontal_wind", Vector2.ZERO) as Vector2).x < 0.0 and (severe_wind.get("target_horizontal_wind", Vector2.ZERO) as Vector2).y > 0.0 and same_view, "Terrain Range headed Calm and Severe captures use the same fixed third-person view with northwest-to-southeast severe force")
+    _visual_wind_evidence = {"calm_force": calm_force, "severe_force": severe_force, "same_view": same_view, "camera_origin": wind_camera_transform.origin, "calm_screenshot_path": "%s/01_terrain_range_calm_wind.png" % _out_dir, "severe_screenshot_path": "%s/01_terrain_range_severe_wind.png" % _out_dir}
     _tap(KEY_V)
     await _settle(2)
     _expect(root.get_camera_3d() == runtime.chase_camera and runtime.chase_camera.current and runtime._airsim_camera_source() == runtime.chase_camera and player_view != null and player_view.text == "VIEW: FPV", "V switches the default player view to FPV with the matching HUD label while preserving the AirSim source")
@@ -1259,6 +1276,6 @@ func _write_report() -> bool:
         "gpu_adapter": RenderingServer.get_video_adapter_name(),
         "vulkan_icd": OS.get_environment("VK_ICD_FILENAMES"),
     }
-    report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "motor_hud": _motor_hud_evidence, "known_xbox_physical": _known_xbox_physical_evidence, "assisted_hover": _assisted_hover_evidence, "layout_audit": _layout_audit_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
+    report.store_string(JSON.stringify({"provenance": provenance, "channel_monitor": _channel_monitor_evidence, "motor_hud": _motor_hud_evidence, "known_xbox_physical": _known_xbox_physical_evidence, "assisted_hover": _assisted_hover_evidence, "layout_audit": _layout_audit_evidence, "visual_wind": _visual_wind_evidence, "screenshot_comparison": _screenshot_comparison, "locale_switches": _locale_switch_evidence, "ui_animation_count": _ui_animation_count, "failures": _failures, "passed": _failures.is_empty()}))
     report.close()
     return true
