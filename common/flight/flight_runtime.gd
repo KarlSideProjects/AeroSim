@@ -1590,6 +1590,8 @@ func _physics_process(delta: float) -> void:
                 if not session_advanced and airsim_session.is_paused():
                     set_paused(true, false)
                     return
+                if session_advanced:
+                    _apply_gsp_wind_requests(_gsp_public_physics_tick())
             _publish_px4_lockstep_sensor_if_needed()
         _advance_visual_wind(session_advanced)
         _advance_airsim_sensors()
@@ -1859,6 +1861,8 @@ func _physics_process(delta: float) -> void:
         if not session_advanced and airsim_session.is_paused():
             set_paused(true, false)
             return
+        if session_advanced:
+            _apply_gsp_wind_requests(_gsp_public_physics_tick())
     if defer_airsim_advance and px4_sitl_bridge != null and not px4_lockstep_active:
         px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), airsim_session.simulation_time_seconds if airsim_session != null else 0.0)
     _advance_px4_path()
@@ -1868,6 +1872,8 @@ func _physics_process(delta: float) -> void:
             if not session_advanced and airsim_session.is_paused():
                 set_paused(true, false)
                 return
+            if session_advanced:
+                _apply_gsp_wind_requests(_gsp_public_physics_tick())
         _publish_px4_lockstep_sensor_if_needed()
     if airsim_session != null and airsim_session.is_paused():
         set_paused(true, false)
