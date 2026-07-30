@@ -480,11 +480,17 @@ Px4SupportLiftReadiness px4_support_lift_readiness(
         return readiness;
     }
     readiness.thrust_scale = per_motor_thrust_scale(config, commands);
-    for (double command : commands.normalized) {
-        const double command_thrust_scale = config.px4_actuator_rpm_mapping
-                ? command * command * readiness.thrust_scale
-                : command * readiness.thrust_scale;
-        readiness.command_thrust_newtons += config.per_motor.max_thrust_per_motor_newtons * command_thrust_scale;
+    if (config.px4_actuator_rpm_mapping) {
+        // Ground support must make its handoff decision from the spool state
+        // that will be present in the first unconstrained flight frame.
+        for (double thrust : state.motor_thrust_newtons) {
+            readiness.command_thrust_newtons += thrust;
+        }
+    } else {
+        for (double command : commands.normalized) {
+            readiness.command_thrust_newtons += config.per_motor.max_thrust_per_motor_newtons *
+                    command * readiness.thrust_scale;
+        }
     }
     readiness.projected_lift_newtons = rotate(
             state.orientation, {0.0, readiness.command_thrust_newtons, 0.0}).y;
@@ -558,6 +564,28 @@ TrajectorySample step_per_motor_physics_frame(
             clock,
             config,
             [&commands](double) { return commands; });
+}
+
+TrajectorySample step_per_motor_ground_support_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const MotorCommands &commands) {
+    const RigidBodyState constrained_state = state;
+    TrajectorySample sample = step_per_motor_physics_frame(state, clock, config, commands);
+    if (sample.substeps == 0) {
+        return sample;
+    }
+    // Jolt owns contact pose/velocity while supported. Preserve only the
+    // physical rotor state evolved by the same per-motor frame.
+    const std::array<double, 4> motor_thrust_newtons = state.motor_thrust_newtons;
+    const std::array<double, 4> motor_rpm = state.motor_rpm;
+    state = constrained_state;
+    state.motor_thrust_newtons = motor_thrust_newtons;
+    state.motor_rpm = motor_rpm;
+    sample.state = state;
+    sample.first_substep_state = state;
+    return sample;
 }
 
 TrajectorySample step_per_motor_physics_frame(

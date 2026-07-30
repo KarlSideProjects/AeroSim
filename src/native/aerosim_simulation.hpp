@@ -351,6 +351,13 @@ TrajectorySample step_per_motor_physics_frame(
         SimulationClock &clock,
         const SimulationConfig &config,
         const MotorCommands &commands);
+// Advances the same ESC/rotor state as per-motor flight while the contact
+// solver constrains the rigid body. Used only for PX4's initial ground support.
+TrajectorySample step_per_motor_ground_support_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const MotorCommands &commands);
 TrajectorySample step_per_motor_physics_frame(
         RigidBodyState &state,
         SimulationClock &clock,

@@ -41,7 +41,9 @@ bool valid_state(const RigidBodyState &state) {
         return false;
     }
     return std::all_of(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(),
-            [](double value) { return std::isfinite(value) && value >= 0.0; });
+            [](double value) { return std::isfinite(value) && value >= 0.0; }) &&
+            std::all_of(state.motor_rpm.begin(), state.motor_rpm.end(),
+                    [](double value) { return std::isfinite(value) && value >= 0.0; });
 }
 
 bool valid_config(const SimulationConfig &config) {
@@ -515,12 +517,19 @@ CollisionStepResult CollisionAuthoritySwitch::step_per_motor_impl(
         authority_ = PhysicsAuthority::Jolt;
         clear_frames_ = 0;
         resolve_contact(state, contact, config);
+        if (config.px4_actuator_rpm_mapping) {
+            return {authority_, step_per_motor_ground_support_frame(state, clock, config, commands),
+                    contact.normal, contact.impulse};
+        }
         return {authority_, sample_jolt_frame(state, clock, config), contact.normal, contact.impulse};
     }
 
     if (authority_ == PhysicsAuthority::Jolt) {
         ++clear_frames_;
         if (clear_frames_ < release_frames_) {
+            if (config.px4_actuator_rpm_mapping) {
+                return {authority_, step_per_motor_ground_support_frame(state, clock, config, commands), {}, {}};
+            }
             return {authority_, sample_jolt_frame(state, clock, config), {}, {}};
         }
         authority_ = PhysicsAuthority::FlightCore;

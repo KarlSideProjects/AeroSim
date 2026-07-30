@@ -103,15 +103,40 @@ int main() {
             0.721400079425549, 0.721400079425549}};
     const aerosim::MotorCommands iris_linear_hover{{0.5204196974414129, 0.5204196974414129,
             0.5204196974414129, 0.5204196974414129}};
+    aerosim::RigidBodyState iris_held_state;
+    aerosim::SimulationClock iris_held_clock;
+    for (int frame = 0; frame < 24; ++frame) {
+        const aerosim::TrajectorySample held = aerosim::step_per_motor_ground_support_frame(
+                iris_held_state, iris_held_clock, iris, iris_hover);
+        if (held.substeps == 0 || iris_held_state.position.y != 0.0 || iris_held_state.velocity.y != 0.0) {
+            return fail("PX4 ground support must evolve motors while constraining the body");
+        }
+    }
     const aerosim::Px4SupportLiftReadiness iris_hover_readiness =
-            aerosim::px4_support_lift_readiness(iris, initial_state, iris_hover);
+            aerosim::px4_support_lift_readiness(iris, iris_held_state, iris_hover);
+    aerosim::RigidBodyState iris_early_state;
+    aerosim::SimulationClock iris_early_clock;
+    for (int frame = 0; frame < 24; ++frame) {
+        const aerosim::TrajectorySample held = aerosim::step_per_motor_ground_support_frame(
+                iris_early_state, iris_early_clock, iris, iris_linear_hover);
+        if (held.substeps == 0) {
+            return fail("PX4 early support frame must be valid");
+        }
+    }
     const aerosim::Px4SupportLiftReadiness iris_early_readiness =
-            aerosim::px4_support_lift_readiness(iris, initial_state, iris_linear_hover);
+            aerosim::px4_support_lift_readiness(iris, iris_early_state, iris_linear_hover);
     if (!iris_hover_readiness.valid || !iris_hover_readiness.ready ||
             std::abs(iris_hover_readiness.command_thrust_newtons - iris_hover_readiness.required_lift_newtons) > 1.0e-3 ||
             !iris_early_readiness.valid || iris_early_readiness.ready ||
             !(iris_early_readiness.command_thrust_newtons < iris_early_readiness.required_lift_newtons)) {
         return fail("PX4 Iris RPM-mapped hover and support-release thresholds must follow the derived prop table");
+    }
+    const std::array<double, 4> rpm_before_release = iris_held_state.motor_rpm;
+    const aerosim::TrajectorySample released = aerosim::step_per_motor_physics_frame(
+            iris_held_state, iris_held_clock, iris, iris_hover);
+    if (released.substeps == 0 || !(rpm_before_release[0] > 0.0) ||
+            !(iris_held_state.motor_rpm[0] >= rpm_before_release[0])) {
+        return fail("PX4 release must continue from the held rotor RPM state");
     }
 
     return EXIT_SUCCESS;
