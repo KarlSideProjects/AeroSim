@@ -490,6 +490,43 @@ func test_real_parser_exposes_only_crc_valid_px4_observability() -> void:
     assert_almost_eq(bridge.px4_observability(3.0).attitude.sample.roll_rad, 0.1, 0.00001)
 
 
+func test_qualification_trace_bounds_finite_px4_attitude_and_local_position_freshness() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    bridge.start()
+    bridge.set_qualification_trace_enabled(true)
+    var attitude_frame := _mavlink_frame(bridge, 30, _floats([10.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]))
+    var local_position_frame := _mavlink_frame(bridge, 32, _floats([10.0, 1.0, 2.0, -3.0, 4.0, 5.0, -6.0]))
+
+    bridge._consume_mavlink(attitude_frame, 1.0, PackedByteArray())
+    bridge._consume_mavlink(local_position_frame, 1.0, PackedByteArray())
+    var fresh_entries := _qualification_trace_entries(bridge.qualification_trace(), "px4_stream_fresh")
+    assert_eq(fresh_entries.size(), 2)
+    assert_eq(fresh_entries[0].stream, "attitude")
+    assert_eq(fresh_entries[0].source, "px4_mavlink")
+    assert_almost_eq(fresh_entries[0].received_at_seconds, 1.0, 0.000001)
+    assert_true(bool(fresh_entries[0].finite))
+    assert_almost_eq(float(fresh_entries[0].sample.body_rates_frd_rad_s[0]), 0.4, 0.00001)
+    assert_almost_eq(float(fresh_entries[0].sample.body_rates_frd_rad_s[1]), 0.5, 0.00001)
+    assert_almost_eq(float(fresh_entries[0].sample.body_rates_frd_rad_s[2]), 0.6, 0.00001)
+    assert_eq(fresh_entries[1].stream, "local_position_ned")
+    assert_true(bool(fresh_entries[1].finite))
+    assert_eq(fresh_entries[1].sample.position_ned, [1.0, 2.0, -3.0])
+    assert_eq(fresh_entries[1].sample.velocity_ned_mps, [4.0, 5.0, -6.0])
+
+    bridge._consume_mavlink(attitude_frame, 1.5, PackedByteArray())
+    bridge._consume_mavlink(local_position_frame, 1.5, PackedByteArray())
+    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "px4_stream_fresh").size(), 2)
+    bridge._consume_mavlink(attitude_frame, 2.1, PackedByteArray())
+    bridge._consume_mavlink(local_position_frame, 2.1, PackedByteArray())
+    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "px4_stream_sample").size(), 4)
+
+    bridge.poll(3.2)
+    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "px4_stream_stale").size(), 2)
+    bridge._consume_mavlink(attitude_frame, 3.3, PackedByteArray())
+    bridge._consume_mavlink(local_position_frame, 3.3, PackedByteArray())
+    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "px4_stream_fresh").size(), 4)
+
+
 func test_px4_actuator_commands_map_iris_wire_order_to_native_motor_order_and_fail_closed_when_stale() -> void:
     var bridge := _new_fake_bridge(1.0, 0.1)
     bridge.start()

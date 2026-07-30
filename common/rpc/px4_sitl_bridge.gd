@@ -30,6 +30,7 @@ const DEFAULT_CONTROL_PORT_LOCAL := 14540
 const DEFAULT_CONTROL_PORT_REMOTE := 14580
 const DEFAULT_UDP_PORT := 14560
 const QUALIFICATION_TRACE_MAX_ENTRIES := 20000
+const QUALIFICATION_STREAM_TRACE_PERIOD_SECONDS := 1.0
 const OFFBOARD_SETPOINT_PERIOD_SECONDS := 0.1
 const OFFBOARD_PREWARM_SECONDS := 1.0
 const HIL_SENSOR_IMU_UPDATED_MASK := 0x003F
@@ -91,6 +92,8 @@ var _tcp_rx_buffer := PackedByteArray()
 var _control_rx_buffer := PackedByteArray()
 var _qualification_trace_enabled := false
 var _qualification_trace: Array[Dictionary] = []
+var _qualification_stream_freshness: Dictionary = {}
+var _qualification_stream_last_trace_time: Dictionary = {}
 
 
 func configure(vehicle_settings: Dictionary, authority_callback: Callable = Callable()) -> Dictionary:
@@ -160,6 +163,8 @@ func start() -> Dictionary:
     _last_outbound_heartbeat_time = -1.0
     _actuators = PackedFloat32Array()
     _px4_messages.clear()
+    _qualification_stream_freshness.clear()
+    _qualification_stream_last_trace_time.clear()
     _sequence = 0
     _target_system = 1
     _target_component = 1
@@ -210,6 +215,7 @@ func poll(now_seconds: float) -> void:
             _send_simulator_heartbeat()
             _last_outbound_heartbeat_time = now_seconds
         _poll_real(now_seconds)
+    _trace_qualification_stream_staleness(now_seconds)
     if _last_heartbeat_time < 0.0:
         if _start_time >= 0.0 and now_seconds - _start_time + 0.000001 >= _config.FailureTimeout:
             _set_state("failed", false, "PX4 heartbeat was not received before startup timeout")
@@ -624,6 +630,8 @@ func diagnostics() -> Dictionary:
 func set_qualification_trace_enabled(enabled: bool) -> void:
     _qualification_trace_enabled = enabled
     _qualification_trace.clear()
+    _qualification_stream_freshness.clear()
+    _qualification_stream_last_trace_time.clear()
 
 
 func qualification_trace() -> Array:
@@ -824,19 +832,23 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
         elif message_id == MAVLINK_ATTITUDE:
             if not v2 and payload_size < 28:
                 continue
-            _record_px4_message("attitude", {
+            var attitude_sample := {
                 "roll_rad": _payload_float(frame, payload_offset, payload_size, 4),
                 "pitch_rad": _payload_float(frame, payload_offset, payload_size, 8),
                 "yaw_rad": _payload_float(frame, payload_offset, payload_size, 12),
                 "body_rates_frd_rad_s": Vector3(_payload_float(frame, payload_offset, payload_size, 16), _payload_float(frame, payload_offset, payload_size, 20), _payload_float(frame, payload_offset, payload_size, 24)),
-            }, now_seconds)
+            }
+            _record_px4_message("attitude", attitude_sample, now_seconds)
+            _trace_qualification_stream_receive("attitude", now_seconds, attitude_sample, _finite_attitude_sample(attitude_sample))
         elif message_id == MAVLINK_LOCAL_POSITION_NED:
             if not v2 and payload_size < 28:
                 continue
-            _record_px4_message("local_position_ned", {
+            var local_position_sample := {
                 "position_ned": Vector3(_payload_float(frame, payload_offset, payload_size, 4), _payload_float(frame, payload_offset, payload_size, 8), _payload_float(frame, payload_offset, payload_size, 12)),
                 "velocity_ned_mps": Vector3(_payload_float(frame, payload_offset, payload_size, 16), _payload_float(frame, payload_offset, payload_size, 20), _payload_float(frame, payload_offset, payload_size, 24)),
-            }, now_seconds)
+            }
+            _record_px4_message("local_position_ned", local_position_sample, now_seconds)
+            _trace_qualification_stream_receive("local_position_ned", now_seconds, local_position_sample, _finite_local_position_sample(local_position_sample))
         elif message_id == MAVLINK_ATTITUDE_TARGET:
             if payload_size < 37:
                 continue
@@ -1097,6 +1109,79 @@ func _actuator_freshness_age_seconds(now_seconds: float) -> float:
 
 func _actuator_is_fresh(now_seconds: float) -> bool:
     return _actuator_freshness_age_seconds(now_seconds) < float(_config.ActuatorTimeout)
+
+
+func _trace_qualification_stream_staleness(now_seconds: float) -> void:
+    if not _qualification_trace_enabled:
+        return
+    for stream_name in ["attitude", "local_position_ned"]:
+        if not _px4_messages.has(stream_name):
+            continue
+        var entry: Dictionary = _px4_messages[stream_name]
+        var received_at_seconds := float(entry.received_at_seconds)
+        var age_seconds := maxf(0.0, now_seconds - received_at_seconds)
+        var fresh := age_seconds < float(_config.HeartbeatTimeout)
+        if fresh == bool(_qualification_stream_freshness.get(stream_name, false)):
+            continue
+        _qualification_stream_freshness[stream_name] = fresh
+        _trace_qualification_event("px4_stream_fresh" if fresh else "px4_stream_stale", now_seconds, {
+            "stream": stream_name,
+            "source": "px4_mavlink",
+            "received_at_seconds": received_at_seconds,
+            "age_seconds": age_seconds,
+        })
+
+
+func _trace_qualification_stream_receive(stream_name: String, now_seconds: float, sample: Dictionary, finite: bool) -> void:
+    if not _qualification_trace_enabled:
+        return
+    var was_fresh := bool(_qualification_stream_freshness.get(stream_name, false))
+    _qualification_stream_freshness[stream_name] = true
+    var trace_fields := {
+        "stream": stream_name,
+        "source": "px4_mavlink",
+        "received_at_seconds": now_seconds,
+        "finite": finite,
+        "sample": _qualification_stream_sample(stream_name, sample),
+    }
+    if not was_fresh:
+        _trace_qualification_event("px4_stream_fresh", now_seconds, trace_fields)
+    var last_trace_time := float(_qualification_stream_last_trace_time.get(stream_name, -INF))
+    if now_seconds - last_trace_time >= QUALIFICATION_STREAM_TRACE_PERIOD_SECONDS:
+        _qualification_stream_last_trace_time[stream_name] = now_seconds
+        _trace_qualification_event("px4_stream_sample", now_seconds, trace_fields)
+
+
+func _qualification_stream_sample(stream_name: String, sample: Dictionary) -> Dictionary:
+    if stream_name == "attitude":
+        var body_rates: Vector3 = sample.body_rates_frd_rad_s
+        return {
+            "roll_rad": float(sample.roll_rad),
+            "pitch_rad": float(sample.pitch_rad),
+            "yaw_rad": float(sample.yaw_rad),
+            "body_rates_frd_rad_s": [body_rates.x, body_rates.y, body_rates.z],
+        }
+    var position: Vector3 = sample.position_ned
+    var velocity: Vector3 = sample.velocity_ned_mps
+    return {
+        "position_ned": [position.x, position.y, position.z],
+        "velocity_ned_mps": [velocity.x, velocity.y, velocity.z],
+    }
+
+
+func _finite_attitude_sample(sample: Dictionary) -> bool:
+    var body_rates: Vector3 = sample.body_rates_frd_rad_s
+    return is_finite(float(sample.roll_rad)) \
+        and is_finite(float(sample.pitch_rad)) \
+        and is_finite(float(sample.yaw_rad)) \
+        and is_finite(body_rates.x) and is_finite(body_rates.y) and is_finite(body_rates.z)
+
+
+func _finite_local_position_sample(sample: Dictionary) -> bool:
+    var position: Vector3 = sample.position_ned
+    var velocity: Vector3 = sample.velocity_ned_mps
+    return is_finite(position.x) and is_finite(position.y) and is_finite(position.z) \
+        and is_finite(velocity.x) and is_finite(velocity.y) and is_finite(velocity.z)
 
 
 func _trace_qualification_event(kind: String, now_seconds: float, fields: Dictionary = {}) -> void:
