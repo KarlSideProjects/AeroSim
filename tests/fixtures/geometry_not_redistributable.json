@@ -1,0 +1,82 @@
+{
+  "version": "geometry-not-redistributable-fixture",
+  "geometry": {
+    "identity": {
+      "designation": "5-inch 6S Quad-X freestyle",
+      "airframe_class": "quad_x_5_inch_freestyle",
+      "frame_reference": "AeroSim parametric 5-inch Quad-X"
+    },
+    "body": {
+      "center_plate_length_m": 0.1,
+      "center_plate_width_m": 0.056,
+      "plate_thickness_m": 0.0025,
+      "bottom_plate_thickness_m": 0.004,
+      "stack_width_m": 0.0355,
+      "stack_height_m": 0.024,
+      "standoff_height_m": 0.03,
+      "standoff_diameter_m": 0.006,
+      "canopy_length_m": 0.062,
+      "canopy_width_m": 0.04,
+      "canopy_height_m": 0.03,
+      "camera_width_m": 0.019,
+      "camera_height_m": 0.019,
+      "camera_depth_m": 0.021,
+      "camera_lens_diameter_m": 0.012,
+      "battery_length_m": 0.075,
+      "battery_width_m": 0.035,
+      "battery_height_m": 0.032,
+      "arm_root_width_m": 0.024,
+      "arm_tip_width_m": 0.016,
+      "arm_thickness_m": 0.005,
+      "landing_foot_height_m": 0.014,
+      "landing_foot_diameter_m": 0.01,
+      "antenna_length_m": 0.058,
+      "antenna_diameter_m": 0.004
+    },
+    "motor": {
+      "bell_diameter_m": 0.0279,
+      "bell_height_m": 0.0155,
+      "base_diameter_m": 0.029,
+      "base_height_m": 0.006,
+      "shaft_diameter_m": 0.005,
+      "shaft_height_m": 0.0075
+    },
+    "propeller": {
+      "hub_diameter_m": 0.018,
+      "hub_height_m": 0.006,
+      "blade_root_chord_m": 0.0085,
+      "blade_max_chord_m": 0.0165,
+      "blade_tip_chord_m": 0.007,
+      "blade_thickness_m": 0.0012,
+      "blade_root_offset_m": 0.008,
+      "blade_root_twist_deg": 24.0,
+      "blade_tip_twist_deg": 9.0
+    },
+    "provenance": {
+      "model_source": "Marketplace drone model download",
+      "source_url": "https://example.invalid/marketplace-drone",
+      "dimensional_evidence": {
+        "evidence_class": "parametric_from_configuration",
+        "documents": [],
+        "notes": "Fixture for scripts/check_gsp_drone_geometry.py: geometry that must be rejected because it is neither release-redistributable nor covered by an allowlisted licence."
+      },
+      "license": {
+        "spdx": "CC-BY-NC-4.0",
+        "holder": "Marketplace author",
+        "attribution_required": true,
+        "attribution": "Marketplace author, personal use license"
+      },
+      "redistribution": "personal_use_only",
+      "assets": [
+        {
+          "path": "common/gsp/assets/three-0.180.0.global.min.js",
+          "sha256": "9e80ed95a3bcbb77bb1d6024de9f7f4cc7d6a9745a322f88052edd29e9faa737"
+        },
+        {
+          "path": "common/gsp/assets/gsp_drone_geometry.js",
+          "sha256": "487dcd116a700c8bd8f2182f7b6d6dabef40a3a48cfecd1289c0b0f0ff6edd46"
+        }
+      ]
+    }
+  }
+}

@@ -43,6 +43,7 @@ for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state
     "rate", "vehicle", "authority", "tick", "latency", "registry", "position", "velocity", "attitude", "rates", "motors",
     "mode-armed", "config-hash", "endurance", "flight-diagnostics", "hardware-configuration", "hardware-derived", "telemetry-data",
     "visualization-status", "flow-legend", "motor-rear-right", "motor-front-right", "motor-rear-left", "motor-front-left",
+    "geometry-classification", "geometry-identity", "geometry-scale", "geometry-motors", "geometry-provenance",
     "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
     "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report",
     "wind-from", "wind-speed", "wind-preview", "wind-apply", "wind-status", "source-commanded", "source-truth", "source-estimated", "source-measured",
@@ -123,6 +124,13 @@ const context = {
     console,
 };
 
+// The geometry package and the visual bridge are bundled beside the panel, so
+// load them into the same context. Without a canvas the visual layer stops at
+// its telemetry mapping, which is exactly the surface the panel reads.
+for (const asset of ["gsp_drone_geometry.js", "gsp_visual.js"]) {
+    vm.runInNewContext(fs.readFileSync(`common/gsp/assets/${asset}`, "utf8"), context, { filename: asset });
+}
+
 const html = fs.readFileSync("common/gsp/gsp_panel.html", "utf8");
 assert.match(html, /<label><span data-i18n="from">FROM°<\/span><input id="wind-from"/,
     "language changes must translate the wind label without replacing its input");
@@ -139,6 +147,7 @@ assert.equal(elements.get("wind-status").textContent, "Preview only; no physical
 assert.equal(elements.get("wind-preview").textContent, "Preview");
 assert.equal(context.document.documentElement.lang, "en");
 elements.get("language-zh").click();
+const hardwareConfiguration = JSON.parse(fs.readFileSync("config/drones/5_inch_6s.json", "utf8"));
 
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     v: 2,
@@ -151,7 +160,7 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     t: "telemetry",
     tick: 1,
     d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1, config_hash: "config-fixture", authority: "flight_controller", armed: true,
-        hardware_configuration: { battery: { capacity_mah: 1300 }, spin_direction: ["cw", "ccw", "cw", "ccw"] },
+        hardware_configuration: hardwareConfiguration,
         hardware_power_model: { hover_endurance_minutes: 4.2, max_total_thrust_newtons: 40, max_total_current_a: 40, max_motor_rpm: 15000 },
         px4_mavlink: { hil_actuator_controls: { source: "px4_mavlink", age_seconds: 0.02, stale: false, sample: { mapping_verified: true, command_normalized: { m1: 0.1, m2: 0.2, m3: 0.3, m4: 0.4 } } } },
         motor_order: ["rear_right", "front_right", "rear_left", "front_left"], rpm: [955, 1910, 2865, 3820],
@@ -178,7 +187,7 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     v: 2,
     t: "telemetry",
     tick: 2,
-    d: { sample_seq: 2, authority: "flight_controller", armed: true, rpm: [955, 1910, 2865, 3820], motors: [] },
+    d: { sample_seq: 2, authority: "flight_controller", armed: true, hardware_configuration: hardwareConfiguration, rpm: [955, 1910, 2865, 3820], motors: [] },
 }) });
 assert.equal(elements.get("wind-apply").disabled, false,
     "regular telemetry after an accepted fresh snapshot keeps wind control safe to use");
@@ -187,6 +196,25 @@ const windRequest = FakeWebSocket.instance.sent.at(-1);
 assert.equal(windRequest.t, "set_wind"); assert.equal(elements.get("wind-apply").disabled, true);
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({ v: 2, t: "wind_ack", d: { request_seq: windRequest.seq, ok: false, error: "unsafe" } }) });
 assert.match(elements.get("wind-status").textContent, /風場被拒絕.*unsafe/); assert.equal(elements.get("wind-apply").disabled, false);
+
+// Geometry stays inspectable: classification, scale, M1-M4 mapping, provenance.
+assert.equal(elements.get("geometry-classification").dataset.classification, "nominal");
+assert.equal(elements.get("geometry-classification").textContent, "名義幾何");
+assert.match(elements.get("geometry-identity").textContent, /5-inch 6S Quad-X freestyle · quad_x_5_inch_freestyle/);
+assert.match(elements.get("geometry-scale").textContent, /wheelbase 225\.0 mm/);
+assert.match(elements.get("geometry-scale").textContent, /prop ⌀127\.0 mm × 4\.3" pitch × 3/);
+assert.match(elements.get("geometry-scale").textContent, /wheelbase 225\.0 mm \(layout 318\.2 mm\)/);
+assert.match(elements.get("geometry-provenance").textContent, /warnings = wheelbase_disagrees_with_motor_layout/);
+const mapping = elements.get("geometry-motors").textContent.split("\n");
+assert.equal(mapping.length, 4);
+assert.match(mapping[0], /^M1 · 右後 · 順時針 · FRD \(-0\.1125, 0\.1125, 0\.0000\) m/);
+assert.match(mapping[1], /^M2 · 右前 · 逆時針 · FRD \(0\.1125, 0\.1125, 0\.0000\) m/);
+assert.match(mapping[2], /^M3 · 左後 · 逆時針/);
+assert.match(mapping[3], /^M4 · 左前 · 順時針/);
+assert.match(elements.get("geometry-provenance").textContent, /redistribution = release/);
+assert.match(elements.get("geometry-provenance").textContent, /license = MIT · AeroSim contributors/);
+assert.match(elements.get("geometry-provenance").textContent, /nominal_because = unqualified_dimensional_evidence, missing_dimensional_evidence_document/);
+assert.match(elements.get("geometry-provenance").textContent, /asset = common\/gsp\/assets\/gsp_drone_geometry\.js sha256:[0-9a-f]{64}/);
 const pingRequest = FakeWebSocket.instance.sent.find((item) => item.t === "ping");
 perfNow = 3;
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({

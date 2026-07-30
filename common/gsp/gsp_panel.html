@@ -12,6 +12,11 @@ header, .state, .grid { display: flex; gap: 12px; align-items: start; }
 header { justify-content: space-between; border-bottom: 1px solid #31445d; padding-bottom: 12px; }
 h1 { margin: 0; font-size: 1.25rem; }
 .badge { color: #9ee6b1; font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; }
+/* Geometry honesty is carried by text plus border style, never colour alone. */
+.badge[data-classification] { border: 1px solid currentColor; border-radius: 4px; padding: 1px 6px; }
+.badge[data-classification="real"] { color: #9ee6b1; border-style: solid; }
+.badge[data-classification="nominal"] { color: #ffcf78; border-style: dashed; }
+.badge[data-classification="unavailable"] { color: #9fb0c5; border-style: dotted; }
 .state, .card { border: 1px solid #31445d; border-radius: 4px; padding: 12px; margin-top: 14px; background: #101923; }
 .state { justify-content: space-between; flex-wrap: wrap; }
 .grid { flex-wrap: wrap; }
@@ -56,6 +61,8 @@ canvas { width: 100%; height: 100px; background: #0c1219; border-radius: 5px; }
 .toolbar { display: flex; gap: 6px; align-items: center; }
 details.card { flex-basis: 100%; } details > summary { font-weight: 700; } details > *:not(summary) { margin-top: 10px; }
 .telemetry-table { height: 28rem; overflow: auto; scrollbar-gutter: stable; } .telemetry-table .unavailable { color: #ffcf78; }
+/* Geometry blocks are short; cap them instead of reserving a fixed height. */
+.geometry-table { max-height: 16rem; overflow: auto; scrollbar-gutter: stable; margin: 0; }
 .status-normal { color: #9ee6b1; } .status-low { color: #ffcf78; } .status-critical, .status-unavailable { color: #ff8aad; }
 @media (max-width: 720px) { main { padding: 10px; } .health-grid, .motor-grid, .tuning-row { grid-template-columns: 1fr; } .quick-adjust-row { grid-template-columns: 1fr 1fr; } }
 /* Operational page stays a single portrait instrument surface; engineering may scroll. */
@@ -73,7 +80,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
 .motor-plots { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; } .motor-plots canvas { height: 72px; width: 100%; border: 1px solid #31445d; }
 #engineering[hidden] { display: none; } #engineering { max-width: 1440px; margin: 0 auto; padding: 16px; }
 @media (prefers-reduced-motion: reduce) { #airframe-3d { outline: 2px dashed #9ee6b1; } }
-@media (max-width: 500px) { .live-strip { grid-template-columns: repeat(2, 1fr); } .live-grid { grid-template-columns: 1fr; } #airframe-3d { height: 120px; } }
+@media (max-width: 500px) { .live-strip { grid-template-columns: repeat(2, 1fr); } #airframe-3d { height: 120px; } }
 </style>
 </head>
 <body>
@@ -81,7 +88,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
 <header><h1 data-i18n="title">AeroSim 地面站開發面板</h1><div class="toolbar"><button id="language-zh" type="button">繁中</button><button id="language-en" type="button">English</button><span class="badge" id="focus-state">panel focus</span></div></header>
 <section class="live-strip" aria-live="polite"><span>SIM <b id="live-connection">WAIT</b></span><span>PX4 <b id="live-authority">—</b></span><span>MODE <b id="live-mode">—</b></span><span>FRESH <b id="live-fresh">WAIT</b></span><span>VEH <b id="live-vehicle">—</b></span><span>TICK <b id="live-tick">—</b></span><span>FAIL <b id="live-failure">—</b></span><span data-i18n="geometry">GEOMETRY · Nominal geometry</span></section>
 <section class="live-grid">
-  <div class="pit"><h2 data-i18n="wind">Wind / 風場</h2><div class="wind-row"><label><span data-i18n="from">FROM°</span><input id="wind-from" type="number" min="0" max="359" value="0"></label><label>m/s<input id="wind-speed" type="number" min="0" step="0.1" value="0"></label><button id="wind-preview" type="button" data-i18n="preview">Preview</button><button id="wind-apply" type="button" data-i18n="apply">Apply</button></div><p id="wind-status" class="muted" data-i18n="preview_initial">Preview only; no physical mutation.</p><div class="source-row" id="source-classes"><span id="source-commanded" class="commanded">Commanded —</span><span id="source-truth" class="truth">Ground truth —</span><span id="source-estimated" class="estimated">Estimated —</span><span id="source-measured" class="measured">Measured —</span></div><h3><span data-i18n="drone">Drone / 無人機</span> <small>Estimated · truth ghost · Nominal geometry</small></h3><div class="toolbar"><button id="view-isometric" type="button" data-i18n="isometric">Isometric</button><button id="view-top" type="button" data-i18n="top">Top</button><button id="view-side" type="button" data-i18n="side">Side</button><button id="view-rear" type="button" data-i18n="rear">Rear</button></div><canvas id="airframe-3d" aria-label="Estimated Drone with ground-truth ghost"></canvas></div>
+  <div class="pit"><h2 data-i18n="wind">Wind / 風場</h2><div class="wind-row"><label><span data-i18n="from">FROM°</span><input id="wind-from" type="number" min="0" max="359" value="0"></label><label>m/s<input id="wind-speed" type="number" min="0" step="0.1" value="0"></label><button id="wind-preview" type="button" data-i18n="preview">Preview</button><button id="wind-apply" type="button" data-i18n="apply">Apply</button></div><p id="wind-status" class="muted" data-i18n="preview_initial">Preview only; no physical mutation.</p><div class="source-row" id="source-classes"><span id="source-commanded" class="commanded">Commanded —</span><span id="source-truth" class="truth">Ground truth —</span><span id="source-estimated" class="estimated">Estimated —</span><span id="source-measured" class="measured">Measured —</span></div><h3><span data-i18n="drone">Drone / 無人機</span> <small>Estimated · truth ghost</small> <span class="badge" id="geometry-classification" aria-live="polite">幾何未提供</span></h3><div class="toolbar"><button id="view-isometric" type="button" data-i18n="isometric">Isometric</button><button id="view-top" type="button" data-i18n="top">Top</button><button id="view-side" type="button" data-i18n="side">Side</button><button id="view-rear" type="button" data-i18n="rear">Rear</button></div><canvas id="airframe-3d" aria-label="Estimated Drone with ground-truth ghost"></canvas><p id="geometry-identity" class="muted">等待硬體設定。</p></div>
   <div class="pit"><h2>M1–M4</h2><div class="motor-grid live-motors"><div id="live-m1">M1 —</div><div id="live-m2">M2 —</div><div id="live-m3">M3 —</div><div id="live-m4">M4 —</div></div><div class="motor-plots"><label><span data-i18n="command_plot">Commanded normalized</span><canvas id="command-chart" width="320" height="90"></canvas></label><label><span data-i18n="rpm_plot">Measured RPM</span><canvas id="rpm-chart" width="320" height="90"></canvas></label></div><p class="muted" data-i18n="plot_legend">Solid=estimate/measured; dashed=commanded; double border=truth ghost.</p></div>
 </section>
 <div class="live-tabs"><button id="open-engineering" type="button">工程設定 / Engineering</button></div>
@@ -112,11 +119,16 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
       <div id="motor-rear-right" class="motor-card" data-motor="rear_right">M1 —</div><div id="motor-front-right" class="motor-card" data-motor="front_right">M2 —</div>
       <div id="motor-rear-left" class="motor-card" data-motor="rear_left">M3 —</div><div id="motor-front-left" class="motor-card" data-motor="front_left">M4 —</div>
     </div>
-    <div class="visual-stage"><p class="muted">即時狀態保留程序化 Quad-X 視圖；NED／FRD／SI 即時遙測。</p></div>
+    <div class="visual-stage"><p class="muted">依作用中硬體設定建模的 Quad-X 視圖；詳細模型與操控位於即時狀態頁。NED／FRD／SI 即時遙測。</p></div>
   </div>
   <p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas>
 </section>
 <details class="card" open><summary>完整遙測（native TelemetrySnapshot；NED／FRD／SI）</summary><pre id="telemetry-data" class="telemetry-table muted">等待即時資料。</pre></details>
+<details class="card" open><summary>幾何模型（來源：作用中硬體設定）</summary>
+  <p id="geometry-scale" class="muted">等待硬體設定。</p>
+  <pre id="geometry-motors" class="geometry-table muted">等待 M1–M4 對應。</pre>
+  <pre id="geometry-provenance" class="geometry-table muted">等待幾何來源與授權。</pre>
+</details>
 <details class="card" open><summary>目前硬體設定（唯讀、canonical preset/schema）</summary><pre id="hardware-configuration" class="telemetry-table muted">等待硬體設定。</pre><pre id="hardware-derived" class="telemetry-table muted">等待衍生 power model。</pre></details>
 <details class="card" open><summary>Quick Adjust</summary><div id="tuning-rows" class="muted">Waiting for registry.</div></details>
 <details class="card"><summary>In-flight Quick Adjust</summary><div id="quick-adjust-rows" class="muted">Waiting for registry.</div></details>
@@ -129,6 +141,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
 </div>
 </main>
 <script src="assets/three-0.180.0.global.min.js"></script>
+<script src="assets/gsp_drone_geometry.js"></script>
 <script src="assets/gsp_visual.js"></script>
 <script>
 (function () {
@@ -181,8 +194,8 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   var requestAnimationFrame = window.requestAnimationFrame || function (callback) { callback(performance.now()); return 0; };
   var language = "zh";
   var translations = {
-    zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…", rear_right: "右後", front_right: "右前", rear_left: "左後", front_left: "左前", normal: "正常", warning: "警告", critical: "嚴重", unavailable: "未提供", visualization_unavailable: "視覺化未提供", wind: "風場", preview: "預覽", apply: "套用", drone: "無人機", pending: "等待權威 ACK", stale: "過期—凍結", fresh: "新鮮", rejected: "風場被拒絕", wind_applied: "模擬已套用：來自 %s° → 前往 %s°，%.1f m/s（ACK #%s）", wind_rejected: "風場被拒絕：%s", source_commanded: "命令", source_truth: "地面真值", source_estimated: "估計", source_measured: "量測", from: "來自°", isometric: "等角", top: "頂視", side: "側視", rear: "後視", command_plot: "命令歸一化", rpm_plot: "量測 RPM", plot_legend: "實線=估計/量測；虛線=命令；雙線框=真值殘影。", geometry: "幾何 · 名義幾何", local: "本地模擬", command: "命令", rpm: "轉/分", saturation: "飽和", not_saturated: "未飽和", fault: "故障", location: "位置", source: "來源", invalid_preview: "預覽值無效。", preview_status: "預覽：來自 %s° → 前往 %s°，%.1f m/s；尚未套用。", invalid_wind: "風場數值無效。", preview_initial: "僅預覽；不會變更物理狀態。", px4_mavlink: "PX4 MAVLink", measured_rpm: "轉/分" },
-    en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…", rear_right: "Rear right", front_right: "Front right", rear_left: "Rear left", front_left: "Front left", normal: "Normal", warning: "Warning", critical: "Critical", unavailable: "Unavailable", visualization_unavailable: "Visualization unavailable", wind: "Wind", preview: "Preview", apply: "Apply", drone: "Drone", pending: "Pending authoritative ACK", stale: "Stale — frozen", fresh: "Fresh", rejected: "Wind rejected", wind_applied: "Applied by simulation: from %s° → toward %s° at %.1f m/s (ACK #%s)", wind_rejected: "Wind rejected: %s", source_commanded: "Commanded", source_truth: "Ground truth", source_estimated: "Estimated", source_measured: "Measured", from: "FROM°", isometric: "Isometric", top: "Top", side: "Side", rear: "Rear", command_plot: "Commanded normalized", rpm_plot: "Measured RPM", plot_legend: "Solid=estimate/measured; dashed=commanded; double border=truth ghost.", geometry: "GEOMETRY · nominal geometry", local: "local simulation", command: "cmd", rpm: "rpm", saturation: "SAT", not_saturated: "not SAT", fault: "fault", location: "location", source: "source", invalid_preview: "Invalid preview.", preview_status: "Preview: from %s° → toward %s° at %.1f m/s; not applied.", invalid_wind: "Invalid wind values.", preview_initial: "Preview only; no physical mutation.", px4_mavlink: "PX4 MAVLink", measured_rpm: "RPM" },
+    zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…", rear_right: "右後", front_right: "右前", rear_left: "左後", front_left: "左前", normal: "正常", warning: "警告", critical: "嚴重", unavailable: "未提供", visualization_unavailable: "視覺化未提供", geometry_real: "真實幾何", geometry_nominal: "名義幾何", geometry_unavailable: "幾何未提供", geometry_waiting: "等待硬體設定。", geometry_cw: "順時針", geometry_ccw: "逆時針", wind: "風場", preview: "預覽", apply: "套用", drone: "無人機", pending: "等待權威 ACK", stale: "過期—凍結", fresh: "新鮮", rejected: "風場被拒絕", wind_applied: "模擬已套用：來自 %s° → 前往 %s°，%.1f m/s（ACK #%s）", wind_rejected: "風場被拒絕：%s", source_commanded: "命令", source_truth: "地面真值", source_estimated: "估計", source_measured: "量測", from: "來自°", isometric: "等角", top: "頂視", side: "側視", rear: "後視", command_plot: "命令歸一化", rpm_plot: "量測 RPM", plot_legend: "實線=估計/量測；虛線=命令；雙線框=真值殘影。", geometry: "幾何 · 名義幾何", local: "本地模擬", command: "命令", rpm: "轉/分", saturation: "飽和", not_saturated: "未飽和", fault: "故障", location: "位置", source: "來源", invalid_preview: "預覽值無效。", preview_status: "預覽：來自 %s° → 前往 %s°，%.1f m/s；尚未套用。", invalid_wind: "風場數值無效。", preview_initial: "僅預覽；不會變更物理狀態。", px4_mavlink: "PX4 MAVLink", measured_rpm: "轉/分" },
+    en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…", rear_right: "Rear right", front_right: "Front right", rear_left: "Rear left", front_left: "Front left", normal: "Normal", warning: "Warning", critical: "Critical", unavailable: "Unavailable", visualization_unavailable: "Visualization unavailable", geometry_real: "Real geometry", geometry_nominal: "Nominal geometry", geometry_unavailable: "Geometry unavailable", geometry_waiting: "Waiting for hardware configuration.", geometry_cw: "Clockwise", geometry_ccw: "Counter-clockwise", wind: "Wind", preview: "Preview", apply: "Apply", drone: "Drone", pending: "Pending authoritative ACK", stale: "Stale — frozen", fresh: "Fresh", rejected: "Wind rejected", wind_applied: "Applied by simulation: from %s° → toward %s° at %.1f m/s (ACK #%s)", wind_rejected: "Wind rejected: %s", source_commanded: "Commanded", source_truth: "Ground truth", source_estimated: "Estimated", source_measured: "Measured", from: "FROM°", isometric: "Isometric", top: "Top", side: "Side", rear: "Rear", command_plot: "Commanded normalized", rpm_plot: "Measured RPM", plot_legend: "Solid=estimate/measured; dashed=commanded; double border=truth ghost.", geometry: "GEOMETRY · nominal geometry", local: "local simulation", command: "cmd", rpm: "rpm", saturation: "SAT", not_saturated: "not SAT", fault: "fault", location: "location", source: "source", invalid_preview: "Invalid preview.", preview_status: "Preview: from %s° → toward %s° at %.1f m/s; not applied.", invalid_wind: "Invalid wind values.", preview_initial: "Preview only; no physical mutation.", px4_mavlink: "PX4 MAVLink", measured_rpm: "RPM" },
   };
 
   function recordPerformanceSample(kind, value) {
@@ -214,6 +227,9 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     if (lastTelemetrySample) renderMotorCards(lastTelemetrySample);
   }
   function listen(id, callback) { var element = $(id); if (element) element.addEventListener("click", callback); }
+  window.addEventListener("aerosim-gsp-visual", function () {
+    if (lastTelemetrySample) renderMotorCards(lastTelemetrySample);
+  });
   listen("language-zh", function () { setLanguage("zh"); });
   listen("language-en", function () { setLanguage("en"); });
   setLanguage(language);
@@ -311,6 +327,62 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     var status = visual && visual.status ? visual.status() : { available: false };
     text("visualization-status", status.available ? translate("live") : translate("visualization_unavailable"));
     text("flow-legend", "FRD · SI · flow magnitude uses m/s");
+    renderGeometry(state.geometry, visual);
+  }
+  function metres(value) { return Number.isFinite(Number(value)) ? (Number(value) * 1000).toFixed(1) + " mm" : "—"; }
+  function renderGeometry(derived, visual) {
+    // Prefer what the renderer actually built; fall back to the derived spec so
+    // the mapping stays inspectable in a page without WebGL.
+    var report = visual && visual.geometry ? visual.geometry() : null;
+    if (!report || !report.available) report = derived && derived.available ? derived : null;
+    var badge = $("geometry-classification");
+    if (!report) {
+      if (badge) { badge.textContent = translate("geometry_unavailable"); badge.dataset.classification = "unavailable"; }
+      text("geometry-identity", (derived && derived.reason) || translate("geometry_waiting"));
+      text("geometry-scale", translate("geometry_waiting"));
+      text("geometry-motors", translate("geometry_waiting"));
+      text("geometry-provenance", translate("geometry_waiting"));
+      return;
+    }
+    if (badge) {
+      badge.textContent = translate(report.classification === "real" ? "geometry_real" : "geometry_nominal");
+      badge.dataset.classification = report.classification;
+    }
+    text("geometry-identity", report.identity.designation + " · " + report.identity.airframe_class
+      + (report.identity.frame_reference ? " · " + report.identity.frame_reference : ""));
+    var pitch = report.propeller.pitch_in == null ? "" : " × " + report.propeller.pitch_in + "\" pitch";
+    text("geometry-scale", "wheelbase " + metres(report.scale.wheelbase_m)
+      + " (layout " + metres(report.scale.layout_wheelbase_m) + ")"
+      + " · motor radius " + metres(report.scale.motor_radius_m)
+      + " · span " + metres(report.scale.span_m)
+      + " · prop ⌀" + metres(report.propeller.diameter_m) + pitch + " × " + report.propeller.blades
+      + " · prop clearance " + metres(report.scale.propeller_clearance_m)
+      + " · CoM FRD (" + report.center_of_mass_frd_m.x + ", " + report.center_of_mass_frd_m.y + ", " + report.center_of_mass_frd_m.z + ") m");
+    var rows = report.motors.map(function (motor) {
+      var spin = motor.spin_direction === "cw" ? translate("geometry_cw")
+        : motor.spin_direction === "ccw" ? translate("geometry_ccw") : translate("unavailable");
+      return motor.label + " · " + translate(motor.id) + " · " + spin
+        + " · FRD (" + motor.frd.x.toFixed(4) + ", " + motor.frd.y.toFixed(4) + ", " + motor.frd.z.toFixed(4) + ") m"
+        + " · radius " + metres(motor.radius_m);
+    });
+    text("geometry-motors", rows.join("\n"));
+    var provenance = report.provenance || {};
+    var evidence = provenance.dimensional_evidence || {};
+    var license = provenance.license || {};
+    var lines = [
+      "source = " + String(provenance.model_source || "—"),
+      "source_url = " + String(provenance.source_url || "—"),
+      "dimensional_evidence = " + String(evidence.evidence_class || "—")
+        + " (" + ((evidence.documents || []).length) + " documents)",
+      "license = " + String(license.spdx || "—") + " · " + String(license.holder || "—"),
+      "attribution = " + (license.attribution_required ? String(license.attribution || "—") : "not required"),
+      "redistribution = " + String(provenance.redistribution || "—"),
+    ];
+    (provenance.assets || []).forEach(function (asset) { lines.push("asset = " + asset.path + " sha256:" + asset.sha256); });
+    if (report.classification !== "real") lines.push("nominal_because = " + report.classification_reasons.join(", "));
+    if (report.warnings && report.warnings.length) lines.push("warnings = " + report.warnings.join(", "));
+    if (evidence.notes) lines.push("notes = " + String(evidence.notes));
+    text("geometry-provenance", lines.join("\n"));
   }
   function send(type, data) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return null;
@@ -804,6 +876,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     window.__AEROSIM_PANEL_TEST__.renderMigrationReport = renderMigrationReport;
     window.__AEROSIM_PANEL_TEST__.motorCards = function () { return [$("motor-rear-right"), $("motor-front-right"), $("motor-rear-left"), $("motor-front-left")]; };
     window.__AEROSIM_PANEL_TEST__.renderLiveConsole = renderLiveConsole;
+    window.__AEROSIM_PANEL_TEST__.displayTelemetry = displayTelemetry;
   }
   connect(); drawSparkline();
 }());

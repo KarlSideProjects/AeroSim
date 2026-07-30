@@ -4,7 +4,12 @@ const vm = require("node:vm");
 
 const context = { window: {}, console, Math, Number, Array, Object, String, Boolean, JSON };
 context.window.window = context.window;
+vm.runInNewContext(fs.readFileSync("common/gsp/assets/gsp_drone_geometry.js", "utf8"), context, { filename: "gsp_drone_geometry.js" });
 vm.runInNewContext(fs.readFileSync("common/gsp/assets/gsp_visual.js", "utf8"), context, { filename: "gsp_visual.js" });
+
+// The rendered airframe is positioned from the active preset, so the mapping
+// test uses the real hardware configuration rather than renderer constants.
+const configuration = JSON.parse(fs.readFileSync("config/drones/5_inch_6s.json", "utf8"));
 
 const map = context.window.__AEROSIM_GSP_VISUAL__.map_telemetry_to_view_state;
 assert.equal(typeof map, "function");
@@ -18,7 +23,7 @@ const state = map({
         { thrust_newtons: 1, speed_rad_s: 400, current_a: 1, saturated: true },
     ],
     rpm: [955, 1910, 2865, 3820],
-    hardware_configuration: { spin_direction: ["cw", "ccw", "cw", "ccw"] },
+    hardware_configuration: configuration,
     hardware_power_model: { max_total_thrust_newtons: 40, max_total_current_a: 40 },
     wind_body_mps: { x_val: 1, y_val: 2, z_val: 3 },
     airspeed_body_frd_mps_mean: { x_val: 1, y_val: 0, z_val: 0 },
@@ -26,23 +31,28 @@ const state = map({
     body_drag_force_body_frd_n_mean: { x_val: 1, y_val: 0, z_val: 0 },
     body_drag_torque_body_frd_nm_mean: { x_val: 0, y_val: 0, z_val: 0.1 },
     body_drag_operating_state: "active",
-    hardware_configuration: {
-        spin_direction: ["cw", "ccw", "cw", "ccw"],
-        frame: { frontal_area_m2: { x: .1, y: .1, z: .1 } },
-        aircraft: { cg_offset_m: { x: 0, y: 0, z: 0 } },
+    hardware_configuration: Object.assign({}, configuration, {
+        frame: Object.assign({}, configuration.frame, { frontal_area_m2: { x: .1, y: .1, z: .1 } }),
+        aircraft: Object.assign({}, configuration.aircraft, { cg_offset_m: { x: 0, y: 0, z: 0 } }),
         aerodynamics: { body_drag: {
             air_density_kg_m3: 1.225,
             drag_coefficient: { x: 1, y: 1, z: 1 },
             center_of_pressure_frd_m: { x: 0, y: 0, z: 0 },
             evidence: { state: "provisional_estimate", provenance: "fixture estimate" },
         } },
-    },
+    }),
     a3_operating_state: "disabled",
     a6_operating_state: "out_of_domain",
 });
 
 assert.deepEqual(state.motors.map((motor) => motor.health), ["normal", "warning", "critical", "critical"]);
-assert.deepEqual(JSON.parse(JSON.stringify(state.motors.map((motor) => motor.position))), [[1, 0, 1], [1, 0, -1], [-1, 0, 1], [-1, 0, -1]]);
+assert.deepEqual(
+    JSON.parse(JSON.stringify(state.motors.map((motor) => motor.position))),
+    JSON.parse(JSON.stringify(configuration.aircraft.motor_layout.map((row) => [row.y, -row.z, -row.x]))),
+);
+assert.deepEqual(JSON.parse(JSON.stringify(state.motors.map((motor) => motor.label))), ["M1", "M2", "M3", "M4"]);
+assert.equal(state.geometry.available, true, state.geometry.reason);
+assert.equal(state.geometry.classification, "nominal");
 assert.equal(state.motors[1].spin_direction, "ccw");
 assert.equal(state.motors[3].angular_step_rad, Math.PI / 6);
 assert.equal(state.flow.wind.state, "active");
@@ -59,6 +69,9 @@ const fallback = map({
 assert.equal(fallback.motors[0].health, "unavailable");
 assert.equal(fallback.motors[0].rpm, 100 * 60 / (Math.PI * 2));
 assert.equal(fallback.motors[0].spin_direction, "unavailable");
+// Without a hardware configuration there is no honest placement to draw.
+assert.equal(fallback.motors[0].position, null);
+assert.equal(fallback.geometry.available, false);
 assert.equal(fallback.flow.wind.state, "unavailable");
 
 const incompleteBodyDrag = map({

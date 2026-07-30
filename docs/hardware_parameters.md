@@ -32,6 +32,8 @@ Every drone preset must define these top-level categories:
 - `aerodynamics`: static A3 switch and three-axis coefficients in `kg`; rotor
   speed is runtime state, never a preset field.
 - `aircraft`: AUW, inertia diagonal, center-of-gravity offset, four motor positions.
+- `geometry`: airframe identity, presentation-only shell dimensions, and
+  geometry provenance. See [GSP drone geometry](gsp_drone_geometry.md).
 - `sensors`: gyro rate, IMU noise density, bias drift, random walk, barometer noise.
 - `fpv`: camera uptilt and FOV.
 

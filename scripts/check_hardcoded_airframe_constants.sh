@@ -4,6 +4,8 @@ set -euo pipefail
 scan_paths=(
     src/native
     common/flight
+    common/gsp/assets/gsp_drone_geometry.js
+    common/gsp/assets/gsp_visual.js
 )
 
 blocked_patterns=(
