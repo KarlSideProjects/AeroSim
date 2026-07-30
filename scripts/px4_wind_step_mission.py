@@ -168,6 +168,51 @@ def telemetry_position_error(message: dict[str, Any]) -> float | None:
     return math.dist(vector, TARGET_NED)
 
 
+def qualification_wind_window(telemetry: list[dict[str, Any]], applied_tick: Any) -> dict[str, Any]:
+    """Select only the PX4-controlled telemetry at or after the wind tick.
+
+    The complete message sequence remains in raw evidence.  A foreign
+    controller after the wind applies invalidates exclusive-authority proof;
+    it must not be silently discarded from the audit.
+    """
+    valid_applied_tick = isinstance(applied_tick, int) and not isinstance(applied_tick, bool)
+    audit = {
+        "selection": "tick >= wind.applied_tick and control_authority == px4_external",
+        "raw_telemetry_count": len(telemetry),
+        "included_count": 0,
+        "excluded_pre_wind_count": 0,
+        "excluded_invalid_tick_count": 0,
+        "foreign_authority_after_wind_count": 0,
+    }
+    samples: list[dict[str, Any]] = []
+    if not valid_applied_tick:
+        audit["invalid_applied_tick"] = True
+        return {"samples": samples, "position_error_m": [], "authority_verified": False, "audit": audit}
+    for message in telemetry:
+        if not isinstance(message, dict):
+            audit["excluded_invalid_tick_count"] += 1
+            continue
+        tick = message.get("tick")
+        if not isinstance(tick, int) or isinstance(tick, bool):
+            audit["excluded_invalid_tick_count"] += 1
+            continue
+        if tick < applied_tick:
+            audit["excluded_pre_wind_count"] += 1
+            continue
+        data = message.get("d")
+        if not isinstance(data, dict) or data.get("control_authority") != "px4_external":
+            audit["foreign_authority_after_wind_count"] += 1
+            continue
+        samples.append(message)
+    audit["included_count"] = len(samples)
+    return {
+        "samples": samples,
+        "position_error_m": [error for message in samples if (error := telemetry_position_error(message)) is not None],
+        "authority_verified": bool(samples) and audit["foreign_authority_after_wind_count"] == 0,
+        "audit": audit,
+    }
+
+
 def telemetry_lean(message: dict[str, Any]) -> float | None:
     data = message.get("d")
     if not isinstance(data, dict):
@@ -443,23 +488,25 @@ def main() -> int:
             except Exception as error:
                 raw.setdefault("cleanup_errors", []).append(str(error))
 
-    position_errors = [error for message in telemetry if (error := telemetry_position_error(message)) is not None]
-    leans = [lean for message in telemetry if (lean := telemetry_lean(message)) is not None]
-    actuator_rows = [row for message in telemetry if (row := actuator_observation(message)) is not None]
-    latest_actuator = actuator_rows[-1] if actuator_rows else {"fresh": False, "mapping_verified": False, "age_seconds": None}
     ack_data = acknowledgement.get("d") if isinstance(acknowledgement.get("d"), dict) else {}
     event_identity = ack_data.get("replay_event_identity") if isinstance(ack_data.get("replay_event_identity"), dict) else {}
     applied_tick = ack_data.get("applied_tick")
-    observed_authorities = {
-        message.get("d", {}).get("authority")
-        for message in telemetry
-        if isinstance(message.get("d"), dict)
+    wind_window = qualification_wind_window(telemetry, applied_tick)
+    window_samples: list[dict[str, Any]] = wind_window["samples"]
+    position_errors: list[float] = wind_window["position_error_m"]
+    leans = [lean for message in window_samples if (lean := telemetry_lean(message)) is not None]
+    actuator_rows = [row for message in window_samples if (row := actuator_observation(message)) is not None]
+    latest_actuator = actuator_rows[-1] if actuator_rows else {"fresh": False, "mapping_verified": False, "age_seconds": None}
+    raw["telemetry_audit"] = {
+        "storage": "raw_evidence.telemetry",
+        "scope": "all received telemetry before and after wind application",
+        "count": len(telemetry),
     }
     evidence = {
         "kind": "aerosim.px4_wind_step_qualification",
         "px4_revision": PX4_REVISION,
         "transport": "real",
-        "authority": "px4_exclusive" if observed_authorities == {"px4_external"} else "unverified",
+        "authority": "px4_exclusive" if wind_window["authority_verified"] else "unverified",
         "wind": {
             "applied_tick": applied_tick,
             "replay_event_tick": event_identity.get("physics_tick"),
@@ -469,6 +516,7 @@ def main() -> int:
         "lean": {"observed": bool(leans and max(leans) > 0.0), "max_abs_roll_or_pitch_rad": max(leans) if leans else 0.0},
         "position_error_m": position_errors,
         "limits": {"rms_m": POSITION_RMS_LIMIT_M, "max_m": POSITION_MAX_LIMIT_M},
+        "telemetry_audit": wind_window["audit"],
         "raw_evidence": raw,
         "bridge_trace": read_bridge_trace(Path(args.px4_trace_file)),
     }

@@ -9,6 +9,7 @@ from scripts.px4_wind_step_mission import (
     qualification_corridor_is_clear,
     qualification_route_clears_drone2,
     qualification_readiness_failure,
+    qualification_wind_window,
     segment_intersects_runtime_wall,
     truth_estimator_convergence_evidence,
     wait_for_async_command,
@@ -29,6 +30,17 @@ def evidence(**overrides):
     }
     value.update(overrides)
     return value
+
+
+def telemetry(tick: int, control_authority: str, position_ned: tuple[float, float, float] = TARGET_NED) -> dict:
+    return {
+        "t": "telemetry",
+        "tick": tick,
+        "d": {
+            "control_authority": control_authority,
+            "pos_ned": {"x_val": position_ned[0], "y_val": position_ned[1], "z_val": position_ned[2]},
+        },
+    }
 
 
 class Px4WindStepQualificationTests(unittest.TestCase):
@@ -72,6 +84,29 @@ class Px4WindStepQualificationTests(unittest.TestCase):
     def test_rejects_replay_tick_mismatch_and_unfrozen_limit_breach(self):
         bad = evidence(wind={"applied_tick": 120, "replay_event_tick": 121, "replay_identity": "wind-step-1"})
         self.assertEqual(evaluate(bad)["status"], "failed")
+
+    def test_wind_window_excludes_pre_px4_telemetry_from_authority_and_metrics(self):
+        window = qualification_wind_window([
+            telemetry(119, "flight_controller", (0.0, 0.0, 0.0)),
+            telemetry(120, "px4_external", (-2.1, -1.0, -3.0)),
+            telemetry(121, "px4_external", (-1.9, -1.0, -3.0)),
+        ], 120)
+
+        self.assertTrue(window["authority_verified"])
+        self.assertEqual([message["tick"] for message in window["samples"]], [120, 121])
+        self.assertEqual(window["audit"]["excluded_pre_wind_count"], 1)
+        self.assertEqual(len(window["position_error_m"]), 2)
+        self.assertAlmostEqual(window["position_error_m"][0], 0.1)
+        self.assertAlmostEqual(window["position_error_m"][1], 0.1)
+
+    def test_wind_window_fails_when_foreign_authority_arrives_after_wind_application(self):
+        window = qualification_wind_window([
+            telemetry(120, "px4_external"),
+            telemetry(121, "flight_controller"),
+        ], 120)
+
+        self.assertFalse(window["authority_verified"])
+        self.assertEqual(window["audit"]["foreign_authority_after_wind_count"], 1)
 
     def test_runner_rejects_takeoff_before_px4_readiness_is_proven(self):
         trace = {
