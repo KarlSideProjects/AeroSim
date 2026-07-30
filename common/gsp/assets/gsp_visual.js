@@ -22,6 +22,34 @@
         return { state: "active", value: { x: Number(value.x_val), y: Number(value.y_val), z: Number(value.z_val) } };
     }
 
+    function positiveVector(value) {
+        const x = value && (value.x ?? value.x_val), y = value && (value.y ?? value.y_val), z = value && (value.z ?? value.z_val);
+        return finite(Number(x)) && finite(Number(y)) && finite(Number(z)) && Number(x) > 0 && Number(y) > 0 && Number(z) > 0;
+    }
+
+    function finiteVector(value) {
+        const x = value && (value.x ?? value.x_val), y = value && (value.y ?? value.y_val), z = value && (value.z ?? value.z_val);
+        return finite(Number(x)) && finite(Number(y)) && finite(Number(z));
+    }
+
+    function qualifiedBodyDrag(sample) {
+        const configuration = sample.hardware_configuration || {};
+        const bodyDrag = configuration.aerodynamics && configuration.aerodynamics.body_drag;
+        const evidence = bodyDrag && bodyDrag.evidence;
+        const evidenceState = evidence && String(evidence.state || "");
+        const airspeed = sample.airspeed_body_frd_mps_mean;
+        return String(sample.body_drag_operating_state || "") === "active" &&
+            ["provisional_estimate", "measured"].includes(evidenceState) &&
+            typeof evidence.provenance === "string" && evidence.provenance.length > 0 &&
+            finite(Number(sample.air_density_kg_m3)) && Number(sample.air_density_kg_m3) > 0 &&
+            finite(Number(bodyDrag.air_density_kg_m3)) && Number(bodyDrag.air_density_kg_m3) > 0 &&
+            positiveVector(bodyDrag.drag_coefficient) &&
+            positiveVector(configuration.frame && configuration.frame.frontal_area_m2) &&
+            finiteVector(bodyDrag.center_of_pressure_frd_m) &&
+            finiteVector(configuration.aircraft && configuration.aircraft.cg_offset_m) &&
+            finiteVector(airspeed);
+    }
+
     function mapTelemetryToViewState(sample, frameSeconds) {
         sample = sample || {};
         const motors = Array.isArray(sample.motors) ? sample.motors : [];
@@ -55,8 +83,8 @@
             }),
             flow: {
                 wind: vectorState(sample.wind_body_mps), airspeed: vectorState(sample.airspeed_body_frd_mps_mean),
-                body_drag: vectorState(sample.drag_body_n, String(sample.body_drag_operating_state || "unavailable")),
-                mean_drag: vectorState(sample.body_drag_force_body_frd_n_mean, String(sample.body_drag_operating_state || "unavailable")),
+                body_drag: vectorState(sample.body_drag_force_body_frd_n_mean, qualifiedBodyDrag(sample) ? "active" : "unavailable"),
+                body_drag_torque: vectorState(sample.body_drag_torque_body_frd_nm_mean, qualifiedBodyDrag(sample) ? "active" : "unavailable"),
                 rotor_drag: vectorState(sample.a3_drag_force_body_frd_n_mean, String(sample.a3_operating_state || "unavailable")),
                 propwash: vectorState(sample.propwash_disturbance_rad_s2, String(sample.a6_operating_state || "unavailable")),
                 downwash: finite(Number(sample.downwash_force_n)) ? { state: "active", value: Number(sample.downwash_force_n) } : { state: "unavailable", value: null },

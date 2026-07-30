@@ -2127,7 +2127,7 @@ Dictionary AeroSimNative::body_drag_configuration() const {
     config["frontal_area_m2"] = godot_vec3(body_drag.frontal_area_m2);
     config["center_of_pressure_frd_m"] = godot_vec3(body_drag.center_of_pressure_frd_m);
     config["air_density_kg_m3"] = hardware_config_.air_density_kg_m3;
-    config["evidence_state"] = "provisional";
+    config["evidence_state"] = body_drag.enabled ? "provisional" : "unavailable";
     return config;
 }
 

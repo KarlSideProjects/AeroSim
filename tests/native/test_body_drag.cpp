@@ -79,6 +79,13 @@ int main() {
         return fail("zero relative airspeed must produce zero body drag wrench");
     }
 
+    aerosim::BodyDragConfig incomplete = config;
+    incomplete.drag_coefficient.y = 0.0;
+    if (aerosim::validate_body_drag_config(incomplete, 1.25) ||
+            aerosim::body_drag_wrench_body_frd(incomplete, {2.0, 0.0, 0.0}, {}, 1.25).force_body_frd_n.x != 0.0) {
+        return fail("enabled body drag with an omitted coefficient must be unavailable, not a precise zero");
+    }
+
     config.enabled = false;
     const aerosim::BodyDragWrench disabled = aerosim::body_drag_wrench_body_frd(
             config, {10.0, 10.0, 10.0}, {}, 1.25);

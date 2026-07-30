@@ -756,7 +756,7 @@ void FlightController::maybe_publish_telemetry(
         snapshot.body_drag_force_body_frd_n_mean = {};
         snapshot.body_drag_torque_body_frd_nm_mean = {};
         snapshot.body_drag_operating_state = "disabled";
-        snapshot.body_drag_evidence_state = "provisional";
+        snapshot.body_drag_evidence_state = "unavailable";
         snapshot.body_drag_reason_code = "disabled";
     } else if (!validate_body_drag_config(config.body_drag, config.air_density_kg_m3)) {
         snapshot.body_drag_force_body_frd_n_mean = {NAN, NAN, NAN};
