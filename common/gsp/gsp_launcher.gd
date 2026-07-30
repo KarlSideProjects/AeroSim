@@ -41,11 +41,14 @@ static func panel_url(panel_file_url: String, port: int, token: String) -> Strin
 
 
 static func demo_panel_split(game_position: Vector2i, game_size: Vector2i) -> Dictionary:
-    var game_height := game_size.y * 3 / 5
+    var panel_width := roundi(float(game_size.y) * 9.0 / 16.0)
+    panel_width = mini(panel_width, game_size.x / 2)
+    var panel_size := Vector2i(panel_width, game_size.y)
     return {
-        "game_size": Vector2i(game_size.x, game_height),
-        "panel_position": Vector2i(game_position.x, game_position.y + game_height),
-        "panel_size": Vector2i(game_size.x, game_size.y - game_height),
+        "game_position": game_position + Vector2i(panel_width, 0),
+        "game_size": Vector2i(game_size.x - panel_width, game_size.y),
+        "panel_position": game_position,
+        "panel_size": panel_size,
     }
 
 
@@ -173,7 +176,7 @@ func open_demo_panel() -> Dictionary:
         }
     ProjectSettings.set_setting(WINDOW_WIDTH_OVERRIDE, split.game_size.x)
     ProjectSettings.set_setting(WINDOW_HEIGHT_OVERRIDE, split.game_size.y)
-    DisplayServer.window_set_position(game_position)
+    DisplayServer.window_set_position(split.game_position)
     DisplayServer.window_set_size(split.game_size)
     var browser_profile := OS.get_user_data_dir().path_join(PANEL_DIRECTORY).path_join("demo-browser")
     var demo_id := str(Time.get_ticks_msec())
