@@ -26,6 +26,7 @@ const DEFAULT_TCP_PORT := 4560
 const DEFAULT_CONTROL_PORT_LOCAL := 14540
 const DEFAULT_CONTROL_PORT_REMOTE := 14580
 const DEFAULT_UDP_PORT := 14560
+const QUALIFICATION_TRACE_MAX_ENTRIES := 20000
 
 var state := "disconnected"
 var mission_phase := "disarmed"
@@ -67,6 +68,8 @@ var _tcp_server: TCPServer
 var _control_peer: PacketPeerUDP
 var _tcp_rx_buffer := PackedByteArray()
 var _control_rx_buffer := PackedByteArray()
+var _qualification_trace_enabled := false
+var _qualification_trace: Array[Dictionary] = []
 
 
 func configure(vehicle_settings: Dictionary, authority_callback: Callable = Callable()) -> Dictionary:
@@ -219,6 +222,17 @@ func publish_sensor_snapshot(snapshot: Dictionary, simulation_time_seconds: floa
     sensor_payload.append_array(_u32_bytes(fields_updated))
     sensor_payload.append(0)
     _send_mavlink(sensor_payload, 107, _tcp)
+    _trace_qualification_event("outgoing_hil_sensor", _last_poll_time, {
+        "simulation_time_seconds": simulation_time_seconds,
+        "time_usec": int(round(simulation_time_seconds * 1_000_000.0)),
+        "fields_updated": fields_updated,
+        "accel_mps2": [accel_x, accel_y, accel_z],
+        "gyro_rad_s": [float(gyro.get("x_val", 0.0)), float(gyro.get("y_val", 0.0)), float(gyro.get("z_val", 0.0))],
+        "magnetic_field_body": [float(magnetic_field.get("x_val", 0.22)), float(magnetic_field.get("y_val", 0.0)), float(magnetic_field.get("z_val", 0.43))],
+        "barometer_altitude_m": barometer_altitude,
+        "absolute_pressure_hpa": 1013.25,
+        "temperature_c": 25.0,
+    })
 
     var system_time_payload := _u64_bytes(int(round(simulation_time_seconds * 1_000_000.0)))
     system_time_payload.append_array(_u32_bytes(int(round(simulation_time_seconds * 1_000.0))))
@@ -402,6 +416,18 @@ func diagnostics() -> Dictionary:
     }
 
 
+# Qualification runs opt into this raw bridge trace so a failed real PX4 run
+# can be diagnosed from the actual incoming frames without changing authority
+# or failsafe behavior. It is intentionally not published through the GSP API.
+func set_qualification_trace_enabled(enabled: bool) -> void:
+    _qualification_trace_enabled = enabled
+    _qualification_trace.clear()
+
+
+func qualification_trace() -> Array:
+    return _qualification_trace.duplicate(true)
+
+
 func stop() -> void:
     if _control_peer != null:
         _control_peer.close()
@@ -505,7 +531,16 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
             _update_armed_since(armed, now_seconds)
             if armed:
                 _arm_requested = false
+            var state_before := state
+            var authority_before := _authority_active
             _refresh_authority(now_seconds, armed)
+            _trace_qualification_event("heartbeat", now_seconds, {
+                "base_mode": base_mode,
+                "custom_mode": custom_mode,
+                "armed": armed,
+                "state_before": state_before,
+                "authority_before": authority_before,
+            })
         elif message_id == MAVLINK_HIL_ACTUATOR_CONTROLS:
             if payload_size < 81:
                 continue
@@ -523,8 +558,18 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
                     "m3": float(_actuators[2]), "m4": float(_actuators[3]),
                 }
             _record_px4_message("hil_actuator_controls", hil_sample, now_seconds)
+            var state_before := state
+            var authority_before := _authority_active
             if _armed_since >= 0.0:
                 _refresh_authority(now_seconds, true)
+            _trace_qualification_event("hil_actuator_controls", now_seconds, {
+                "mode_byte": int(frame[payload_offset + 80]),
+                "armed": armed,
+                "outputs": Array(_actuators),
+                "mapping_verified": bool(hil_sample.mapping_verified),
+                "state_before": state_before,
+                "authority_before": authority_before,
+            })
         elif message_id == MAVLINK_ATTITUDE:
             if not v2 and payload_size < 28:
                 continue
@@ -582,7 +627,13 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
                 continue
             var command := int(frame.decode_u16(payload_offset))
             var result := int(frame[payload_offset + 2])
-            if _pending_command_ids.has(command):
+            var tracked := _pending_command_ids.has(command)
+            _trace_qualification_event("command_ack", now_seconds, {
+                "command": command,
+                "result": result,
+                "tracked": tracked,
+            })
+            if tracked:
                 _last_command_result = result
                 if result == 5:
                     continue
@@ -625,7 +676,14 @@ func _message_id(frame: PackedByteArray) -> int:
 
 
 func _send_command_long(command: int, parameter1: float, parameter7: float = 0.0) -> void:
-    _send_command_long_parameters(command, [parameter1, 0.0, 0.0, 0.0, 0.0, 0.0, parameter7])
+    var parameters: Array = [parameter1, 0.0, 0.0, 0.0, 0.0, 0.0, parameter7]
+    if command == 22:
+        # MAV_CMD_NAV_TAKEOFF's latitude/longitude are optional. Zero is a
+        # finite coordinate at the Gulf of Guinea, while NaN asks PX4 to use
+        # the current global position for a vertical takeoff.
+        parameters[4] = NAN
+        parameters[5] = NAN
+    _send_command_long_parameters(command, parameters)
 
 
 func _send_simulator_heartbeat() -> void:
@@ -652,6 +710,12 @@ func _send_command_long_parameters(command: int, parameters: Array) -> void:
     _last_command_id = command
     _last_command_result = -1
     _pending_command_ids.append(command)
+    _trace_qualification_event("outgoing_command_long", _last_poll_time, {
+        "command": command,
+        "parameters": parameters.duplicate(),
+        "target_system": _target_system,
+        "target_component": _target_component,
+    })
     _send_mavlink(payload, 76, _control_peer)
 
 
@@ -700,6 +764,27 @@ func _refresh_authority(now_seconds: float, armed: bool) -> void:
         if _last_actuator_time >= 0.0 and now_seconds - _last_actuator_time < _config.ActuatorTimeout:
             message = "PX4 heartbeat and actuator output received"
         _set_state("armed", true, message)
+
+
+func _trace_qualification_event(kind: String, now_seconds: float, fields: Dictionary = {}) -> void:
+    if not _qualification_trace_enabled:
+        return
+    var entry: Dictionary = {
+        "kind": kind,
+        "time_seconds": now_seconds,
+        "state": state,
+        "authority_active": _authority_active,
+        "bootstrapped": _start_time >= 0.0 and _last_heartbeat_time >= 0.0,
+        "failsafe": state in ["stale", "failed"],
+        "arm_requested": _arm_requested,
+        "armed_since": _armed_since,
+        "hil_mode_requested": _hil_mode_requested,
+    }
+    for key in fields:
+        entry[key] = fields[key]
+    _qualification_trace.append(entry)
+    if _qualification_trace.size() > QUALIFICATION_TRACE_MAX_ENTRIES:
+        _qualification_trace.pop_front()
 
 
 func _mavlink_crc(data: PackedByteArray, extra: int) -> int:
@@ -764,8 +849,15 @@ func _crc_extra(message_id: int) -> int:
 
 
 func _set_state(next_state: String, authority: bool, message: String) -> void:
+    var state_before := state
     state = next_state
     _message = message
+    if state_before != state:
+        _trace_qualification_event("state_transition", _last_poll_time, {
+            "state_before": state_before,
+            "message": message,
+            "requested_authority": authority,
+        })
     _set_authority(authority)
 
 
@@ -780,7 +872,13 @@ func _update_armed_since(armed: bool, now_seconds: float) -> void:
 func _set_authority(active: bool) -> void:
     if _authority_active == active:
         return
+    var authority_before := _authority_active
     _authority_active = active
+    _trace_qualification_event("authority_transition", _last_poll_time, {
+        "authority_before": authority_before,
+        "active": active,
+        "callback_fired": _authority_callback.is_valid(),
+    })
     if _authority_callback.is_valid():
         _authority_callback.call(active)
 

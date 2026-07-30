@@ -243,6 +243,21 @@ bool test_replay_reconstructs_seeded_atmosphere() {
     return true;
 }
 
+bool test_environment_record_returns_native_event_identity() {
+    aerosim::ReplaySessionRecorder recorder(47, "event-identity-manifest");
+    if (!recorder.add_vehicle("DroneA", "drone-a-hash", "{\"mass_kg\":1.0}") ||
+            !recorder.add_vehicle("DroneB", "drone-b-hash", "{\"mass_kg\":1.0}") ||
+            !recorder.set_physics_tick(23)) {
+        return false;
+    }
+    aerosim::ReplayEventIdentity identity;
+    if (!recorder.record_environment(7000, complete_atmosphere(47), &identity)) {
+        return false;
+    }
+    return identity.timestamp_us == 7000 && identity.physics_tick == 23 &&
+            identity.event_order == 0 && identity.type == aerosim::ReplayEventType::Environment;
+}
+
 bool test_checkpoint_round_trip_preserves_atmosphere() {
     aerosim::ReplaySessionRecorder recorder(42, "settings-manifest-v1");
     aerosim::DualAircraftState state;
@@ -1426,6 +1441,9 @@ int main() {
     }
     if (!test_replay_reconstructs_seeded_atmosphere()) {
         return fail("replay must reconstruct seeded atmosphere inputs instead of static turbulence");
+    }
+    if (!test_environment_record_returns_native_event_identity()) {
+        return fail("environment records must return their authoritative native replay identity");
     }
     if (!test_checkpoint_round_trip_preserves_atmosphere()) {
         return fail("replay checkpoints must retain the captured atmosphere through serialization");

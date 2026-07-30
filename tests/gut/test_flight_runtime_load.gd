@@ -162,7 +162,15 @@ class ResetRecordingNative extends FakeNative:
         replay_event_order.append("environment")
         replay_timestamps.append(timestamp_us)
         environment_record_count += 1
-        return {"ok": true}
+        return {
+            "ok": true,
+            "event_identity": {
+                "timestamp_us": timestamp_us,
+                "physics_tick": 0,
+                "event_order": replay_event_order.size() - 1,
+                "type": "environment",
+            },
+        }
 
 
 class ArmRejectingNative extends FakeNative:

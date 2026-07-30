@@ -360,6 +360,8 @@ static func _validate_px4_transport(vehicle: Dictionary, scope: String, errors: 
     for key in ["ControlIp", "LocalHostIp", "UdpIp"]:
         if vehicle.has(key) and (typeof(vehicle[key]) != TYPE_STRING or String(vehicle[key]).is_empty()):
             errors.append("%s.%s must be a non-empty string" % [scope, key])
+    if vehicle.has("HilActuatorQuadXOrder") and vehicle["HilActuatorQuadXOrder"] != ["rear_right", "front_right", "rear_left", "front_left"]:
+        errors.append("%s.HilActuatorQuadXOrder must be the verified Quad-X order" % scope)
 
 
 static func _validate_named_entries(value: Dictionary, allowed: Dictionary, scope: String, errors: Array[String], is_camera: bool, manifest: Dictionary) -> void:

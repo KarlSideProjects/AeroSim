@@ -216,6 +216,40 @@ func test_real_parser_keeps_armed_hil_actuator_controls() -> void:
     assert_eq(bridge.actuator_outputs(), PackedFloat32Array([0.25, 0.5, 0.75, 1.0]))
 
 
+func test_qualification_trace_records_incoming_mode_armed_and_authority_transition() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    bridge.set_qualification_trace_enabled(true)
+    bridge.start()
+    bridge.poll(0.0)
+    var heartbeat_payload := PackedByteArray([0, 0, 0, 0, 6, 8, 0x80, 3, 3])
+
+    bridge._consume_mavlink(_mavlink_frame(bridge, 0, heartbeat_payload), 0.01, PackedByteArray())
+
+    var trace: Array = bridge.qualification_trace()
+    var heartbeat := _qualification_trace_entry(trace, "heartbeat")
+    var authority_transition := _qualification_trace_entry(trace, "authority_transition")
+    assert_eq(heartbeat.base_mode, 0x80)
+    assert_true(bool(heartbeat.armed))
+    assert_true(bool(heartbeat.bootstrapped))
+    assert_false(bool(heartbeat.failsafe))
+    assert_true(bool(authority_transition.active))
+    assert_true(bool(authority_transition.callback_fired))
+
+
+func test_nav_takeoff_uses_current_global_position_and_absolute_altitude() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    bridge.set_qualification_trace_enabled(true)
+
+    bridge._send_command_long(22, 0.0, 5.0)
+
+    var command := _qualification_trace_entry(bridge.qualification_trace(), "outgoing_command_long")
+    var parameters: Array = command.parameters
+    assert_eq(command.command, 22)
+    assert_true(is_nan(float(parameters[4])))
+    assert_true(is_nan(float(parameters[5])))
+    assert_eq(float(parameters[6]), 5.0)
+
+
 func test_real_parser_exposes_only_crc_valid_px4_observability() -> void:
     var bridge := _new_fake_bridge(1.0)
     bridge.start()
@@ -355,3 +389,11 @@ func _new_fake_bridge(heartbeat_timeout: float, actuator_timeout: float = -1.0) 
 
 func _on_authority_changed(active: bool) -> void:
     authority_events.append(active)
+
+
+func _qualification_trace_entry(trace: Array, kind: String) -> Dictionary:
+    for index in range(trace.size() - 1, -1, -1):
+        var entry: Dictionary = trace[index]
+        if String(entry.get("kind", "")) == kind:
+            return entry
+    return {}

@@ -38,6 +38,24 @@ class Px4SitlLauncherTests(unittest.TestCase):
         source = LAUNCHER.read_text(encoding="utf-8")
         self.assertIn('mkdir -p "$(dirname "$qualification_log")"', source)
 
+    def test_runtime_disables_the_interactive_px4_shell(self):
+        source = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn('"$px4_binary" -d -i 0', source)
+
+    def test_generated_hil_runtime_uses_hil_pwm_outputs_without_changing_preflight(self):
+        source = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("-e 's/pwm_out_sim start -m sim/pwm_out_sim start -m hil/'", source)
+        self.assertIn("rg -q 'pwm_out_sim start -m hil'", source)
+        self.assertIn("commander start -h", source)
+        self.assertNotIn("COM_DISARM_PRFLT", source)
+
+    def test_wind_qualification_runs_the_real_gsp_controller_and_two_vehicle_settings(self):
+        source = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn('config/sitl/px4_iris_wind_qualification.json', source)
+        self.assertIn('res://tests/headless/px4_wind_step_qualification.gd', source)
+        self.assertIn('scripts/px4_wind_step_mission.py', source)
+        self.assertIn('runtime_ready_file="$gsp_ready_file"', source)
+
     def test_wind_step_qualification_does_not_pass_without_authentic_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             environment = os.environ | {

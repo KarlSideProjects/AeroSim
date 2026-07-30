@@ -251,6 +251,7 @@ var _replay_recording_active := false
 var _replay_recording_failed := false
 var _replay_recording_failure := ""
 var _replay_authoritative_physics_tick := 0
+var _last_replay_environment_identity: Dictionary = {}
 var _replay_settings_manifest_hash := ""
 var _replay_upper_config_manifest_hash := ""
 var _replay_lower_config_manifest_hash := ""
@@ -801,6 +802,7 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     _replay_recording_failed = false
     _replay_recording_failure = ""
     _replay_authoritative_physics_tick = 0
+    _last_replay_environment_identity.clear()
     _replay_last_timestamp_us = 0
     _replay_epoch_offset_us = 0
     _replay_last_simulation_timestamp_us = 0
@@ -992,6 +994,7 @@ func _record_replay_scene_object(operation: int, snapshot: Dictionary) -> void:
 
 
 func _record_replay_environment(state: Dictionary) -> bool:
+    _last_replay_environment_identity.clear()
     if _replay_recording_failed or not _replay_recording_active or native == null:
         return false
     var replay_state := state.duplicate(true)
@@ -1006,6 +1009,18 @@ func _record_replay_environment(state: Dictionary) -> bool:
     if not bool(result.get("ok", false)):
         _fail_replay_recording(String(result.get("diagnostic_message", "environment recording failed")))
         return false
+    var identity_value = result.get("event_identity", null)
+    if typeof(identity_value) != TYPE_DICTIONARY:
+        _fail_replay_recording("environment recording did not return a native event identity")
+        return false
+    var identity: Dictionary = identity_value
+    if String(identity.get("type", "")) != "environment" or \
+            typeof(identity.get("timestamp_us", null)) != TYPE_INT or int(identity.get("timestamp_us", -1)) < 0 or \
+            typeof(identity.get("physics_tick", null)) != TYPE_INT or int(identity.get("physics_tick", -1)) != _replay_authoritative_physics_tick or \
+            typeof(identity.get("event_order", null)) != TYPE_INT or int(identity.get("event_order", -1)) < 0:
+        _fail_replay_recording("environment recording returned an invalid native event identity")
+        return false
+    _last_replay_environment_identity = identity.duplicate(true)
     return true
 
 
@@ -3254,9 +3269,12 @@ func _apply_environment_result(result: Dictionary) -> Dictionary:
             _airsim_secondary_native.call("configure_wind", secondary_wind_config)
     if not _apply_environment_visuals(result.state):
         return {"ok": false, "error": last_error_message}
-    if not _reset_commit_in_progress and _replay_recording_active and not _record_replay_environment(_environment_rpc_snapshot(result.state)):
-        return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
-    return {"ok": true, "value": _environment_rpc_snapshot(result.state)}
+    var response := {"ok": true, "value": _environment_rpc_snapshot(result.state)}
+    if not _reset_commit_in_progress and _replay_recording_active:
+        if not _record_replay_environment(_environment_rpc_snapshot(result.state)):
+            return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
+        response["replay_event_identity"] = _last_replay_environment_identity.duplicate(true)
+    return response
 
 
 func _apply_environment_visuals(state: Dictionary) -> bool:
@@ -5523,6 +5541,11 @@ func _apply_gsp_wind_requests(public_physics_tick: int) -> void:
         acknowledgement["applied_tick"] = public_physics_tick
         acknowledgement["ok"] = bool(apply_result.get("ok", false))
         acknowledgement["pending"] = false
+        if acknowledgement.ok and typeof(apply_result.get("replay_event_identity", null)) == TYPE_DICTIONARY:
+            var replay_event_identity: Dictionary = apply_result.get("replay_event_identity", {}).duplicate(true)
+            acknowledgement["public_applied_tick"] = acknowledgement["applied_tick"]
+            acknowledgement["applied_tick"] = int(replay_event_identity.get("physics_tick", -1))
+            acknowledgement["replay_event_identity"] = replay_event_identity
         if not acknowledgement.ok:
             acknowledgement["error"] = String(apply_result.get("error", "wind_apply_failed"))
             # The visual preflight above makes this fallback exceptional; restore every mutated boundary if it occurs.
@@ -7348,6 +7371,9 @@ func _configure_px4_sitl_bridge() -> void:
 
 
 func _on_px4_authority_changed(active: bool) -> void:
+    if native != null and native.has_method("set_external_authority_active") and _native_external_authority_state != active:
+        native.call("set_external_authority_active", active)
+        _native_external_authority_state = active
     if not active and px4_sitl_bridge != null and px4_sitl_bridge.state == "failed":
         paused = true
         if airsim_session != null:

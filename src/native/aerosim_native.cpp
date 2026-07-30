@@ -1138,9 +1138,19 @@ Dictionary AeroSimNative::record_replay_environment(
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
         return replay_status(false, &diagnostic);
     }
+    aerosim::ReplayEventIdentity identity;
     const bool ok = replay_recorder_->record_environment(static_cast<std::uint64_t>(timestamp_us),
-            std::string(environment_json.utf8().get_data()));
-    return replay_status(ok, &replay_recorder_->diagnostic());
+            std::string(environment_json.utf8().get_data()), &identity);
+    Dictionary result = replay_status(ok, &replay_recorder_->diagnostic());
+    if (ok) {
+        Dictionary event_identity;
+        event_identity["timestamp_us"] = static_cast<std::int64_t>(identity.timestamp_us);
+        event_identity["physics_tick"] = static_cast<std::int64_t>(identity.physics_tick);
+        event_identity["event_order"] = static_cast<std::int64_t>(identity.event_order);
+        event_identity["type"] = "environment";
+        result["event_identity"] = event_identity;
+    }
+    return result;
 }
 
 Dictionary AeroSimNative::record_replay_checkpoint(

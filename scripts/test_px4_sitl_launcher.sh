@@ -113,6 +113,7 @@ px4_runtime_log="$log_dir/px4_runtime.log"
 mission_log="$log_dir/mission.log"
 tmp_dir="$(mktemp -d)"
 ready_file="$tmp_dir/ready"
+gsp_ready_file="$tmp_dir/gsp-ready.json"
 stop_file="$tmp_dir/stop"
 godot_log="$tmp_dir/godot.log"
 venv_dir="$tmp_dir/venv"
@@ -167,10 +168,17 @@ fi
 px4_rootfs="$PX4_SOURCE_DIR/build/px4_sitl_default"
 px4_data_path="$px4_rootfs/etc"
 px4_runtime_rcs="$px4_rootfs/etc/init.d-posix/aerosim_rcS"
-sed 's/^commander start$/commander start -h/' "$px4_rootfs/etc/init.d-posix/rcS" >"$px4_runtime_rcs"
+sed \
+    -e 's/^commander start$/commander start -h/' \
+    -e 's/pwm_out_sim start -m sim/pwm_out_sim start -m hil/' \
+    "$px4_rootfs/etc/init.d-posix/rcS" >"$px4_runtime_rcs"
 sed -i '/^commander start -h$/i\param set NAV_RCL_ACT 0\nparam set NAV_DLL_ACT 0\nparam set COM_OBL_ACT 1' "$px4_runtime_rcs"
 if ! rg -q '^commander start -h$' "$px4_runtime_rcs"; then
     echo "PX4 HIL startup script was not generated" >&2
+    exit 1
+fi
+if ! rg -q 'pwm_out_sim start -m hil' "$px4_runtime_rcs"; then
+    echo "PX4 HIL output mode was not generated" >&2
     exit 1
 fi
 px4_instance_dir="$px4_rootfs/instance_0"
@@ -178,7 +186,7 @@ mkdir -p "$px4_instance_dir"
 (
     cd "$px4_instance_dir"
     PX4_SYS_AUTOSTART=10016 PX4_SIM_MODEL=iris \
-        "$px4_binary" -i 0 "$px4_data_path" -s "$px4_runtime_rcs" -t "$PX4_SOURCE_DIR/test_data"
+        "$px4_binary" -d -i 0 "$px4_data_path" -s "$px4_runtime_rcs" -t "$PX4_SOURCE_DIR/test_data"
 ) >"$px4_runtime_log" 2>&1 &
 PX4_RUNTIME_PID=$!
 px4_ready=false
@@ -206,13 +214,28 @@ if ! kill -0 "$PX4_RUNTIME_PID" 2>/dev/null; then
     exit 1
 fi
 
-"$GODOT_BIN" --headless --path "$ROOT_DIR" \
-    -- --airsim-settings-file "$ROOT_DIR/config/sitl/px4_iris.json" \
-    --airsim-ready-file "$ready_file" --airsim-stop-file "$stop_file" \
+settings_file="$ROOT_DIR/config/sitl/px4_iris.json"
+godot_script=()
+airsim_ready_args=(--airsim-ready-file "$ready_file")
+qualification_trace_args=()
+runtime_ready_file="$ready_file"
+if [ "$wind_step_qualification" = true ]; then
+    settings_file="$ROOT_DIR/config/sitl/px4_iris_wind_qualification.json"
+    godot_script=(--script res://tests/headless/px4_wind_step_qualification.gd)
+    airsim_ready_args=()
+    runtime_ready_file="$gsp_ready_file"
+    px4_trace_file="$log_dir/wind_step_bridge_trace.json"
+    qualification_trace_args=(--px4-trace-file "$px4_trace_file")
+fi
+"$GODOT_BIN" --headless --path "$ROOT_DIR" "${godot_script[@]}" \
+    -- --airsim-settings-file "$settings_file" \
+    "${airsim_ready_args[@]}" --airsim-stop-file "$stop_file" \
+    --gsp-ready-file "$gsp_ready_file" \
+    "${qualification_trace_args[@]}" \
     >"$godot_log" 2>&1 &
 GODOT_PID=$!
 for _attempt in $(seq 1 90); do
-    if [ -f "$ready_file" ]; then
+    if [ -f "$runtime_ready_file" ]; then
         break
     fi
     if ! kill -0 "$GODOT_PID" 2>/dev/null; then
@@ -222,7 +245,7 @@ for _attempt in $(seq 1 90); do
     fi
     sleep 1
 done
-if [ ! -f "$ready_file" ]; then
+if [ ! -f "$runtime_ready_file" ]; then
     cat "$godot_log" >&2
     echo "PX4 RPC bridge did not become ready" >&2
     exit 1
@@ -231,17 +254,19 @@ fi
 "$venv_dir/bin/python" -m pip install --disable-pip-version-check --quiet \
     setuptools wheel numpy opencv-contrib-python msgpack-rpc-python backports.ssl_match_hostname
 "$venv_dir/bin/python" -m pip install --disable-pip-version-check --quiet --no-build-isolation airsim==1.8.1
-if ! "$venv_dir/bin/python" -u "$ROOT_DIR/scripts/px4_sitl_mission.py" --port 41451 >"$mission_log" 2>&1; then
+if [ "$wind_step_qualification" = true ]; then
+    evidence_path="$log_dir/wind_step_evidence.json"
+    mission_command=("$venv_dir/bin/python" -u "$ROOT_DIR/scripts/px4_wind_step_mission.py" --port 41451 --gsp-ready-file "$gsp_ready_file" --px4-trace-file "$px4_trace_file" --evidence-output "$evidence_path")
+else
+    mission_command=("$venv_dir/bin/python" -u "$ROOT_DIR/scripts/px4_sitl_mission.py" --port 41451)
+fi
+if ! "${mission_command[@]}" >"$mission_log" 2>&1; then
     cat "$mission_log" >&2
     exit 1
 fi
 if [ "$wind_step_qualification" = true ]; then
     qualification_log="$log_dir/wind_step_qualification.json"
-    evidence_path="${AEROSIM_PX4_WIND_STEP_EVIDENCE:-}"
-    qualification_args=(--output "$qualification_log")
-    if [ -n "$evidence_path" ]; then
-        qualification_args+=(--evidence "$evidence_path")
-    fi
+    qualification_args=(--output "$qualification_log" --evidence "$evidence_path")
     if ! python3 "$ROOT_DIR/scripts/px4_wind_step_qualification.py" "${qualification_args[@]}"; then
         echo "PX4 wind-step qualification unavailable or failed; no authentic result is claimed" >&2
         exit 1

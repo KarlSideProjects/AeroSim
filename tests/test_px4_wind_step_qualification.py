@@ -1,6 +1,7 @@
 import unittest
 
 from scripts.px4_wind_step_qualification import PX4_REVISION, evaluate
+from scripts.px4_wind_step_mission import wait_for_async_command
 
 
 def evidence(**overrides):
@@ -20,6 +21,16 @@ def evidence(**overrides):
 
 
 class Px4WindStepQualificationTests(unittest.TestCase):
+    def test_async_command_timeout_names_the_stage_without_waiting_forever(self):
+        class NeverCompletes:
+            def join(self):
+                import threading
+
+                threading.Event().wait()
+
+        with self.assertRaisesRegex(TimeoutError, "takeoff timed out"):
+            wait_for_async_command(lambda: NeverCompletes(), "takeoff", timeout_seconds=0.01)
+
     def test_accepts_complete_real_px4_evidence_within_frozen_limits(self):
         result = evaluate(evidence())
         self.assertEqual(result["status"], "qualified")
