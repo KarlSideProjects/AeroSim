@@ -6343,6 +6343,10 @@ func gsp_telemetry_snapshot() -> Dictionary:
     snapshot["vel_ned"] = velocity_payload
     snapshot["att_euler_deg"] = AirSimCoordinateContract.ned_orientation_to_zyx_euler_degrees(attitude_ned)
     snapshot["gyro_body"] = rates_payload
+    if px4_sitl_bridge != null:
+        # Local kinematics remain AeroSim state. This separate, source-labelled
+        # block contains only CRC-validated MAVLink messages emitted by PX4.
+        snapshot["px4_mavlink"] = px4_sitl_bridge.px4_observability(Time.get_ticks_usec() / 1_000_000.0)
     var rpm: Array[float] = []
     for motor_value in snapshot.get("motors", []):
         var motor: Dictionary = motor_value

@@ -5,8 +5,13 @@ const MAVLINK_STX := 0xFE
 const MAVLINK_STX_V2 := 0xFD
 const MAVLINK_HEARTBEAT := 0
 const MAVLINK_COMMAND_ACK := 77
+const MAVLINK_ATTITUDE := 30
+const MAVLINK_LOCAL_POSITION_NED := 32
+const MAVLINK_ATTITUDE_TARGET := 83
+const MAVLINK_POSITION_TARGET_LOCAL_NED := 85
 const MAV_CMD_DO_SET_MODE := 176
 const MAVLINK_HIL_ACTUATOR_CONTROLS := 93
+const MAVLINK_WIND_COV := 231
 const MAV_MODE_FLAG_CUSTOM_MODE_ENABLED := 1
 const PX4_CUSTOM_MAIN_MODE_OFFBOARD := 6
 # Match AirSim's default simulator node IDs so PX4 does not treat control
@@ -56,6 +61,7 @@ var _message := ""
 var _pending_heartbeat := -1
 var _pending_actuators: Array = []
 var _actuators := PackedFloat32Array()
+var _px4_messages: Dictionary = {}
 var _tcp: StreamPeerTCP
 var _tcp_server: TCPServer
 var _control_peer: PacketPeerUDP
@@ -115,6 +121,7 @@ func start() -> Dictionary:
     _takeoff_altitude = 0.0
     _last_outbound_heartbeat_time = -1.0
     _actuators = PackedFloat32Array()
+    _px4_messages.clear()
     _sequence = 0
     _target_system = 1
     _target_component = 1
@@ -359,7 +366,24 @@ func lockstep_active() -> bool:
 
 
 func actuator_outputs() -> PackedFloat32Array:
-    return _actuators
+    # High Fidelity has no native fallback: stale or unarmed PX4 output must
+    # not advance the native controller with a previous command.
+    return _actuators if is_authority_active() else PackedFloat32Array()
+
+
+func px4_observability(now_seconds: float) -> Dictionary:
+    var observed: Dictionary = {}
+    for name in _px4_messages:
+        var entry: Dictionary = _px4_messages[name]
+        var age_seconds := maxf(0.0, now_seconds - float(entry.received_at_seconds))
+        var freshness_timeout := float(_config.ActuatorTimeout) if name == "hil_actuator_controls" else float(_config.HeartbeatTimeout)
+        observed[name] = {
+            "source": "px4_mavlink",
+            "age_seconds": age_seconds,
+            "stale": age_seconds >= freshness_timeout,
+            "sample": entry.sample.duplicate(true),
+        }
+    return observed
 
 
 func diagnostics() -> Dictionary:
@@ -491,8 +515,55 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
             for index in 4:
                 _actuators.append(clampf(frame.decode_float(payload_offset + 16 + index * 4), 0.0, 1.0) if armed else 0.0)
             _last_actuator_time = now_seconds
+            _record_px4_message("hil_actuator_controls", {
+                "command_normalized": {
+                    "m1": float(_actuators[0]), "m2": float(_actuators[1]),
+                    "m3": float(_actuators[2]), "m4": float(_actuators[3]),
+                },
+            }, now_seconds)
             if _armed_since >= 0.0:
                 _refresh_authority(now_seconds, true)
+        elif message_id == MAVLINK_ATTITUDE:
+            if payload_size < 28:
+                continue
+            _record_px4_message("attitude", {
+                "roll_rad": frame.decode_float(payload_offset + 4),
+                "pitch_rad": frame.decode_float(payload_offset + 8),
+                "yaw_rad": frame.decode_float(payload_offset + 12),
+                "body_rates_frd_rad_s": Vector3(frame.decode_float(payload_offset + 16), frame.decode_float(payload_offset + 20), frame.decode_float(payload_offset + 24)),
+            }, now_seconds)
+        elif message_id == MAVLINK_LOCAL_POSITION_NED:
+            if payload_size < 28:
+                continue
+            _record_px4_message("local_position_ned", {
+                "position_ned": Vector3(frame.decode_float(payload_offset + 4), frame.decode_float(payload_offset + 8), frame.decode_float(payload_offset + 12)),
+                "velocity_ned_mps": Vector3(frame.decode_float(payload_offset + 16), frame.decode_float(payload_offset + 20), frame.decode_float(payload_offset + 24)),
+            }, now_seconds)
+        elif message_id == MAVLINK_ATTITUDE_TARGET:
+            if payload_size < 37:
+                continue
+            _record_px4_message("attitude_target", {
+                "attitude_ned": Quaternion(frame.decode_float(payload_offset + 5), frame.decode_float(payload_offset + 6), frame.decode_float(payload_offset + 7), frame.decode_float(payload_offset + 4)),
+                "body_rates_frd_rad_s": Vector3(frame.decode_float(payload_offset + 20), frame.decode_float(payload_offset + 24), frame.decode_float(payload_offset + 28)),
+                "thrust": frame.decode_float(payload_offset + 32),
+            }, now_seconds)
+        elif message_id == MAVLINK_POSITION_TARGET_LOCAL_NED:
+            if payload_size < 51:
+                continue
+            _record_px4_message("position_target_local_ned", {
+                "position_ned": Vector3(frame.decode_float(payload_offset + 4), frame.decode_float(payload_offset + 8), frame.decode_float(payload_offset + 12)),
+                "velocity_ned_mps": Vector3(frame.decode_float(payload_offset + 16), frame.decode_float(payload_offset + 20), frame.decode_float(payload_offset + 24)),
+                "yaw_rad": frame.decode_float(payload_offset + 40),
+                "yaw_rate_rad_s": frame.decode_float(payload_offset + 44),
+            }, now_seconds)
+        elif message_id == MAVLINK_WIND_COV:
+            if payload_size < 40:
+                continue
+            _record_px4_message("wind_cov", {
+                "wind_ned_mps": Vector3(frame.decode_float(payload_offset + 8), frame.decode_float(payload_offset + 12), frame.decode_float(payload_offset + 16)),
+                "horizontal_variance": frame.decode_float(payload_offset + 20),
+                "vertical_variance": frame.decode_float(payload_offset + 24),
+            }, now_seconds)
         elif message_id == MAVLINK_COMMAND_ACK:
             if payload_size < 3:
                 continue
@@ -520,6 +591,10 @@ func _find_mavlink_start(rx_buffer: PackedByteArray) -> int:
     if v2_start < 0:
         return v1_start
     return mini(v1_start, v2_start)
+
+
+func _record_px4_message(name: String, sample: Dictionary, now_seconds: float) -> void:
+    _px4_messages[name] = {"received_at_seconds": now_seconds, "sample": sample}
 
 
 func _message_id(frame: PackedByteArray) -> int:
@@ -652,12 +727,17 @@ func _crc_extra(message_id: int) -> int:
         0: return 50
         2: return 137
         24: return 24
+        30: return 39
+        32: return 185
         76: return 152
+        83: return 22
         84: return 143
+        85: return 140
         93: return 47
         105: return 93
         107: return 108
         113: return 124
+        231: return 105
         77: return 143
         _: return -1
 
