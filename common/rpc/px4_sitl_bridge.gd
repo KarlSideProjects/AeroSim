@@ -687,6 +687,16 @@ func _consume_fake(now_seconds: float) -> void:
             _refresh_authority(now_seconds, true)
 
 
+func _poll_tcp_available_bytes_after_poll() -> int:
+    if not _tcp_connected():
+        return -1
+    _tcp.poll()
+    # A remote PX4 shutdown can change StreamPeerTCP's status during poll().
+    # Do not ask an already-closed stream for bytes: Godot reports that as an
+    # engine error even though the disconnect itself is expected.
+    return _tcp.get_available_bytes() if _tcp_connected() else -1
+
+
 func _poll_real(now_seconds: float) -> void:
     if _tcp_server == null or _control_peer == null:
         return
@@ -694,8 +704,7 @@ func _poll_real(now_seconds: float) -> void:
         _tcp = _tcp_server.take_connection()
         _message = "PX4 TCP simulator channel connected"
     if _tcp_connected():
-        _tcp.poll()
-        var available_bytes := _tcp.get_available_bytes()
+        var available_bytes := _poll_tcp_available_bytes_after_poll()
         if available_bytes < 0:
             _tcp = null
             _tcp_rx_buffer.clear()

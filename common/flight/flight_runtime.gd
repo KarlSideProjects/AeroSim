@@ -7468,7 +7468,7 @@ func _airsim_px4_command(method: String, args: Array) -> Dictionary:
     var result: Dictionary
     match method:
         "takeoff":
-            result = px4_sitl_bridge.takeoff(Vector3(0.0, 0.0, -5.0))
+            result = px4_sitl_bridge.takeoff(Vector3(0.0, 0.0, -AIRSIM_TAKEOFF_ALTITUDE_M))
         "land":
             result = px4_sitl_bridge.land()
         "hover":

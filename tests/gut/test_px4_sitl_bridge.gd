@@ -34,6 +34,39 @@ func test_fake_transport_reaches_connected_armed_and_fails_after_stale() -> void
     assert_false(bridge.diagnostics().message.is_empty())
 
 
+func test_real_tcp_remote_close_after_poll_never_reads_closed_stream() -> void:
+    var listener := TCPServer.new()
+    assert_eq(listener.listen(0, "127.0.0.1"), OK)
+    if listener.get_local_port() <= 0:
+        return
+    var client := StreamPeerTCP.new()
+    assert_eq(client.connect_to_host("127.0.0.1", listener.get_local_port()), OK)
+    var server_peer: StreamPeerTCP
+    for _attempt in 20:
+        client.poll()
+        if listener.is_connection_available():
+            server_peer = listener.take_connection()
+            break
+        await get_tree().process_frame
+    assert_not_null(server_peer)
+    if server_peer == null:
+        listener.stop()
+        return
+
+    var bridge := _new_fake_bridge(1.0)
+    bridge._tcp = server_peer
+    client.disconnect_from_host()
+    var available_bytes := 0
+    for _attempt in 20:
+        available_bytes = bridge._poll_tcp_available_bytes_after_poll()
+        if available_bytes < 0:
+            break
+        await get_tree().process_frame
+    assert_eq(available_bytes, -1)
+    assert_false(bridge._tcp_connected())
+    listener.stop()
+
+
 func test_hil_sensor_measurements_require_actual_mag_and_baro_samples() -> void:
     var bridge := _new_fake_bridge(1.0)
     var snapshot := {

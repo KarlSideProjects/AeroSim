@@ -1359,6 +1359,20 @@ func test_px4_takeoff_holds_the_initial_upward_spawn_floor_contact_until_hardwar
     assert_eq(runtime._px4_launch_phase, "support_held")
 
 
+func test_px4_takeoff_reuses_the_generic_airsim_takeoff_altitude_for_command_and_completion() -> void:
+    var fixture := _px4_collision_boundary_runtime()
+    var runtime: FlightRuntime = fixture.runtime
+    var bridge: Px4SitlBridge = runtime.px4_sitl_bridge
+    runtime._airsim_vehicle_name = "Drone1"
+    bridge._config.Transport = "Real"
+
+    assert_true(runtime._airsim_px4_command("takeoff", []).ok)
+    assert_almost_eq(bridge._takeoff_altitude, FlightRuntime.AIRSIM_TAKEOFF_ALTITUDE_M, 0.000001)
+    runtime.drone_body.global_position = runtime._spawn_position() + Vector3.UP * FlightRuntime.AIRSIM_TAKEOFF_ALTITUDE_M
+    runtime.drone_body.linear_velocity = Vector3.ZERO
+    assert_true(runtime._airsim_task_complete("Drone1"))
+
+
 func test_px4_jolt_contact_applies_the_native_solved_velocity_before_the_next_contact_step() -> void:
     var fixture := _px4_collision_boundary_runtime()
     var runtime: FlightRuntime = fixture.runtime
