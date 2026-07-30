@@ -1053,6 +1053,19 @@ func test_quick_fly_defaults_the_player_view_to_third_person_before_controller_r
     assert_true(runtime.third_person_view)
 
 
+func test_demo_flight_preserves_the_wind_selected_in_map_setup() -> void:
+    var runtime := _quick_fly_runtime()
+    _attach_runtime_ui(runtime)
+
+    (runtime.main_menu_layer.get_node("Entries/Map") as Button).pressed.emit()
+    (runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/WindPresets/Severe") as Button).pressed.emit()
+    (runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/DemoFlight") as Button).pressed.emit()
+
+    var wind: Vector3 = runtime.environment_state.snapshot().steady_wind
+    assert_eq(runtime.selected_wind_preset, "severe")
+    assert_almost_eq(wind.length(), 8.0, 0.000001)
+
+
 func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     var runtime := _quick_fly_runtime()
     _attach_runtime_ui(runtime)

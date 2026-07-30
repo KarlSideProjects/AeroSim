@@ -2342,7 +2342,8 @@ func start_demo_flight() -> void:
     _demo_finish_hud_frame_seen = false
     _demo_flight_controls.clear()
     _demo_flight_route_pending = false
-    if not apply_flight_setup(default_flight_setup()):
+    var setup := flight_setup if not flight_setup.is_empty() else default_flight_setup()
+    if not apply_flight_setup(setup):
         screen = "error"
         _refresh_flight_hud()
         return
