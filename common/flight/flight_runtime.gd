@@ -1545,7 +1545,6 @@ func _physics_process(delta: float) -> void:
             drone_body.sleeping = false
         return
     _sync_native_external_authority()
-    _apply_gsp_wind_requests(_gsp_public_physics_tick())
     _apply_quick_adjust_inputs(delta)
     _apply_gsp_tuning_requests(_gsp_public_physics_tick())
     if paused:
@@ -1582,6 +1581,8 @@ func _physics_process(delta: float) -> void:
             return
     if not defer_airsim_advance and px4_sitl_bridge != null and not px4_lockstep_active:
         px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), airsim_session.simulation_time_seconds if airsim_session != null else 0.0)
+    if airsim_session == null or (not defer_airsim_advance and not px4_lockstep_active and session_advanced):
+        _apply_gsp_wind_requests(_gsp_public_physics_tick())
     if native == null or paused or not takeoff_requested:
         if px4_lockstep_active and _px4_lockstep_sensor_pending:
             if airsim_session != null:
@@ -3249,6 +3250,10 @@ func _apply_environment_result(result: Dictionary) -> Dictionary:
 
 
 func _apply_environment_visuals(state: Dictionary) -> bool:
+    var ready := _environment_visuals_ready()
+    if not bool(ready.get("ok", false)):
+        last_error_message = String(ready.get("error", "environment visuals unavailable"))
+        return false
     if loaded_map == null:
         return true
     var world_environment := loaded_map.get_node_or_null("AeroSimEnvironment") as WorldEnvironment
@@ -3280,6 +3285,17 @@ func _apply_environment_visuals(state: Dictionary) -> bool:
         if sun != null and sun_direction.length_squared() > 0.0:
             sun.rotation = Vector3(-asin(clampf(sun_direction.y, -1.0, 1.0)), atan2(sun_direction.x, sun_direction.z), 0.0)
     return true
+
+
+func _environment_visuals_ready() -> Dictionary:
+    if loaded_map == null or loaded_map_id != "terrain3d_range":
+        return {"ok": true}
+    var world_environment := loaded_map.get_node_or_null("AeroSimEnvironment") as WorldEnvironment
+    if world_environment == null:
+        return {"ok": false, "error": "Terrain Range is missing required AeroSimEnvironment"}
+    if world_environment.environment == null:
+        return {"ok": false, "error": "Terrain Range required AeroSimEnvironment has no Environment resource"}
+    return {"ok": true}
 
 
 func _normalize_environment_payload(raw: Dictionary) -> Dictionary:
@@ -5478,7 +5494,17 @@ func _apply_gsp_wind_requests(public_physics_tick: int) -> void:
     var pending := _gsp_wind_pending
     _gsp_wind_pending = []
     for request in pending:
+        var visual_ready := _environment_visuals_ready()
+        if not bool(visual_ready.get("ok", false)):
+            _gsp_wind_completed.append(request.merged({
+                "ok": false,
+                "pending": false,
+                "error": String(visual_ready.get("error", "environment visuals unavailable")),
+            }, true))
+            continue
         var state_before := environment_state.snapshot() if environment_state != null else {}
+        var primary_wind_before: Dictionary = native.call("wind_configuration") if native != null and native.has_method("wind_configuration") else {}
+        var secondary_wind_before: Dictionary = _airsim_secondary_native.call("wind_configuration") if _airsim_secondary_native != null and _airsim_secondary_native.has_method("wind_configuration") else {}
         var apply_result := _apply_environment_result(environment_state.apply({
             "wind_preset": String(state_before.get("wind_preset", "calm")),
             "steady_wind": request.ned_mps,
@@ -5489,9 +5515,13 @@ func _apply_gsp_wind_requests(public_physics_tick: int) -> void:
         acknowledgement["pending"] = false
         if not acknowledgement.ok:
             acknowledgement["error"] = String(apply_result.get("error", "wind_apply_failed"))
-            # EnvironmentState only mutates after validation; preserve the prior state if a later visual apply fails.
+            # The visual preflight above makes this fallback exceptional; restore every mutated boundary if it occurs.
             if environment_state != null and not state_before.is_empty():
                 environment_state.apply(state_before)
+            if native != null and not primary_wind_before.is_empty():
+                native.call("configure_wind", primary_wind_before)
+            if _airsim_secondary_native != null and not secondary_wind_before.is_empty():
+                _airsim_secondary_native.call("configure_wind", secondary_wind_before)
         _gsp_wind_completed.append(acknowledgement)
 
 

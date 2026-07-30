@@ -6,12 +6,26 @@ const GspServer = preload("res://common/gsp/gsp_server.gd")
 
 var failures: Array[String] = []
 
+class FakeNative extends Node:
+    var config := {
+        "preset": "calm", "steady_wind": Vector3.ZERO,
+        "turbulence_sigma": Vector3(1.0, 2.0, 3.0), "shear_enabled": true, "seed": 17,
+    }
+
+    func wind_configuration() -> Dictionary:
+        return config.duplicate(true)
+
+    func configure_wind(next: Dictionary) -> void:
+        config = next.duplicate(true)
+
 func _init() -> void:
     var valid := GspServer.validate_set_wind_message(JSON.stringify({"v": 2, "t": "set_wind", "seq": 1, "d": {"wind_from_deg": 0.0, "speed_mps": 5.0}}), 0)
     _expect(bool(valid.get("ok", false)), "bounded meteorological wind request is accepted")
     _expect(not bool(GspServer.validate_set_wind_message(JSON.stringify({"v": 2, "t": "set_wind", "seq": 1, "d": {"wind_from_deg": 360.0, "speed_mps": 5.0}}), 0).get("ok", false)), "out-of-domain bearing is rejected before mutation")
+    _expect(not bool(GspServer.validate_set_wind_message(JSON.stringify({"v": 2, "t": "set_wind", "seq": 1, "d": {"wind_from_deg": 0.0, "speed_mps": 5.0}}), 1).get("ok", false)), "stale wind sequence is rejected before provider mutation")
     var runtime := FlightRuntime.new()
     runtime.environment_state = EnvironmentState.new()
+    runtime.native = FakeNative.new()
     runtime._active_hardware_configuration = {"environment": {"wind_speed_mps": {"max": 10.0}}}
     var before: Dictionary = runtime.environment_state.snapshot()
     var pending: Dictionary = runtime.gsp_wind_request(7, 9, 11, 0.0, 5.0)
@@ -21,6 +35,7 @@ func _init() -> void:
     var applied: Dictionary = results[0] if not results.is_empty() else {}
     var wind: Vector3 = runtime.environment_state.snapshot().steady_wind
     _expect(bool(applied.get("ok", false)) and int(applied.get("request_seq", -1)) == 11 and int(applied.get("applied_tick", -1)) == 42 and wind.is_equal_approx(Vector3(-5.0, 0.0, 0.0)), "north-from resolves south NED and returns correlated applied tick")
+    _expect(runtime.native.config.turbulence_sigma == Vector3(1.0, 2.0, 3.0) and bool(runtime.native.config.shear_enabled) and int(runtime.native.config.seed) == 17, "steady-wind apply retains deterministic advanced Dryden/shear configuration")
     var calm := runtime.gsp_wind_request(7, 9, 12, 90.0, 0.0)
     runtime._apply_gsp_wind_requests(43)
     _expect(bool(calm.get("pending", false)) and runtime.environment_state.snapshot().steady_wind == Vector3.ZERO, "zero speed remains true calm")
