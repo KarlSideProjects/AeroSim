@@ -24,7 +24,8 @@ sources:
   - .github/workflows/ci.yml
   - tests/gut/test_flight_runtime_load.gd
   - tests/headless/gsp_launch_contract.gd
-last_verified: 2026-07-29
+  - docs/product_capabilities.md
+last_verified: 2026-07-31
 ---
 
 # AeroSim 運行時架構
@@ -78,6 +79,23 @@ bundle，但不會自動開啟瀏覽器。Wayland 不允許應用程式強迫另
 仍然存在，按下時才即時嘗試啟動。狀態標籤只顯示就緒、不可用、已送出開啟請求或已複製網址，
 帶 session token 的 URL 不會出現在 HUD。這些控制項屬於 paused／post-flight 的 workstation
 入口，不改變飛行中的控制路徑。
+
+### GSP `即時狀態` 與風場授權
+
+CAP-024 之後，GSP 的直式 `即時狀態` 表面在 Lab Mode 是 Available：它把 previewed／applied 風場、
+Vehicle Instance 反應、PX4 estimate 與 target、M1–M4 normalized post-allocation command 與
+模擬 measured motor feedback 放在同一條可檢視的因果鏈上。每個可見數值都標示 Commanded、
+Ground truth、Estimated 或 Measured 來源類別與新鮮度；過時或不可用的樣本保留最後值並明示
+unavailable，不得以零值或 AeroSim 本地估測冒充 PX4。
+
+風場只能由 authenticated 的明確 apply 改變環境，不會由預覽動作生效。`FlightRuntime` 把待處理的
+GSP 風場請求排到下一個 authoritative physics tick 才套用，並要求 native replay 回傳帶
+`physics_tick` 與 `event_order` 的 environment event identity；對不上時 replay recording 直接
+fail loud，而不是靜默記錄。PX4 High Fidelity 只在輸出新鮮時保有獨占 authority，過時即 fail
+closed，不隱式回退到內建 controller。
+
+CAP-006 尚未通過，因此上述表面的視覺與可用性證據仍是 provisional Codex AI visual evidence，
+不是人工核准的 UI 審核。
 
 ### 機體軸與呈現層對齊
 

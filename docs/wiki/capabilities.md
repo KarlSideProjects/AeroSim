@@ -7,7 +7,7 @@ sources:
   - docs/product_capabilities.md
   - PRD_AeroSim.md
   - config/airsim_compatibility_manifest.json
-last_verified: 2026-07-26
+last_verified: 2026-07-31
 ---
 
 # AeroSim 能力與狀態
@@ -28,6 +28,7 @@ last_verified: 2026-07-26
 | 多機 | CAP-013 two named vehicles | Confirmed target | Lab Mode 承諾兩台互相隔離的具名多旋翼，不承諾任意 fleet scale。 |
 | 感測器 | CAP-020 Baseline Sensor Suite | Foundation | 原生 IMU 與部分非相機 sensor retrieval 有證據；完整 RGB、depth、segmentation 產品表面仍未完成。 |
 | Dashboard | CAP-021 Operations Dashboard | Foundation | 目前是 basic debug panel，不是完整 Player/Lab dashboard。 |
+| 飛行測試工作站 | CAP-024 GSP flight-test console | Available（Lab Mode） | 直式 `即時狀態` 以來源類別與新鮮度呈現風場、PX4／MAVLink 狀態與 M1–M4 指令；不取代 CAP-021，也不是遠端 Web 產品。CAP-006 未通過前只算 provisional Codex 視覺證據。 |
 | 世界 | CAP-030 Industrial Test Range | Confirmed target | 場景與 spawn、route landmark、collision geometry 已存在；正式視覺驗收未完成。 |
 | 視覺 | CAP-031 asset pipeline、CAP-032 AI visual verification | Confirmed target | 目標是可重建場景、固定視圖與結構化 AI visual evidence。 |
 | 重播與資料 | CAP-040 Flight Replay、CAP-041 Dataset Recording | Foundation / Confirmed target | 原生 replay 可重現部分 Angle Mode trajectory；完整 product session 與 dataset contract 尚未完整交付。 |
