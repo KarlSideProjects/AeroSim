@@ -65,6 +65,7 @@ var _offboard_requested := false
 var _offboard_target_active := false
 var _offboard_prewarm_since := -1.0
 var _last_position_setpoint_time := -1.0
+var _offboard_publisher_started := false
 var _takeoff_pending := false
 var _takeoff_altitude := 0.0
 var _estimator_ready_report_count := 0
@@ -149,6 +150,7 @@ func start() -> Dictionary:
     _offboard_target_active = false
     _offboard_prewarm_since = -1.0
     _last_position_setpoint_time = -1.0
+    _offboard_publisher_started = false
     _takeoff_pending = false
     _takeoff_altitude = 0.0
     _estimator_ready_report_count = 0
@@ -463,6 +465,8 @@ func setpoint_ned_frd(position_ned: Vector3, body_rates_frd: Vector3) -> Diction
         _offboard_target_active = true
         _offboard_prewarm_since = -1.0
         _last_position_setpoint_time = -1.0
+        _offboard_publisher_started = false
+        _trace_qualification_event("publisher_target_accepted", _last_poll_time, {"position_ned": position_ned})
     return {"ok": true}
 
 
@@ -470,19 +474,26 @@ func _advance_offboard_setpoint_publisher(now_seconds: float) -> void:
     if _config.get("Transport") == "Fake" or not _offboard_target_active:
         return
     if not is_authority_active() or not estimator_ready(now_seconds):
-        _clear_offboard_target()
+        _clear_offboard_target("guard_authority_or_estimator")
         return
     if _offboard_prewarm_since < 0.0:
         _offboard_prewarm_since = now_seconds
+        _offboard_publisher_started = true
+        _trace_qualification_event("publisher_started", now_seconds, {})
     if _last_position_setpoint_time < 0.0 or now_seconds - _last_position_setpoint_time >= OFFBOARD_SETPOINT_PERIOD_SECONDS:
         _send_position_setpoint(last_setpoint.position_ned)
         _last_position_setpoint_time = now_seconds
+        if _offboard_publisher_started:
+            _offboard_publisher_started = false
+            _trace_qualification_event("publisher_first_send", now_seconds, {})
     if not _offboard_requested and now_seconds - _offboard_prewarm_since >= OFFBOARD_PREWARM_SECONDS:
         _send_command_long_parameters(MAV_CMD_DO_SET_MODE, [MAV_MODE_FLAG_CUSTOM_MODE_ENABLED, PX4_CUSTOM_MAIN_MODE_OFFBOARD])
         _offboard_requested = true
 
 
-func _clear_offboard_target() -> void:
+func _clear_offboard_target(reason: String = "explicit") -> void:
+    if _offboard_target_active:
+        _trace_qualification_event("publisher_cleared", _last_poll_time, {"reason": reason, "authority_active": is_authority_active(), "estimator_ready": estimator_ready(_last_poll_time)})
     _offboard_target_active = false
     _offboard_prewarm_since = -1.0
     _last_position_setpoint_time = -1.0

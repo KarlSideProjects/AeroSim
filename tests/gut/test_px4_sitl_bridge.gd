@@ -135,8 +135,11 @@ func test_offboard_publisher_prewarm_cadence_and_stale_stop_fail_closed() -> voi
     bridge._estimator_ready_report_count = 2
     bridge._last_estimator_ready_report_time = 0.0
     assert_true(bridge.setpoint_ned_frd(Vector3(1.0, 2.0, -3.0), Vector3.ZERO).ok)
+    assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_target_accepted").is_empty())
 
     bridge.poll(0.0)
+    assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_started").is_empty())
+    assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_first_send").is_empty())
     bridge.poll(0.5)
     assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size(), 2)
     assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_command_long").size(), 0)
@@ -144,6 +147,7 @@ func test_offboard_publisher_prewarm_cadence_and_stale_stop_fail_closed() -> voi
     assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_command_long").back().command, 176)
 
     bridge._set_state("stale", false, "test")
+    assert_eq(_qualification_trace_entry(bridge.qualification_trace(), "publisher_cleared").reason, "explicit")
     bridge.poll(1.2)
     assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size(), 3)
 
