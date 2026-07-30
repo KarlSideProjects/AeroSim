@@ -47,6 +47,18 @@ if [ "$mode" = "check" ]; then
             exit 1
         fi
     fi
+    if [ "$wind_step_qualification" = true ]; then
+        qualification_log="$ROOT_DIR/build/px4_sitl/wind_step_qualification.json"
+        evidence_path="${AEROSIM_PX4_WIND_STEP_EVIDENCE:-}"
+        qualification_args=(--output "$qualification_log")
+        if [ -n "$evidence_path" ]; then
+            qualification_args+=(--evidence "$evidence_path")
+        fi
+        if ! python3 "$ROOT_DIR/scripts/px4_wind_step_qualification.py" "${qualification_args[@]}"; then
+            echo "PX4 wind-step qualification unavailable or failed; no authentic result is claimed" >&2
+            exit 1
+        fi
+    fi
     printf '{"ok":true,"mode":"check","repository":"%s","revision":"%s","source_dir":"%s"}\n' "$PX4_REPOSITORY" "$PX4_REVISION" "$PX4_SOURCE_DIR"
     if [ "$fake_smoke" = true ]; then
         godot_bin="${GODOT_BIN:-godot}"

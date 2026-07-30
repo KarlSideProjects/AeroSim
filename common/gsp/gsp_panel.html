@@ -599,7 +599,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     text("live-mode", String(sample.mode || "—") + "/" + (sample.armed ? "ARMED" : "DISARMED")); text("live-fresh", fresh ? translate("fresh") : translate("stale") + (sample.age_seconds == null ? "" : " " + Number(sample.age_seconds).toFixed(2) + " s"));
     text("live-vehicle", sample.vehicle_instance || "—"); text("live-tick", envelope.tick == null ? "—" : envelope.tick); text("live-failure", sample.failure_state || sample.last_error || "—");
     var px4Command = px4Commands(sample);
-    text("source-commanded", translate("source_commanded") + " " + (px4Command.command ? translate("px4_mavlink") + " " + (px4Command.stale ? translate("stale") : translate("fresh")) : translate("unavailable")));
+    text("source-commanded", translate("source_commanded") + " " + (px4Command.command ? translate("px4_mavlink") + " " + (px4Command.stale ? translate("stale") : translate("fresh")) + (Number.isFinite(Number(px4Command.age)) ? " " + Number(px4Command.age).toFixed(2) + " s" : "") : translate("unavailable")));
     text("source-truth", translate("source_truth") + " " + translate("local")); text("source-estimated", translate("source_estimated") + " " + (sample.px4_mavlink && sample.px4_mavlink.local_position_ned ? translate("px4_mavlink") : translate("unavailable"))); text("source-measured", translate("source_measured") + " " + translate("measured_rpm") + " " + translate("local"));
     var commands = px4Command.command ? [px4Command.command.m1, px4Command.command.m2, px4Command.command.m3, px4Command.command.m4] : [];
     var rpms = Array.isArray(sample.rpm) ? sample.rpm : [];
