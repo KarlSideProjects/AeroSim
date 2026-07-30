@@ -184,6 +184,16 @@ Every camera and sensor observation uses one simulation-time clock. Pausing free
 
 **Current evidence:** `AirSimSession` is the shared simulation clock. Issue #141 schedules each non-camera sensor against that clock, keeps paused reads stable, validates configured rates and latency/startup values, and exposes sample/drop counters for deterministic gap checks. Multi-vehicle alignment and dataset validation remain future work.
 
+### CAP-024: GSP flight-test console
+
+**Status:** Available in Lab Mode
+
+GSP is a local, loopback-authenticated flight-test console beside the game. It is not a remote web product and does not replace the native Operations Dashboard. Its portrait `即時狀態` surface makes the causal chain inspectable: previewed/applied wind, Vehicle Instance response, PX4 estimate and targets when the selected MAVLink transport supplies them, normalized M1–M4 post-allocation commands, and simulated measured motor feedback.
+
+**Minimum acceptance:** At 480×854, 560×996, and 640×1138 CSS viewports, primary wind controls, the configured Drone view, M1–M4 summaries, command/RPM plots, and flight-health state fit without vertical scrolling. Controls use meteorological “from” bearing and SI speed; only an explicit authenticated apply can mutate the environment, at the next authoritative physics tick, with a correlated acknowledgement and Flight Replay event. Visible values identify Commanded, Ground truth, Estimated, or Measured source classes. GPS, IMU, barometer, magnetometer, MAVLink/PX4 status, estimator readiness, flight mode, armed state, target, motor command, and motor feedback show their source and age when available. A stale or unavailable sample retains the last value, is visibly unavailable, and never becomes fabricated zero. Unsafe mutation is disabled; stale PX4 output fails closed without implicit native-controller fallback.
+
+**Current evidence:** Issues #303–#306 were closed after PR #308 at `c7de058` passed hosted CI run `30565297580`. The qualification includes authenticated wind/replay contracts, real PX4 SITL wind-step evidence, source/mapping/freshness checks, browser tests for the three portrait sizes, Traditional Chinese and English, keyboard operation, offline installed assets, stale/error states, and the release-package replay. The GSP main model is configuration-driven and reports its geometry classification truthfully. CAP-006 has not passed, so this is provisional Codex AI visual evidence rather than a formal human visual or usability review.
+
 ## World and scene system
 
 ### CAP-030: One reference environment
