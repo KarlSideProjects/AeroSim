@@ -57,6 +57,8 @@ var _quick_adjust_request_provider: Callable
 var _preset_request_provider: Callable
 var _marker_request_provider: Callable
 var _simulation_request_provider: Callable
+var _wind_request_provider: Callable
+var _wind_result_provider: Callable
 var _latest_telemetry_payload: Dictionary = {}
 var _last_telemetry_source_seq := -1
 var _telemetry_sample_seq := 0
@@ -213,6 +215,14 @@ func set_simulation_request_provider(provider: Callable) -> void:
     _simulation_request_provider = provider
 
 
+func set_wind_request_provider(provider: Callable) -> void:
+    _wind_request_provider = provider
+
+
+func set_wind_result_provider(provider: Callable) -> void:
+    _wind_result_provider = provider
+
+
 func get_telemetry_processing_diagnostics() -> Dictionary:
     var samples := _telemetry_serialization_samples_usec.duplicate()
     samples.sort()
@@ -255,6 +265,7 @@ func poll() -> void:
     _poll_unauthenticated_peers()
     _poll_authenticated_peers()
     _poll_tuning_results()
+    _poll_wind_results()
     _poll_telemetry()
     _poll_closing_peers()
 
@@ -436,6 +447,28 @@ static func validate_simulation_message(message: String, previous_sequence: int,
     if data.size() > 2:
         return {"ok": false, "error": "unsupported simulation fields"}
     return {"ok": true, "envelope": envelope, "sequence": sequence, "command": String(data.cmd)}
+
+
+static func validate_set_wind_message(message: String, previous_sequence: int) -> Dictionary:
+    var envelope_result := _parse_envelope(message, "set_wind")
+    if not bool(envelope_result.get("ok", false)):
+        return envelope_result
+    var envelope: Dictionary = envelope_result.envelope
+    var sequence := _integer_value(envelope.seq)
+    if sequence != previous_sequence + 1:
+        return {"ok": false, "error": "invalid wind sequence"}
+    var data: Dictionary = envelope.d
+    if data.size() != 2 or not data.has_all(["wind_from_deg", "speed_mps"]):
+        return {"ok": false, "error": "malformed wind data"}
+    if (typeof(data.wind_from_deg) != TYPE_INT and typeof(data.wind_from_deg) != TYPE_FLOAT) or \
+            (typeof(data.speed_mps) != TYPE_INT and typeof(data.speed_mps) != TYPE_FLOAT) or \
+            not is_finite(float(data.wind_from_deg)) or not is_finite(float(data.speed_mps)):
+        return {"ok": false, "error": "wind values must be finite numbers"}
+    if float(data.wind_from_deg) < 0.0 or float(data.wind_from_deg) >= 360.0:
+        return {"ok": false, "error": "wind_from_deg must be in the range 0..360"}
+    if float(data.speed_mps) < 0.0:
+        return {"ok": false, "error": "speed_mps must be non-negative"}
+    return {"ok": true, "envelope": envelope, "sequence": sequence, "wind_from_deg": float(data.wind_from_deg), "speed_mps": float(data.speed_mps)}
 
 
 static func validate_preset_message(message: String, previous_sequence: int, expected_type: String) -> Dictionary:
@@ -816,6 +849,21 @@ func _poll_authenticated_peers() -> void:
                 if not _queue_identity_message(record, "sim_cmd_ack", simulation_data):
                     failed = true
                     break
+            elif message_type == "set_wind":
+                var wind_result := validate_set_wind_message(message, int(record.get("client_sequence", -1)))
+                if not bool(wind_result.get("ok", false)):
+                    failed = true
+                    break
+                record["client_sequence"] = int(wind_result.sequence)
+                var wind_response := _submit_wind_request(int(record.id), int(record.connection_id), int(wind_result.sequence), float(wind_result.wind_from_deg), float(wind_result.speed_mps))
+                if not bool(wind_response.get("pending", false)):
+                    var wind_data := wind_response.duplicate(true)
+                    wind_data.erase("peer_id")
+                    wind_data.erase("connection_id")
+                    wind_data["request_seq"] = int(wind_result.sequence)
+                    if not _queue_identity_message(record, "wind_ack", wind_data):
+                        failed = true
+                        break
             elif message_type == "set_tuning":
                 var tuning_result := validate_set_tuning_message(message, int(record.get("client_sequence", -1)))
                 if not bool(tuning_result.get("ok", false)):
@@ -957,6 +1005,13 @@ func _submit_simulation_request(peer_id: int, connection_id: int, request_seq: i
     return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_simulation_response"}
 
 
+func _submit_wind_request(peer_id: int, connection_id: int, request_seq: int, wind_from_deg: float, speed_mps: float) -> Dictionary:
+    if not _wind_request_provider.is_valid():
+        return {"ok": false, "error": "wind_unavailable"}
+    var result = _wind_request_provider.call(peer_id, connection_id, request_seq, wind_from_deg, speed_mps)
+    return result if typeof(result) == TYPE_DICTIONARY else {"ok": false, "error": "invalid_wind_response"}
+
+
 func _queue_tuning_ack(record: Dictionary, request_seq: int, result: Dictionary) -> bool:
     var data := result.duplicate(true)
     data.erase("peer_id")
@@ -1028,6 +1083,29 @@ func _poll_tuning_results() -> void:
     for commit_id in changed_results:
         var commit_result: Dictionary = changed_results[commit_id]
         _broadcast_tuning_commit(commit_result, int(commit_result.get("commit_request_seq", -1)))
+
+
+func _poll_wind_results() -> void:
+    if not _wind_result_provider.is_valid():
+        return
+    var results = _wind_result_provider.call()
+    if typeof(results) != TYPE_ARRAY:
+        return
+    for result_value in results:
+        if typeof(result_value) != TYPE_DICTIONARY:
+            continue
+        var result: Dictionary = result_value
+        for record in _authenticated_peers.duplicate():
+            if int(record.get("id", -1)) != int(result.get("peer_id", -1)) or int(record.get("connection_id", -1)) != int(result.get("connection_id", -1)):
+                continue
+            var data := result.duplicate(true)
+            data.erase("peer_id")
+            data.erase("connection_id")
+            data["request_seq"] = int(result.get("request_seq", -1))
+            if not _queue_identity_message(record, "wind_ack", data) or not _flush_reliable(record):
+                _authenticated_peers.erase(record)
+                _begin_close(record, "reliable send failed")
+            break
 
 
 func _queue_identity_message(record: Dictionary, message_type: String, data: Dictionary) -> bool:

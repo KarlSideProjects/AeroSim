@@ -271,6 +271,8 @@ var _gsp_tuning_registry_hash := "unavailable"
 var _gsp_tuning_pending: Array[Dictionary] = []
 var _gsp_tuning_completed: Array[Dictionary] = []
 var _gsp_tuning_recent_results: Array[Dictionary] = []
+var _gsp_wind_pending: Array[Dictionary] = []
+var _gsp_wind_completed: Array[Dictionary] = []
 const GSP_MIGRATION_CAPABILITY_TTL_MS := 30_000
 const GSP_MIGRATION_CAPABILITY_LIMIT := 8
 var _gsp_migration_capabilities: Array[Dictionary] = []
@@ -1543,6 +1545,7 @@ func _physics_process(delta: float) -> void:
             drone_body.sleeping = false
         return
     _sync_native_external_authority()
+    _apply_gsp_wind_requests(_gsp_public_physics_tick())
     _apply_quick_adjust_inputs(delta)
     _apply_gsp_tuning_requests(_gsp_public_physics_tick())
     if paused:
@@ -3229,13 +3232,15 @@ func _apply_environment_result(result: Dictionary) -> Dictionary:
     if not result.ok:
         return result
     if native != null:
-        var wind_config := {
-            "preset": String(result.state.wind_preset),
-            "steady_wind": result.state.steady_wind,
-        }
+        var wind_config: Dictionary = native.call("wind_configuration") if native.has_method("wind_configuration") else {}
+        wind_config["preset"] = String(result.state.wind_preset)
+        wind_config["steady_wind"] = result.state.steady_wind
         native.call("configure_wind", wind_config)
         if _airsim_secondary_native != null:
-            _airsim_secondary_native.call("configure_wind", wind_config)
+            var secondary_wind_config: Dictionary = _airsim_secondary_native.call("wind_configuration") if _airsim_secondary_native.has_method("wind_configuration") else {}
+            secondary_wind_config["preset"] = String(result.state.wind_preset)
+            secondary_wind_config["steady_wind"] = result.state.steady_wind
+            _airsim_secondary_native.call("configure_wind", secondary_wind_config)
     if not _apply_environment_visuals(result.state):
         return {"ok": false, "error": last_error_message}
     if not _reset_commit_in_progress:
@@ -5440,6 +5445,60 @@ func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, para
     if typeof(parameter) == TYPE_ARRAY:
         return gsp_tuning_batch_request(peer_id, connection_id, request_seq, parameter, source, quick_adjust_slot)
     return gsp_tuning_batch_request(peer_id, connection_id, request_seq, [{"parameter": parameter, "value": value}], source, quick_adjust_slot)
+
+
+func gsp_wind_request(peer_id: int, connection_id: int, request_seq: int, wind_from_deg: float, speed_mps: float) -> Dictionary:
+    var result := {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    var domain: Dictionary = _active_hardware_configuration.get("environment", {}).get("wind_speed_mps", {})
+    var maximum := float(domain.get("max", NAN))
+    if not is_finite(wind_from_deg) or wind_from_deg < 0.0 or wind_from_deg >= 360.0:
+        result.merge({"ok": false, "error": "wind_from_deg_out_of_range"})
+        return result
+    if not is_finite(speed_mps) or speed_mps < 0.0 or not is_finite(maximum) or speed_mps > maximum:
+        result.merge({"ok": false, "error": "wind_speed_out_of_domain"})
+        return result
+    var toward_deg := fposmod(wind_from_deg + 180.0, 360.0)
+    var toward_rad := deg_to_rad(toward_deg)
+    var ned := Vector3(cos(toward_rad) * speed_mps, sin(toward_rad) * speed_mps, 0.0)
+    _gsp_wind_pending.append({
+        "peer_id": peer_id,
+        "connection_id": connection_id,
+        "request_seq": request_seq,
+        "wind_from_deg": wind_from_deg,
+        "speed_mps": speed_mps,
+        "toward_deg": toward_deg,
+        "ned_mps": ned,
+    })
+    return result.merged({"ok": true, "pending": true, "apply_timing": "next_physics_step", "wind_from_deg": wind_from_deg, "speed_mps": speed_mps, "toward_deg": toward_deg, "ned_mps": ned}, true)
+
+
+func _apply_gsp_wind_requests(public_physics_tick: int) -> void:
+    if _gsp_wind_pending.is_empty():
+        return
+    var pending := _gsp_wind_pending
+    _gsp_wind_pending = []
+    for request in pending:
+        var state_before := environment_state.snapshot() if environment_state != null else {}
+        var apply_result := _apply_environment_result(environment_state.apply({
+            "wind_preset": String(state_before.get("wind_preset", "calm")),
+            "steady_wind": request.ned_mps,
+        })) if environment_state != null else {"ok": false, "error": "environment_unavailable"}
+        var acknowledgement := request.duplicate(true)
+        acknowledgement["applied_tick"] = public_physics_tick
+        acknowledgement["ok"] = bool(apply_result.get("ok", false))
+        acknowledgement["pending"] = false
+        if not acknowledgement.ok:
+            acknowledgement["error"] = String(apply_result.get("error", "wind_apply_failed"))
+            # EnvironmentState only mutates after validation; preserve the prior state if a later visual apply fails.
+            if environment_state != null and not state_before.is_empty():
+                environment_state.apply(state_before)
+        _gsp_wind_completed.append(acknowledgement)
+
+
+func gsp_wind_results() -> Array:
+    var results := _gsp_wind_completed.duplicate(true)
+    _gsp_wind_completed.clear()
+    return results
 
 
 func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array, source: String = "panel", quick_adjust_slot: int = -1, atomic_barrier: bool = false, preset_provenance: Dictionary = {}) -> Dictionary:

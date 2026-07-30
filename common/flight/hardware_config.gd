@@ -71,6 +71,9 @@ const FACTORY_DEFAULT := {
             "coeff_3": -0.11
         }
     },
+    "environment": {
+        "wind_speed_mps": {"max": 30.0}
+    },
     "aircraft": {
         "mass_kg": 0.72,
         "inertia_kg_m2": {"x": 0.0030, "y": 0.0030, "z": 0.0050},
