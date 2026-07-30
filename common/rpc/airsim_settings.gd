@@ -360,6 +360,21 @@ static func _validate_px4_transport(vehicle: Dictionary, scope: String, errors: 
     for key in ["ControlIp", "LocalHostIp", "UdpIp"]:
         if vehicle.has(key) and (typeof(vehicle[key]) != TYPE_STRING or String(vehicle[key]).is_empty()):
             errors.append("%s.%s must be a non-empty string" % [scope, key])
+    if vehicle.has("HardwarePreset") and (typeof(vehicle["HardwarePreset"]) != TYPE_STRING or not String(vehicle["HardwarePreset"]).begins_with("res://config/drones/")):
+        errors.append("%s.HardwarePreset must be a drone preset resource path" % scope)
+    if vehicle.has("HilGpsIntervalSeconds") and (not _is_finite_number(vehicle["HilGpsIntervalSeconds"]) or float(vehicle["HilGpsIntervalSeconds"]) < 0.0):
+        errors.append("%s.HilGpsIntervalSeconds must be finite and non-negative" % scope)
+    if vehicle.has("HilActuatorQuadXOrder"):
+        var motor_order: Variant = vehicle["HilActuatorQuadXOrder"]
+        var motor_names := {}
+        if not motor_order is Array or motor_order.size() != 4:
+            errors.append("%s.HilActuatorQuadXOrder must name four distinct motors" % scope)
+        else:
+            for motor_name_value in motor_order:
+                if typeof(motor_name_value) != TYPE_STRING or String(motor_name_value).is_empty() or motor_names.has(String(motor_name_value)):
+                    errors.append("%s.HilActuatorQuadXOrder must name four distinct motors" % scope)
+                    break
+                motor_names[String(motor_name_value)] = true
 
 
 static func _validate_named_entries(value: Dictionary, allowed: Dictionary, scope: String, errors: Array[String], is_camera: bool, manifest: Dictionary) -> void:

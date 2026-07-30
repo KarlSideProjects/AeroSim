@@ -193,6 +193,7 @@ bool finite_vec3(const aerosim::Vec3 &value) {
 
 bool valid_imu_state(const aerosim::RigidBodyState &state) {
     return finite_vec3(state.position) && finite_vec3(state.velocity) && finite_vec3(state.angular_velocity) &&
+            finite_vec3(state.linear_acceleration_world_mps2) &&
             finite_vec3(state.propwash_disturbance_rad_s2) && std::isfinite(state.orientation.x) &&
             std::isfinite(state.orientation.y) && std::isfinite(state.orientation.z) &&
             std::isfinite(state.orientation.w) && aerosim::quat_norm(state.orientation) > 0.0;
@@ -405,6 +406,9 @@ void AeroSimNative::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_external_authority_active", "active"), &AeroSimNative::set_external_authority_active);
     ClassDB::bind_method(D_METHOD("flight_tuning_contract"), &AeroSimNative::flight_tuning_contract);
     ClassDB::bind_method(D_METHOD("flight_tuning_configuration"), &AeroSimNative::flight_tuning_configuration);
+    ClassDB::bind_method(
+            D_METHOD("px4_support_lift_readiness", "motor_0", "motor_1", "motor_2", "motor_3"),
+            &AeroSimNative::px4_support_lift_readiness);
     ClassDB::bind_method(D_METHOD("hardware_power_diagnostics"), &AeroSimNative::hardware_power_diagnostics);
     ClassDB::bind_method(D_METHOD("hardware_per_motor_diagnostics"), &AeroSimNative::hardware_per_motor_diagnostics);
     ClassDB::bind_method(D_METHOD("telemetry_snapshot"), &AeroSimNative::telemetry_snapshot);
@@ -1138,9 +1142,19 @@ Dictionary AeroSimNative::record_replay_environment(
         const aerosim::ReplayDiagnostic diagnostic{aerosim::ReplayDiagnosticCode::InvalidSession, "replay recording is not active"};
         return replay_status(false, &diagnostic);
     }
+    aerosim::ReplayEventIdentity identity;
     const bool ok = replay_recorder_->record_environment(static_cast<std::uint64_t>(timestamp_us),
-            std::string(environment_json.utf8().get_data()));
-    return replay_status(ok, &replay_recorder_->diagnostic());
+            std::string(environment_json.utf8().get_data()), &identity);
+    Dictionary result = replay_status(ok, &replay_recorder_->diagnostic());
+    if (ok) {
+        Dictionary event_identity;
+        event_identity["timestamp_us"] = static_cast<std::int64_t>(identity.timestamp_us);
+        event_identity["physics_tick"] = static_cast<std::int64_t>(identity.physics_tick);
+        event_identity["event_order"] = static_cast<std::int64_t>(identity.event_order);
+        event_identity["type"] = "environment";
+        result["event_identity"] = event_identity;
+    }
+    return result;
 }
 
 Dictionary AeroSimNative::record_replay_checkpoint(
@@ -1284,6 +1298,7 @@ PackedFloat64Array AeroSimNative::step_px4_actuator_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
+    config.px4_actuator_rpm_mapping = true;
     if (config.mass_kg <= 0.0 || !aerosim::validate_per_motor_config(config.per_motor)) {
         set_step_error("step_px4_actuator_mode", aerosim::StepStatus::InvalidConfig, "hardware");
         return {};
@@ -1378,6 +1393,7 @@ PackedFloat64Array AeroSimNative::step_collision_px4_actuator_mode(
     aerosim::SimulationConfig config = hardware_config_.simulation_config();
     config.physics_hz = physics_hz;
     config.substep_hz = substep_hz;
+    config.px4_actuator_rpm_mapping = true;
     config.a4_ground_effect = a4_ground_effect_config_;
     config.external_force_world = external_force_world_;
     apply_downwash_provider(config);
@@ -1971,6 +1987,26 @@ Dictionary AeroSimNative::hardware_power_diagnostics() const {
     return diagnostics;
 }
 
+Dictionary AeroSimNative::px4_support_lift_readiness(
+        double motor_0,
+        double motor_1,
+        double motor_2,
+        double motor_3) const {
+    const aerosim::MotorCommands commands{{motor_0, motor_1, motor_2, motor_3}};
+    aerosim::SimulationConfig config = hardware_config_.simulation_config();
+    config.px4_actuator_rpm_mapping = true;
+    const aerosim::Px4SupportLiftReadiness readiness = aerosim::px4_support_lift_readiness(
+            config, simulation_state_, commands);
+    Dictionary result;
+    result["valid"] = readiness.valid;
+    result["ready"] = readiness.ready;
+    result["command_thrust_newtons"] = readiness.command_thrust_newtons;
+    result["projected_lift_newtons"] = readiness.projected_lift_newtons;
+    result["required_lift_newtons"] = readiness.required_lift_newtons;
+    result["thrust_scale"] = readiness.thrust_scale;
+    return result;
+}
+
 Dictionary AeroSimNative::hardware_per_motor_diagnostics() const {
     const aerosim::PerMotorPhysicsConfig &per_motor = hardware_config_.simulation_config().per_motor;
     Dictionary diagnostics;
@@ -2127,7 +2163,7 @@ Dictionary AeroSimNative::body_drag_configuration() const {
     config["frontal_area_m2"] = godot_vec3(body_drag.frontal_area_m2);
     config["center_of_pressure_frd_m"] = godot_vec3(body_drag.center_of_pressure_frd_m);
     config["air_density_kg_m3"] = hardware_config_.air_density_kg_m3;
-    config["evidence_state"] = "provisional";
+    config["evidence_state"] = body_drag.enabled ? "provisional" : "unavailable";
     return config;
 }
 

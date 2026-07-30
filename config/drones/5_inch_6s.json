@@ -152,7 +152,12 @@
       "enabled": false,
       "drag_coefficient": {"x": 0.0, "y": 0.0, "z": 0.0},
       "center_of_pressure_frd_m": {"x": 0.0, "y": 0.0, "z": 0.0},
-      "air_density_kg_m3": 1.225
+      "air_density_kg_m3": 1.225,
+      "pressure_center_reference": "aircraft.cg_offset_m",
+      "evidence": {
+        "state": "unavailable",
+        "provenance": "No aerodynamic characterization is recorded for this preset; body-drag force and torque remain unavailable."
+      }
     },
     "a6": {
       "enabled": false,
@@ -167,6 +172,9 @@
       "coeff_2": 0.16,
       "coeff_3": -0.11
     }
+  },
+  "environment": {
+    "wind_speed_mps": {"max": 30.0}
   },
   "aircraft": {
     "mass_kg": 0.72,

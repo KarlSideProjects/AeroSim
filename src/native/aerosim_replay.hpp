@@ -89,6 +89,13 @@ enum class ReplayEventType {
     Marker,
 };
 
+struct ReplayEventIdentity {
+    std::uint64_t timestamp_us = 0;
+    std::uint64_t physics_tick = 0;
+    std::uint64_t event_order = 0;
+    ReplayEventType type = ReplayEventType::Command;
+};
+
 struct ReplayEvent {
     std::uint64_t timestamp_us = 0;
     std::uint64_t physics_tick = 0;
@@ -224,7 +231,7 @@ private:
 
     bool fail(ReplayDiagnosticCode code, std::string message);
     bool has_vehicle(const std::string &vehicle_name) const;
-    bool append_event(ReplayEvent event);
+    bool append_event(ReplayEvent event, ReplayEventIdentity *identity = nullptr);
 
 #ifdef AEROSIM_REPLAY_TESTING
     friend struct ReplaySessionRecorderTestAccess;
@@ -280,7 +287,10 @@ public:
             std::string asset_id,
             const Vec3 &position,
             const Quat &orientation = {});
-    bool record_environment(std::uint64_t timestamp_us, std::string environment_json);
+    bool record_environment(
+            std::uint64_t timestamp_us,
+            std::string environment_json,
+            ReplayEventIdentity *identity = nullptr);
     bool record_quick_adjust_binding(
             std::uint64_t timestamp_us,
             std::string profile_json);

@@ -25,10 +25,17 @@ struct Quat {
 struct RigidBodyState {
     Vec3 position;
     Vec3 velocity;
+    // World-frame (Godot Y-up) translational acceleration from the native
+    // integrator. This is the physical acceleration before conversion into
+    // the body-frame specific force observed by the IMU.
+    Vec3 linear_acceleration_world_mps2;
     Quat orientation;
     Vec3 angular_velocity;
     Vec3 propwash_disturbance_rad_s2;
     std::array<double, 4> motor_thrust_newtons = {0.0, 0.0, 0.0, 0.0};
+    // PX4 HIL actuator outputs are requested rotor-speed ratios.  Keep their
+    // lag state in the same physical domain rather than lagging thrust.
+    std::array<double, 4> motor_rpm = {0.0, 0.0, 0.0, 0.0};
 };
 
 struct A3DragConfig {
@@ -83,6 +90,15 @@ struct MotorCommands {
     std::array<double, 4> normalized = {0.0, 0.0, 0.0, 0.0};
 };
 
+struct Px4SupportLiftReadiness {
+    bool valid = false;
+    bool ready = false;
+    double command_thrust_newtons = 0.0;
+    double projected_lift_newtons = 0.0;
+    double required_lift_newtons = 0.0;
+    double thrust_scale = 0.0;
+};
+
 struct SimulationConfig {
     double seconds = 1.0;
     std::int32_t physics_hz = 240;
@@ -99,6 +115,7 @@ struct SimulationConfig {
     double battery_remaining_mah = 0.0;
     double max_total_current_a = 0.0;
     double max_motor_rpm = 0.0;
+    bool px4_actuator_rpm_mapping = false;
     double altitude_hold_noise_deadband_m = 0.0;
     PerMotorPhysicsConfig per_motor;
     A3DragConfig a3_drag;
@@ -316,6 +333,10 @@ Vec3 frd_to_y_up(const Vec3 &frd);
 Vec3 y_up_to_frd(const Vec3 &y_up);
 double first_order_motor_response(double current, double target, double tau_s, double dt_s);
 double available_thrust_cap_newtons(const SimulationConfig &config, double throttle);
+Px4SupportLiftReadiness px4_support_lift_readiness(
+        const SimulationConfig &config,
+        const RigidBodyState &state,
+        const MotorCommands &commands);
 double motor_speed_rad_s_from_thrust(
         double thrust_newtons,
         double max_thrust_per_motor_newtons,
@@ -330,6 +351,13 @@ TrajectorySample step_physics_frame(
         const SimulationConfig &config,
         const std::function<void(double)> &before_substep);
 TrajectorySample step_per_motor_physics_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const MotorCommands &commands);
+// Advances the same ESC/rotor state as per-motor flight while the contact
+// solver constrains the rigid body. Used only for PX4's initial ground support.
+TrajectorySample step_per_motor_ground_support_frame(
         RigidBodyState &state,
         SimulationClock &clock,
         const SimulationConfig &config,

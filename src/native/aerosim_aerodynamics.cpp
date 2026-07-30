@@ -39,9 +39,14 @@ bool validate_body_drag_config(const BodyDragConfig &config, double air_density_
             return false;
         }
     }
-    return config.drag_coefficient.x >= 0.0 && config.drag_coefficient.y >= 0.0 &&
-            config.drag_coefficient.z >= 0.0 && config.frontal_area_m2.x >= 0.0 &&
-            config.frontal_area_m2.y >= 0.0 && config.frontal_area_m2.z >= 0.0 &&
+    if (!config.enabled) {
+        return air_density_kg_m3 > 0.0;
+    }
+    // An enabled/displayable wrench needs a coefficient and area for every axis;
+    // zero is an omitted input, not a measured zero-drag airframe.
+    return config.drag_coefficient.x > 0.0 && config.drag_coefficient.y > 0.0 &&
+            config.drag_coefficient.z > 0.0 && config.frontal_area_m2.x > 0.0 &&
+            config.frontal_area_m2.y > 0.0 && config.frontal_area_m2.z > 0.0 &&
             air_density_kg_m3 > 0.0;
 }
 

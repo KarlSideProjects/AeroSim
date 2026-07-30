@@ -11,6 +11,8 @@ const PANEL_ASSET_PATHS := [
     "res://common/gsp/assets/gsp_drone_geometry.js",
     "res://common/gsp/assets/gsp_visual.js",
     "res://common/gsp/assets/three-0.180.0.global.min.js",
+    "res://common/gsp/assets/THREE-LICENSE",
+    "res://common/gsp/assets/asset_notes.md",
 ]
 const GspServer = preload("res://common/gsp/gsp_server.gd")
 
@@ -84,6 +86,10 @@ func launch(options: Dictionary = {}) -> Dictionary:
         _server.set_marker_request_provider(Callable(get_parent(), "gsp_marker_request"))
     if get_parent() != null and get_parent().has_method("gsp_simulation_request"):
         _server.set_simulation_request_provider(Callable(get_parent(), "gsp_simulation_request"))
+    if get_parent() != null and get_parent().has_method("gsp_wind_request"):
+        _server.set_wind_request_provider(Callable(get_parent(), "gsp_wind_request"))
+    if get_parent() != null and get_parent().has_method("gsp_wind_results"):
+        _server.set_wind_result_provider(Callable(get_parent(), "gsp_wind_results"))
     var server_result := _server.start()
     if not bool(server_result.get("ok", false)):
         print("GSP unavailable: %s" % String(server_result.get("error", "listener failed")))

@@ -168,6 +168,9 @@
       "coeff_3": -0.11
     }
   },
+  "environment": {
+    "wind_speed_mps": {"max": 30.0}
+  },
   "aircraft": {
     "mass_kg": 0.68,
     "inertia_kg_m2": {"x": 0.0027, "y": 0.0027, "z": 0.0046},

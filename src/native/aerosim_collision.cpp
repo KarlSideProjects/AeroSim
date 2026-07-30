@@ -41,7 +41,9 @@ bool valid_state(const RigidBodyState &state) {
         return false;
     }
     return std::all_of(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(),
-            [](double value) { return std::isfinite(value) && value >= 0.0; });
+            [](double value) { return std::isfinite(value) && value >= 0.0; }) &&
+            std::all_of(state.motor_rpm.begin(), state.motor_rpm.end(),
+                    [](double value) { return std::isfinite(value) && value >= 0.0; });
 }
 
 bool valid_config(const SimulationConfig &config) {
@@ -151,7 +153,12 @@ void resolve_contact(RigidBodyState &state, const CollisionContact &contact, con
     const double pre_impact_energy = kinetic_energy_joules(state, config);
     const Vec3 normal = normalized_or_zero(contact.normal);
     const double normal_speed = dot(state.velocity, normal);
-    if (contact.has_resolved_state && finite(contact.resolved_velocity) && finite(contact.resolved_angular_velocity)) {
+    // PX4 actuator contact arrives before Jolt has solved the body step. Its
+    // supplied velocity is therefore only the pre-solver body velocity, not a
+    // resolved contact result. Let this collision path resolve the normal
+    // velocity, then make that solved state the next-frame Jolt/native truth.
+    if (contact.has_resolved_state && !config.px4_actuator_rpm_mapping &&
+            finite(contact.resolved_velocity) && finite(contact.resolved_angular_velocity)) {
         state.velocity = contact.resolved_velocity;
         state.angular_velocity = contact.resolved_angular_velocity;
     } else if (finite(contact.impulse) && length(contact.impulse) > 0.0 && config.mass_kg > 0.0) {
@@ -515,12 +522,19 @@ CollisionStepResult CollisionAuthoritySwitch::step_per_motor_impl(
         authority_ = PhysicsAuthority::Jolt;
         clear_frames_ = 0;
         resolve_contact(state, contact, config);
+        if (config.px4_actuator_rpm_mapping) {
+            return {authority_, step_per_motor_ground_support_frame(state, clock, config, commands),
+                    contact.normal, contact.impulse};
+        }
         return {authority_, sample_jolt_frame(state, clock, config), contact.normal, contact.impulse};
     }
 
     if (authority_ == PhysicsAuthority::Jolt) {
         ++clear_frames_;
         if (clear_frames_ < release_frames_) {
+            if (config.px4_actuator_rpm_mapping) {
+                return {authority_, step_per_motor_ground_support_frame(state, clock, config, commands), {}, {}};
+            }
             return {authority_, sample_jolt_frame(state, clock, config), {}, {}};
         }
         authority_ = PhysicsAuthority::FlightCore;

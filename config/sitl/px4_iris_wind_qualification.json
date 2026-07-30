@@ -20,11 +20,17 @@
       "ControlPortLocal": 14540,
       "ControlPortRemote": 14580,
       "LockStep": true,
+      "HilGpsIntervalSeconds": 0.05,
       "HilActuatorQuadXOrder": ["front_right", "rear_left", "front_left", "rear_right"],
       "HardwarePreset": "res://config/drones/px4_iris.json",
       "LocalHostIp": "127.0.0.1",
       "UdpIp": "127.0.0.1",
       "UdpPort": 14560,
+      "Cameras": {},
+      "Sensors": {}
+    },
+    "Drone2": {
+      "VehicleType": "SimpleFlight",
       "Cameras": {},
       "Sensors": {}
     }

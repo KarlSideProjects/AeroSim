@@ -675,6 +675,40 @@ int main() {
         return fail("collision handoff must write back Jolt-resolved velocity and angular velocity");
     }
 
+    aerosim::SimulationConfig px4_contact_config = config;
+    px4_contact_config.px4_actuator_rpm_mapping = true;
+    px4_contact_config.max_motor_rpm = 10504.23;
+    aerosim::RigidBodyState px4_contact_state;
+    px4_contact_state.position.y = 0.015625;
+    px4_contact_state.velocity.y = -0.680928885936737;
+    aerosim::SimulationClock px4_contact_clock;
+    aerosim::CollisionAuthoritySwitch px4_contact_authority(2);
+    aerosim::CollisionContact px4_ground_contact;
+    px4_ground_contact.touching = true;
+    px4_ground_contact.normal = {0.0, 1.0, 0.0};
+    px4_ground_contact.restitution = 0.0;
+    // This is the stale pre-solver Jolt velocity carried by the old PX4 HIL
+    // boundary. PX4 ground contact must resolve it instead of reapplying it.
+    px4_ground_contact.has_resolved_state = true;
+    px4_ground_contact.resolved_velocity = px4_contact_state.velocity;
+    const aerosim::MotorCommands px4_ground_commands{{0.0, 0.0, 0.0, 0.0}};
+    for (int frame = 0; frame < 3; ++frame) {
+        const aerosim::CollisionStepResult grounded = px4_contact_authority.step_per_motor(
+                px4_contact_state, px4_contact_clock, px4_contact_config, px4_ground_commands, px4_ground_contact);
+        if (grounded.authority != aerosim::PhysicsAuthority::Jolt ||
+                !near(px4_contact_state.velocity.y, 0.0, 1e-12)) {
+            return fail("PX4 Jolt ground contact must settle instead of replaying pre-solver downward velocity");
+        }
+    }
+    const aerosim::CollisionContact px4_clear_contact;
+    for (int frame = 0; frame < px4_contact_authority.release_frames(); ++frame) {
+        px4_contact_authority.step_per_motor(
+                px4_contact_state, px4_contact_clock, px4_contact_config, px4_ground_commands, px4_clear_contact);
+    }
+    if (px4_contact_authority.current_authority() != aerosim::PhysicsAuthority::FlightCore) {
+        return fail("PX4 Jolt contact release must still hand back to FlightCore on clear frames");
+    }
+
     aerosim::RigidBodyState clamped_state;
     aerosim::SimulationClock clamped_clock;
     aerosim::FlightController clamped_controller;

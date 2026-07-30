@@ -199,6 +199,8 @@ func test_accepts_px4_sitl_transport_settings() -> void:
                 "ControlPortLocal": 14540,
                 "ControlPortRemote": 14580,
                 "LockStep": true,
+                "HilGpsIntervalSeconds": 0.05,
+                "HilActuatorQuadXOrder": ["front_right", "rear_left", "front_left", "rear_right"],
                 "LocalHostIp": "127.0.0.1",
                 "UdpIp": "127.0.0.1",
                 "UdpPort": 14560
@@ -208,6 +210,23 @@ func test_accepts_px4_sitl_transport_settings() -> void:
 
     assert_true(result.ok, result.error)
     assert_eq(result.settings["Vehicles"]["Drone1"]["TcpPort"], 4560)
+    assert_eq(result.settings["Vehicles"]["Drone1"]["HilGpsIntervalSeconds"], 0.05)
+
+
+func test_rejects_invalid_px4_quad_x_actuator_mapping() -> void:
+    var result := AirSimSettings.validate({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {
+            "Drone1": {
+                "VehicleType": "PX4Multirotor",
+                "HilActuatorQuadXOrder": ["front_right", "front_right", "rear_left", "front_left"]
+            }
+        }
+    })
+
+    assert_false(result.ok)
+    assert_string_contains(result.error, "HilActuatorQuadXOrder must name four distinct motors")
 
 
 func test_rejects_px4_serial_transport_and_invalid_ports() -> void:
@@ -228,3 +247,19 @@ func test_rejects_px4_serial_transport_and_invalid_ports() -> void:
     assert_string_contains(result.error, "UseSerial")
     assert_string_contains(result.error, "ControlPortLocal")
     assert_string_contains(result.error, "ControlPortRemote")
+
+
+func test_rejects_invalid_px4_hil_gps_interval() -> void:
+    var result := AirSimSettings.validate({
+        "SettingsVersion": 1.2,
+        "SimMode": "Multirotor",
+        "Vehicles": {
+            "Drone1": {
+                "VehicleType": "PX4Multirotor",
+                "HilGpsIntervalSeconds": -0.01,
+            }
+        }
+    })
+
+    assert_false(result.ok)
+    assert_string_contains(result.error, "HilGpsIntervalSeconds")

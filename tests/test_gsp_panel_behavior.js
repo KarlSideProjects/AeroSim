@@ -45,11 +45,18 @@ for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state
     "visualization-status", "flow-legend", "motor-rear-right", "motor-front-right", "motor-rear-left", "motor-front-left",
     "geometry-classification", "geometry-identity", "geometry-scale", "geometry-motors", "geometry-provenance",
     "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
-    "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report"]) {
-    elements.set(id, new Element(id === "sparkline" ? "canvas" : "div"));
+    "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report",
+    "wind-from", "wind-speed", "wind-preview", "wind-apply", "wind-status", "source-commanded", "source-truth", "source-estimated", "source-measured",
+    "live-connection", "live-authority", "live-mode", "live-fresh", "live-vehicle", "live-tick", "live-failure", "live-m1", "live-m2", "live-m3", "live-m4", "command-chart", "rpm-chart", "language-zh", "language-en", "px4-link", "px4-estimator", "px4-mode", "px4-safety", "px4-sensors", "px4-cue"]) {
+    elements.set(id, new Element(["sparkline", "command-chart", "rpm-chart"].includes(id) ? "canvas" : "div"));
 }
 elements.get("sparkline").width = 840;
 elements.get("sparkline").height = 100;
+elements.get("wind-status").dataset.i18n = "preview_initial";
+elements.get("wind-status").textContent = "Preview only; no physical mutation.";
+elements.get("wind-preview").dataset.i18n = "preview";
+elements.get("wind-preview").textContent = "Preview";
+const i18nNodes = [elements.get("wind-status"), elements.get("wind-preview")];
 
 class FakeWebSocket {
     static instance;
@@ -86,7 +93,9 @@ const context = {
     window,
     document: {
         hidden: false,
+        documentElement: {},
         getElementById: (id) => elements.get(id),
+        querySelectorAll: (selector) => selector === "[data-i18n]" ? i18nNodes : [],
         createElement: (tagName) => new Element(tagName),
         addEventListener() {},
     },
@@ -123,9 +132,21 @@ for (const asset of ["gsp_drone_geometry.js", "gsp_visual.js"]) {
 }
 
 const html = fs.readFileSync("common/gsp/gsp_panel.html", "utf8");
+assert.match(html, /<label><span data-i18n="from">FROM°<\/span><input id="wind-from"/,
+    "language changes must translate the wind label without replacing its input");
+assert.doesNotMatch(html, /geometry: "[^"]*<b>/,
+    "text-only translations must not render markup literally");
 const script = html.match(/<script>\n([\s\S]*?)\n<\/script>/)[1];
 vm.runInNewContext(script, context, { filename: "gsp_panel.html" });
 
+assert.equal(elements.get("wind-status").textContent, "僅預覽；不會變更物理狀態。");
+assert.equal(elements.get("wind-preview").textContent, "預覽");
+assert.equal(context.document.documentElement.lang, "zh-Hant");
+elements.get("language-en").click();
+assert.equal(elements.get("wind-status").textContent, "Preview only; no physical mutation.");
+assert.equal(elements.get("wind-preview").textContent, "Preview");
+assert.equal(context.document.documentElement.lang, "en");
+elements.get("language-zh").click();
 const hardwareConfiguration = JSON.parse(fs.readFileSync("config/drones/5_inch_6s.json", "utf8"));
 
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
@@ -138,9 +159,22 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     v: 2,
     t: "telemetry",
     tick: 1,
-    d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1, config_hash: "config-fixture", armed: true,
+    d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1, config_hash: "config-fixture", authority: "flight_controller", armed: true,
         hardware_configuration: hardwareConfiguration,
-        hardware_power_model: { hover_endurance_minutes: 4.2, max_total_thrust_newtons: 40, max_total_current_a: 40 },
+        hardware_power_model: { hover_endurance_minutes: 4.2, max_total_thrust_newtons: 40, max_total_current_a: 40, max_motor_rpm: 15000 },
+        px4_mavlink: {
+            bridge_diagnostics: { source: "px4_bridge", age_seconds: 0.01, stale: false, sample: { state: "active", authority_active: true, estimator_ready: true, mission_phase: "hold" } },
+            heartbeat: { source: "px4_mavlink", age_seconds: 0.01, stale: false, sample: { flight_mode: "OFFBOARD" } },
+            autopilot_status: { source: "px4_mavlink", age_seconds: 0.01, stale: false, sample: { automatic_takeoff: true, position_hold: true, anti_wind_active: false } },
+            estimator_status: { source: "px4_mavlink", age_seconds: 0.02, stale: false, sample: { estimator_ready: true } },
+            system_status: { source: "px4_mavlink", age_seconds: 0.03, stale: true, sample: { failsafe: "RTL" } },
+            gps: { source: "px4_mavlink", age_seconds: 0.04, stale: false, sample: {} },
+            highres_imu: { source: "px4_mavlink", age_seconds: 0.05, stale: false, sample: {} },
+            scaled_pressure: { source: "px4_mavlink", age_seconds: 0.06, stale: false, sample: {} },
+            mag: { source: "px4_mavlink", age_seconds: 0.07, stale: true, sample: {} },
+            position_target_local_ned: { source: "px4_mavlink", age_seconds: 0.08, stale: false, sample: { position_ned: { x_val: 1, y_val: 2, z_val: -3 } } },
+            hil_actuator_controls: { source: "px4_mavlink", age_seconds: 0.02, stale: false, sample: { mapping_verified: true, command_normalized: { m1: 0.1, m2: 0.2, m3: 0.3, m4: 0.4 } } },
+        },
         motor_order: ["rear_right", "front_right", "rear_left", "front_left"], rpm: [955, 1910, 2865, 3820],
         motors: [
             { thrust_newtons: 2, current_a: 1, saturated: false }, { thrust_newtons: 8.5, current_a: 1, saturated: false },
@@ -157,6 +191,34 @@ assert.equal(elements.get("motor-rear-right").dataset.motor, "rear_right");
 assert.match(elements.get("motor-rear-right").textContent, /M1[\s\S]*955[\s\S]*2\.00[\s\S]*1\.00/);
 assert.match(elements.get("motor-rear-left").textContent, /嚴重/);
 assert.match(elements.get("flow-legend").textContent, /FRD.*m\/s/);
+assert.match(elements.get("source-commanded").textContent, /命令.*PX4 MAVLink.*新鮮/);
+assert.match(elements.get("source-truth").textContent, /地面真值/);
+assert.match(elements.get("px4-link").textContent, /PX4 bridge active.*bridge authority 啟用.*新鮮 0\.01 s/,
+    "bridge diagnostics stay explicitly distinct from PX4 MAVLink telemetry");
+assert.match(elements.get("px4-estimator").textContent, /估測器 已接收.*0\.02 s/);
+assert.match(elements.get("px4-mode").textContent, /模式 OFFBOARD/);
+assert.match(elements.get("px4-safety").textContent, /安全 RTL/);
+assert.match(elements.get("px4-sensors").textContent, /GPS 新鮮 0\.04 s.*磁力計 過期…凍結 0\.07 s/);
+assert.match(elements.get("px4-cue").textContent, /自動起飛 啟用.*定點保持 啟用.*抗風 未啟用/);
+elements.get("language-en").click();
+assert.match(elements.get("px4-estimator").textContent, /Estimator Received.*0\.02 s/,
+    "language switching rerenders the live health rail");
+elements.get("language-zh").click();
+assert.match(elements.get("live-m1").textContent, /955 轉\/分.*2\.00 N.*1\.00 A.*cw.*位置 未提供/);
+assert.match(elements.get("live-m1").textContent, /0\.10 命令/);
+FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
+    v: 2,
+    t: "telemetry",
+    tick: 2,
+    d: { sample_seq: 2, authority: "flight_controller", armed: true, hardware_configuration: hardwareConfiguration, rpm: [955, 1910, 2865, 3820], motors: [] },
+}) });
+assert.equal(elements.get("wind-apply").disabled, false,
+    "regular telemetry after an accepted fresh snapshot keeps wind control safe to use");
+elements.get("wind-from").value = "90"; elements.get("wind-speed").value = "3"; elements.get("wind-apply").click();
+const windRequest = FakeWebSocket.instance.sent.at(-1);
+assert.equal(windRequest.t, "set_wind"); assert.equal(elements.get("wind-apply").disabled, true);
+FakeWebSocket.instance.listeners.message({ data: JSON.stringify({ v: 2, t: "wind_ack", d: { request_seq: windRequest.seq, ok: false, error: "unsafe" } }) });
+assert.match(elements.get("wind-status").textContent, /風場被拒絕.*unsafe/); assert.equal(elements.get("wind-apply").disabled, false);
 
 // Geometry stays inspectable: classification, scale, M1-M4 mapping, provenance.
 assert.equal(elements.get("geometry-classification").dataset.classification, "nominal");

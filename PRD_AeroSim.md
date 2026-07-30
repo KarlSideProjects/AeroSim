@@ -3,12 +3,13 @@
 
 | 文件屬性 | 內容 |
 |---|---|
-| 版本 | v4.1.9（AirSim-class minimum；2026-07-25 Mode 2 輔助飛行 cockpit 決策同步） |
+| 版本 | v4.1.10（AirSim-class minimum；2026-07-31 GSP PX4 flight-health qualification 同步） |
 | 文件狀態 | 產品邊界已核准；GitHub issue 同步中 |
 | 發行模式 | **私下提供（Private Distribution）**，不上架 Google Play / App Store / Steam |
 | 開發模式 | 階段閘門制（Phase-Gate）：**門檻數值為剛性要求，核准後凍結、不得下修；未達標即退回修改，循環直到通過** |
 
 ### 變更紀錄
+- v4.1.10：GSP 定位為 Lab Mode 的本地、loopback-authenticated 飛行測試工作站，不取代原生 Operations Dashboard 或成為遠端 Web 產品。它以可追溯來源與新鮮度呈現 GPS、IMU、氣壓計、磁力計、PX4 estimator／MAVLink、飛行模式、armed 狀態、風場、M1–M4 normalized command 與模擬量測回饋；逾時時保留最後值並明示 unavailable/stale，禁止以零值或 AeroSim 本地估測冒充 PX4。風場依氣象「from」方位預覽、明確套用、在 authoritative physics tick 生效並寫入 Flight Replay；PX4 High Fidelity 僅在新鮮輸出下保持獨占 authority，否則 fail closed。直式 GSP `即時狀態` 的實作／封包／PX4 qualification 已由 CI 驗證；它保留為 CAP-006 前的 provisional Codex evidence，不要求人工 UI 審核。
 - v4.1.9：凍結 Xbox Mode 2 為左搖桿 Yaw/Throttle、右搖桿 Roll/Pitch；A 受控起飛至約 1 m 後進入輔助定高／定向／定點，Y 回 Angle Mode。遊戲預設 1920×900，常駐顯示手把輸入與四槳轉速／推力／旋向圖，並由 replay 保留輔助控制指令。
 - v4.1.8：確認第一版 UI/UX 標準由 CAP-006/G4.6 的完整可玩成品承擔；G2.9 僅保留為未來 Betaflight 開發對照，不作 UI/UX 或 Ubuntu qualification 門檻。
 - v4.1.7：Android Player Mode 本期 deferred，不產生、不簽章、不驗收 Android APK 或側載；保留未來可獨立重啟的 Android lane，且不阻擋 Ubuntu minimum。
@@ -45,7 +46,7 @@ AirSim-class minimum 不是外觀仿製。AeroSim 必須在同一 Godot 產品�
 |---|---|---|
 | 產品入口 | Player Mode、Lab Mode、Quick Fly、Map Catalog、七入口主選單、完整可玩里程碑 | CAP-001–006 |
 | 相容與控制 | `airsim==1.8.1` 凍結子集、PX4 SITL、雙機、NED/FRD/SI、local-only RPC、完整飛行指令面、經 issue 稽核的 AirSim reference | CAP-010–017 |
-| 感測與觀測 | RGB、DepthPlanar、Segmentation、IMU、GPS、magnetometer、barometer、LiDAR、Operations Dashboard、simulation-time 取樣 | CAP-020–023 |
+| 感測與觀測 | RGB、DepthPlanar、Segmentation、IMU、GPS、magnetometer、barometer、LiDAR、Operations Dashboard、GSP 飛行測試工作站、simulation-time 取樣 | CAP-020–024 |
 | 世界與場景 | 一張 Industrial Test Range、Godot-native glTF/GLB pipeline、Codex 視覺驗證、catalog objects、風雨霧與日照、自製雙機外觀 | CAP-030–036 |
 | 證據與資料 | deterministic Flight Replay、雙機同步 Dataset Recording、可攜 dataset package | CAP-040–042 |
 | 發行資格 | Ubuntu x86_64 完整 qualification、指定 runner 效能 gate、本機低規格不阻擋 | CAP-050–051 |

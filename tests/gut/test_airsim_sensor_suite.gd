@@ -106,6 +106,27 @@ func test_gps_and_barometer_preserve_origin_and_native_altitude_semantics() -> v
     assert_eq(named_gps.get_sensor("Drone1", AirSimSensorSuite.SENSOR_GPS, "custom_gps").time_stamp, 1000000000)
 
 
+func test_stationary_magnetometer_and_barometer_resample_at_50_hz_with_deterministic_noise() -> void:
+    var suite := AirSimSensorSuite.new()
+    autofree(suite)
+    assert_true(suite.configure(_settings(), ["Drone1"]).ok)
+    suite.advance(0.0, _state())
+    var magnetometer_before: Dictionary = suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_MAGNETOMETER, "")
+    var barometer_before: Dictionary = suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_BAROMETER, "")
+
+    suite.advance(0.019, _state())
+    assert_eq(suite.stats("Drone1", AirSimSensorSuite.SENSOR_MAGNETOMETER, "").sample_count, 1)
+    suite.advance(0.02, _state())
+    var magnetometer_after: Dictionary = suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_MAGNETOMETER, "")
+    var barometer_after: Dictionary = suite.get_sensor("Drone1", AirSimSensorSuite.SENSOR_BAROMETER, "")
+
+    assert_eq(magnetometer_after.time_stamp, 20_000_000)
+    assert_eq(barometer_after.time_stamp, 20_000_000)
+    assert_ne(magnetometer_after.magnetic_field_body.x_val, magnetometer_before.magnetic_field_body.x_val)
+    assert_ne(barometer_after.pressure, barometer_before.pressure)
+    assert_ne(barometer_after.temperature, barometer_before.temperature)
+
+
 func test_sensor_drop_metadata_is_observable_after_a_large_simulation_gap() -> void:
     var suite := AirSimSensorSuite.new()
     autofree(suite)

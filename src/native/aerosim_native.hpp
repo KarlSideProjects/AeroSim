@@ -340,6 +340,11 @@ public:
     void set_external_authority_active(bool active);
     godot::Dictionary flight_tuning_contract() const;
     godot::Dictionary flight_tuning_configuration() const;
+    godot::Dictionary px4_support_lift_readiness(
+            double motor_0,
+            double motor_1,
+            double motor_2,
+            double motor_3) const;
     godot::Dictionary hardware_power_diagnostics() const;
     godot::Dictionary hardware_per_motor_diagnostics() const;
     godot::Dictionary telemetry_snapshot() const;

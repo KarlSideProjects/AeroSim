@@ -41,6 +41,10 @@ const MAP_SCENE_PATHS := {
 }
 const SPAWN_POSITION := Vector3(-1.0, 0.0, 0.0)
 const AIRSIM_GROUND_BODY_CLEARANCE_M := 0.25
+const PX4_LAUNCH_PHASE_IDLE := "idle"
+const PX4_LAUNCH_PHASE_SUPPORT_HELD := "support_held"
+const PX4_LAUNCH_PHASE_RELEASE_PROBE := "release_probe"
+const PX4_LAUNCH_PHASE_RELEASED := "released"
 ## Altitude the AirSim `takeoff` command climbs to, above the spawn origin.
 const AIRSIM_TAKEOFF_ALTITUDE_M := 3.0
 const KEYBOARD_FLIGHT_THROTTLE := 0.75
@@ -251,6 +255,7 @@ var _replay_recording_active := false
 var _replay_recording_failed := false
 var _replay_recording_failure := ""
 var _replay_authoritative_physics_tick := 0
+var _last_replay_environment_identity: Dictionary = {}
 var _replay_settings_manifest_hash := ""
 var _replay_upper_config_manifest_hash := ""
 var _replay_lower_config_manifest_hash := ""
@@ -271,6 +276,8 @@ var _gsp_tuning_registry_hash := "unavailable"
 var _gsp_tuning_pending: Array[Dictionary] = []
 var _gsp_tuning_completed: Array[Dictionary] = []
 var _gsp_tuning_recent_results: Array[Dictionary] = []
+var _gsp_wind_pending: Array[Dictionary] = []
+var _gsp_wind_completed: Array[Dictionary] = []
 const GSP_MIGRATION_CAPABILITY_TTL_MS := 30_000
 const GSP_MIGRATION_CAPABILITY_LIMIT := 8
 var _gsp_migration_capabilities: Array[Dictionary] = []
@@ -300,6 +307,11 @@ var _airsim_last_body_angular_velocity := Vector3.ZERO
 var _airsim_angular_acceleration := Vector3.ZERO
 var _airsim_environment_catalog_loaded := false
 var _px4_lockstep_sensor_pending := false
+var _px4_takeoff_ground_release_pending := false
+var _px4_launch_phase := PX4_LAUNCH_PHASE_IDLE
+var _px4_launch_support_frame_required := false
+var _px4_launch_handoff_events: Array[Dictionary] = []
+var _last_px4_collision_input := {}
 var _airsim_collision_seen := false
 var _airsim_contact_this_frame := false
 var _airsim_collision_normal := Vector3.ZERO
@@ -378,7 +390,6 @@ func _ready() -> void:
         get_tree().quit(1)
         return
     else:
-        _configure_px4_sitl_bridge()
         var sensor_result := airsim_sensor_suite.configure(airsim_rpc_server.settings, _airsim_vehicle_names if not _airsim_vehicle_names.is_empty() else [_airsim_vehicle_name])
         if not sensor_result.ok:
             push_error("AirSim sensor startup failed: %s" % sensor_result.error)
@@ -405,11 +416,12 @@ func _ready() -> void:
     if not hardware_config.initialize_tuning(self):
         last_error_message = hardware_config.last_error
         push_error("Default tuning initialization failed: %s" % hardware_config.last_error)
-    if not hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET):
+    if not hardware_config.apply_to_runtime(self, _hardware_preset_for_vehicle(_airsim_vehicle_name)):
         last_error_message = hardware_config.last_error
         push_error("Default hardware preset failed: %s" % hardware_config.last_error)
     motor_hud_spin_directions = hardware_config.current.get("spin_direction", [])
     _activate_hardware_configuration(hardware_config)
+    _configure_px4_sitl_bridge()
     if not _configure_secondary_native(hardware_config):
         push_error("Named vehicle runtime setup failed: %s" % last_error_message)
         if airsim_rpc_server != null and airsim_rpc_server.is_running():
@@ -687,7 +699,7 @@ func _configure_secondary_native(hardware_config: RefCounted) -> bool:
         native = primary_native
         last_error_message = "second named vehicle tuning initialization failed"
         return false
-    var applied_result: Variant = hardware_config.apply_to_runtime(self, DEFAULT_HARDWARE_PRESET)
+    var applied_result: Variant = hardware_config.apply_to_runtime(self, _hardware_preset_for_vehicle(String(_airsim_vehicle_names[1])))
     var applied: bool = bool(applied_result)
     native = primary_native
     if not applied:
@@ -799,6 +811,7 @@ func _begin_complete_replay_recording(startup_settings: Dictionary) -> void:
     _replay_recording_failed = false
     _replay_recording_failure = ""
     _replay_authoritative_physics_tick = 0
+    _last_replay_environment_identity.clear()
     _replay_last_timestamp_us = 0
     _replay_epoch_offset_us = 0
     _replay_last_simulation_timestamp_us = 0
@@ -990,6 +1003,7 @@ func _record_replay_scene_object(operation: int, snapshot: Dictionary) -> void:
 
 
 func _record_replay_environment(state: Dictionary) -> bool:
+    _last_replay_environment_identity.clear()
     if _replay_recording_failed or not _replay_recording_active or native == null:
         return false
     var replay_state := state.duplicate(true)
@@ -1004,6 +1018,18 @@ func _record_replay_environment(state: Dictionary) -> bool:
     if not bool(result.get("ok", false)):
         _fail_replay_recording(String(result.get("diagnostic_message", "environment recording failed")))
         return false
+    var identity_value = result.get("event_identity", null)
+    if typeof(identity_value) != TYPE_DICTIONARY:
+        _fail_replay_recording("environment recording did not return a native event identity")
+        return false
+    var identity: Dictionary = identity_value
+    if String(identity.get("type", "")) != "environment" or \
+            typeof(identity.get("timestamp_us", null)) != TYPE_INT or int(identity.get("timestamp_us", -1)) < 0 or \
+            typeof(identity.get("physics_tick", null)) != TYPE_INT or int(identity.get("physics_tick", -1)) != _replay_authoritative_physics_tick or \
+            typeof(identity.get("event_order", null)) != TYPE_INT or int(identity.get("event_order", -1)) < 0:
+        _fail_replay_recording("environment recording returned an invalid native event identity")
+        return false
+    _last_replay_environment_identity = identity.duplicate(true)
     return true
 
 
@@ -1579,6 +1605,8 @@ func _physics_process(delta: float) -> void:
             return
     if not defer_airsim_advance and px4_sitl_bridge != null and not px4_lockstep_active:
         px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), airsim_session.simulation_time_seconds if airsim_session != null else 0.0)
+    if airsim_session == null or (not defer_airsim_advance and not px4_lockstep_active and session_advanced):
+        _apply_gsp_wind_requests(_gsp_public_physics_tick())
     if native == null or paused or not takeoff_requested:
         if px4_lockstep_active and _px4_lockstep_sensor_pending:
             if airsim_session != null:
@@ -1586,6 +1614,8 @@ func _physics_process(delta: float) -> void:
                 if not session_advanced and airsim_session.is_paused():
                     set_paused(true, false)
                     return
+                if session_advanced:
+                    _apply_gsp_wind_requests(_gsp_public_physics_tick())
             _publish_px4_lockstep_sensor_if_needed()
         _advance_visual_wind(session_advanced)
         _advance_airsim_sensors()
@@ -1657,6 +1687,8 @@ func _physics_process(delta: float) -> void:
                     if not session_advanced and airsim_session.is_paused():
                         set_paused(true, false)
                         return
+                    if session_advanced:
+                        _apply_gsp_wind_requests(_gsp_public_physics_tick())
                 _publish_px4_lockstep_sensor_if_needed()
             _advance_visual_wind(session_advanced)
             _advance_airsim_sensors()
@@ -1680,6 +1712,8 @@ func _physics_process(delta: float) -> void:
                     if not session_advanced and airsim_session.is_paused():
                         set_paused(true, false)
                         return
+                    if session_advanced:
+                        _apply_gsp_wind_requests(_gsp_public_physics_tick())
                 _publish_px4_lockstep_sensor_if_needed()
             _advance_visual_wind(session_advanced)
             _advance_airsim_sensors()
@@ -1687,6 +1721,54 @@ func _physics_process(delta: float) -> void:
         if drone_body != null:
             if not _sync_native_from_drone():
                 return
+        var px4_launch_ground_contact := _px4_launch_ground_contact()
+        var px4_lift_readiness := {}
+        var px4_launch_phase_for_step := _px4_launch_phase
+        var px4_collision_touching: bool = drone_body != null and drone_body.contact_seen
+        if px4_launch_ground_contact:
+            if _px4_launch_phase == PX4_LAUNCH_PHASE_SUPPORT_HELD:
+                if _px4_launch_support_frame_required:
+                    _px4_launch_support_frame_required = false
+                    px4_collision_touching = true
+                else:
+                    px4_lift_readiness = _px4_support_lift_readiness(actuator_outputs)
+                    if bool(px4_lift_readiness.get("valid", false)) and bool(px4_lift_readiness.get("ready", false)):
+                        _px4_launch_phase = PX4_LAUNCH_PHASE_RELEASE_PROBE
+                        px4_launch_phase_for_step = PX4_LAUNCH_PHASE_RELEASE_PROBE
+                        px4_collision_touching = false
+                        _record_px4_launch_handoff({
+                            "phase": PX4_LAUNCH_PHASE_RELEASE_PROBE,
+                            "projected_lift_newtons": px4_lift_readiness.get("projected_lift_newtons"),
+                            "required_lift_newtons": px4_lift_readiness.get("required_lift_newtons"),
+                        })
+                    else:
+                        px4_collision_touching = true
+                        _record_px4_launch_handoff({"phase": PX4_LAUNCH_PHASE_SUPPORT_HELD, "contact_support": true})
+            elif _px4_launch_phase == PX4_LAUNCH_PHASE_RELEASE_PROBE:
+                px4_collision_touching = false
+            else:
+                # FlightCore proved an upward response on this same initial
+                # spawn-floor contact. Retain that authority only until the
+                # normal clearance test closes this launch window; side, later
+                # floor, airborne, and landing contacts never enter this branch.
+                px4_collision_touching = false
+        _last_px4_collision_input = {
+            "caller": "FlightRuntime._physics_process.px4",
+            "contact_seen": drone_body != null and drone_body.contact_seen,
+            "contact_normal": [
+                drone_body.contact_normal.x if drone_body != null else 0.0,
+                drone_body.contact_normal.y if drone_body != null else 0.0,
+                drone_body.contact_normal.z if drone_body != null else 0.0,
+            ],
+            "body_global_y": drone_body.global_position.y if drone_body != null else 0.0,
+            "spawn_y": _spawn_position().y,
+            "clearance_m": AIRSIM_GROUND_BODY_CLEARANCE_M,
+            "initial_ground_contact": px4_launch_ground_contact,
+            "launch_phase_for_step": px4_launch_phase_for_step,
+            "launch_phase": _px4_launch_phase,
+            "lift_readiness": px4_lift_readiness.duplicate(true),
+            "touching": px4_collision_touching,
+        }
         var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body) if drone_body != null else Vector3.ZERO
         row = native.call(
             "step_collision_px4_actuator_mode",
@@ -1696,7 +1778,7 @@ func _physics_process(delta: float) -> void:
             clampf(actuator_outputs[1], 0.0, 1.0),
             clampf(actuator_outputs[2], 0.0, 1.0),
             clampf(actuator_outputs[3], 0.0, 1.0),
-            drone_body != null and drone_body.contact_seen,
+            px4_collision_touching,
             drone_body.contact_normal.x if drone_body != null else 0.0,
             drone_body.contact_normal.y if drone_body != null else 0.0,
             drone_body.contact_normal.z if drone_body != null else 0.0,
@@ -1714,6 +1796,12 @@ func _physics_process(delta: float) -> void:
         )
         if _handle_native_step_failure(native, row, true):
             return
+        _resolve_px4_launch_release_probe(row, px4_launch_ground_contact)
+        _last_px4_collision_input["launch_phase"] = _px4_launch_phase
+        if row.size() > 12:
+            _last_px4_collision_input["probe_authority_jolt"] = row[12] > 0.5
+        if row.size() > 9:
+            _last_px4_collision_input["probe_vertical_velocity_mps"] = row[9]
     elif drone_body != null:
         if not demo_flight_active() or _demo_needs_native_sync():
             if not _sync_native_from_drone():
@@ -1855,6 +1943,8 @@ func _physics_process(delta: float) -> void:
         if not session_advanced and airsim_session.is_paused():
             set_paused(true, false)
             return
+        if session_advanced:
+            _apply_gsp_wind_requests(_gsp_public_physics_tick())
     if defer_airsim_advance and px4_sitl_bridge != null and not px4_lockstep_active:
         px4_sitl_bridge.publish_sensor_snapshot(_airsim_state(_airsim_vehicle_name).get("state", {}), airsim_session.simulation_time_seconds if airsim_session != null else 0.0)
     _advance_px4_path()
@@ -1864,6 +1954,8 @@ func _physics_process(delta: float) -> void:
             if not session_advanced and airsim_session.is_paused():
                 set_paused(true, false)
                 return
+            if session_advanced:
+                _apply_gsp_wind_requests(_gsp_public_physics_tick())
         _publish_px4_lockstep_sensor_if_needed()
     if airsim_session != null and airsim_session.is_paused():
         set_paused(true, false)
@@ -2852,6 +2944,10 @@ func reset_to_spawn(rpc_owned_reset: bool = false) -> bool:
     _reset_pending_secondary_ack_required = _airsim_secondary_native != null and secondary_drone_body != null and secondary_drone_body.has_method("queue_reset_state")
     screen = "reset_pending"
     takeoff_requested = false
+    _px4_takeoff_ground_release_pending = false
+    _px4_launch_phase = PX4_LAUNCH_PHASE_IDLE
+    _px4_launch_support_frame_required = false
+    _px4_launch_handoff_events.clear()
     takeoff_assist_active = false
     assisted_throttle_waiting_for_neutral = false
     # Quiesce private simulation/body state while retaining the public AirSim
@@ -3229,21 +3325,30 @@ func _apply_environment_result(result: Dictionary) -> Dictionary:
     if not result.ok:
         return result
     if native != null:
-        var wind_config := {
-            "preset": String(result.state.wind_preset),
-            "steady_wind": result.state.steady_wind,
-        }
+        var wind_config: Dictionary = native.call("wind_configuration") if native.has_method("wind_configuration") else {}
+        wind_config["preset"] = String(result.state.wind_preset)
+        wind_config["steady_wind"] = result.state.steady_wind
         native.call("configure_wind", wind_config)
         if _airsim_secondary_native != null:
-            _airsim_secondary_native.call("configure_wind", wind_config)
+            var secondary_wind_config: Dictionary = _airsim_secondary_native.call("wind_configuration") if _airsim_secondary_native.has_method("wind_configuration") else {}
+            secondary_wind_config["preset"] = String(result.state.wind_preset)
+            secondary_wind_config["steady_wind"] = result.state.steady_wind
+            _airsim_secondary_native.call("configure_wind", secondary_wind_config)
     if not _apply_environment_visuals(result.state):
         return {"ok": false, "error": last_error_message}
-    if not _reset_commit_in_progress:
-        _record_replay_environment(_environment_rpc_snapshot(result.state))
-    return {"ok": true, "value": _environment_rpc_snapshot(result.state)}
+    var response := {"ok": true, "value": _environment_rpc_snapshot(result.state)}
+    if not _reset_commit_in_progress and _replay_recording_active:
+        if not _record_replay_environment(_environment_rpc_snapshot(result.state)):
+            return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
+        response["replay_event_identity"] = _last_replay_environment_identity.duplicate(true)
+    return response
 
 
 func _apply_environment_visuals(state: Dictionary) -> bool:
+    var ready := _environment_visuals_ready()
+    if not bool(ready.get("ok", false)):
+        last_error_message = String(ready.get("error", "environment visuals unavailable"))
+        return false
     if loaded_map == null:
         return true
     var world_environment := loaded_map.get_node_or_null("AeroSimEnvironment") as WorldEnvironment
@@ -3275,6 +3380,17 @@ func _apply_environment_visuals(state: Dictionary) -> bool:
         if sun != null and sun_direction.length_squared() > 0.0:
             sun.rotation = Vector3(-asin(clampf(sun_direction.y, -1.0, 1.0)), atan2(sun_direction.x, sun_direction.z), 0.0)
     return true
+
+
+func _environment_visuals_ready() -> Dictionary:
+    if loaded_map == null or loaded_map_id != "terrain3d_range":
+        return {"ok": true}
+    var world_environment := loaded_map.get_node_or_null("AeroSimEnvironment") as WorldEnvironment
+    if world_environment == null:
+        return {"ok": false, "error": "Terrain Range is missing required AeroSimEnvironment"}
+    if world_environment.environment == null:
+        return {"ok": false, "error": "Terrain Range required AeroSimEnvironment has no Environment resource"}
+    return {"ok": true}
 
 
 func _normalize_environment_payload(raw: Dictionary) -> Dictionary:
@@ -5169,7 +5285,8 @@ func _refresh_osd() -> void:
     var active := screen in ["preflight", "flight", "finish", "osd"] and not (paused and screen == "flight")
     var snapshot := _osd_snapshot()
     var battery: Dictionary = snapshot.get("battery", {})
-    var armed := bool(snapshot.get("armed", _flight_control_armed()))
+    var armed_value: Variant = snapshot.get("armed", _flight_control_armed())
+    var armed: bool = armed_value if armed_value is bool else _flight_control_armed()
     var mode := String(snapshot.get("mode", flight_mode))
     var lap_text := ""
     if time_trial != null:
@@ -5440,6 +5557,79 @@ func gsp_tuning_request(peer_id: int, connection_id: int, request_seq: int, para
     if typeof(parameter) == TYPE_ARRAY:
         return gsp_tuning_batch_request(peer_id, connection_id, request_seq, parameter, source, quick_adjust_slot)
     return gsp_tuning_batch_request(peer_id, connection_id, request_seq, [{"parameter": parameter, "value": value}], source, quick_adjust_slot)
+
+
+func gsp_wind_request(peer_id: int, connection_id: int, request_seq: int, wind_from_deg: float, speed_mps: float) -> Dictionary:
+    var result := {"peer_id": peer_id, "connection_id": connection_id, "request_seq": request_seq}
+    var domain: Dictionary = _active_hardware_configuration.get("environment", {}).get("wind_speed_mps", {})
+    var maximum := float(domain.get("max", NAN))
+    if not is_finite(wind_from_deg) or wind_from_deg < 0.0 or wind_from_deg >= 360.0:
+        result.merge({"ok": false, "error": "wind_from_deg_out_of_range"})
+        return result
+    if not is_finite(speed_mps) or speed_mps < 0.0 or not is_finite(maximum) or speed_mps > maximum:
+        result.merge({"ok": false, "error": "wind_speed_out_of_domain"})
+        return result
+    var toward_deg := fposmod(wind_from_deg + 180.0, 360.0)
+    var toward_rad := deg_to_rad(toward_deg)
+    var ned := Vector3(cos(toward_rad) * speed_mps, sin(toward_rad) * speed_mps, 0.0)
+    _gsp_wind_pending.append({
+        "peer_id": peer_id,
+        "connection_id": connection_id,
+        "request_seq": request_seq,
+        "wind_from_deg": wind_from_deg,
+        "speed_mps": speed_mps,
+        "toward_deg": toward_deg,
+        "ned_mps": ned,
+    })
+    return result.merged({"ok": true, "pending": true, "apply_timing": "next_physics_step", "wind_from_deg": wind_from_deg, "speed_mps": speed_mps, "toward_deg": toward_deg, "ned_mps": ned}, true)
+
+
+func _apply_gsp_wind_requests(public_physics_tick: int) -> void:
+    if _gsp_wind_pending.is_empty():
+        return
+    var pending := _gsp_wind_pending
+    _gsp_wind_pending = []
+    for request in pending:
+        var visual_ready := _environment_visuals_ready()
+        if not bool(visual_ready.get("ok", false)):
+            _gsp_wind_completed.append(request.merged({
+                "ok": false,
+                "pending": false,
+                "error": String(visual_ready.get("error", "environment visuals unavailable")),
+            }, true))
+            continue
+        var state_before := environment_state.snapshot() if environment_state != null else {}
+        var primary_wind_before: Dictionary = native.call("wind_configuration") if native != null and native.has_method("wind_configuration") else {}
+        var secondary_wind_before: Dictionary = _airsim_secondary_native.call("wind_configuration") if _airsim_secondary_native != null and _airsim_secondary_native.has_method("wind_configuration") else {}
+        var apply_result := _apply_environment_result(environment_state.apply({
+            "wind_preset": String(state_before.get("wind_preset", "calm")),
+            "steady_wind": request.ned_mps,
+        })) if environment_state != null else {"ok": false, "error": "environment_unavailable"}
+        var acknowledgement := request.duplicate(true)
+        acknowledgement["applied_tick"] = public_physics_tick
+        acknowledgement["ok"] = bool(apply_result.get("ok", false))
+        acknowledgement["pending"] = false
+        if acknowledgement.ok and typeof(apply_result.get("replay_event_identity", null)) == TYPE_DICTIONARY:
+            var replay_event_identity: Dictionary = apply_result.get("replay_event_identity", {}).duplicate(true)
+            acknowledgement["public_applied_tick"] = acknowledgement["applied_tick"]
+            acknowledgement["applied_tick"] = int(replay_event_identity.get("physics_tick", -1))
+            acknowledgement["replay_event_identity"] = replay_event_identity
+        if not acknowledgement.ok:
+            acknowledgement["error"] = String(apply_result.get("error", "wind_apply_failed"))
+            # The visual preflight above makes this fallback exceptional; restore every mutated boundary if it occurs.
+            if environment_state != null and not state_before.is_empty():
+                environment_state.apply(state_before)
+            if native != null and not primary_wind_before.is_empty():
+                native.call("configure_wind", primary_wind_before)
+            if _airsim_secondary_native != null and not secondary_wind_before.is_empty():
+                _airsim_secondary_native.call("configure_wind", secondary_wind_before)
+        _gsp_wind_completed.append(acknowledgement)
+
+
+func gsp_wind_results() -> Array:
+    var results := _gsp_wind_completed.duplicate(true)
+    _gsp_wind_completed.clear()
+    return results
 
 
 func gsp_tuning_batch_request(peer_id: int, connection_id: int, request_seq: int, changes: Array, source: String = "panel", quick_adjust_slot: int = -1, atomic_barrier: bool = false, preset_provenance: Dictionary = {}) -> Dictionary:
@@ -6227,7 +6417,10 @@ func gsp_telemetry_snapshot() -> Dictionary:
     var snapshot: Dictionary = native.call("telemetry_snapshot")
     var publish_count := int(snapshot.get("publish_count", -1))
     if publish_count == _gsp_telemetry_publish_count and not _gsp_telemetry_cache.is_empty():
-        return _gsp_telemetry_cache.duplicate(true)
+        var cached := _gsp_telemetry_cache.duplicate(true)
+        if px4_sitl_bridge != null:
+            cached["px4_mavlink"] = px4_sitl_bridge.px4_observability(Time.get_ticks_usec() / 1_000_000.0)
+        return cached
     var position: Vector3 = drone_body.global_position if drone_body != null else _spawn_position()
     var orientation: Quaternion = drone_body.global_transform.basis.get_rotation_quaternion() if drone_body != null else Quaternion.IDENTITY
     var velocity: Vector3 = drone_body.linear_velocity if drone_body != null else Vector3.ZERO
@@ -6244,6 +6437,10 @@ func gsp_telemetry_snapshot() -> Dictionary:
     snapshot["vel_ned"] = velocity_payload
     snapshot["att_euler_deg"] = AirSimCoordinateContract.ned_orientation_to_zyx_euler_degrees(attitude_ned)
     snapshot["gyro_body"] = rates_payload
+    if px4_sitl_bridge != null:
+        # Local kinematics remain AeroSim state. This separate, source-labelled
+        # block contains only CRC-validated MAVLink messages emitted by PX4.
+        snapshot["px4_mavlink"] = px4_sitl_bridge.px4_observability(Time.get_ticks_usec() / 1_000_000.0)
     var rpm: Array[float] = []
     for motor_value in snapshot.get("motors", []):
         var motor: Dictionary = motor_value
@@ -7225,8 +7422,10 @@ func _configure_px4_sitl_bridge() -> void:
     var vehicle_settings: Dictionary = vehicles.get(_airsim_vehicle_name, {})
     if String(vehicle_settings.get("VehicleType", "SimpleFlight")) != "PX4Multirotor":
         return
+    var bridge_settings := vehicle_settings.duplicate(true)
+    bridge_settings["NativeMotorOrder"] = _active_hardware_configuration.get("motor_order", [])
     px4_sitl_bridge = Px4SitlBridge.new()
-    var configure_result := px4_sitl_bridge.configure(vehicle_settings, Callable(self, "_on_px4_authority_changed"))
+    var configure_result := px4_sitl_bridge.configure(bridge_settings, Callable(self, "_on_px4_authority_changed"))
     if not configure_result.ok:
         last_error_message = String(configure_result.error)
         paused = true
@@ -7241,7 +7440,24 @@ func _configure_px4_sitl_bridge() -> void:
         push_error(last_error_message)
 
 
+func _hardware_preset_for_vehicle(vehicle_name: String) -> String:
+    if airsim_rpc_server == null:
+        return DEFAULT_HARDWARE_PRESET
+    var vehicles: Dictionary = airsim_rpc_server.settings.get("Vehicles", {})
+    var vehicle: Dictionary = vehicles.get(vehicle_name, {})
+    var preset := String(vehicle.get("HardwarePreset", DEFAULT_HARDWARE_PRESET))
+    return preset if preset.begins_with("res://config/drones/") else DEFAULT_HARDWARE_PRESET
+
+
 func _on_px4_authority_changed(active: bool) -> void:
+    if not active:
+        _px4_takeoff_ground_release_pending = false
+        _px4_launch_phase = PX4_LAUNCH_PHASE_IDLE
+        _px4_launch_support_frame_required = false
+        _px4_launch_handoff_events.clear()
+    if native != null and native.has_method("set_external_authority_active") and _native_external_authority_state != active:
+        native.call("set_external_authority_active", active)
+        _native_external_authority_state = active
     if not active and px4_sitl_bridge != null and px4_sitl_bridge.state == "failed":
         paused = true
         if airsim_session != null:
@@ -7252,7 +7468,7 @@ func _airsim_px4_command(method: String, args: Array) -> Dictionary:
     var result: Dictionary
     match method:
         "takeoff":
-            result = px4_sitl_bridge.takeoff(Vector3(0.0, 0.0, -5.0))
+            result = px4_sitl_bridge.takeoff(Vector3(0.0, 0.0, -AIRSIM_TAKEOFF_ALTITUDE_M))
         "land":
             result = px4_sitl_bridge.land()
         "hover":
@@ -7268,11 +7484,80 @@ func _airsim_px4_command(method: String, args: Array) -> Dictionary:
             return {"ok": false, "error": "PX4 SITL does not support AirSim command '%s' in this slice" % method}
     if not result.ok:
         return result
+    if method == "takeoff":
+        _px4_takeoff_ground_release_pending = true
+        _px4_launch_phase = PX4_LAUNCH_PHASE_SUPPORT_HELD
+        _px4_launch_support_frame_required = false
+        _px4_launch_handoff_events.clear()
+    elif method == "land":
+        _px4_takeoff_ground_release_pending = false
+        _px4_launch_phase = PX4_LAUNCH_PHASE_IDLE
+        _px4_launch_support_frame_required = false
+        _px4_launch_handoff_events.clear()
     _airsim_command_state = {"method": method, "args": args, "waypoint_index": 0}
     _airsim_command_remaining_frames = maxi(1, int(30.0 * float(Engine.physics_ticks_per_second)))
     takeoff_requested = true
     screen = "flight" if method == "takeoff" else screen
     return {"ok": true, "duration_frames": _airsim_command_remaining_frames}
+
+
+func _px4_launch_ground_contact() -> bool:
+    if not _px4_takeoff_ground_release_pending or drone_body == null:
+        return false
+    if px4_sitl_bridge == null or not px4_sitl_bridge.is_authority_active():
+        _px4_takeoff_ground_release_pending = false
+        _px4_launch_phase = PX4_LAUNCH_PHASE_IDLE
+        _px4_launch_support_frame_required = false
+        return false
+    if drone_body.global_position.y - _spawn_position().y >= AIRSIM_GROUND_BODY_CLEARANCE_M:
+        _px4_takeoff_ground_release_pending = false
+        _px4_launch_phase = PX4_LAUNCH_PHASE_IDLE
+        _px4_launch_support_frame_required = false
+        _record_px4_launch_handoff({"phase": "cleared"})
+        return false
+    return drone_body.contact_seen and drone_body.contact_normal.dot(Vector3.UP) > 0.5
+
+
+func _px4_support_lift_readiness(actuator_outputs: Array) -> Dictionary:
+    if native == null or not native.has_method("px4_support_lift_readiness") or actuator_outputs.size() < 4:
+        return {"valid": false, "ready": false}
+    var readiness: Variant = native.call(
+        "px4_support_lift_readiness",
+        clampf(float(actuator_outputs[0]), 0.0, 1.0),
+        clampf(float(actuator_outputs[1]), 0.0, 1.0),
+        clampf(float(actuator_outputs[2]), 0.0, 1.0),
+        clampf(float(actuator_outputs[3]), 0.0, 1.0)
+    )
+    return readiness if readiness is Dictionary else {"valid": false, "ready": false}
+
+
+func _resolve_px4_launch_release_probe(row: PackedFloat64Array, launch_ground_contact: bool) -> void:
+    if (_px4_launch_phase != PX4_LAUNCH_PHASE_RELEASE_PROBE and _px4_launch_phase != PX4_LAUNCH_PHASE_RELEASED) or not launch_ground_contact:
+        return
+    # CollisionAuthoritySwitch remains in Jolt for its configured clear frames.
+    # FlightCore must provide a real upward response on every initial-floor
+    # frame before clearance. A stopped response returns to support rather than
+    # allowing the body to pass through the floor.
+    if row.size() <= 12 or row[12] > 0.5:
+        return
+    var vertical_velocity := row[9] if row.size() > 9 else NAN
+    _record_px4_launch_handoff({
+        "phase": _px4_launch_phase,
+        "authority_jolt": false,
+        "vertical_velocity_mps": vertical_velocity,
+    })
+    if is_finite(vertical_velocity) and vertical_velocity > 0.0:
+        _px4_launch_phase = PX4_LAUNCH_PHASE_RELEASED
+        return
+    _px4_launch_phase = PX4_LAUNCH_PHASE_SUPPORT_HELD
+    _px4_launch_support_frame_required = true
+
+
+func _record_px4_launch_handoff(event: Dictionary) -> void:
+    if not event.is_empty() and (_px4_launch_handoff_events.is_empty() or _px4_launch_handoff_events.back() != event):
+        _px4_launch_handoff_events.append(event.duplicate(true))
+    while _px4_launch_handoff_events.size() > 32:
+        _px4_launch_handoff_events.pop_front()
 
 
 func _advance_px4_path() -> void:
@@ -7464,6 +7749,8 @@ func _airsim_state(name: String) -> Dictionary:
                 "orientation": _airsim_quaternion(AirSimCoordinateContract.godot_orientation_to_ned(measurement_orientation)),
                 "barometer_altitude_m": float(raw_imu.get("barometer_altitude_m", -position.y)),
             }
+    var magnetometer_sample := airsim_sensor_suite.get_sensor(name, AirSimSensorSuite.SENSOR_MAGNETOMETER, "") if airsim_sensor_suite != null else {}
+    var barometer_sample := airsim_sensor_suite.get_sensor(name, AirSimSensorSuite.SENSOR_BAROMETER, "") if airsim_sensor_suite != null else {}
     var collision := {
         "has_collided": _airsim_collision_seen,
         "normal": _airsim_vector3(AirSimCoordinateContract.godot_direction_to_ned(_airsim_collision_normal)),
@@ -7495,6 +7782,18 @@ func _airsim_state(name: String) -> Dictionary:
         "can_arm": native != null,
         "aerosim_identity": {"vehicle_name": _airsim_vehicle_name},
     }
+    if not magnetometer_sample.is_empty():
+        state["magnetometer"] = {
+            "magnetic_field_body": magnetometer_sample.get("magnetic_field_body", {}),
+            "time_stamp": int(magnetometer_sample.get("time_stamp", -1)),
+        }
+    if not barometer_sample.is_empty():
+        state["barometer"] = {
+            "altitude_m": float(barometer_sample.get("altitude", 0.0)),
+            "pressure_hpa": float(barometer_sample.get("pressure", 0.0)) / 100.0,
+            "temperature_c": float(barometer_sample.get("temperature", 0.0)),
+            "time_stamp": int(barometer_sample.get("time_stamp", -1)),
+        }
     return {"ok": true, "state": state}
 
 

@@ -35,6 +35,7 @@ bool valid_frame_timing(const SimulationConfig &config, const SimulationClock &c
     return config.physics_hz > 0 && config.substep_hz >= config.physics_hz &&
             static_cast<double>(config.substep_hz) / static_cast<double>(config.physics_hz) <= kMaxSubstepsPerFrame &&
             std::isfinite(config.mass_kg) && config.mass_kg > 0.0 && std::isfinite(config.gravity_mps2) &&
+            (!config.px4_actuator_rpm_mapping || (std::isfinite(config.max_motor_rpm) && config.max_motor_rpm > 0.0)) &&
             std::isfinite(clock.substep_accumulator) &&
             clock.substep_accumulator >= 0.0 && clock.substep_accumulator < 1.0;
 }
@@ -45,11 +46,14 @@ bool finite_vec3(const Vec3 &value) {
 
 bool finite_state(const RigidBodyState &state) {
     return finite_vec3(state.position) && finite_vec3(state.velocity) &&
+            finite_vec3(state.linear_acceleration_world_mps2) &&
             std::isfinite(state.orientation.x) && std::isfinite(state.orientation.y) &&
             std::isfinite(state.orientation.z) && std::isfinite(state.orientation.w) &&
             finite_vec3(state.angular_velocity) && finite_vec3(state.propwash_disturbance_rad_s2) &&
             std::all_of(state.motor_thrust_newtons.begin(), state.motor_thrust_newtons.end(), [](double value) {
                 return std::isfinite(value);
+            }) && std::all_of(state.motor_rpm.begin(), state.motor_rpm.end(), [](double value) {
+                return std::isfinite(value) && value >= 0.0;
             });
 }
 
@@ -150,6 +154,7 @@ AerodynamicStepValues integrate(RigidBodyState &state, const SimulationConfig &c
             force_world.z / config.mass_kg,
     };
 
+    state.linear_acceleration_world_mps2 = acceleration;
     state.velocity = state.velocity + acceleration * dt;
     state.position = state.position + state.velocity * dt;
 
@@ -215,43 +220,42 @@ bool validate_per_motor_config(const PerMotorPhysicsConfig &config) {
         }
     }
     const double max_abs_position = std::max({
-            std::abs(config.position_frd[0].x),
-            std::abs(config.position_frd[0].y),
-            std::abs(config.position_frd[1].x),
-            std::abs(config.position_frd[1].y),
-            std::abs(config.position_frd[2].x),
-            std::abs(config.position_frd[2].y),
-            std::abs(config.position_frd[3].x),
-            std::abs(config.position_frd[3].y),
+            std::abs(config.position_frd[0].x), std::abs(config.position_frd[0].y),
+            std::abs(config.position_frd[1].x), std::abs(config.position_frd[1].y),
+            std::abs(config.position_frd[2].x), std::abs(config.position_frd[2].y),
+            std::abs(config.position_frd[3].x), std::abs(config.position_frd[3].y),
     });
     const double position_tolerance = 1e-9 * std::max(1.0, max_abs_position);
-    const double forward_arm = std::abs(config.position_frd[0].x);
-    const double right_arm = std::abs(config.position_frd[0].y);
-    if (forward_arm <= position_tolerance || right_arm <= position_tolerance ||
-            forward_arm > 1.0 || right_arm > 1.0) {
-        return false;
-    }
-    const std::array<Vec3, 4> expected_positions = {{
-            {-forward_arm, right_arm, 0.0},
-            {forward_arm, right_arm, 0.0},
-            {-forward_arm, -right_arm, 0.0},
-            {forward_arm, -right_arm, 0.0},
+    const std::array<Vec3, 4> expected_quadrants = {{
+            {-1.0, 1.0, 0.0}, {1.0, 1.0, 0.0},
+            {-1.0, -1.0, 0.0}, {1.0, -1.0, 0.0},
     }};
-    const std::array<double, 4> expected_spin = {1.0, -1.0, -1.0, 1.0};
-    for (std::size_t index = 0; index < expected_positions.size(); ++index) {
+    std::size_t positive_yaw_motors = 0;
+    for (std::size_t index = 0; index < expected_quadrants.size(); ++index) {
         const Vec3 &actual = config.position_frd[index];
-        const Vec3 &expected = expected_positions[index];
-        if (std::abs(actual.x - expected.x) > position_tolerance ||
-                std::abs(actual.y - expected.y) > position_tolerance ||
-                std::abs(actual.z) > position_tolerance ||
-                config.spin_direction[index] != expected_spin[index]) {
+        const Vec3 &quadrant = expected_quadrants[index];
+        if (std::abs(actual.z) > position_tolerance || std::abs(actual.x) <= position_tolerance ||
+                std::abs(actual.y) <= position_tolerance || std::abs(actual.x) > 1.0 ||
+                std::abs(actual.y) > 1.0 || actual.x * quadrant.x <= 0.0 ||
+                actual.y * quadrant.y <= 0.0) {
             return false;
         }
+        positive_yaw_motors += config.spin_direction[index] > 0.0 ? 1U : 0U;
+        for (std::size_t other = 0; other < index; ++other) {
+            const Vec3 &other_position = config.position_frd[other];
+            if (std::abs(actual.x - other_position.x) <= position_tolerance &&
+                    std::abs(actual.y - other_position.y) <= position_tolerance) {
+                return false;
+            }
+        }
+    }
+    if (positive_yaw_motors != 2U) {
+        return false;
     }
 
     const auto columns = quad_x_mixer_columns(config);
     std::array<double, 4> scales{};
-    std::array<double, 4> diagonal{};
+    std::array<std::array<double, 4>, 4> normalized{};
     for (std::size_t axis = 0; axis < columns.size(); ++axis) {
         for (double coefficient : columns[axis]) {
             scales[axis] = std::max(scales[axis], std::abs(coefficient));
@@ -259,28 +263,38 @@ bool validate_per_motor_config(const PerMotorPhysicsConfig &config) {
         if (!std::isfinite(scales[axis]) || scales[axis] <= 0.0) {
             return false;
         }
-        for (double coefficient : columns[axis]) {
-            const double normalized_coefficient = coefficient / scales[axis];
-            diagonal[axis] += normalized_coefficient * normalized_coefficient;
-        }
-        if (!std::isfinite(diagonal[axis]) || diagonal[axis] <= 0.0) {
-            return false;
+        for (std::size_t index = 0; index < columns[axis].size(); ++index) {
+            normalized[axis][index] = columns[axis][index] / scales[axis];
         }
     }
-    for (std::size_t left = 0; left < columns.size(); ++left) {
-        for (std::size_t right = left + 1; right < columns.size(); ++right) {
-            double cross = 0.0;
-            for (std::size_t index = 0; index < columns[left].size(); ++index) {
-                cross += (columns[left][index] / scales[left]) *
-                        (columns[right][index] / scales[right]);
-            }
-            const double correlation = std::abs(cross) /
-                    std::sqrt(diagonal[left]) /
-                    std::sqrt(diagonal[right]);
-            if (!std::isfinite(correlation) || correlation > 1e-9) {
-                return false;
+    // Iris is intentionally fore/aft asymmetric.  Require a full-rank allocation
+    // matrix, not the former square-frame orthogonality shortcut.
+    double determinant = 1.0;
+    for (std::size_t pivot = 0; pivot < normalized.size(); ++pivot) {
+        std::size_t best_row = pivot;
+        for (std::size_t row = pivot + 1; row < normalized.size(); ++row) {
+            if (std::abs(normalized[row][pivot]) > std::abs(normalized[best_row][pivot])) {
+                best_row = row;
             }
         }
+        if (std::abs(normalized[best_row][pivot]) <= 1e-9) {
+            return false;
+        }
+        if (best_row != pivot) {
+            std::swap(normalized[best_row], normalized[pivot]);
+            determinant = -determinant;
+        }
+        const double pivot_value = normalized[pivot][pivot];
+        determinant *= pivot_value;
+        for (std::size_t row = pivot + 1; row < normalized.size(); ++row) {
+            const double factor = normalized[row][pivot] / pivot_value;
+            for (std::size_t column = pivot; column < normalized[row].size(); ++column) {
+                normalized[row][column] -= factor * normalized[pivot][column];
+            }
+        }
+    }
+    if (!std::isfinite(determinant) || std::abs(determinant) <= 1e-9) {
+        return false;
     }
     return true;
 }
@@ -296,35 +310,55 @@ bool valid_motor_commands(const MotorCommands &commands) {
     return true;
 }
 
+double per_motor_thrust_scale(const SimulationConfig &config, const MotorCommands &commands) {
+    const double average_command = std::accumulate(
+            commands.normalized.begin(), commands.normalized.end(), 0.0) /
+            static_cast<double>(commands.normalized.size());
+    if (config.battery_nominal_voltage_v <= 0.0 || config.battery_cells <= 0.0 ||
+            config.battery_cell_resistance_ohm <= 0.0) {
+        return 1.0;
+    }
+    const double total_current = config.per_motor.max_current_per_motor_a *
+            static_cast<double>(commands.normalized.size()) * average_command;
+    const double loaded_voltage = config.battery_nominal_voltage_v -
+            total_current * config.battery_cell_resistance_ohm * config.battery_cells;
+    const double voltage_ratio = std::clamp(loaded_voltage / config.battery_nominal_voltage_v, 0.0, 1.0);
+    return voltage_ratio * voltage_ratio;
+}
+
 AerodynamicStepValues integrate_per_motor(
         RigidBodyState &state,
         const SimulationConfig &config,
         const MotorCommands &commands,
         const Vec3 &external_force_world,
         double dt) {
-    const double average_command = std::accumulate(
-            commands.normalized.begin(), commands.normalized.end(), 0.0) /
-            static_cast<double>(commands.normalized.size());
-    const double total_current = config.per_motor.max_current_per_motor_a *
-            static_cast<double>(commands.normalized.size()) * average_command;
-    double voltage_ratio = 1.0;
-    if (config.battery_nominal_voltage_v > 0.0 && config.battery_cells > 0.0 &&
-            config.battery_cell_resistance_ohm > 0.0) {
-        const double loaded_voltage = config.battery_nominal_voltage_v -
-                total_current * config.battery_cell_resistance_ohm * config.battery_cells;
-        voltage_ratio = std::clamp(loaded_voltage / config.battery_nominal_voltage_v, 0.0, 1.0);
-    }
-    const double thrust_scale = voltage_ratio * voltage_ratio;
+    const double thrust_scale = per_motor_thrust_scale(config, commands);
 
     Vec3 body_force;
     Vec3 body_torque;
     Vec3 motor_torque_frd;
     const auto columns = quad_x_mixer_columns(config.per_motor);
     for (std::size_t index = 0; index < commands.normalized.size(); ++index) {
-        const double target_thrust = config.per_motor.max_thrust_per_motor_newtons *
-                commands.normalized[index] * thrust_scale;
-        const double thrust = first_order_motor_response(
-                state.motor_thrust_newtons[index], target_thrust, config.motor_tau_s, dt);
+        double thrust = 0.0;
+        if (config.px4_actuator_rpm_mapping) {
+            // The preset derives max thrust from its RPM² prop table.  PX4 HIL
+            // controls are normalized requested RPM, and battery voltage acts
+            // on RPM before the RPM² thrust conversion.
+            const double target_rpm = config.max_motor_rpm * commands.normalized[index] * std::sqrt(thrust_scale);
+            const double rpm = first_order_motor_response(state.motor_rpm[index], target_rpm, config.motor_tau_s, dt);
+            state.motor_rpm[index] = rpm;
+            const double rpm_ratio = std::clamp(rpm / config.max_motor_rpm, 0.0, 1.0);
+            thrust = config.per_motor.max_thrust_per_motor_newtons * rpm_ratio * rpm_ratio;
+        } else {
+            const double target_thrust = config.per_motor.max_thrust_per_motor_newtons *
+                    commands.normalized[index] * thrust_scale;
+            thrust = first_order_motor_response(
+                    state.motor_thrust_newtons[index], target_thrust, config.motor_tau_s, dt);
+            state.motor_rpm[index] = config.max_motor_rpm > 0.0
+                    ? config.max_motor_rpm * std::sqrt(std::clamp(
+                            thrust / config.per_motor.max_thrust_per_motor_newtons, 0.0, 1.0))
+                    : 0.0;
+        }
         state.motor_thrust_newtons[index] = thrust;
         const Vec3 force{0.0, thrust, 0.0};
         body_force = body_force + force;
@@ -357,6 +391,7 @@ AerodynamicStepValues integrate_per_motor(
             force_world.y / config.mass_kg - config.gravity_mps2,
             force_world.z / config.mass_kg,
     };
+    state.linear_acceleration_world_mps2 = acceleration;
     state.velocity = state.velocity + acceleration * dt;
     state.position = state.position + state.velocity * dt;
 
@@ -434,6 +469,43 @@ double available_thrust_cap_newtons(const SimulationConfig &config, double throt
     return raw_cap * voltage_ratio * voltage_ratio;
 }
 
+Px4SupportLiftReadiness px4_support_lift_readiness(
+        const SimulationConfig &config,
+        const RigidBodyState &state,
+        const MotorCommands &commands) {
+    Px4SupportLiftReadiness readiness;
+    if (!std::isfinite(config.mass_kg) || config.mass_kg <= 0.0 ||
+            !std::isfinite(config.gravity_mps2) || config.gravity_mps2 < 0.0 ||
+            !validate_per_motor_config(config.per_motor) || !valid_motor_commands(commands) ||
+            !std::isfinite(state.orientation.x) || !std::isfinite(state.orientation.y) ||
+            !std::isfinite(state.orientation.z) || !std::isfinite(state.orientation.w) ||
+            quat_norm(state.orientation) <= 0.0) {
+        return readiness;
+    }
+    readiness.thrust_scale = per_motor_thrust_scale(config, commands);
+    if (config.px4_actuator_rpm_mapping) {
+        // Ground support must make its handoff decision from the spool state
+        // that will be present in the first unconstrained flight frame.
+        for (double thrust : state.motor_thrust_newtons) {
+            readiness.command_thrust_newtons += thrust;
+        }
+    } else {
+        for (double command : commands.normalized) {
+            readiness.command_thrust_newtons += config.per_motor.max_thrust_per_motor_newtons *
+                    command * readiness.thrust_scale;
+        }
+    }
+    readiness.projected_lift_newtons = rotate(
+            state.orientation, {0.0, readiness.command_thrust_newtons, 0.0}).y;
+    readiness.required_lift_newtons = config.mass_kg * config.gravity_mps2;
+    readiness.valid = std::isfinite(readiness.thrust_scale) &&
+            std::isfinite(readiness.command_thrust_newtons) &&
+            std::isfinite(readiness.projected_lift_newtons) &&
+            std::isfinite(readiness.required_lift_newtons);
+    readiness.ready = readiness.valid && readiness.projected_lift_newtons > readiness.required_lift_newtons;
+    return readiness;
+}
+
 double motor_speed_rad_s_from_thrust(
         double thrust_newtons,
         double max_thrust_per_motor_newtons,
@@ -495,6 +567,32 @@ TrajectorySample step_per_motor_physics_frame(
             clock,
             config,
             [&commands](double) { return commands; });
+}
+
+TrajectorySample step_per_motor_ground_support_frame(
+        RigidBodyState &state,
+        SimulationClock &clock,
+        const SimulationConfig &config,
+        const MotorCommands &commands) {
+    const RigidBodyState constrained_state = state;
+    TrajectorySample sample = step_per_motor_physics_frame(state, clock, config, commands);
+    if (sample.substeps == 0) {
+        return sample;
+    }
+    // Jolt owns contact pose/velocity while supported. Preserve only the
+    // physical rotor state evolved by the same per-motor frame.
+    const std::array<double, 4> motor_thrust_newtons = state.motor_thrust_newtons;
+    const std::array<double, 4> motor_rpm = state.motor_rpm;
+    state = constrained_state;
+    // The contact solver constrains motion during support. Its contact force
+    // makes the net world acceleration zero, while the IMU still reports the
+    // corresponding upward specific force through gravity subtraction.
+    state.linear_acceleration_world_mps2 = {};
+    state.motor_thrust_newtons = motor_thrust_newtons;
+    state.motor_rpm = motor_rpm;
+    sample.state = state;
+    sample.first_substep_state = state;
+    return sample;
 }
 
 TrajectorySample step_per_motor_physics_frame(

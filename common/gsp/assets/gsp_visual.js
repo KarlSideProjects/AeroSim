@@ -17,8 +17,39 @@
 
     function vectorState(value, gate) {
         if (gate && gate !== "active") return { state: gate, value: null };
-        if (!value || !finite(Number(value.x_val)) || !finite(Number(value.y_val)) || !finite(Number(value.z_val))) return { state: "unavailable", value: null };
-        return { state: "active", value: { x: Number(value.x_val), y: Number(value.y_val), z: Number(value.z_val) } };
+        if (!finiteVector(value)) return { state: "unavailable", value: null };
+        return { state: "active", value: { x: vectorAxis(value, "x"), y: vectorAxis(value, "y"), z: vectorAxis(value, "z") } };
+    }
+
+    function vectorAxis(value, axis) {
+        if (!value || typeof value !== "object") return undefined;
+        return Object.prototype.hasOwnProperty.call(value, axis) ? value[axis] : value[axis + "_val"];
+    }
+
+    function finiteVector(value) {
+        return finite(vectorAxis(value, "x")) && finite(vectorAxis(value, "y")) && finite(vectorAxis(value, "z"));
+    }
+
+    function positiveVector(value) {
+        return finiteVector(value) && vectorAxis(value, "x") > 0 && vectorAxis(value, "y") > 0 && vectorAxis(value, "z") > 0;
+    }
+
+    function qualifiedBodyDrag(sample) {
+        const configuration = sample.hardware_configuration || {};
+        const bodyDrag = configuration.aerodynamics && configuration.aerodynamics.body_drag;
+        const evidence = bodyDrag && bodyDrag.evidence;
+        const evidenceState = evidence && String(evidence.state || "");
+        const airspeed = sample.airspeed_body_frd_mps_mean;
+        return String(sample.body_drag_operating_state || "") === "active" &&
+            ["provisional_estimate", "measured"].includes(evidenceState) &&
+            typeof evidence.provenance === "string" && evidence.provenance.length > 0 &&
+            finite(sample.air_density_kg_m3) && sample.air_density_kg_m3 > 0 &&
+            finite(bodyDrag.air_density_kg_m3) && bodyDrag.air_density_kg_m3 > 0 &&
+            positiveVector(bodyDrag.drag_coefficient) &&
+            positiveVector(configuration.frame && configuration.frame.frontal_area_m2) &&
+            finiteVector(bodyDrag.center_of_pressure_frd_m) &&
+            finiteVector(configuration.aircraft && configuration.aircraft.cg_offset_m) &&
+            finiteVector(airspeed);
     }
 
     // Rendered geometry always comes from the hardware configuration the
@@ -67,8 +98,8 @@
             }),
             flow: {
                 wind: vectorState(sample.wind_body_mps), airspeed: vectorState(sample.airspeed_body_frd_mps_mean),
-                body_drag: vectorState(sample.drag_body_n, String(sample.body_drag_operating_state || "unavailable")),
-                mean_drag: vectorState(sample.body_drag_force_body_frd_n_mean, String(sample.body_drag_operating_state || "unavailable")),
+                body_drag: vectorState(sample.body_drag_force_body_frd_n_mean, qualifiedBodyDrag(sample) ? "active" : "unavailable"),
+                body_drag_torque: vectorState(sample.body_drag_torque_body_frd_nm_mean, qualifiedBodyDrag(sample) ? "active" : "unavailable"),
                 rotor_drag: vectorState(sample.a3_drag_force_body_frd_n_mean, String(sample.a3_operating_state || "unavailable")),
                 propwash: vectorState(sample.propwash_disturbance_rad_s2, String(sample.a6_operating_state || "unavailable")),
                 downwash: finite(Number(sample.downwash_force_n)) ? { state: "active", value: Number(sample.downwash_force_n) } : { state: "unavailable", value: null },
@@ -175,6 +206,7 @@
     let pitch = .62;
     let distance = 1;
     let model = null;
+    let truthGhost = null;
     let renderedSignature = "";
 
     // "M1 CW" callouts drawn into a texture so the rotor mapping is readable in
@@ -213,6 +245,24 @@
         });
     }
 
+    function buildTruthGhost(source) {
+        const ghost = new THREE.Group();
+        source.updateWorldMatrix(true, true);
+        source.traverse((child) => {
+            if (!child.isMesh || !child.geometry) return;
+            const edge = new THREE.LineSegments(
+                new THREE.EdgesGeometry(child.geometry),
+                new THREE.LineDashedMaterial({ color: 0xffcf78, dashSize: .008, gapSize: .005 }),
+            );
+            edge.matrix.copy(child.matrixWorld);
+            edge.matrixAutoUpdate = false;
+            edge.computeLineDistances();
+            ghost.add(edge);
+        });
+        ghost.visible = false;
+        return ghost;
+    }
+
     // The model is rebuilt inside the render loop, one frame after the telemetry
     // that changed it. Announce the new state so the panel's status and geometry
     // card do not describe the previous frame.
@@ -234,6 +284,11 @@
             const child = airframe.children.pop();
             disposeNode(child);
         }
+        if (truthGhost) {
+            scene.remove(truthGhost);
+            disposeNode(truthGhost);
+            truthGhost = null;
+        }
         model = null;
         motorLabels = null;
         rotorById = {};
@@ -244,6 +299,10 @@
         }
         model = geometryPackage.build_drone_model(THREE, spec);
         airframe.add(model.group);
+        // The truth ghost shares the configured model; it never reintroduces
+        // nominal coordinates or dimensions into the renderer.
+        truthGhost = buildTruthGhost(model.group);
+        scene.add(truthGhost);
         motorLabels = geometryPackage.build_motor_labels(THREE, spec, createLabelTexture);
         airframe.add(motorLabels);
         rotorById = model.rotors;
@@ -302,6 +361,19 @@
             if (!root.matchMedia || !root.matchMedia("(prefers-reduced-motion: reduce)").matches) rotor.blades.rotation.y -= motor.angular_step_rad * rotor.spin_sign;
         });
         updateFlow();
+        const px4 = sample.px4_mavlink && sample.px4_mavlink.local_position_ned;
+        const attitude = sample.px4_mavlink && sample.px4_mavlink.attitude;
+        const estimate = px4 && !px4.stale && px4.sample && px4.sample.position_ned;
+        const truth = sample.pos_ned;
+        if (estimate && truth && finiteVector(estimate) && finiteVector(truth)) {
+            // PX4 estimate drives the solid Drone; local simulation stays the labelled ghost.
+            const delta = sceneVector({ x: vectorAxis(estimate, "x") - vectorAxis(truth, "x"), y: vectorAxis(estimate, "y") - vectorAxis(truth, "y"), z: vectorAxis(estimate, "z") - vectorAxis(truth, "z") });
+            airframe.position.copy(delta.clampLength(0, 1.5)); truthGhost.visible = true;
+        } else {
+            airframe.position.set(0, 0, 0);
+            if (truthGhost) truthGhost.visible = false;
+        }
+        if (attitude && !attitude.stale && attitude.sample && finite(Number(attitude.sample.roll_rad)) && finite(Number(attitude.sample.pitch_rad)) && finite(Number(attitude.sample.yaw_rad))) airframe.rotation.set(-Number(attitude.sample.pitch_rad), -Number(attitude.sample.yaw_rad), Number(attitude.sample.roll_rad));
     }
 
     function resize() {

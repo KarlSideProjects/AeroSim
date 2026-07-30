@@ -2118,7 +2118,7 @@ bool ReplaySessionRecorder::set_physics_tick(std::uint64_t physics_tick) {
     return true;
 }
 
-bool ReplaySessionRecorder::append_event(ReplayEvent event) {
+bool ReplaySessionRecorder::append_event(ReplayEvent event, ReplayEventIdentity *identity) {
     if (append_failed_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay event append already failed");
     }
@@ -2130,6 +2130,9 @@ bool ReplaySessionRecorder::append_event(ReplayEvent event) {
     event.event_order = next_event_order_;
     ++next_event_order_;
     event.has_authoritative_order = true;
+    if (identity != nullptr) {
+        *identity = {event.timestamp_us, event.physics_tick, event.event_order, event.type};
+    }
     session_.events.push_back(std::move(event));
     return true;
 }
@@ -2418,7 +2421,10 @@ bool ReplaySessionRecorder::record_scene_object(
     return true;
 }
 
-bool ReplaySessionRecorder::record_environment(std::uint64_t timestamp_us, std::string environment_json) {
+bool ReplaySessionRecorder::record_environment(
+        std::uint64_t timestamp_us,
+        std::string environment_json,
+        ReplayEventIdentity *identity) {
     if (finished_) {
         return fail(ReplayDiagnosticCode::InvalidSession, "replay session is already finished");
     }
@@ -2437,7 +2443,7 @@ bool ReplaySessionRecorder::record_environment(std::uint64_t timestamp_us, std::
     event.type = ReplayEventType::Environment;
     const std::string compact_environment = compact_json(parsed);
     event.environment_json = compact_environment;
-    if (!append_event(std::move(event))) {
+    if (!append_event(std::move(event), identity)) {
         return false;
     }
     environment_json_ = compact_environment;
