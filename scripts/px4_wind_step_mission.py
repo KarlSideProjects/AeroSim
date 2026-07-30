@@ -149,6 +149,44 @@ def read_bridge_trace(path: Path) -> dict[str, Any]:
     return {"available": False, "reason": "trace_file_not_valid_json"}
 
 
+def qualification_readiness_failure(trace: dict[str, Any]) -> str:
+    """Return the unmet physical-readiness proof, without issuing flight commands."""
+    bridge_events = trace.get("bridge_events")
+    runtime_events = trace.get("runtime_authority_events")
+    if not isinstance(bridge_events, list) or not isinstance(runtime_events, list):
+        return "PX4 qualification trace is unavailable"
+    takeoff_acks = [event for event in bridge_events if isinstance(event, dict) and event.get("kind") == "command_ack" and event.get("command") == 22]
+    if not any(event.get("result") == 0 for event in takeoff_acks):
+        return "PX4 CMD22 ACK=0 was not observed"
+    if not any(event.get("kind") == "estimator_status" and event.get("estimator_ready") is True for event in bridge_events if isinstance(event, dict)):
+        return "PX4 estimator readiness was not observed"
+    if not any(event.get("state") == "armed" and event.get("authority_active") is True for event in bridge_events if isinstance(event, dict)):
+        return "PX4 armed authority was not observed"
+    if not any(
+        event.get("kind") == "hil_actuator_controls"
+        and event.get("authority_active") is True
+        and isinstance(event.get("outputs"), list)
+        and any(isinstance(value, (int, float)) and math.isfinite(value) and abs(value) > 0.05 for value in event["outputs"])
+        for event in bridge_events
+        if isinstance(event, dict)
+    ):
+        return "post-takeoff nonzero PX4 actuator output was not observed"
+    if not any(isinstance(event.get("px4_collision_input"), dict) and event["px4_collision_input"] for event in runtime_events if isinstance(event, dict)):
+        return "PX4 collision input was not observed"
+    return ""
+
+
+def wait_for_qualification_readiness(path: Path, timeout_seconds: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    failure = "PX4 qualification trace is unavailable"
+    while time.monotonic() < deadline:
+        failure = qualification_readiness_failure(read_bridge_trace(path))
+        if not failure:
+            return
+        time.sleep(0.05)
+    raise RuntimeError(failure)
+
+
 def main() -> int:
     global airsim, arm_with_startup_retry, disarm_with_retry, wait_for_landed
     global receive_frame, send_text, websocket_connect
@@ -194,6 +232,7 @@ def main() -> int:
             client.enableApiControl(True, vehicle_name="Drone1")
             arm_with_startup_retry(client)
             wait_for_async_command(lambda: client.takeoffAsync(vehicle_name="Drone1"), "takeoff")
+            wait_for_qualification_readiness(Path(args.px4_trace_file))
             wait_for_async_command(lambda: client.moveToPositionAsync(*TARGET_NED, 1.0, vehicle_name="Drone1"), "move_to_position")
             wait_for_async_command(lambda: client.hoverAsync(vehicle_name="Drone1"), "hover")
 

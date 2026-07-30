@@ -304,6 +304,7 @@ var _airsim_angular_acceleration := Vector3.ZERO
 var _airsim_environment_catalog_loaded := false
 var _px4_lockstep_sensor_pending := false
 var _px4_takeoff_ground_release_pending := false
+var _last_px4_collision_input := {}
 var _airsim_collision_seen := false
 var _airsim_contact_this_frame := false
 var _airsim_collision_normal := Vector3.ZERO
@@ -1714,6 +1715,21 @@ func _physics_process(delta: float) -> void:
             if not _sync_native_from_drone():
                 return
         var px4_launch_ground_contact := _px4_launch_ground_contact()
+        var px4_collision_touching: bool = drone_body != null and drone_body.contact_seen and not px4_launch_ground_contact
+        _last_px4_collision_input = {
+            "caller": "FlightRuntime._physics_process.px4",
+            "contact_seen": drone_body != null and drone_body.contact_seen,
+            "contact_normal": [
+                drone_body.contact_normal.x if drone_body != null else 0.0,
+                drone_body.contact_normal.y if drone_body != null else 0.0,
+                drone_body.contact_normal.z if drone_body != null else 0.0,
+            ],
+            "body_global_y": drone_body.global_position.y if drone_body != null else 0.0,
+            "spawn_y": _spawn_position().y,
+            "clearance_m": AIRSIM_GROUND_BODY_CLEARANCE_M,
+            "initial_ground_contact": px4_launch_ground_contact,
+            "touching": px4_collision_touching,
+        }
         var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body) if drone_body != null else Vector3.ZERO
         row = native.call(
             "step_collision_px4_actuator_mode",
@@ -1723,7 +1739,7 @@ func _physics_process(delta: float) -> void:
             clampf(actuator_outputs[1], 0.0, 1.0),
             clampf(actuator_outputs[2], 0.0, 1.0),
             clampf(actuator_outputs[3], 0.0, 1.0),
-            drone_body != null and drone_body.contact_seen and not px4_launch_ground_contact,
+            px4_collision_touching,
             drone_body.contact_normal.x if drone_body != null else 0.0,
             drone_body.contact_normal.y if drone_body != null else 0.0,
             drone_body.contact_normal.z if drone_body != null else 0.0,

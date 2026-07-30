@@ -11,6 +11,7 @@ const MAVLINK_ATTITUDE_TARGET := 83
 const MAVLINK_POSITION_TARGET_LOCAL_NED := 85
 const MAV_CMD_DO_SET_MODE := 176
 const MAVLINK_HIL_ACTUATOR_CONTROLS := 93
+const MAVLINK_ESTIMATOR_STATUS := 230
 const MAVLINK_WIND_COV := 231
 const MAV_MODE_FLAG_CUSTOM_MODE_ENABLED := 1
 const PX4_CUSTOM_MAIN_MODE_OFFBOARD := 6
@@ -22,6 +23,8 @@ const DEFAULT_HEARTBEAT_TIMEOUT := 2.0
 const DEFAULT_FAILURE_TIMEOUT := 5.0
 const ARM_ESTIMATOR_SETTLE_SECONDS := 8.0
 const TAKEOFF_ESTIMATOR_SETTLE_SECONDS := 5.0
+const ESTIMATOR_READY_REQUIRED_FLAGS := 63
+const ESTIMATOR_READY_REPORT_COUNT := 2
 const DEFAULT_TCP_PORT := 4560
 const DEFAULT_CONTROL_PORT_LOCAL := 14540
 const DEFAULT_CONTROL_PORT_REMOTE := 14580
@@ -50,6 +53,8 @@ var _hil_mode_requested := false
 var _offboard_requested := false
 var _takeoff_pending := false
 var _takeoff_altitude := 0.0
+var _estimator_ready_report_count := 0
+var _last_estimator_ready_report_time := -1.0
 var _last_outbound_heartbeat_time := -1.0
 var _last_poll_time := -1.0
 var _sequence := 0
@@ -123,6 +128,8 @@ func start() -> Dictionary:
     _offboard_requested = false
     _takeoff_pending = false
     _takeoff_altitude = 0.0
+    _estimator_ready_report_count = 0
+    _last_estimator_ready_report_time = -1.0
     _last_outbound_heartbeat_time = -1.0
     _actuators = PackedFloat32Array()
     _px4_messages.clear()
@@ -179,6 +186,9 @@ func poll(now_seconds: float) -> void:
     if _last_heartbeat_time < 0.0:
         if _start_time >= 0.0 and now_seconds - _start_time + 0.000001 >= _config.FailureTimeout:
             _set_state("failed", false, "PX4 heartbeat was not received before startup timeout")
+        return
+    _progress_arm_readiness(now_seconds)
+    if state == "failed":
         return
     var age := now_seconds - _last_heartbeat_time
     var actuator_reference := maxf(_armed_since, _last_actuator_time)
@@ -241,22 +251,33 @@ func publish_sensor_snapshot(snapshot: Dictionary, simulation_time_seconds: floa
     var velocity: Dictionary = estimate.get("linear_velocity", {})
     var velocity_ned := Vector3(float(velocity.get("x_val", 0.0)), float(velocity.get("y_val", 0.0)), float(velocity.get("z_val", 0.0)))
     var gps: Dictionary = snapshot.get("gps_location", {})
-    var gps_payload := _u64_bytes(int(round(simulation_time_seconds * 1_000_000.0)))
-    gps_payload.append_array(_i32_bytes(int(round(float(gps.get("latitude", 0.0)) * 10_000_000.0))))
-    gps_payload.append_array(_i32_bytes(int(round(float(gps.get("longitude", 0.0)) * 10_000_000.0))))
-    gps_payload.append_array(_i32_bytes(int(round(float(gps.get("altitude", 0.0)) * 1000.0))))
-    gps_payload.append_array(_u16_bytes(100))
-    gps_payload.append_array(_u16_bytes(100))
-    gps_payload.append_array(_u16_bytes(int(round(velocity_ned.length() * 100.0))))
-    gps_payload.append_array(_i16_bytes(int(round(float(velocity.get("x_val", 0.0)) * 100.0))))
-    gps_payload.append_array(_i16_bytes(int(round(float(velocity.get("y_val", 0.0)) * 100.0))))
-    gps_payload.append_array(_i16_bytes(int(round(float(velocity.get("z_val", 0.0)) * 100.0))))
-    gps_payload.append_array(_u16_bytes(0))
-    gps_payload.append(3)
-    gps_payload.append(10)
-    gps_payload.append(0)
-    gps_payload.append_array(_u16_bytes(0))
+    var gps_payload := _hil_gps_payload(
+        int(round(simulation_time_seconds * 1_000_000.0)),
+        float(gps.get("latitude", 0.0)),
+        float(gps.get("longitude", 0.0)),
+        float(gps.get("altitude", 0.0)),
+        velocity_ned)
     _send_mavlink(gps_payload, 113, _tcp)
+
+
+func _hil_gps_payload(time_usec: int, latitude: float, longitude: float, altitude_m: float, velocity_ned: Vector3) -> PackedByteArray:
+    var payload := _u64_bytes(time_usec)
+    payload.append_array(_i32_bytes(int(round(latitude * 10_000_000.0))))
+    payload.append_array(_i32_bytes(int(round(longitude * 10_000_000.0))))
+    payload.append_array(_i32_bytes(int(round(altitude_m * 1000.0))))
+    payload.append_array(_u16_bytes(100))
+    payload.append_array(_u16_bytes(100))
+    payload.append_array(_u16_bytes(int(round(velocity_ned.length() * 100.0))))
+    payload.append_array(_i16_bytes(int(round(velocity_ned.x * 100.0))))
+    payload.append_array(_i16_bytes(int(round(velocity_ned.y * 100.0))))
+    payload.append_array(_i16_bytes(int(round(velocity_ned.z * 100.0))))
+    payload.append_array(_u16_bytes(0))
+    # The generated PX4 MAVLink header packs fix_type at payload offset 34.
+    payload.append(3)
+    payload.append(10)
+    payload.append(0)
+    payload.append_array(_u16_bytes(0))
+    return payload
 
 
 func inject_heartbeat(armed: bool) -> void:
@@ -280,14 +301,7 @@ func arm_disarm(armed: bool) -> Dictionary:
             _set_state("connected", false, "PX4 disarmed")
         return {"ok": true}
     _arm_requested = armed
-    if armed:
-        # PX4 starts in AUTO_LOITER under HIL. Give EKF2 time to establish a
-        # local/global estimate before arming, otherwise its mode fallback can
-        # reach flight termination before the first offboard setpoint.
-        if not _arm_command_sent and _start_time >= 0.0 and _last_poll_time - _start_time >= ARM_ESTIMATOR_SETTLE_SECONDS:
-            _send_command_long(400, 1.0)
-            _arm_command_sent = true
-    else:
+    if not armed:
         _send_command_long(400, 0.0)
     return {"ok": true, "armed": state == "armed" if armed else state == "connected"}
 
@@ -380,6 +394,12 @@ func lockstep_active() -> bool:
     return lockstep_enabled() and state in ["armed", "stale"]
 
 
+func estimator_ready(now_seconds: float) -> bool:
+    return _estimator_ready_report_count >= ESTIMATOR_READY_REPORT_COUNT \
+        and _last_estimator_ready_report_time >= 0.0 \
+        and now_seconds - _last_estimator_ready_report_time < float(_config.HeartbeatTimeout)
+
+
 func actuator_outputs() -> PackedFloat32Array:
     # High Fidelity has no native fallback: stale or unarmed PX4 output must
     # not advance the native controller with a previous command.
@@ -408,6 +428,9 @@ func diagnostics() -> Dictionary:
         "last_heartbeat_time": _last_heartbeat_time,
         "last_actuator_time": _last_actuator_time,
         "last_sensor_time": _last_sensor_time,
+        "estimator_ready": estimator_ready(_last_poll_time),
+        "estimator_ready_report_count": _estimator_ready_report_count,
+        "last_estimator_ready_report_time": _last_estimator_ready_report_time,
         "authority_active": _authority_active,
         "mission_phase": mission_phase,
         "last_command_id": _last_command_id,
@@ -439,6 +462,8 @@ func stop() -> void:
     _arm_requested = false
     _arm_command_sent = false
     _takeoff_pending = false
+    _estimator_ready_report_count = 0
+    _last_estimator_ready_report_time = -1.0
     _pending_command_ids.clear()
     _set_state("disconnected", false, "PX4 transport stopped")
 
@@ -570,6 +595,31 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
                 "state_before": state_before,
                 "authority_before": authority_before,
             })
+        elif message_id == MAVLINK_ESTIMATOR_STATUS:
+            if payload_size < 42:
+                continue
+            var flags := int(frame.decode_u16(payload_offset + 40))
+            var required_flags_present := (flags & ESTIMATOR_READY_REQUIRED_FLAGS) == ESTIMATOR_READY_REQUIRED_FLAGS
+            if required_flags_present:
+                if _last_estimator_ready_report_time >= 0.0 and now_seconds - _last_estimator_ready_report_time < float(_config.HeartbeatTimeout):
+                    _estimator_ready_report_count += 1
+                else:
+                    _estimator_ready_report_count = 1
+                _last_estimator_ready_report_time = now_seconds
+            else:
+                _estimator_ready_report_count = 0
+                _last_estimator_ready_report_time = -1.0
+            var estimator_sample := {
+                "time_usec": _payload_u64(frame, payload_offset, payload_size, 0),
+                "flags": flags,
+                "vel_ratio": _payload_float(frame, payload_offset, payload_size, 8),
+                "pos_horiz_ratio": _payload_float(frame, payload_offset, payload_size, 12),
+                "pos_vert_ratio": _payload_float(frame, payload_offset, payload_size, 16),
+                "estimator_ready": estimator_ready(now_seconds),
+                "ready_report_count": _estimator_ready_report_count,
+            }
+            _record_px4_message("estimator_status", estimator_sample, now_seconds)
+            _trace_qualification_event("estimator_status", now_seconds, estimator_sample)
         elif message_id == MAVLINK_ATTITUDE:
             if not v2 and payload_size < 28:
                 continue
@@ -669,6 +719,15 @@ func _payload_float(frame: PackedByteArray, payload_offset: int, payload_size: i
     return frame.decode_float(payload_offset + field_offset) if field_offset + 4 <= payload_size else 0.0
 
 
+func _payload_u64(frame: PackedByteArray, payload_offset: int, payload_size: int, field_offset: int) -> int:
+    if field_offset + 8 > payload_size:
+        return 0
+    var value := 0
+    for index in 8:
+        value |= int(frame[payload_offset + field_offset + index]) << (index * 8)
+    return value
+
+
 func _message_id(frame: PackedByteArray) -> int:
     if frame[0] == MAVLINK_STX_V2:
         return int(frame[7]) | (int(frame[8]) << 8) | (int(frame[9]) << 16)
@@ -751,6 +810,22 @@ func _mavlink_crc_valid(frame: PackedByteArray) -> bool:
         # actually consume below.
         return true
     return _mavlink_crc(frame.slice(1, crc_end), extra) == expected
+
+
+func _progress_arm_readiness(now_seconds: float) -> void:
+    if _config.get("Transport") == "Fake" or not _arm_requested or _arm_command_sent or _start_time < 0.0:
+        return
+    if now_seconds - _start_time + 0.000001 < ARM_ESTIMATOR_SETTLE_SECONDS:
+        return
+    # Do not arm merely because a fixed delay elapsed. PX4 must have emitted
+    # two fresh estimator reports proving attitude, horizontal velocity, and
+    # local/global position validity. This leaves PX4 preflight and EKF
+    # parameters untouched while making an incomplete HIL startup fail closed.
+    if not estimator_ready(now_seconds):
+        _set_state("failed", false, "PX4 estimator readiness was not proven before arm timeout")
+        return
+    _send_command_long(400, 1.0)
+    _arm_command_sent = true
 
 
 func _refresh_authority(now_seconds: float, armed: bool) -> void:
@@ -843,6 +918,7 @@ func _crc_extra(message_id: int) -> int:
         105: return 93
         107: return 108
         113: return 124
+        230: return 163
         231: return 105
         77: return 143
         _: return -1

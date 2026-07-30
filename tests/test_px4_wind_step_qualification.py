@@ -1,7 +1,7 @@
 import unittest
 
 from scripts.px4_wind_step_qualification import PX4_REVISION, evaluate
-from scripts.px4_wind_step_mission import wait_for_async_command
+from scripts.px4_wind_step_mission import qualification_readiness_failure, wait_for_async_command
 
 
 def evidence(**overrides):
@@ -46,5 +46,29 @@ class Px4WindStepQualificationTests(unittest.TestCase):
     def test_rejects_replay_tick_mismatch_and_unfrozen_limit_breach(self):
         bad = evidence(wind={"applied_tick": 120, "replay_event_tick": 121, "replay_identity": "wind-step-1"})
         self.assertEqual(evaluate(bad)["status"], "failed")
+
+    def test_runner_rejects_takeoff_before_px4_readiness_is_proven(self):
+        trace = {
+            "bridge_events": [
+                {"kind": "command_ack", "command": 22, "result": 1},
+            ],
+            "runtime_authority_events": [],
+        }
+
+        self.assertIn("CMD22 ACK", qualification_readiness_failure(trace))
         bad = evidence(position_error_m=[0.6], limits={"rms_m": 0.3, "max_m": 0.4})
         self.assertEqual(evaluate(bad)["status"], "failed")
+
+    def test_runner_requires_bridge_estimator_readiness_before_accepting_takeoff_proof(self):
+        trace = {
+            "bridge_events": [
+                {"kind": "command_ack", "command": 22, "result": 0},
+                {"state": "armed", "authority_active": True},
+                {"kind": "hil_actuator_controls", "authority_active": True, "outputs": [0.2, 0.2, 0.2, 0.2]},
+            ],
+            "runtime_authority_events": [{"px4_collision_input": {"touching": False}}],
+        }
+
+        self.assertIn("estimator readiness", qualification_readiness_failure(trace))
+        trace["bridge_events"].insert(1, {"kind": "estimator_status", "estimator_ready": True})
+        self.assertEqual(qualification_readiness_failure(trace), "")

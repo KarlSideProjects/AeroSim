@@ -91,6 +91,7 @@ func _write_trace(force: bool = false) -> void:
         "bridge_state": String(bridge.state),
         "px4_takeoff_ground_release_pending": _smoke._px4_takeoff_ground_release_pending,
         "last_collision_authority": _smoke.last_collision_authority,
+        "px4_collision_input": _smoke._last_px4_collision_input,
     }
     var runtime_signature := JSON.stringify(runtime)
     if runtime_signature != _last_runtime_signature:

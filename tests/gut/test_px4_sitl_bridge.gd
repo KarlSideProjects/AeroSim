@@ -250,6 +250,71 @@ func test_nav_takeoff_uses_current_global_position_and_absolute_altitude() -> vo
     assert_eq(float(parameters[6]), 5.0)
 
 
+func test_hil_gps_payload_matches_the_mavlink_wire_layout() -> void:
+    var bridge := _new_fake_bridge(1.0)
+
+    var payload: PackedByteArray = bridge._hil_gps_payload(1_234_567, 47.641468, -122.140165, 12.5, Vector3(1.25, -2.5, 0.75))
+
+    assert_eq(payload.size(), 39)
+    assert_eq(_u64_at(payload, 0), 1_234_567)
+    assert_eq(_i32_at(payload, 8), 476_414_680)
+    assert_eq(_i32_at(payload, 12), -1_221_401_650)
+    assert_eq(_i32_at(payload, 16), 12_500)
+    assert_eq(int(payload[34]), 3)
+
+
+func test_estimator_status_requires_two_fresh_valid_reports_before_readiness() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    bridge.start()
+
+    bridge._consume_mavlink(_mavlink_frame(bridge, 230, _estimator_status_payload(63)), 1.0, PackedByteArray())
+    assert_false(bridge.estimator_ready(1.0))
+
+    bridge._consume_mavlink(_mavlink_frame(bridge, 230, _estimator_status_payload(63)), 1.2, PackedByteArray())
+    assert_true(bridge.estimator_ready(1.2))
+    assert_eq(bridge.px4_observability(1.2).estimator_status.sample.flags, 63)
+    assert_false(bridge.estimator_ready(2.21))
+
+
+func test_estimator_status_rejects_incomplete_flags_and_real_bootstrap_fails_closed() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    bridge.set_qualification_trace_enabled(true)
+    bridge.start()
+    bridge._config.Transport = "Real"
+    bridge.state = "connected"
+    bridge._start_time = 0.0
+    bridge._last_heartbeat_time = 7.9
+
+    bridge._consume_mavlink(_mavlink_frame(bridge, 230, _estimator_status_payload(164)), 7.0, PackedByteArray())
+    bridge._consume_mavlink(_mavlink_frame(bridge, 230, _estimator_status_payload(164)), 7.5, PackedByteArray())
+    assert_false(bridge.estimator_ready(7.5))
+
+    assert_true(bridge.arm_disarm(true).ok)
+    bridge.poll(8.0)
+
+    assert_eq(bridge.state, "failed")
+    assert_string_contains(bridge.diagnostics().message, "estimator readiness")
+    assert_eq(_qualification_trace_entry(bridge.qualification_trace(), "outgoing_command_long"), {})
+
+
+func test_real_bootstrap_arms_after_two_fresh_valid_estimator_reports() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    bridge.set_qualification_trace_enabled(true)
+    bridge.start()
+    bridge._config.Transport = "Real"
+    bridge.state = "connected"
+    bridge._start_time = 0.0
+    bridge._last_heartbeat_time = 7.9
+
+    bridge._consume_mavlink(_mavlink_frame(bridge, 230, _estimator_status_payload(63)), 7.0, PackedByteArray())
+    bridge._consume_mavlink(_mavlink_frame(bridge, 230, _estimator_status_payload(63)), 7.5, PackedByteArray())
+    assert_true(bridge.arm_disarm(true).ok)
+    bridge.poll(8.0)
+
+    assert_eq(bridge.state, "connected")
+    assert_eq(_qualification_trace_entry(bridge.qualification_trace(), "outgoing_command_long").command, 400)
+
+
 func test_real_parser_exposes_only_crc_valid_px4_observability() -> void:
     var bridge := _new_fake_bridge(1.0)
     bridge.start()
@@ -350,6 +415,28 @@ func _floats(values: Array) -> PackedByteArray:
     for value in values:
         bytes.append_array(Px4SitlBridgeScript.new()._float_bytes(float(value)))
     return bytes
+
+
+func _estimator_status_payload(flags: int) -> PackedByteArray:
+    var bridge := Px4SitlBridgeScript.new()
+    var payload := bridge._u64_bytes(1_000_000)
+    payload.append_array(_floats([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    payload.append_array(bridge._u16_bytes(flags))
+    return payload
+
+
+func _u64_at(bytes: PackedByteArray, offset: int) -> int:
+    var value := 0
+    for index in 8:
+        value |= int(bytes[offset + index]) << (index * 8)
+    return value
+
+
+func _i32_at(bytes: PackedByteArray, offset: int) -> int:
+    var value := 0
+    for index in 4:
+        value |= int(bytes[offset + index]) << (index * 8)
+    return value - 0x1_0000_0000 if value >= 0x8000_0000 else value
 
 
 func _mavlink_frame(bridge: Px4SitlBridge, message_id: int, payload: PackedByteArray) -> PackedByteArray:
