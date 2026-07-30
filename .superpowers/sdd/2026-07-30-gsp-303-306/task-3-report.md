@@ -62,3 +62,7 @@ Fresh focused verification: `node tests/test_gsp_panel_behavior.js`, `node tests
 - Added zh-TW/en labels for the wind direction/control state, view controls, plot labels/legend, source suffixes, and motor detail fields.
 - Motor location is emitted only from authoritative `motor.location` or configured `motor_positions`; otherwise the card explicitly says unavailable. Nominal visual positions are never presented as telemetry.
 - Focused panel behavior now checks the request lock/rejection path and unavailable motor location. Focused tests passed as listed above; browser evidence remains blocked by the absent Godot binary.
+
+## Fix round 3 evidence
+
+- The initial preview notice, PX4 MAVLink source value, and measured-RPM source value now use zh-TW/en translation keys. Focused panel and console contract tests passed.
