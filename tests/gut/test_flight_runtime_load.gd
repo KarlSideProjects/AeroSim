@@ -132,6 +132,17 @@ class CollisionHandoffNative extends FakeNative:
         return row
 
 
+class Px4CollisionBoundaryNative extends FakeNative:
+    var px4_touching_arguments: Array[bool] = []
+
+    func step_collision_px4_actuator_mode(...arguments) -> PackedFloat64Array:
+        px4_touching_arguments.append(bool(arguments[6]))
+        var row := PackedFloat64Array()
+        row.resize(17)
+        row[7] = 1.0
+        return row
+
+
 class ResetRecordingNative extends FakeNative:
     var reset_operation_count := 0
     var environment_record_count := 0
@@ -986,6 +997,48 @@ func _quick_fly_runtime() -> FlightRuntime:
     return runtime
 
 
+func _px4_collision_boundary_runtime() -> Dictionary:
+    var runtime := FlightRuntime.new()
+    autofree(runtime)
+    var map := Node3D.new()
+    var spawn := Marker3D.new()
+    spawn.name = "SpawnNorth"
+    map.add_child(spawn)
+    get_tree().root.add_child(map)
+    autofree(map)
+    var body := CollisionProbeBody.new()
+    get_tree().root.add_child(body)
+    autofree(body)
+    var bridge := Px4SitlBridge.new()
+    assert_true(bridge.configure({
+        "VehicleType": "PX4Multirotor",
+        "Transport": "Fake",
+        "HeartbeatTimeout": 60.0,
+        "FailureTimeout": 180.0,
+        "ActuatorTimeout": 60.0,
+        "UseSerial": false,
+        "LockStep": false,
+    }).ok)
+    assert_true(bridge.start().ok)
+    bridge.inject_heartbeat(false)
+    bridge.poll(0.0)
+    assert_true(bridge.arm_disarm(true).ok)
+    bridge.inject_heartbeat(true)
+    bridge.inject_actuators([0.5, 0.5, 0.5, 0.5])
+    bridge.poll(0.01)
+    var native := Px4CollisionBoundaryNative.new()
+    runtime.loaded_map = map
+    runtime.drone_body = body
+    runtime.native = native
+    runtime.airsim_session = AirSimSession.new(240)
+    runtime.px4_sitl_bridge = bridge
+    runtime.takeoff_requested = true
+    runtime.screen = "flight"
+    assert_eq(bridge.state, "armed")
+    assert_true(runtime._airsim_px4_command("takeoff", []).ok)
+    return {"runtime": runtime, "native": native}
+
+
 func _await_reset_commit() -> void:
     await get_tree().physics_frame
     await get_tree().process_frame
@@ -1276,6 +1329,64 @@ func test_demo_launch_ignores_only_the_initial_upward_platform_contact() -> void
     runtime.drone_body.contact_normal = Vector3.UP
     runtime._physics_process(1.0 / 60.0)
     assert_true(bool(runtime.native.collision_angle_arguments.touching))
+
+
+func test_px4_takeoff_releases_only_the_initial_upward_spawn_floor_contact() -> void:
+    var fixture := _px4_collision_boundary_runtime()
+    var runtime: FlightRuntime = fixture.runtime
+    var native: Px4CollisionBoundaryNative = fixture.native
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(native.px4_touching_arguments, [false])
+
+
+func test_px4_takeoff_keeps_side_contact_in_the_collision_boundary() -> void:
+    var fixture := _px4_collision_boundary_runtime()
+    var runtime: FlightRuntime = fixture.runtime
+    var native: Px4CollisionBoundaryNative = fixture.native
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.RIGHT
+
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(native.px4_touching_arguments, [true])
+
+
+func test_px4_takeoff_closes_ground_release_after_clearance_and_keeps_later_floor_contact() -> void:
+    var fixture := _px4_collision_boundary_runtime()
+    var runtime: FlightRuntime = fixture.runtime
+    var native: Px4CollisionBoundaryNative = fixture.native
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+    runtime._physics_process(1.0 / 240.0)
+    runtime.drone_body.global_position.y = FlightRuntime.AIRSIM_GROUND_BODY_CLEARANCE_M + 0.001
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_eq(native.px4_touching_arguments, [false, true])
+    assert_false(runtime._px4_takeoff_ground_release_pending)
+
+
+func test_px4_takeoff_ground_release_clears_for_land_reset_and_authority_loss() -> void:
+    var fixture := _px4_collision_boundary_runtime()
+    var runtime: FlightRuntime = fixture.runtime
+    assert_true(runtime._px4_takeoff_ground_release_pending)
+    assert_true(runtime._airsim_px4_command("land", []).ok)
+    assert_false(runtime._px4_takeoff_ground_release_pending)
+    assert_true(runtime._airsim_px4_command("takeoff", []).ok)
+    runtime._on_px4_authority_changed(false)
+    assert_false(runtime._px4_takeoff_ground_release_pending)
+    assert_true(runtime._airsim_px4_command("takeoff", []).ok)
+    assert_true(runtime._px4_takeoff_ground_release_pending)
+
+    assert_true(runtime.reset_to_spawn())
+
+    assert_false(runtime._px4_takeoff_ground_release_pending)
 
 
 func test_demo_launch_commands_level_sticks() -> void:

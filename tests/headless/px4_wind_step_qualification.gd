@@ -89,6 +89,8 @@ func _write_trace(force: bool = false) -> void:
         "native_control_authority": native_authority,
         "bridge_authority_active": bridge.is_authority_active(),
         "bridge_state": String(bridge.state),
+        "px4_takeoff_ground_release_pending": _smoke._px4_takeoff_ground_release_pending,
+        "last_collision_authority": _smoke.last_collision_authority,
     }
     var runtime_signature := JSON.stringify(runtime)
     if runtime_signature != _last_runtime_signature:

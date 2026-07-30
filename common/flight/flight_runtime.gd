@@ -303,6 +303,7 @@ var _airsim_last_body_angular_velocity := Vector3.ZERO
 var _airsim_angular_acceleration := Vector3.ZERO
 var _airsim_environment_catalog_loaded := false
 var _px4_lockstep_sensor_pending := false
+var _px4_takeoff_ground_release_pending := false
 var _airsim_collision_seen := false
 var _airsim_contact_this_frame := false
 var _airsim_collision_normal := Vector3.ZERO
@@ -1712,6 +1713,7 @@ func _physics_process(delta: float) -> void:
         if drone_body != null:
             if not _sync_native_from_drone():
                 return
+        var px4_launch_ground_contact := _px4_launch_ground_contact()
         var angular_velocity_body := _jolt_angular_velocity_body_y_up(drone_body) if drone_body != null else Vector3.ZERO
         row = native.call(
             "step_collision_px4_actuator_mode",
@@ -1721,7 +1723,7 @@ func _physics_process(delta: float) -> void:
             clampf(actuator_outputs[1], 0.0, 1.0),
             clampf(actuator_outputs[2], 0.0, 1.0),
             clampf(actuator_outputs[3], 0.0, 1.0),
-            drone_body != null and drone_body.contact_seen,
+            drone_body != null and drone_body.contact_seen and not px4_launch_ground_contact,
             drone_body.contact_normal.x if drone_body != null else 0.0,
             drone_body.contact_normal.y if drone_body != null else 0.0,
             drone_body.contact_normal.z if drone_body != null else 0.0,
@@ -2881,6 +2883,7 @@ func reset_to_spawn(rpc_owned_reset: bool = false) -> bool:
     _reset_pending_secondary_ack_required = _airsim_secondary_native != null and secondary_drone_body != null and secondary_drone_body.has_method("queue_reset_state")
     screen = "reset_pending"
     takeoff_requested = false
+    _px4_takeoff_ground_release_pending = false
     takeoff_assist_active = false
     assisted_throttle_waiting_for_neutral = false
     # Quiesce private simulation/body state while retaining the public AirSim
@@ -7371,6 +7374,8 @@ func _configure_px4_sitl_bridge() -> void:
 
 
 func _on_px4_authority_changed(active: bool) -> void:
+    if not active:
+        _px4_takeoff_ground_release_pending = false
     if native != null and native.has_method("set_external_authority_active") and _native_external_authority_state != active:
         native.call("set_external_authority_active", active)
         _native_external_authority_state = active
@@ -7400,11 +7405,27 @@ func _airsim_px4_command(method: String, args: Array) -> Dictionary:
             return {"ok": false, "error": "PX4 SITL does not support AirSim command '%s' in this slice" % method}
     if not result.ok:
         return result
+    if method == "takeoff":
+        _px4_takeoff_ground_release_pending = true
+    elif method == "land":
+        _px4_takeoff_ground_release_pending = false
     _airsim_command_state = {"method": method, "args": args, "waypoint_index": 0}
     _airsim_command_remaining_frames = maxi(1, int(30.0 * float(Engine.physics_ticks_per_second)))
     takeoff_requested = true
     screen = "flight" if method == "takeoff" else screen
     return {"ok": true, "duration_frames": _airsim_command_remaining_frames}
+
+
+func _px4_launch_ground_contact() -> bool:
+    if not _px4_takeoff_ground_release_pending or drone_body == null:
+        return false
+    if px4_sitl_bridge == null or not px4_sitl_bridge.is_authority_active():
+        _px4_takeoff_ground_release_pending = false
+        return false
+    if drone_body.global_position.y - _spawn_position().y >= AIRSIM_GROUND_BODY_CLEARANCE_M:
+        _px4_takeoff_ground_release_pending = false
+        return false
+    return drone_body.contact_seen and drone_body.contact_normal.dot(Vector3.UP) > 0.5
 
 
 func _advance_px4_path() -> void:
