@@ -116,6 +116,9 @@
     const propMaterial = new THREE.MeshStandardMaterial({ color: 0xc5e8ff, transparent: true, opacity: .9, roughness: .38 });
     const discMaterial = new THREE.MeshBasicMaterial({ color: 0x67d5ff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
     const hub = new THREE.Mesh(new THREE.BoxGeometry(.48, .16, .34), frameMaterial); hub.castShadow = true; airframe.add(hub);
+    // Nominal geometry only: the estimated vehicle is centred; dashed outline is local ground truth.
+    const truthGhost = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(.54, .2, .4)), new THREE.LineDashedMaterial({ color: 0xffcf78, dashSize: .08, gapSize: .05 }));
+    truthGhost.computeLineDistances(); truthGhost.visible = false; scene.add(truthGhost);
     const nose = new THREE.Mesh(new THREE.ConeGeometry(.09, .3, 12), new THREE.MeshStandardMaterial({ color: 0x9ee6b1, emissive: 0x173c26 }));
     nose.rotation.x = Math.PI / 2; nose.position.z = -.34; airframe.add(nose);
 
@@ -176,6 +179,13 @@
             if (!root.matchMedia || !root.matchMedia("(prefers-reduced-motion: reduce)").matches) rotor.blade.rotation.y += motor.angular_step_rad * (motor.spin_direction === "ccw" ? -1 : 1);
         });
         updateFlow();
+        const px4 = sample.px4_mavlink && sample.px4_mavlink.local_position_ned;
+        const estimate = px4 && px4.sample && px4.sample.position_ned;
+        const truth = sample.pos_ned;
+        if (estimate && truth && finite(Number(estimate.x_val)) && finite(Number(truth.x_val))) {
+            const delta = sceneVector({ x: Number(truth.x_val) - Number(estimate.x_val), y: Number(truth.y_val) - Number(estimate.y_val), z: Number(truth.z_val) - Number(estimate.z_val) });
+            truthGhost.position.copy(delta.clampLength(0, 1.5)); truthGhost.visible = true;
+        } else truthGhost.visible = false;
     }
 
     function resize() {

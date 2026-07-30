@@ -58,11 +58,35 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
 .telemetry-table { height: 28rem; overflow: auto; scrollbar-gutter: stable; } .telemetry-table .unavailable { color: #ffcf78; }
 .status-normal { color: #9ee6b1; } .status-low { color: #ffcf78; } .status-critical, .status-unavailable { color: #ff8aad; }
 @media (max-width: 720px) { main { padding: 10px; } .health-grid, .motor-grid, .tuning-row { grid-template-columns: 1fr; } .quick-adjust-row { grid-template-columns: 1fr 1fr; } }
+/* Operational page stays a single portrait instrument surface; engineering may scroll. */
+#live-console { height: 100vh; box-sizing: border-box; overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 7px; }
+.live-strip, .live-grid, .wind-row, .source-row { display: grid; gap: 6px; }
+.live-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid #31445d; padding: 6px; font: .68rem/1.15 ui-monospace, monospace; }
+.live-grid { grid-template-columns: minmax(0, 1.08fr) minmax(8.5rem, .92fr); min-height: 0; }
+.pit { background: #101923; border: 1px solid #31445d; padding: 7px; min-width: 0; }
+.pit h2, .pit h3 { margin: 0 0 5px; font-size: .76rem; letter-spacing: .06em; text-transform: uppercase; }
+.wind-row { grid-template-columns: 1fr 1fr auto; align-items: end; } .wind-row label { display: grid; gap: 2px; font-size: .7rem; }
+.wind-row input, .wind-row button, .live-tabs button { background: #0c1219; color: #dce7f5; border: 1px solid #52697c; border-radius: 2px; padding: 4px; }
+#airframe-3d { height: clamp(130px, 29vh, 255px); width: 100%; } .live-motors { grid-template-columns: repeat(2, 1fr); font-size: .72rem; }
+.source-row { grid-template-columns: repeat(4, 1fr); font: .67rem/1.2 ui-monospace, monospace; } .source-row span { border-left: 3px solid #52697c; padding-left: 4px; }
+.source-row .commanded { border-style: dashed; } .source-row .truth { border-style: double; } .source-row .estimated { border-color: #9ee6b1; } .source-row .measured { border-color: #ffcf78; }
+.motor-plots { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; } .motor-plots canvas { height: 72px; width: 100%; border: 1px solid #31445d; }
+#engineering[hidden] { display: none; } #engineering { max-width: 1440px; margin: 0 auto; padding: 16px; }
+@media (prefers-reduced-motion: reduce) { #airframe-3d { outline: 2px dashed #9ee6b1; } }
+@media (max-width: 500px) { .live-strip { grid-template-columns: repeat(2, 1fr); } .live-grid { grid-template-columns: 1fr; } #airframe-3d { height: 145px; } }
 </style>
 </head>
 <body>
-<main>
+<main id="live-console" aria-label="即時狀態">
 <header><h1 data-i18n="title">AeroSim 地面站開發面板</h1><div class="toolbar"><button id="language-zh" type="button">繁中</button><button id="language-en" type="button">English</button><span class="badge" id="focus-state">panel focus</span></div></header>
+<section class="live-strip" aria-live="polite"><span>SIM <b id="live-connection">WAIT</b></span><span>PX4 <b id="live-authority">—</b></span><span>MODE <b id="live-mode">—</b></span><span>FRESH <b id="live-fresh">WAIT</b></span><span>VEH <b id="live-vehicle">—</b></span><span>TICK <b id="live-tick">—</b></span><span>FAIL <b id="live-failure">—</b></span><span>GEOMETRY <b>Nominal geometry</b></span></section>
+<section class="live-grid">
+  <div class="pit"><h2>Wind / 風場</h2><div class="wind-row"><label>FROM°<input id="wind-from" type="number" min="0" max="359" value="0"></label><label>m/s<input id="wind-speed" type="number" min="0" step="0.1" value="0"></label><button id="wind-preview" type="button">Preview</button><button id="wind-apply" type="button">Apply</button></div><p id="wind-status" class="muted">Preview only; no physical mutation.</p><div class="source-row" id="source-classes"><span class="commanded">Commanded —</span><span class="truth">Ground truth —</span><span class="estimated">Estimated —</span><span class="measured">Measured —</span></div><h3>Drone / 無人機 <small>Estimated · truth ghost · Nominal geometry</small></h3><canvas id="airframe-3d" aria-label="Estimated Drone with ground-truth ghost"></canvas></div>
+  <div class="pit"><h2>M1–M4</h2><div class="motor-grid live-motors"><div id="live-m1">M1 —</div><div id="live-m2">M2 —</div><div id="live-m3">M3 —</div><div id="live-m4">M4 —</div></div><div class="motor-plots"><label>Commanded normalized<canvas id="command-chart" width="320" height="90"></canvas></label><label>Measured RPM<canvas id="rpm-chart" width="320" height="90"></canvas></label></div><p class="muted">Solid=estimate/measured; dashed=commanded; double border=truth ghost.</p></div>
+</section>
+<div class="live-tabs"><button id="open-engineering" type="button">工程設定 / Engineering</button></div>
+</main>
+<main id="engineering" hidden>
 <section class="state" aria-live="polite">
   <strong id="connection">未連線</strong>
   <span id="fresh-state" class="muted">等待工作階段片段。</span>
@@ -88,7 +112,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
       <div id="motor-rear-right" class="motor-card" data-motor="rear_right">M1 —</div><div id="motor-front-right" class="motor-card" data-motor="front_right">M2 —</div>
       <div id="motor-rear-left" class="motor-card" data-motor="rear_left">M3 —</div><div id="motor-front-left" class="motor-card" data-motor="front_left">M4 —</div>
     </div>
-    <div class="visual-stage"><p class="muted">程序化 Quad-X 視圖；NED／FRD／SI 即時遙測。</p><div class="toolbar"><button id="view-isometric" type="button">Isometric</button><button id="view-top" type="button">Top</button><button id="view-side" type="button">Side</button><button id="view-rear" type="button">Rear</button></div><canvas id="airframe-3d" aria-label="Quad-X telemetry visualization"></canvas></div>
+    <div class="visual-stage"><p class="muted">程序化 Quad-X 視圖；NED／FRD／SI 即時遙測。</p><div class="toolbar"><button id="view-isometric" type="button">Isometric</button><button id="view-top" type="button">Top</button><button id="view-side" type="button">Side</button><button id="view-rear" type="button">Rear</button></div><canvas id="airframe-3d-engineering" aria-label="Quad-X telemetry visualization"></canvas></div>
   </div>
   <p id="motors" class="muted">—</p><canvas id="sparkline" width="840" height="100" aria-label="Telemetry sparkline"></canvas>
 </section>
@@ -542,6 +566,48 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     });
     context.stroke();
   }
+  function drawMotorPlot(id, rows, scale, colors) {
+    var chart = $(id); if (!chart || !chart.getContext) return;
+    var plot = chart.getContext("2d"); if (!plot) return;
+    plot.clearRect(0, 0, chart.width, chart.height);
+    rows.forEach(function (row, motor) {
+      if (!row.length) return;
+      plot.strokeStyle = colors[motor]; plot.beginPath();
+      row.forEach(function (value, index) {
+        var x = index * chart.width / Math.max(row.length - 1, 1);
+        var y = chart.height - 8 - Math.max(0, Math.min(1, value / scale)) * (chart.height - 16);
+        if (index === 0) plot.moveTo(x, y); else plot.lineTo(x, y);
+      }); plot.stroke();
+    });
+  }
+  var commandHistory = [[], [], [], []], rpmHistory = [[], [], [], []];
+  function renderLiveConsole(sample, envelope) {
+    var fresh = sample.fresh && !sample.stale;
+    text("live-connection", fresh ? "LIVE" : "STALE"); text("live-authority", sample.authority || sample.control_authority || "—");
+    text("live-mode", String(sample.mode || "—") + "/" + (sample.armed ? "ARMED" : "DISARMED")); text("live-fresh", fresh ? "FRESH" : "STALE — frozen");
+    text("live-vehicle", sample.vehicle_instance || "—"); text("live-tick", envelope.tick == null ? "—" : envelope.tick); text("live-failure", sample.failure_state || sample.last_error || "—");
+    var classes = $("source-classes"); if (classes) classes.textContent = "Commanded " + (Array.isArray(sample.commanded_motor_normalized) ? "available" : "unavailable") + " | Ground truth local simulation | Estimated " + (sample.px4_mavlink && sample.px4_mavlink.local_position_ned ? "PX4 MAVLink" : "unavailable") + " | Measured RPM local simulation";
+    var commands = Array.isArray(sample.commanded_motor_normalized) ? sample.commanded_motor_normalized : [];
+    var rpms = Array.isArray(sample.rpm) ? sample.rpm : [];
+    for (var index = 0; index < 4; index += 1) {
+      var rpm = Number(rpms[index]); var command = Number(commands[index]);
+      if (Number.isFinite(command)) commandHistory[index].push(command);
+      if (Number.isFinite(rpm)) rpmHistory[index].push(rpm);
+      if (commandHistory[index].length > 40) commandHistory[index].shift(); if (rpmHistory[index].length > 40) rpmHistory[index].shift();
+      text("live-m" + (index + 1), "M" + (index + 1) + " " + (Number.isFinite(command) ? command.toFixed(2) + " cmd" : "cmd —") + " / " + (Number.isFinite(rpm) ? rpm.toFixed(0) + " rpm" : "rpm —"));
+    }
+    drawMotorPlot("command-chart", commandHistory, 1, ["#9ee6b1", "#67d5ff", "#ffcf78", "#ff8aad"]); drawMotorPlot("rpm-chart", rpmHistory, 12000, ["#9ee6b1", "#67d5ff", "#ffcf78", "#ff8aad"]);
+    var apply = $("wind-apply"); if (apply) apply.disabled = !panelReady() || !fresh || !!sample.replay_active || String(sample.authority || "").toLowerCase() === "unavailable";
+  }
+  function previewWind() {
+    var from = Number($("wind-from").value), speed = Number($("wind-speed").value); var toward = (from + 180) % 360;
+    text("wind-status", Number.isFinite(from) && Number.isFinite(speed) ? "Preview: from " + from.toFixed(0) + "° → toward " + toward.toFixed(0) + "° at " + speed.toFixed(1) + " m/s; not applied." : "Invalid preview.");
+  }
+  function applyWind() {
+    if (!panelReady()) return; var from = Number($("wind-from").value), speed = Number($("wind-speed").value);
+    if (!Number.isFinite(from) || !Number.isFinite(speed)) { text("wind-status", "Invalid wind values."); return; }
+    var sequence = send("set_wind", { wind_from_deg: from, speed_mps: speed }); if (sequence != null) text("wind-status", "Pending authoritative ACK #" + sequence + "…");
+  }
   function displayTelemetry(message) {
     if (document.hidden) return;
     var sample = message.d;
@@ -581,6 +647,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     sparkValues.push((sample.rpm || []).reduce(function (sum, rpm) { return sum + Number(rpm || 0); }, 0) / 60000);
     if (sparkValues.length > 80) sparkValues.shift();
     drawSparkline();
+    renderLiveConsole(sample, message);
   }
   function connect() {
     if (port < 8765 || port > 8769 || !/^[0-9a-f]{32}$/i.test(token)) {
@@ -660,6 +727,8 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
           tuningControls[key].slider.value = values[key]; tuningControls[key].number.value = values[key];
           tuningControls[key].status.textContent = "Committed by session";
         });
+      } else if (message.t === "wind_ack") {
+        var windAck = message.d || {}; text("wind-status", windAck.ok ? "Applied by simulation: from " + Number(windAck.wind_from_deg).toFixed(0) + "° → toward " + ((Number(windAck.wind_from_deg) + 180) % 360).toFixed(0) + "° at " + Number(windAck.speed_mps).toFixed(1) + " m/s (ACK #" + windAck.request_seq + ")" : "Wind rejected: " + String(windAck.error || "unknown reason"));
       } else if (message.t === "quick_adjust_ack") {
         var quickStatus = pendingQuickAdjust[Number(message.d.request_seq)];
         if (!quickStatus) return;
@@ -698,6 +767,8 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   $("preset-preview").addEventListener("click", function () { if (presetSource.value) sendPreset("preview_preset_migration", { name: presetSource.value }); });
   $("preset-compare-current").addEventListener("click", function () { if (presetSource.value) sendPreset("compare_presets", { left: "", right: presetSource.value }); });
   $("preset-compare-two").addEventListener("click", function () { if (presetSource.value && presetTarget.value) sendPreset("compare_presets", { left: presetSource.value, right: presetTarget.value }); });
+  listen("wind-preview", previewWind); listen("wind-apply", applyWind);
+  listen("open-engineering", function () { var engineering = $("engineering"); if (engineering) { engineering.hidden = false; engineering.scrollIntoView({ block: "start" }); } });
   if (window.__AEROSIM_PANEL_TEST__) {
     window.__AEROSIM_PANEL_TEST__.tuningControls = function () { return tuningControls; };
     window.__AEROSIM_PANEL_TEST__.renderQuickAdjust = renderQuickAdjust;
