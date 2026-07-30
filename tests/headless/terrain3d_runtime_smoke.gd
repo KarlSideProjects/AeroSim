@@ -77,22 +77,28 @@ func _run() -> void:
         quit(1)
         return
     var frozen_snapshot: Dictionary = visual_wind.call("snapshot")
-    scene.set_paused(true)
+    scene.screen = "flight"
+    var pause_action := InputEventAction.new()
+    pause_action.action = &"flight_pause"
+    pause_action.pressed = true
+    scene._unhandled_input(pause_action)
     await physics_frame
-    if visual_wind.call("snapshot") != frozen_snapshot:
-        push_error("Terrain Range visual wind must freeze while paused")
+    await process_frame
+    var reset_button := scene.get_node_or_null("FlightHud/PausePanel/Rows/Reset") as Button
+    var frozen: bool = visual_wind.call("snapshot") == frozen_snapshot
+    if not scene.paused or reset_button == null or not frozen:
+        push_error("Terrain Range visual wind must freeze through the player pause action")
         quit(1)
         return
-    scene.airsim_session.set_paused(false)
-    scene.set_paused(false, false)
+    reset_button.pressed.emit()
     var reset_snapshot: Dictionary = visual_wind.call("snapshot")
-    if not scene.reset_to_spawn() or scene._reset_pending_token == 0:
-        push_error("Terrain3D runtime smoke must enter reset-pending before visual wind can resume")
+    if scene._reset_pending_token == 0:
+        push_error("Terrain3D runtime smoke Reset must enter reset-pending before visual wind can resume")
         quit(1)
         return
     scene._advance_visual_wind(true)
     if visual_wind.call("snapshot") != reset_snapshot:
-        push_error("Terrain Range visual wind must freeze while reset is pending")
+        push_error("Terrain Range visual wind must freeze while the player Reset is pending")
         quit(1)
         return
     var spawn := scene.loaded_map.get_node("SpawnNorth") as Marker3D

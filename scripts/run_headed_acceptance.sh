@@ -152,7 +152,7 @@ for required_file in \
     "$out_dir/01_controller_confirmation.png" \
     "$out_dir/01_terrain_range_preflight.png" \
     "$out_dir/01_third_person_preflight.png" \
-    "$out_dir/01_terrain_range_light_wind.png" \
+    "$out_dir/01_terrain_range_calm_wind.png" \
     "$out_dir/01_terrain_range_severe_wind.png" \
     "$out_dir/02_keyboard_fallback.png" \
     "$out_dir/03_takeoff.png" \
