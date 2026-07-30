@@ -67,7 +67,7 @@ var _offboard_target_active := false
 var _offboard_prewarm_since := -1.0
 var _last_position_setpoint_time := -1.0
 var _offboard_publisher_started := false
-var _offboard_waiting_estimator := false
+var _offboard_waiting_kinematics := false
 var _takeoff_pending := false
 var _takeoff_altitude := 0.0
 var _estimator_ready_report_count := 0
@@ -155,7 +155,7 @@ func start() -> Dictionary:
     _offboard_prewarm_since = -1.0
     _last_position_setpoint_time = -1.0
     _offboard_publisher_started = false
-    _offboard_waiting_estimator = false
+    _offboard_waiting_kinematics = false
     _takeoff_pending = false
     _takeoff_altitude = 0.0
     _estimator_ready_report_count = 0
@@ -474,7 +474,7 @@ func setpoint_ned_frd(position_ned: Vector3, body_rates_frd: Vector3) -> Diction
         _offboard_prewarm_since = -1.0
         _last_position_setpoint_time = -1.0
         _offboard_publisher_started = false
-        _offboard_waiting_estimator = false
+        _offboard_waiting_kinematics = false
         _trace_qualification_event("publisher_target_accepted", _last_poll_time, {"position_ned": position_ned})
     return {"ok": true}
 
@@ -485,14 +485,14 @@ func _advance_offboard_setpoint_publisher(now_seconds: float) -> void:
     if not is_authority_active():
         _clear_offboard_target("authority_lost")
         return
-    if not estimator_ready(now_seconds):
+    if not _offboard_kinematics_ready(now_seconds):
         if _offboard_prewarm_since >= 0.0 or _offboard_requested:
-            _clear_offboard_target("estimator_lost_after_publisher_start")
-        elif not _offboard_waiting_estimator:
-            _offboard_waiting_estimator = true
-            _trace_qualification_event("publisher_waiting_estimator", now_seconds, {})
+            _clear_offboard_target("kinematics_lost_after_publisher_start")
+        elif not _offboard_waiting_kinematics:
+            _offboard_waiting_kinematics = true
+            _trace_qualification_event("publisher_waiting_kinematics", now_seconds, {})
         return
-    _offboard_waiting_estimator = false
+    _offboard_waiting_kinematics = false
     if _offboard_prewarm_since < 0.0:
         _offboard_prewarm_since = now_seconds
         _offboard_publisher_started = true
@@ -515,7 +515,7 @@ func _clear_offboard_target(reason: String = "explicit") -> void:
     _offboard_prewarm_since = -1.0
     _last_position_setpoint_time = -1.0
     _offboard_requested = false
-    _offboard_waiting_estimator = false
+    _offboard_waiting_kinematics = false
 
 
 func _send_position_setpoint(position_ned: Vector3) -> void:
@@ -561,6 +561,21 @@ func estimator_ready(now_seconds: float) -> bool:
     return _estimator_ready_report_count >= ESTIMATOR_READY_REPORT_COUNT \
         and _last_estimator_ready_report_time >= 0.0 \
         and now_seconds - _last_estimator_ready_report_time < float(_config.HeartbeatTimeout)
+
+
+func _offboard_kinematics_ready(now_seconds: float) -> bool:
+    return _px4_stream_is_fresh_and_finite("attitude", now_seconds) \
+        and _px4_stream_is_fresh_and_finite("local_position_ned", now_seconds)
+
+
+func _px4_stream_is_fresh_and_finite(stream_name: String, now_seconds: float) -> bool:
+    if not _px4_messages.has(stream_name):
+        return false
+    var entry: Dictionary = _px4_messages[stream_name]
+    if now_seconds - float(entry.received_at_seconds) >= float(_config.HeartbeatTimeout):
+        return false
+    var sample: Dictionary = entry.sample
+    return _finite_attitude_sample(sample) if stream_name == "attitude" else _finite_local_position_sample(sample)
 
 
 func actuator_outputs() -> PackedFloat32Array:

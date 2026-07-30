@@ -125,7 +125,7 @@ func test_fake_armed_authority_expires_when_actuators_stop() -> void:
     assert_eq(bridge.actuator_outputs().size(), 0)
 
 
-func test_offboard_target_waits_for_estimator_then_fails_closed_after_publisher_start() -> void:
+func test_offboard_target_waits_for_kinematics_then_fails_closed_after_publisher_start() -> void:
     var bridge := _new_fake_bridge(2.0)
     bridge._config.Transport = "Real"
     bridge.set_qualification_trace_enabled(true)
@@ -138,11 +138,12 @@ func test_offboard_target_waits_for_estimator_then_fails_closed_after_publisher_
     assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_target_accepted").is_empty())
 
     bridge.poll(0.0)
-    assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_waiting_estimator").is_empty())
+    assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_waiting_kinematics").is_empty())
     assert_true(bridge._offboard_target_active)
     assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size(), 0)
 
-    bridge._last_estimator_ready_report_time = 0.01
+    bridge._consume_mavlink(_mavlink_frame(bridge, 30, _floats([0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6])), 0.01, PackedByteArray())
+    bridge._consume_mavlink(_mavlink_frame(bridge, 32, _floats([0.01, 1.0, 2.0, -3.0, 4.0, 5.0, -6.0])), 0.01, PackedByteArray())
     bridge.poll(0.01)
     assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_started").is_empty())
     assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_first_send").is_empty())
@@ -152,9 +153,11 @@ func test_offboard_target_waits_for_estimator_then_fails_closed_after_publisher_
     bridge.poll(1.02)
     assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_command_long").back().command, 176)
 
-    bridge._last_estimator_ready_report_time = -1.0
+    var attitude_entry: Dictionary = bridge._px4_messages.attitude
+    attitude_entry.received_at_seconds = -1.0
+    bridge._px4_messages.attitude = attitude_entry
     bridge.poll(1.2)
-    assert_eq(_qualification_trace_entry(bridge.qualification_trace(), "publisher_cleared").reason, "estimator_lost_after_publisher_start")
+    assert_eq(_qualification_trace_entry(bridge.qualification_trace(), "publisher_cleared").reason, "kinematics_lost_after_publisher_start")
     assert_false(bridge._offboard_target_active)
     var sent_before_clear := _qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size()
     bridge.poll(1.3)
