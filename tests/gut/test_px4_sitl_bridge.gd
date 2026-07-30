@@ -34,6 +34,26 @@ func test_fake_transport_reaches_connected_armed_and_fails_after_stale() -> void
     assert_false(bridge.diagnostics().message.is_empty())
 
 
+func test_hil_sensor_measurements_require_actual_mag_and_baro_samples() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    var snapshot := {
+        "kinematics_estimated": {"linear_velocity": {"x_val": 1.0, "y_val": -2.0, "z_val": 3.0}},
+        "imu_sample": {
+            "accel": {"x_val": 0.1, "y_val": 0.2, "z_val": -9.7},
+            "gyro": {"x_val": 0.01, "y_val": 0.02, "z_val": 0.03},
+        },
+        "magnetometer": {"magnetic_field_body": {"x_val": 0.22, "y_val": 0.01, "z_val": 0.43}},
+        "barometer": {"altitude_m": 123.0, "pressure_hpa": 998.5},
+    }
+    var measurements := bridge.hil_sensor_measurements(snapshot)
+    assert_true(measurements.ok)
+    assert_almost_eq(measurements.magnetic_field_gauss.y, 0.01, 0.000001)
+    assert_almost_eq(measurements.absolute_pressure_hpa, 998.5, 0.000001)
+
+    snapshot.erase("magnetometer")
+    assert_false(bridge.hil_sensor_measurements(snapshot).ok, "The HIL bridge must fail closed instead of inventing a magnetic field.")
+
+
 func test_fake_armed_transport_reconnects_before_failure_timeout() -> void:
     var bridge := _new_fake_bridge(0.1)
 
@@ -88,6 +108,37 @@ func test_fake_armed_authority_expires_when_actuators_stop() -> void:
     assert_eq(bridge.state, "stale")
     assert_false(bridge.is_authority_active())
     assert_eq(bridge.actuator_outputs().size(), 0)
+
+
+func test_real_lockstep_actuator_freshness_uses_hil_simulation_time_not_wall_clock() -> void:
+    var bridge := _new_fake_bridge(1.0, 0.1)
+    bridge._config.Transport = "Real"
+    bridge.state = "armed"
+    bridge._armed_since = 0.0
+    bridge._last_heartbeat_time = 0.0
+    bridge._last_actuator_time = 0.01
+    bridge._last_actuator_simulation_time = 40.0
+    bridge._last_sensor_time = 40.05
+
+    assert_almost_eq(bridge._actuator_freshness_age_seconds(999.0), 0.05, 0.000001)
+    bridge.poll(999.0)
+    assert_eq(bridge.state, "armed", "A wall-clock stall must not trip a LockStep controller with a fresh HIL timestamp.")
+
+    bridge._last_sensor_time = 40.11
+    bridge.poll(999.0)
+    assert_eq(bridge.state, "stale", "Advancing HIL simulation time beyond ActuatorTimeout must fail closed.")
+
+
+func test_lockstep_bootstrap_without_a_hil_actuator_timestamp_keeps_wall_clock_timeout() -> void:
+    var bridge := _new_fake_bridge(1.0, 0.1)
+    bridge._config.Transport = "Real"
+    bridge.state = "armed"
+    bridge._armed_since = 0.0
+    bridge._last_heartbeat_time = 0.0
+    bridge._last_actuator_time = 0.01
+
+    bridge.poll(0.12)
+    assert_eq(bridge.state, "stale", "Bootstrap must not silently use a missing HIL source timestamp as fresh control output.")
 
 
 func test_fake_armed_heartbeat_allows_takeoff_before_first_actuator() -> void:
@@ -214,6 +265,7 @@ func test_real_parser_keeps_armed_hil_actuator_controls() -> void:
 
     assert_eq(bridge.state, "armed")
     assert_eq(bridge.actuator_outputs(), PackedFloat32Array([1.0, 0.25, 0.5, 0.75]))
+    assert_almost_eq(bridge.diagnostics().last_actuator_simulation_time, 0.001, 0.000001)
 
 
 func test_qualification_trace_records_incoming_mode_armed_and_authority_transition() -> void:
@@ -244,6 +296,8 @@ func test_qualification_trace_records_incoming_mode_armed_and_authority_transiti
 
     var actuator := _qualification_trace_entry(bridge.qualification_trace(), "hil_actuator_controls")
     assert_eq(actuator.flags, 1)
+    assert_eq(actuator.time_usec, 1000)
+    assert_almost_eq(actuator.simulation_time_seconds, 0.001, 0.000001)
     assert_eq(actuator.raw_outputs, [0.25, 0.5, 0.75, 1.0])
     assert_eq(actuator.outputs, [1.0, 0.25, 0.5, 0.75])
     assert_true(bool(actuator.mapping_verified))

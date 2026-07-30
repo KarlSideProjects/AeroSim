@@ -43,6 +43,9 @@ var _authority_callback: Callable
 var _authority_active := false
 var _last_heartbeat_time := -1.0
 var _last_actuator_time := -1.0
+# HIL_ACTUATOR_CONTROLS is timestamped in PX4's simulator clock. Keep it
+# separate from Godot's wall-clock receive time for LockStep freshness.
+var _last_actuator_simulation_time := -1.0
 var _last_sensor_time := -1.0
 var _hil_sensor_reset_sent := false
 var _start_time := -1.0
@@ -121,6 +124,8 @@ func start() -> Dictionary:
         return {"ok": false, "error": _message}
     _last_heartbeat_time = -1.0
     _last_actuator_time = -1.0
+    _last_actuator_simulation_time = -1.0
+    _last_sensor_time = -1.0
     _hil_sensor_reset_sent = false
     _armed_since = -1.0
     _arm_requested = false
@@ -191,13 +196,17 @@ func poll(now_seconds: float) -> void:
     _progress_arm_readiness(now_seconds)
     if state == "failed":
         return
-    var age := now_seconds - _last_heartbeat_time
-    var actuator_reference := maxf(_armed_since, _last_actuator_time)
-    var actuator_started_after_arm := _last_actuator_time >= _armed_since and _armed_since >= 0.0
-    if state == "armed" and actuator_started_after_arm and now_seconds - actuator_reference + 0.000001 >= _config.ActuatorTimeout:
+    var actuator_started_after_arm := _actuator_received_after_arm()
+    if state == "armed" and actuator_started_after_arm and _actuator_freshness_age_seconds(now_seconds) + 0.000001 >= _config.ActuatorTimeout:
         _actuators = PackedFloat32Array()
         _set_state("stale", false, "PX4 actuator output is stale")
         return
+    # A real LockStep control loop advances only as HIL_SENSOR advances. Once
+    # PX4 has provided an actuator source timestamp, wall-clock heartbeat gaps
+    # are not evidence of an inactive controller.
+    if _uses_source_clock_for_actuator_freshness():
+        return
+    var age := now_seconds - _last_heartbeat_time
     if age + 0.000001 >= _config.FailureTimeout:
         _set_state("failed", false, "PX4 heartbeat timeout after %.3f seconds" % age)
     elif age > _config.HeartbeatTimeout and state not in ["stale", "failed"]:
@@ -208,22 +217,24 @@ func publish_sensor_snapshot(snapshot: Dictionary, simulation_time_seconds: floa
     _last_sensor_time = simulation_time_seconds
     if _config.get("Transport") == "Fake" or not _tcp_connected():
         return
-    var estimate: Dictionary = snapshot.get("kinematics_estimated", {})
-    var imu: Dictionary = snapshot.get("imu_sample", {})
-    var gyro: Dictionary = imu.get("gyro", {})
-    var accel: Dictionary = imu.get("accel", {})
-    var magnetometer: Dictionary = snapshot.get("magnetometer", {})
-    var magnetic_field: Dictionary = magnetometer.get("magnetic_field_body", {})
-    var barometer_altitude := float(imu.get("barometer_altitude_m", -float(estimate.get("position", {}).get("z_val", 0.0))))
-    var accel_x := float(accel.get("x_val", 0.0))
-    var accel_y := float(accel.get("y_val", 0.0))
-    var accel_z := float(accel.get("z_val", -9.80665))
+    var measurements := hil_sensor_measurements(snapshot)
+    if not bool(measurements.get("ok", false)):
+        _trace_qualification_event("outgoing_hil_sensor_rejected", _last_poll_time, {
+            "simulation_time_seconds": simulation_time_seconds,
+            "error": String(measurements.get("error", "missing sensor measurement")),
+        })
+        return
+    var accel: Vector3 = measurements.accel_mps2
+    var gyro: Vector3 = measurements.gyro_rad_s
+    var magnetic_field: Vector3 = measurements.magnetic_field_gauss
+    var barometer_altitude := float(measurements.barometer_altitude_m)
+    var absolute_pressure_hpa := float(measurements.absolute_pressure_hpa)
     var sensor_payload := _u64_bytes(int(round(simulation_time_seconds * 1_000_000.0)))
     for value in [
-        accel_x, accel_y, accel_z,
-        float(gyro.get("x_val", 0.0)), float(gyro.get("y_val", 0.0)), float(gyro.get("z_val", 0.0)),
-        float(magnetic_field.get("x_val", 0.22)), float(magnetic_field.get("y_val", 0.0)), float(magnetic_field.get("z_val", 0.43)),
-        1013.25, 0.0, barometer_altitude, 25.0
+        accel.x, accel.y, accel.z,
+        gyro.x, gyro.y, gyro.z,
+        magnetic_field.x, magnetic_field.y, magnetic_field.z,
+        absolute_pressure_hpa, 0.0, barometer_altitude, 25.0
     ]:
         sensor_payload.append_array(_float_bytes(value))
     var fields_updated := 0x1FFF
@@ -237,11 +248,11 @@ func publish_sensor_snapshot(snapshot: Dictionary, simulation_time_seconds: floa
         "simulation_time_seconds": simulation_time_seconds,
         "time_usec": int(round(simulation_time_seconds * 1_000_000.0)),
         "fields_updated": fields_updated,
-        "accel_mps2": [accel_x, accel_y, accel_z],
-        "gyro_rad_s": [float(gyro.get("x_val", 0.0)), float(gyro.get("y_val", 0.0)), float(gyro.get("z_val", 0.0))],
-        "magnetic_field_body": [float(magnetic_field.get("x_val", 0.22)), float(magnetic_field.get("y_val", 0.0)), float(magnetic_field.get("z_val", 0.43))],
+        "accel_mps2": [accel.x, accel.y, accel.z],
+        "gyro_rad_s": [gyro.x, gyro.y, gyro.z],
+        "magnetic_field_body": [magnetic_field.x, magnetic_field.y, magnetic_field.z],
         "barometer_altitude_m": barometer_altitude,
-        "absolute_pressure_hpa": 1013.25,
+        "absolute_pressure_hpa": absolute_pressure_hpa,
         "temperature_c": 25.0,
     })
 
@@ -249,8 +260,7 @@ func publish_sensor_snapshot(snapshot: Dictionary, simulation_time_seconds: floa
     system_time_payload.append_array(_u32_bytes(int(round(simulation_time_seconds * 1_000.0))))
     _send_mavlink(system_time_payload, 2, _tcp)
 
-    var velocity: Dictionary = estimate.get("linear_velocity", {})
-    var velocity_ned := Vector3(float(velocity.get("x_val", 0.0)), float(velocity.get("y_val", 0.0)), float(velocity.get("z_val", 0.0)))
+    var velocity_ned: Vector3 = measurements.velocity_ned
     var gps: Dictionary = snapshot.get("gps_location", {})
     var gps_payload := _hil_gps_payload(
         int(round(simulation_time_seconds * 1_000_000.0)),
@@ -259,6 +269,47 @@ func publish_sensor_snapshot(snapshot: Dictionary, simulation_time_seconds: floa
         float(gps.get("altitude", 0.0)),
         velocity_ned)
     _send_mavlink(gps_payload, 113, _tcp)
+
+
+func hil_sensor_measurements(snapshot: Dictionary) -> Dictionary:
+    var estimate: Variant = snapshot.get("kinematics_estimated")
+    var imu: Variant = snapshot.get("imu_sample")
+    var magnetometer: Variant = snapshot.get("magnetometer")
+    var barometer: Variant = snapshot.get("barometer")
+    if not (estimate is Dictionary) or not (imu is Dictionary) or not (magnetometer is Dictionary) or not (barometer is Dictionary):
+        return {"ok": false, "error": "HIL sensor snapshot requires kinematics, IMU, magnetometer, and barometer measurements"}
+    var accel: Variant = _finite_vector3(imu.get("accel"))
+    var gyro: Variant = _finite_vector3(imu.get("gyro"))
+    var magnetic_field: Variant = _finite_vector3(magnetometer.get("magnetic_field_body"))
+    var velocity: Variant = _finite_vector3(estimate.get("linear_velocity"))
+    var barometer_altitude: Variant = barometer.get("altitude_m")
+    var absolute_pressure: Variant = barometer.get("pressure_hpa")
+    if accel == null or gyro == null or magnetic_field == null or velocity == null or not _finite_number(barometer_altitude) or not _finite_number(absolute_pressure) or float(absolute_pressure) <= 0.0:
+        return {"ok": false, "error": "HIL sensor snapshot contains missing or non-finite measurements"}
+    return {
+        "ok": true,
+        "accel_mps2": accel,
+        "gyro_rad_s": gyro,
+        "magnetic_field_gauss": magnetic_field,
+        "velocity_ned": velocity,
+        "barometer_altitude_m": float(barometer_altitude),
+        "absolute_pressure_hpa": float(absolute_pressure),
+    }
+
+
+func _finite_vector3(value: Variant) -> Variant:
+    if not (value is Dictionary):
+        return null
+    var x: Variant = value.get("x_val")
+    var y: Variant = value.get("y_val")
+    var z: Variant = value.get("z_val")
+    if not _finite_number(x) or not _finite_number(y) or not _finite_number(z):
+        return null
+    return Vector3(float(x), float(y), float(z))
+
+
+func _finite_number(value: Variant) -> bool:
+    return (value is float or value is int) and is_finite(float(value))
 
 
 func _hil_gps_payload(time_usec: int, latitude: float, longitude: float, altitude_m: float, velocity_ned: Vector3) -> PackedByteArray:
@@ -413,6 +464,8 @@ func px4_observability(now_seconds: float) -> Dictionary:
         var entry: Dictionary = _px4_messages[name]
         var age_seconds := maxf(0.0, now_seconds - float(entry.received_at_seconds))
         var freshness_timeout := float(_config.ActuatorTimeout) if name == "hil_actuator_controls" else float(_config.HeartbeatTimeout)
+        if name == "hil_actuator_controls":
+            age_seconds = _actuator_freshness_age_seconds(now_seconds)
         observed[name] = {
             "source": "px4_mavlink",
             "age_seconds": age_seconds,
@@ -428,7 +481,9 @@ func diagnostics() -> Dictionary:
         "message": _message,
         "last_heartbeat_time": _last_heartbeat_time,
         "last_actuator_time": _last_actuator_time,
+        "last_actuator_simulation_time": _last_actuator_simulation_time,
         "last_sensor_time": _last_sensor_time,
+        "actuator_freshness_age_seconds": _actuator_freshness_age_seconds(_last_poll_time),
         "estimator_ready": estimator_ready(_last_poll_time),
         "estimator_ready_report_count": _estimator_ready_report_count,
         "last_estimator_ready_report_time": _last_estimator_ready_report_time,
@@ -572,6 +627,7 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
                 continue
             # PX4's generated common dialect packs this message as time_usec
             # (8), flags (8), controls[16] (64), and mode (1).
+            var actuator_time_usec := _payload_u64(frame, payload_offset, payload_size, 0)
             var armed := (int(frame[payload_offset + 80]) & 0x80) != 0
             var raw_controls := PackedFloat32Array()
             for index in 4:
@@ -583,6 +639,7 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
                 for source_index in native_indices:
                     _actuators.append(raw_controls[source_index])
                 _last_actuator_time = now_seconds
+                _last_actuator_simulation_time = float(actuator_time_usec) / 1_000_000.0
                 hil_sample["command_normalized"] = {
                     "m1": float(_actuators[0]), "m2": float(_actuators[1]),
                     "m3": float(_actuators[2]), "m4": float(_actuators[3]),
@@ -597,6 +654,8 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
             _trace_qualification_event("hil_actuator_controls", now_seconds, {
                 "mode_byte": int(frame[payload_offset + 80]),
                 "flags": _payload_u64(frame, payload_offset, payload_size, 8),
+                "time_usec": actuator_time_usec,
+                "simulation_time_seconds": _last_actuator_simulation_time,
                 "armed": armed,
                 "raw_outputs": Array(raw_controls),
                 "outputs": Array(_actuators),
@@ -871,13 +930,36 @@ func _refresh_authority(now_seconds: float, armed: bool) -> void:
     if not armed:
         _set_state("connected", false, "PX4 heartbeat received")
         return
-    if state == "stale" and _last_actuator_time < _armed_since:
+    if state == "stale" and (not _actuator_received_after_arm() or not _actuator_is_fresh(now_seconds)):
         _set_state("stale", false, "PX4 actuator output is stale")
     else:
         var message := "PX4 heartbeat received; awaiting actuator output"
-        if _last_actuator_time >= 0.0 and now_seconds - _last_actuator_time < _config.ActuatorTimeout:
+        if _actuator_received_after_arm() and _actuator_is_fresh(now_seconds):
             message = "PX4 heartbeat and actuator output received"
         _set_state("armed", true, message)
+
+
+func _actuator_received_after_arm() -> bool:
+    return _last_actuator_time >= _armed_since and _armed_since >= 0.0
+
+
+func _uses_source_clock_for_actuator_freshness() -> bool:
+    return lockstep_enabled() \
+        and _config.get("Transport") != "Fake" \
+        and _last_sensor_time >= 0.0 \
+        and _last_actuator_simulation_time >= 0.0
+
+
+func _actuator_freshness_age_seconds(now_seconds: float) -> float:
+    if _uses_source_clock_for_actuator_freshness():
+        if _last_sensor_time < _last_actuator_simulation_time:
+            return INF
+        return _last_sensor_time - _last_actuator_simulation_time
+    return maxf(0.0, now_seconds - _last_actuator_time) if _last_actuator_time >= 0.0 else INF
+
+
+func _actuator_is_fresh(now_seconds: float) -> bool:
+    return _actuator_freshness_age_seconds(now_seconds) < float(_config.ActuatorTimeout)
 
 
 func _trace_qualification_event(kind: String, now_seconds: float, fields: Dictionary = {}) -> void:
