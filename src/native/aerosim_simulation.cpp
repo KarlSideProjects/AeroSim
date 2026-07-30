@@ -46,6 +46,7 @@ bool finite_vec3(const Vec3 &value) {
 
 bool finite_state(const RigidBodyState &state) {
     return finite_vec3(state.position) && finite_vec3(state.velocity) &&
+            finite_vec3(state.linear_acceleration_world_mps2) &&
             std::isfinite(state.orientation.x) && std::isfinite(state.orientation.y) &&
             std::isfinite(state.orientation.z) && std::isfinite(state.orientation.w) &&
             finite_vec3(state.angular_velocity) && finite_vec3(state.propwash_disturbance_rad_s2) &&
@@ -153,6 +154,7 @@ AerodynamicStepValues integrate(RigidBodyState &state, const SimulationConfig &c
             force_world.z / config.mass_kg,
     };
 
+    state.linear_acceleration_world_mps2 = acceleration;
     state.velocity = state.velocity + acceleration * dt;
     state.position = state.position + state.velocity * dt;
 
@@ -389,6 +391,7 @@ AerodynamicStepValues integrate_per_motor(
             force_world.y / config.mass_kg - config.gravity_mps2,
             force_world.z / config.mass_kg,
     };
+    state.linear_acceleration_world_mps2 = acceleration;
     state.velocity = state.velocity + acceleration * dt;
     state.position = state.position + state.velocity * dt;
 
@@ -581,6 +584,10 @@ TrajectorySample step_per_motor_ground_support_frame(
     const std::array<double, 4> motor_thrust_newtons = state.motor_thrust_newtons;
     const std::array<double, 4> motor_rpm = state.motor_rpm;
     state = constrained_state;
+    // The contact solver constrains motion during support. Its contact force
+    // makes the net world acceleration zero, while the IMU still reports the
+    // corresponding upward specific force through gravity subtraction.
+    state.linear_acceleration_world_mps2 = {};
     state.motor_thrust_newtons = motor_thrust_newtons;
     state.motor_rpm = motor_rpm;
     sample.state = state;

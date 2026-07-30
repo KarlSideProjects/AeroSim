@@ -1,3 +1,4 @@
+import math
 import unittest
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from scripts.px4_wind_step_mission import (
     qualification_route_clears_drone2,
     qualification_readiness_failure,
     segment_intersects_runtime_wall,
+    truth_estimator_convergence_evidence,
     wait_for_async_command,
 )
 
@@ -99,6 +101,9 @@ class Px4WindStepQualificationTests(unittest.TestCase):
 
         self.assertIn("estimator readiness", qualification_readiness_failure(trace))
         trace["bridge_events"].insert(1, {"kind": "estimator_status", "estimator_ready": True})
+        trace["bridge_events"].append({"kind": "px4_stream_sample", "stream": "local_position_ned", "finite": True,
+            "sample": {"position_ned": [0.0, 0.0, -3.0], "velocity_ned_mps": [0.0, 0.0, 0.0]}})
+        trace["runtime"] = {"truth_kinematics_ned": {"position_ned": [0.0, 0.0, -3.0], "velocity_ned_mps": [0.0, 0.0, 0.0]}}
         self.assertEqual(qualification_readiness_failure(trace), "")
 
     def test_runner_rejects_wind_step_until_launch_support_probe_and_clearance_are_all_traced(self):
@@ -117,4 +122,36 @@ class Px4WindStepQualificationTests(unittest.TestCase):
 
         self.assertIn("clearance", qualification_readiness_failure(trace))
         trace["runtime_authority_events"][0]["px4_launch_handoff_events"].append({"phase": "cleared"})
+        trace["bridge_events"].append({"kind": "px4_stream_sample", "stream": "local_position_ned", "finite": True,
+            "sample": {"position_ned": [0.0, 0.0, -3.0], "velocity_ned_mps": [0.0, 0.0, 0.0]}})
+        trace["runtime"] = {"truth_kinematics_ned": {"position_ned": [0.0, 0.0, -3.0], "velocity_ned_mps": [0.0, 0.0, 0.0]}}
         self.assertEqual(qualification_readiness_failure(trace), "")
+
+    def test_runner_waits_for_truth_estimator_convergence_and_low_vertical_speed_before_waypoint(self):
+        trace = {
+            "bridge_events": [
+                {"kind": "command_ack", "command": 22, "result": 0},
+                {"kind": "estimator_status", "estimator_ready": True},
+                {"state": "armed", "authority_active": True},
+                {"kind": "hil_actuator_controls", "authority_active": True, "outputs": [0.3, 0.3, 0.3, 0.3]},
+            ],
+            "runtime_authority_events": [{"px4_collision_input": {"touching": True}, "px4_launch_handoff_events": [
+                {"phase": "support_held", "contact_support": True},
+                {"phase": "release_probe", "authority_jolt": False, "vertical_velocity_mps": 0.2},
+                {"phase": "cleared"},
+            ]}],
+            "runtime": {"truth_kinematics_ned": {"position_ned": [0.0, 0.0, -3.0], "velocity_ned_mps": [0.0, 0.0, 0.0]}},
+        }
+
+        self.assertIn("truth/estimator", qualification_readiness_failure(trace))
+        trace["bridge_events"].append({
+            "kind": "px4_stream_sample",
+            "stream": "local_position_ned",
+            "finite": True,
+            "sample": {"position_ned": [0.1, 0.0, -3.1], "velocity_ned_mps": [0.0, 0.0, 0.1]},
+        })
+        self.assertEqual(qualification_readiness_failure(trace), "")
+        convergence = truth_estimator_convergence_evidence(trace)
+        self.assertEqual(convergence["truth_position_ned"], [0.0, 0.0, -3.0])
+        self.assertAlmostEqual(convergence["position_error_m"], math.sqrt(0.02))
+        self.assertAlmostEqual(convergence["velocity_error_mps"], 0.1)

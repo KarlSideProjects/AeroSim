@@ -111,6 +111,11 @@ func _write_trace(force: bool = false) -> void:
     var trace: Array = bridge.qualification_trace()
     var native_snapshot: Dictionary = _smoke.native.call("telemetry_snapshot") if _smoke.native != null and _smoke.native.has_method("telemetry_snapshot") else {}
     var native_authority := String(native_snapshot.get("control_authority", "unavailable"))
+    var airsim_snapshot: Dictionary = _smoke._airsim_state("Drone1")
+    var airsim_state: Dictionary = airsim_snapshot.get("state", {})
+    var truth_kinematics: Dictionary = airsim_state.get("kinematics_estimated", {})
+    var truth_position: Dictionary = truth_kinematics.get("position", {})
+    var truth_velocity: Dictionary = truth_kinematics.get("linear_velocity", {})
     var runtime := {
         "native_external_authority_state": _smoke._native_external_authority_state == true,
         "native_control_authority": native_authority,
@@ -127,6 +132,21 @@ func _write_trace(force: bool = false) -> void:
         var event := runtime.duplicate(true)
         event["time_seconds"] = Time.get_ticks_usec() / 1_000_000.0
         _runtime_authority_events.append(event)
+    # This is trace-only truth used by the external mission gate. Keep it out
+    # of runtime authority-event signatures so changing kinematics does not
+    # turn diagnostics into an unbounded per-physics-frame log.
+    runtime["truth_kinematics_ned"] = {
+        "position_ned": [
+            float(truth_position.get("x_val", NAN)),
+            float(truth_position.get("y_val", NAN)),
+            float(truth_position.get("z_val", NAN)),
+        ],
+        "velocity_ned_mps": [
+            float(truth_velocity.get("x_val", NAN)),
+            float(truth_velocity.get("y_val", NAN)),
+            float(truth_velocity.get("z_val", NAN)),
+        ],
+    }
     var now_msec := Time.get_ticks_msec()
     if not force and _last_trace_write_msec >= 0 and now_msec - _last_trace_write_msec < 250:
         return

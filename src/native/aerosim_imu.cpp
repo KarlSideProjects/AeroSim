@@ -155,9 +155,14 @@ ImuSample ImuSimulator::sample(const RigidBodyState &state) {
             gyro_bias_ +
             gyro_walk_ +
             noise3(config_.gyro_noise_density * white_scale);
+    // An accelerometer measures specific force, not world acceleration. The
+    // native integrator stores world acceleration with gravity already
+    // applied, so remove world gravity before projecting into the body frame.
+    const Vec3 specific_force_world = delayed.linear_acceleration_world_mps2 +
+            Vec3{0.0, config_.gravity_mps2, 0.0};
     const Vec3 accel = rotate(
             {-delayed.orientation.x, -delayed.orientation.y, -delayed.orientation.z, delayed.orientation.w},
-            {0.0, config_.gravity_mps2, 0.0}) +
+            specific_force_world) +
             config_.accel_bias +
             accel_bias_ +
             accel_walk_ +

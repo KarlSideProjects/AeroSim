@@ -25,6 +25,10 @@ struct Quat {
 struct RigidBodyState {
     Vec3 position;
     Vec3 velocity;
+    // World-frame (Godot Y-up) translational acceleration from the native
+    // integrator. This is the physical acceleration before conversion into
+    // the body-frame specific force observed by the IMU.
+    Vec3 linear_acceleration_world_mps2;
     Quat orientation;
     Vec3 angular_velocity;
     Vec3 propwash_disturbance_rad_s2;

@@ -193,6 +193,7 @@ bool finite_vec3(const aerosim::Vec3 &value) {
 
 bool valid_imu_state(const aerosim::RigidBodyState &state) {
     return finite_vec3(state.position) && finite_vec3(state.velocity) && finite_vec3(state.angular_velocity) &&
+            finite_vec3(state.linear_acceleration_world_mps2) &&
             finite_vec3(state.propwash_disturbance_rad_s2) && std::isfinite(state.orientation.x) &&
             std::isfinite(state.orientation.y) && std::isfinite(state.orientation.z) &&
             std::isfinite(state.orientation.w) && aerosim::quat_norm(state.orientation) > 0.0;

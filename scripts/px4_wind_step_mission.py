@@ -31,6 +31,12 @@ QUALIFICATION_DRONE2_CLEARANCE_M = 0.2
 POSITION_RMS_LIMIT_M = 0.75
 POSITION_MAX_LIMIT_M = 1.25
 ASYNC_COMMAND_TIMEOUT_SECONDS = 45.0
+# Before issuing the waypoint, the takeoff leg must be settled in the same
+# physical frame used by the qualification. These are readiness bounds, not
+# scoring limits and do not extend the command timeout.
+TRUTH_ESTIMATOR_POSITION_CONVERGENCE_M = 0.5
+TRUTH_ESTIMATOR_VELOCITY_CONVERGENCE_MPS = 0.75
+MAX_SETTLED_VERTICAL_SPEED_MPS = 0.5
 
 
 def segment_intersects_runtime_wall(start: tuple[float, float, float], end: tuple[float, float, float]) -> bool:
@@ -275,16 +281,79 @@ def qualification_readiness_failure(trace: dict[str, Any]) -> str:
         for index, event in enumerate(handoff_events)
     ):
         return "PX4 launch clearance after the release probe was not observed"
+    convergence_failure = truth_estimator_convergence_failure(trace)
+    if convergence_failure:
+        return convergence_failure
     return ""
 
 
-def wait_for_qualification_readiness(path: Path, timeout_seconds: float = 5.0) -> None:
+def _finite_vector3(value: Any) -> tuple[float, float, float] | None:
+    if not isinstance(value, list) or len(value) != 3:
+        return None
+    if not all(isinstance(component, (int, float)) and not isinstance(component, bool) and math.isfinite(component) for component in value):
+        return None
+    return float(value[0]), float(value[1]), float(value[2])
+
+
+def truth_estimator_convergence_evidence(trace: dict[str, Any]) -> dict[str, Any] | None:
+    """Return bounded truth/PX4 local-position evidence from the latest fresh sample."""
+    runtime = trace.get("runtime")
+    truth = runtime.get("truth_kinematics_ned") if isinstance(runtime, dict) else None
+    truth_position = _finite_vector3(truth.get("position_ned")) if isinstance(truth, dict) else None
+    truth_velocity = _finite_vector3(truth.get("velocity_ned_mps")) if isinstance(truth, dict) else None
+    if truth_position is None or truth_velocity is None:
+        return None
+    bridge_events = trace.get("bridge_events")
+    if not isinstance(bridge_events, list):
+        return None
+    local_position = next((
+        event.get("sample")
+        for event in reversed(bridge_events)
+        if isinstance(event, dict)
+        and event.get("kind") in {"px4_stream_fresh", "px4_stream_sample"}
+        and event.get("stream") == "local_position_ned"
+        and event.get("finite") is True
+        and isinstance(event.get("sample"), dict)
+    ), None)
+    px4_position = _finite_vector3(local_position.get("position_ned")) if isinstance(local_position, dict) else None
+    px4_velocity = _finite_vector3(local_position.get("velocity_ned_mps")) if isinstance(local_position, dict) else None
+    if px4_position is None or px4_velocity is None:
+        return None
+    return {
+        "truth_position_ned": list(truth_position),
+        "truth_velocity_ned_mps": list(truth_velocity),
+        "px4_position_ned": list(px4_position),
+        "px4_velocity_ned_mps": list(px4_velocity),
+        "position_error_m": math.dist(truth_position, px4_position),
+        "velocity_error_mps": math.dist(truth_velocity, px4_velocity),
+    }
+
+
+def truth_estimator_convergence_failure(trace: dict[str, Any]) -> str:
+    """Return why takeoff truth has not converged with PX4 local position."""
+    convergence = truth_estimator_convergence_evidence(trace)
+    if convergence is None:
+        return "PX4 truth/estimator convergence evidence is unavailable"
+    if convergence["position_error_m"] > TRUTH_ESTIMATOR_POSITION_CONVERGENCE_M or \
+            convergence["velocity_error_mps"] > TRUTH_ESTIMATOR_VELOCITY_CONVERGENCE_MPS:
+        return "PX4 truth/estimator convergence was not observed"
+    if abs(convergence["truth_velocity_ned_mps"][2]) > MAX_SETTLED_VERTICAL_SPEED_MPS or \
+            abs(convergence["px4_velocity_ned_mps"][2]) > MAX_SETTLED_VERTICAL_SPEED_MPS:
+        return "PX4 takeoff vertical speed was not settled before waypoint"
+    return ""
+
+
+def wait_for_qualification_readiness(path: Path, timeout_seconds: float = 5.0) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds
     failure = "PX4 qualification trace is unavailable"
     while time.monotonic() < deadline:
-        failure = qualification_readiness_failure(read_bridge_trace(path))
+        trace = read_bridge_trace(path)
+        failure = qualification_readiness_failure(trace)
         if not failure:
-            return
+            convergence = truth_estimator_convergence_evidence(trace)
+            if convergence is not None:
+                return convergence
+            failure = "PX4 truth/estimator convergence evidence is unavailable"
         time.sleep(0.05)
     raise RuntimeError(failure)
 
@@ -336,7 +405,7 @@ def main() -> int:
             client.enableApiControl(True, vehicle_name="Drone1")
             arm_with_startup_retry(client)
             wait_for_async_command(lambda: client.takeoffAsync(vehicle_name="Drone1"), "takeoff")
-            wait_for_qualification_readiness(Path(args.px4_trace_file))
+            raw["takeoff_convergence"] = wait_for_qualification_readiness(Path(args.px4_trace_file))
             wait_for_async_command(lambda: client.moveToPositionAsync(*TARGET_NED, 1.0, vehicle_name="Drone1"), "move_to_position")
             wait_for_async_command(lambda: client.hoverAsync(vehicle_name="Drone1"), "hover")
 
