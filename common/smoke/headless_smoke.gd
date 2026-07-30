@@ -6,6 +6,7 @@ const GamepadDeviceState = preload("res://common/flight/gamepad_device_state.gd"
 const CollisionProbeBodyScript = preload("res://common/flight/collision_probe_body.gd")
 const HardwareConfig = preload("res://common/flight/hardware_config.gd")
 const FreeFlightMap = preload("res://common/maps/free_flight_map.gd")
+const TerrainRangeWindProfile = preload("res://common/maps/terrain_range_wind_profile.gd")
 const IndustrialYardScene = preload("res://levels/free_flight/industrial_yard.tscn")
 const SmokeScene = preload("res://levels/smoke/smoke.tscn")
 const FlightRuntime = preload("res://common/flight/flight_runtime.gd")
@@ -1803,9 +1804,10 @@ func _verify_runtime_actions() -> bool:
         return false
     severe_wind_button.pressed.emit()
     var wind_config: Dictionary = scene.native.call("wind_configuration")
+    var severe_steady_wind := TerrainRangeWindProfile.steady_wind_for_preset("severe")
     if wind_config.get("preset", "") != "severe" or \
-            not _same_imu_value(wind_config.get("steady_wind", Vector3.ZERO), scene.scene_steady_wind_mps):
-        push_error("Map selection must apply the scene steady wind vector to native wind configuration")
+            not _same_imu_value(wind_config.get("steady_wind", Vector3.ZERO), severe_steady_wind):
+        push_error("Map selection must apply Terrain Range's severe steady wind vector to native wind configuration")
         scene.queue_free()
         return false
     scene.native.call("configure_wind", {
@@ -1814,7 +1816,7 @@ func _verify_runtime_actions() -> bool:
     })
     var invalid_preset_config: Dictionary = scene.native.call("wind_configuration")
     if invalid_preset_config.get("preset", "") != "severe" or \
-            not _same_imu_value(invalid_preset_config.get("steady_wind", Vector3.ZERO), scene.scene_steady_wind_mps):
+            not _same_imu_value(invalid_preset_config.get("steady_wind", Vector3.ZERO), severe_steady_wind):
         push_error("Invalid wind presets must not replace the last valid native configuration")
         scene.queue_free()
         return false
@@ -1824,7 +1826,7 @@ func _verify_runtime_actions() -> bool:
     })
     var invalid_vector_config: Dictionary = scene.native.call("wind_configuration")
     if invalid_vector_config.get("preset", "") != "severe" or \
-            not _same_imu_value(invalid_vector_config.get("steady_wind", Vector3.ZERO), scene.scene_steady_wind_mps):
+            not _same_imu_value(invalid_vector_config.get("steady_wind", Vector3.ZERO), severe_steady_wind):
         push_error("Non-finite wind vectors must not enter the native wind configuration")
         scene.queue_free()
         return false

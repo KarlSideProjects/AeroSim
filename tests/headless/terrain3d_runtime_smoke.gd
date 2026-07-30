@@ -40,6 +40,55 @@ func _run() -> void:
         push_error("Quick Fly must load Terrain Range with Terrain3D")
         quit(1)
         return
+    var visual_wind: Node = scene.loaded_map.get_node_or_null("VisualWindController")
+    if visual_wind == null or not visual_wind.has_method("snapshot"):
+        push_error("Terrain3D runtime smoke requires the Terrain Range visual-wind snapshot seam")
+        quit(1)
+        return
+    var before_selection: Dictionary = visual_wind.call("snapshot")
+    scene.select_map("terrain3d_range", "light")
+    if visual_wind.call("snapshot") != before_selection:
+        push_error("Terrain Range visual wind must not sample before an authoritative frame advances")
+        quit(1)
+        return
+    await physics_frame
+    var light_snapshot: Dictionary = visual_wind.call("snapshot")
+    var light_target: Vector2 = light_snapshot.target_horizontal_wind
+    if light_target.x >= 0.0 or light_target.y <= 0.0 or light_target.length() < 1.5 or light_target.length() > 2.5:
+        push_error("Terrain Range Light visual wind must be bounded and flow from -X toward +Z")
+        quit(1)
+        return
+    var explicit_steady := Vector3(3.0, 0.0, -4.0)
+    var explicit_environment: Dictionary = scene._airsim_environment("simSetEnvironment", [{"steady_wind": explicit_steady, "wind_preset": "severe"}])
+    if not explicit_environment.ok:
+        push_error("Terrain3D runtime smoke must accept an explicit steady wind")
+        quit(1)
+        return
+    var preset_only_environment: Dictionary = scene._airsim_environment("simSetEnvironment", [{"wind_preset": "light"}])
+    var native_wind: Dictionary = scene.native.call("wind_configuration")
+    if not preset_only_environment.ok or native_wind.steady_wind != explicit_steady:
+        push_error("Preset-only RPC wind updates must preserve an explicit steady wind vector")
+        quit(1)
+        return
+    var frozen_snapshot: Dictionary = visual_wind.call("snapshot")
+    scene.set_paused(true)
+    await physics_frame
+    if visual_wind.call("snapshot") != frozen_snapshot:
+        push_error("Terrain Range visual wind must freeze while paused")
+        quit(1)
+        return
+    scene.airsim_session.set_paused(false)
+    scene.set_paused(false, false)
+    var reset_snapshot: Dictionary = visual_wind.call("snapshot")
+    if not scene.reset_to_spawn() or scene._reset_pending_token == 0:
+        push_error("Terrain3D runtime smoke must enter reset-pending before visual wind can resume")
+        quit(1)
+        return
+    scene._advance_visual_wind(true)
+    if visual_wind.call("snapshot") != reset_snapshot:
+        push_error("Terrain Range visual wind must freeze while reset is pending")
+        quit(1)
+        return
     var spawn := scene.loaded_map.get_node("SpawnNorth") as Marker3D
     if scene.drone_body.global_position.distance_to(spawn.global_position) > 1e-6:
         push_error("Terrain3D runtime smoke must reset to SpawnNorth: body=%s spawn=%s" % [scene.drone_body.global_position, spawn.global_position])

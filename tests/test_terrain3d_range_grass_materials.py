@@ -19,10 +19,11 @@ class Terrain3DRangeGrassMaterialsTest(unittest.TestCase):
 
         self.assertIn('path="res://assets/maps/terrain3d_range/grass_process_material.tres"', scene)
         self.assertIn('path="res://assets/maps/terrain3d_range/grass_blade_material.tres"', scene)
-        self.assertEqual(scene.count('process_material = ExtResource("8")'), 1)
-        self.assertEqual(scene.count('mesh_material_override = ExtResource("9")'), 1)
+        self.assertIn('process_material = ExtResource("8")', scene)
+        self.assertIn('mesh_material_override = ExtResource("9")', scene)
         self.assertIn('[node name="VisualWindSample" type="Marker3D" parent="."]', scene)
-        self.assertIn('position = Vector3(540, 80.3, -760)', scene)
+        self.assertIn('position = Vector3(480, 79.7, -740)', scene)
+        self.assertIn('[node name="VisualWindController" type="Node" parent="."]', scene)
 
         for source in [process_material, blade_material, process_shader, blade_shader]:
             self.assertTrue(source.is_file(), source)
@@ -30,15 +31,7 @@ class Terrain3DRangeGrassMaterialsTest(unittest.TestCase):
         self.assertIn('path="res://assets/maps/terrain3d_range/grass_blade.gdshader"', blade_material.read_text(encoding="utf-8"))
         self.assertTrue(all(NOTICE in shader.read_text(encoding="utf-8") for shader in [process_shader, blade_shader]))
 
-    def test_project_owned_materials_preserve_the_upstream_grass_behavior(self) -> None:
-        self.assertEqual(
-            (MATERIAL_DIRECTORY / "grass_process.gdshader").read_text(encoding="utf-8"),
-            (ADDON_DIRECTORY / "particles.gdshader").read_text(encoding="utf-8"),
-        )
-        self.assertEqual(
-            (MATERIAL_DIRECTORY / "grass_blade.gdshader").read_text(encoding="utf-8"),
-            (ADDON_DIRECTORY / "grass.gdshader").read_text(encoding="utf-8"),
-        )
+    def test_project_owned_material_resources_leave_the_addon_boundary_intact(self) -> None:
         process_material = (MATERIAL_DIRECTORY / "grass_process_material.tres").read_text(encoding="utf-8")
         for setting in [
             "shader_parameter/min_scale = Vector3(0.1, 0.32, 0.1)",

@@ -5,6 +5,8 @@ shader_type spatial;
 render_mode skip_vertex_transform, cull_disabled, blend_mix;
 
 uniform vec2 wind_direction = vec2(1.0, 1.0);
+uniform float wind_force : hint_range(0.0, 1.0, 0.01) = 0.0;
+uniform float wind_phase = 0.0;
 
 varying vec4 data;
 
@@ -37,9 +39,9 @@ void vertex() {
 
 	// These 2 combined result in a decent bend without resorting to matrices or pivot data.
 	// Lateral move and wobble
-	float lateral_wobble = sin(TIME * 2.0 * (1.0 + data.r + data.g)) * 0.25 * (1.0 - INSTANCE_CUSTOM[2]);
-	vec2 direction = normalize(wind_direction);
-	w_vertex.xz -= (vec2(-direction.y, direction.x) * lateral_wobble + direction) * force;
+	float lateral_wobble = sin(wind_phase * 2.0 * (1.0 + data.r + data.g)) * 0.25 * (1.0 - INSTANCE_CUSTOM[2]);
+	vec2 direction = length(wind_direction) > 0.0001 ? normalize(wind_direction) : vec2(1.0, 0.0);
+	w_vertex.xz += (vec2(-direction.y, direction.x) * lateral_wobble + direction) * force;
 	// Flatten
 	w_vertex.y -= INSTANCE_CUSTOM[2] * force * data[2];
 

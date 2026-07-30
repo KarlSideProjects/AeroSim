@@ -25,6 +25,8 @@ uniform float wind_speed = 0.025;
 uniform float wind_strength : hint_range(0.0, 1.0, 0.01) = 1.0;
 uniform float wind_dithering = 4.0;
 uniform vec2 wind_direction = vec2(1.0,1.0);
+uniform float wind_force : hint_range(0.0, 1.0, 0.01) = 0.0;
+uniform float wind_phase = 0.0;
 
 group_uniforms shapeing;
 uniform float clod_scale_boost = 3.0;
@@ -271,5 +273,6 @@ void process() {
 	// Extract world space UV from Transform Matrix
 	vec2 uv = (TRANSFORM[3].xz + CUSTOM.rg * wind_dithering) * noise_scale;
 	// Scaled wind noise, updated per instance, at process FPS. Passed to Vertex()
-	CUSTOM[2] = textureLod(main_noise, uv + TIME * wind_speed * normalize(wind_direction), 0.0).r * wind_strength;
+	vec2 direction = length(wind_direction) > 0.0001 ? normalize(wind_direction) : vec2(1.0, 0.0);
+	CUSTOM[2] = textureLod(main_noise, uv + wind_phase * wind_speed * direction, 0.0).r * wind_strength * wind_force;
 }
