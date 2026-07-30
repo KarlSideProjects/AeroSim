@@ -99,10 +99,21 @@ int main() {
     iris.max_motor_rpm = 10504.23;
     iris.per_motor.max_thrust_per_motor_newtons = 7.0664;
     iris.px4_actuator_rpm_mapping = true;
-    const aerosim::MotorCommands iris_hover{{0.721400079425549, 0.721400079425549,
-            0.721400079425549, 0.721400079425549}};
-    const aerosim::MotorCommands iris_linear_hover{{0.5204196974414129, 0.5204196974414129,
-            0.5204196974414129, 0.5204196974414129}};
+    const double iris_required_lift_newtons = iris.mass_kg * iris.gravity_mps2;
+    const double iris_total_max_thrust_newtons = iris.per_motor.max_thrust_per_motor_newtons * 4.0;
+    // The support-release contract is strict (`>`), so choose a small
+    // config-relative excess rather than relying on a rounded hover literal.
+    const double iris_release_margin_newtons = iris_required_lift_newtons * 1.0e-4;
+    const double iris_rpm_mapped_release = std::sqrt(
+            (iris_required_lift_newtons + iris_release_margin_newtons) / iris_total_max_thrust_newtons);
+    const double iris_linear_hover_command = iris_required_lift_newtons / iris_total_max_thrust_newtons;
+    if (!(iris_rpm_mapped_release > iris_linear_hover_command + 0.1)) {
+        return fail("PX4 Iris prop-table RPM command must remain distinct from linear thrust command");
+    }
+    const aerosim::MotorCommands iris_hover{{iris_rpm_mapped_release, iris_rpm_mapped_release,
+            iris_rpm_mapped_release, iris_rpm_mapped_release}};
+    const aerosim::MotorCommands iris_linear_hover{{iris_linear_hover_command, iris_linear_hover_command,
+            iris_linear_hover_command, iris_linear_hover_command}};
     aerosim::RigidBodyState iris_held_state;
     aerosim::SimulationClock iris_held_clock;
     for (int frame = 0; frame < 24; ++frame) {
@@ -126,9 +137,9 @@ int main() {
     const aerosim::Px4SupportLiftReadiness iris_early_readiness =
             aerosim::px4_support_lift_readiness(iris, iris_early_state, iris_linear_hover);
     if (!iris_hover_readiness.valid || !iris_hover_readiness.ready ||
-            std::abs(iris_hover_readiness.command_thrust_newtons - iris_hover_readiness.required_lift_newtons) > 1.0e-3 ||
+            iris_hover_readiness.command_thrust_newtons < iris_hover_readiness.required_lift_newtons + iris_release_margin_newtons * 0.99 ||
             !iris_early_readiness.valid || iris_early_readiness.ready ||
-            !(iris_early_readiness.command_thrust_newtons < iris_early_readiness.required_lift_newtons)) {
+            !(iris_early_readiness.command_thrust_newtons < iris_early_readiness.required_lift_newtons - iris_release_margin_newtons)) {
         return fail("PX4 Iris RPM-mapped hover and support-release thresholds must follow the derived prop table");
     }
     const std::array<double, 4> rpm_before_release = iris_held_state.motor_rpm;
