@@ -134,6 +134,7 @@ class CollisionHandoffNative extends FakeNative:
 
 class Px4CollisionBoundaryNative extends FakeNative:
     var px4_touching_arguments: Array[bool] = []
+    var px4_resolved_velocity_inputs: Array[Vector3] = []
     var lift_readiness := {
         "valid": true,
         "ready": false,
@@ -148,6 +149,7 @@ class Px4CollisionBoundaryNative extends FakeNative:
 
     func step_collision_px4_actuator_mode(...arguments) -> PackedFloat64Array:
         px4_touching_arguments.append(bool(arguments[6]))
+        px4_resolved_velocity_inputs.append(Vector3(float(arguments[14]), float(arguments[15]), float(arguments[16])))
         var row := PackedFloat64Array()
         row.resize(17)
         row[7] = 1.0
@@ -1355,6 +1357,31 @@ func test_px4_takeoff_holds_the_initial_upward_spawn_floor_contact_until_hardwar
 
     assert_eq(native.px4_touching_arguments, [true])
     assert_eq(runtime._px4_launch_phase, "support_held")
+
+
+func test_px4_jolt_contact_applies_the_native_solved_velocity_before_the_next_contact_step() -> void:
+    var fixture := _px4_collision_boundary_runtime()
+    var runtime: FlightRuntime = fixture.runtime
+    var native: Px4CollisionBoundaryNative = fixture.native
+    native.probe_is_jolt = true
+    runtime.drone_body.global_position.y = 0.015625
+    runtime.drone_body.linear_velocity = Vector3(0.0, -0.680928885936737, 0.0)
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+
+    runtime._physics_process(1.0 / 240.0)
+
+    assert_almost_eq(native.px4_resolved_velocity_inputs[0].y, -0.680928885936737, 0.000001)
+    assert_true(runtime.drone_body.pending_native_state)
+    assert_almost_eq(runtime.drone_body.native_linear_velocity.y, 0.0, 0.000001)
+    # Mirror CollisionProbeBody's next Jolt integration callback, which is
+    # where the native solved contact state commits to the rigid body.
+    runtime.drone_body.linear_velocity = runtime.drone_body.native_linear_velocity
+    runtime.drone_body.pending_native_state = false
+    runtime.drone_body.contact_seen = true
+    runtime.drone_body.contact_normal = Vector3.UP
+    runtime._physics_process(1.0 / 240.0)
+    assert_almost_eq(native.px4_resolved_velocity_inputs[1].y, 0.0, 0.000001)
 
 
 func test_px4_takeoff_runs_one_hardware_ready_release_probe_and_marks_upward_motion_released() -> void:
