@@ -1,16 +1,15 @@
 (function () {
     const root = typeof window === "undefined" ? globalThis : window;
-    const MOTOR_POSITIONS = {
-        rear_right: [1, 0, 1],
-        front_right: [1, 0, -1],
-        rear_left: [-1, 0, 1],
-        front_left: [-1, 0, -1],
-    };
     const TAU = Math.PI * 2;
+    const geometryPackage = root.__AEROSIM_GSP_DRONE_GEOMETRY__ || null;
     let view = "isometric";
     let visualStatus = { available: false, rotor_count: 0, context_lost: false };
     let labels = {};
     let rotorById = {};
+    let motorLabels = null;
+    let geometrySpec = geometryPackage
+        ? { available: false, reason: "waiting for hardware configuration" }
+        : { available: false, reason: "geometry package unavailable" };
 
     function finite(value) {
         return typeof value === "number" && Number.isFinite(value);
@@ -20,6 +19,13 @@
         if (gate && gate !== "active") return { state: gate, value: null };
         if (!value || !finite(Number(value.x_val)) || !finite(Number(value.y_val)) || !finite(Number(value.z_val))) return { state: "unavailable", value: null };
         return { state: "active", value: { x: Number(value.x_val), y: Number(value.y_val), z: Number(value.z_val) } };
+    }
+
+    // Rendered geometry always comes from the hardware configuration the
+    // simulator sent, never from renderer constants.
+    function deriveGeometry(sample) {
+        if (!geometryPackage) return { available: false, reason: "geometry package unavailable" };
+        return geometryPackage.derive_geometry_spec(sample ? sample.hardware_configuration : null);
     }
 
     function mapTelemetryToViewState(sample, frameSeconds) {
@@ -34,8 +40,11 @@
         const maxCurrent = Number(power.max_total_current_a) / count;
         const hasPower = count > 0 && finite(maxThrust) && maxThrust > 0 && finite(maxCurrent) && maxCurrent > 0;
         const seconds = finite(frameSeconds) && frameSeconds > 0 ? frameSeconds : 1 / 60;
+        const geometry = deriveGeometry(sample);
+        const placements = geometry.available ? geometry.motors : [];
         return {
             axes: { body: "FRD", scene: { forward: "-Z", right: "+X", down: "-Y" } },
+            geometry,
             motors: motors.map((motor, index) => {
                 const thrust = Number(motor && motor.thrust_newtons);
                 const current = Number(motor && motor.current_a);
@@ -45,8 +54,11 @@
                 const health = !finite(ratio) ? "unavailable" : motor && motor.saturated || ratio >= .98 ? "critical" : ratio >= .85 ? "warning" : "normal";
                 const normalized = finite(ratio) ? Math.max(0, Math.min(ratio, 1)) : 0;
                 const id = String(order[index] || "motor_" + (index + 1));
+                const placement = placements[index] && placements[index].id === id ? placements[index] : null;
                 return {
-                    id, index, position: MOTOR_POSITIONS[id] || [0, 0, 0], rpm: finite(measuredRpm) ? measuredRpm : null,
+                    id, index, label: "M" + (index + 1),
+                    position: placement ? placement.scene : null,
+                    rpm: finite(measuredRpm) ? measuredRpm : null,
                     thrust_newtons: finite(thrust) ? thrust : null, current_a: finite(current) ? current : null,
                     saturated: !!(motor && motor.saturated), spin_direction: spin[index] === "cw" || spin[index] === "ccw" ? spin[index] : "unavailable",
                     health, rotor_opacity: 1 - normalized * .85, disc_opacity: normalized * .85,
@@ -74,6 +86,43 @@
         labels = next || {};
     }
 
+    function renderedLabels() {
+        if (!motorLabels) return [];
+        return motorLabels.children.map((sprite) => ({
+            label: String(sprite.userData.label),
+            motor_id: String(sprite.userData.motor_id),
+            position: sprite.position.toArray(),
+        }));
+    }
+
+    function geometryReport() {
+        if (!geometrySpec.available) {
+            return {
+                available: false,
+                reason: String(geometrySpec.reason || "geometry unavailable"),
+                classification: "unavailable",
+            };
+        }
+        return {
+            available: true,
+            classification: geometrySpec.classification,
+            classification_reasons: geometrySpec.classification_reasons.slice(),
+            identity: Object.assign({}, geometrySpec.identity),
+            scale: Object.assign({}, geometrySpec.scale),
+            center_of_mass_frd_m: Object.assign({}, geometrySpec.center_of_mass_frd_m),
+            propeller: Object.assign({}, geometrySpec.propeller),
+            motor: Object.assign({}, geometrySpec.motor),
+            motors: geometrySpec.motors.map((motor) => ({
+                id: motor.id, label: motor.label, spin_direction: motor.spin_direction,
+                frd: Object.assign({}, motor.frd), scene: motor.scene.slice(), radius_m: motor.radius_m,
+            })),
+            provenance: geometrySpec.provenance,
+            warnings: geometrySpec.warnings.slice(),
+            rendered: Object.keys(rotorById).length > 0,
+            rendered_labels: renderedLabels(),
+        };
+    }
+
     function api() {
         return {
             map_telemetry_to_view_state: mapTelemetryToViewState,
@@ -81,6 +130,7 @@
             set_view: setView,
             current_view: () => view,
             status: () => Object.assign({}, visualStatus),
+            geometry: geometryReport,
             rotor: (id) => rotorById[id] || null,
         };
     }
@@ -89,7 +139,7 @@
     if (typeof document === "undefined") return;
     const canvas = document.getElementById("airframe-3d");
     const THREE = root.THREE;
-    if (!canvas || !THREE) return;
+    if (!canvas || !THREE || !geometryPackage) return;
 
     let renderer;
     try {
@@ -104,37 +154,18 @@
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0c1219);
-    const camera = new THREE.PerspectiveCamera(38, 1, .1, 50);
+    const camera = new THREE.PerspectiveCamera(38, 1, .01, 20);
     const key = new THREE.DirectionalLight(0xd9ecff, 2.2);
-    key.position.set(4, 6, 2); key.castShadow = true; scene.add(key);
+    key.position.set(.4, .6, .2); key.castShadow = true; scene.add(key);
     scene.add(new THREE.HemisphereLight(0x9fc8ff, 0x102236, 1.6));
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), new THREE.MeshStandardMaterial({ color: 0x101923, roughness: .94 }));
-    ground.rotation.x = -Math.PI / 2; ground.position.y = -.36; ground.receiveShadow = true; scene.add(ground);
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshStandardMaterial({ color: 0x101923, roughness: .94 }));
+    ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
     const airframe = new THREE.Group(); scene.add(airframe);
-    const frameMaterial = new THREE.MeshStandardMaterial({ color: 0x263a47, metalness: .62, roughness: .32 });
-    const motorMaterial = new THREE.MeshStandardMaterial({ color: 0x7d939f, metalness: .84, roughness: .2 });
-    const propMaterial = new THREE.MeshStandardMaterial({ color: 0xc5e8ff, transparent: true, opacity: .9, roughness: .38 });
-    const discMaterial = new THREE.MeshBasicMaterial({ color: 0x67d5ff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
-    const hub = new THREE.Mesh(new THREE.BoxGeometry(.48, .16, .34), frameMaterial); hub.castShadow = true; airframe.add(hub);
-    const nose = new THREE.Mesh(new THREE.ConeGeometry(.09, .3, 12), new THREE.MeshStandardMaterial({ color: 0x9ee6b1, emissive: 0x173c26 }));
-    nose.rotation.x = Math.PI / 2; nose.position.z = -.34; airframe.add(nose);
-
-    Object.keys(MOTOR_POSITIONS).forEach((id) => {
-        const position = MOTOR_POSITIONS[id];
-        const group = new THREE.Group(); group.name = "rotor-" + id; group.position.set(position[0], position[1], position[2]);
-        const arm = new THREE.Mesh(new THREE.BoxGeometry(.12, .07, 1.5), frameMaterial);
-        arm.position.copy(group.position).multiplyScalar(.5); arm.rotation.y = Math.atan2(position[0], position[2]); arm.castShadow = true; airframe.add(arm);
-        const bell = new THREE.Mesh(new THREE.CylinderGeometry(.15, .15, .13, 20), motorMaterial); bell.castShadow = true; group.add(bell);
-        const blade = new THREE.Mesh(new THREE.BoxGeometry(.95, .018, .12), propMaterial); blade.position.x = .38; blade.castShadow = true;
-        const bladePair = new THREE.Group(); bladePair.add(blade); const opposite = blade.clone(); opposite.rotation.y = Math.PI; bladePair.add(opposite); bladePair.position.y = .1; group.add(bladePair);
-        const disc = new THREE.Mesh(new THREE.CircleGeometry(.58, 32), discMaterial.clone()); disc.rotation.x = -Math.PI / 2; disc.position.y = .11; group.add(disc);
-        airframe.add(group); rotorById[id] = { group, blade: bladePair, disc };
-    });
-
     const flow = new THREE.ArrowHelper(new THREE.Vector3(0, 0, -1), new THREE.Vector3(), 0, 0x67d5ff, .18, .1);
     scene.add(flow);
     const downwash = new THREE.ArrowHelper(new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, .05, 0), 0, 0xffcf78, .12, .08);
     scene.add(downwash);
+
     let sample = root.__AEROSIM_GSP_TELEMETRY__ || {};
     let state = mapTelemetryToViewState(sample);
     let lastFrame = performance.now();
@@ -142,7 +173,93 @@
     let previousPointer = null;
     let yaw = .78;
     let pitch = .62;
-    let distance = 4.3;
+    let distance = 1;
+    let model = null;
+    let renderedSignature = "";
+
+    // "M1 CW" callouts drawn into a texture so the rotor mapping is readable in
+    // the render itself, not only in the panel text.
+    function createLabelTexture(motor) {
+        const labelCanvas = document.createElement("canvas");
+        labelCanvas.width = 192;
+        labelCanvas.height = 96;
+        const context = labelCanvas.getContext("2d");
+        if (!context) return null;
+        context.fillStyle = "rgba(9,14,20,0.86)";
+        context.fillRect(0, 0, labelCanvas.width, labelCanvas.height);
+        context.strokeStyle = "rgba(103,213,255,0.75)";
+        context.lineWidth = 4;
+        context.strokeRect(2, 2, labelCanvas.width - 4, labelCanvas.height - 4);
+        context.fillStyle = "#e4eef8";
+        context.font = "600 46px ui-sans-serif, system-ui, sans-serif";
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        const spin = geometryPackage.spin_abbreviation(motor.spin_direction);
+        context.fillText(motor.label + " " + spin, labelCanvas.width / 2, labelCanvas.height / 2);
+        const texture = new THREE.CanvasTexture(labelCanvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        return texture;
+    }
+
+    function disposeNode(node) {
+        node.traverse((child) => {
+            if (child.geometry) child.geometry.dispose();
+            const material = child.material;
+            if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+            else if (material) {
+                if (material.map) material.map.dispose();
+                material.dispose();
+            }
+        });
+    }
+
+    // The model is rebuilt inside the render loop, one frame after the telemetry
+    // that changed it. Announce the new state so the panel's status and geometry
+    // card do not describe the previous frame.
+    function announceVisualState() {
+        if (typeof CustomEvent !== "function" || !root.dispatchEvent) return;
+        root.dispatchEvent(new CustomEvent("aerosim-gsp-visual", { detail: Object.assign({}, visualStatus) }));
+    }
+
+    function applyGeometry(spec) {
+        const signature = spec.available ? JSON.stringify({
+            identity: spec.identity, scale: spec.scale, body: spec.body, motor: spec.motor,
+            propeller: spec.propeller, camera_angle_deg: spec.camera_angle_deg,
+            motors: spec.motors.map((motor) => [motor.id, motor.scene, motor.spin_direction]),
+            center: spec.center_of_mass_frd_m,
+        }) : "";
+        if (signature === renderedSignature) return;
+        renderedSignature = signature;
+        while (airframe.children.length) {
+            const child = airframe.children.pop();
+            disposeNode(child);
+        }
+        model = null;
+        motorLabels = null;
+        rotorById = {};
+        if (!spec.available) {
+            visualStatus = { available: false, rotor_count: 0, context_lost: visualStatus.context_lost };
+            announceVisualState();
+            return;
+        }
+        model = geometryPackage.build_drone_model(THREE, spec);
+        airframe.add(model.group);
+        motorLabels = geometryPackage.build_motor_labels(THREE, spec, createLabelTexture);
+        airframe.add(motorLabels);
+        rotorById = model.rotors;
+        const span = spec.scale.span_m;
+        ground.geometry.dispose();
+        ground.geometry = new THREE.PlaneGeometry(span * 6, span * 6);
+        ground.position.y = -(spec.body.arm_thickness_m / 2 + spec.body.landing_foot_height_m);
+        key.position.set(span * 1.2, span * 1.8, span * .6);
+        distance = span * 2.4;
+        visualStatus = {
+            available: true,
+            rotor_count: Object.keys(rotorById).length,
+            context_lost: visualStatus.context_lost,
+        };
+        announceVisualState();
+    }
 
     function setCamera() {
         const presets = { isometric: [.78, .62], top: [0, 1.54], side: [1.57, 0], rear: [3.14, 0] };
@@ -156,24 +273,33 @@
     }
 
     function updateFlow() {
+        const span = geometrySpec.available ? geometrySpec.scale.span_m : 0;
         const wind = state.flow.wind;
-        if (wind.state === "active") {
+        if (wind.state === "active" && span > 0) {
             const vector = sceneVector(wind.value); const length = vector.length();
-            flow.visible = length > 0; if (length > 0) { flow.position.set(0, .4, 0); flow.setDirection(vector.normalize()); flow.setLength(Math.min(2.4, length / 15 * 2.4)); }
+            flow.visible = length > 0;
+            if (length > 0) {
+                flow.position.set(0, span * .6, 0);
+                flow.setDirection(vector.normalize());
+                flow.setLength(Math.min(span, length / 15 * span), span * .12, span * .06);
+            }
         } else flow.visible = false;
         const down = state.flow.downwash;
-        downwash.visible = down.state === "active" && down.value > 0;
-        if (downwash.visible) downwash.setLength(Math.min(1.4, down.value / 10));
+        downwash.visible = down.state === "active" && down.value > 0 && span > 0;
+        if (downwash.visible) downwash.setLength(Math.min(span * .6, down.value / 10 * span * .6), span * .1, span * .05);
     }
 
     function updateScene(seconds) {
         state = mapTelemetryToViewState(sample, seconds);
+        geometrySpec = state.geometry;
+        applyGeometry(geometrySpec);
         state.motors.forEach((motor) => {
             const rotor = rotorById[motor.id]; if (!rotor) return;
             const color = motor.health === "critical" ? 0xff8aad : motor.health === "warning" ? 0xffcf78 : motor.health === "normal" ? 0x9ee6b1 : 0x59646d;
-            rotor.blade.children.forEach((blade) => { blade.material.color.setHex(color); blade.material.opacity = motor.rotor_opacity; });
+            rotor.blades.children.forEach((blade) => { blade.material.color.setHex(color); blade.material.opacity = motor.rotor_opacity; });
             rotor.disc.material.color.setHex(color); rotor.disc.material.opacity = motor.disc_opacity;
-            if (!root.matchMedia || !root.matchMedia("(prefers-reduced-motion: reduce)").matches) rotor.blade.rotation.y += motor.angular_step_rad * (motor.spin_direction === "ccw" ? -1 : 1);
+            // A clockwise rotor seen from above turns the negative way about +Y.
+            if (!root.matchMedia || !root.matchMedia("(prefers-reduced-motion: reduce)").matches) rotor.blades.rotation.y -= motor.angular_step_rad * rotor.spin_sign;
         });
         updateFlow();
     }
@@ -190,22 +316,29 @@
         if (!dragging || !previousPointer) return;
         view = "free"; yaw += (event.clientX - previousPointer.clientX) * .012; pitch = Math.max(-1.35, Math.min(1.35, pitch + (event.clientY - previousPointer.clientY) * .012)); previousPointer = event;
     });
-    canvas.addEventListener("wheel", (event) => { distance = Math.max(2.5, Math.min(8, distance + event.deltaY * .004)); event.preventDefault(); }, { passive: false });
-    canvas.addEventListener("webglcontextlost", (event) => { event.preventDefault(); visualStatus = { available: false, rotor_count: 0, context_lost: true }; });
+    canvas.addEventListener("wheel", (event) => {
+        const span = geometrySpec.available ? geometrySpec.scale.span_m : 1;
+        distance = Math.max(span * 1.2, Math.min(span * 6, distance + event.deltaY * span * .002));
+        event.preventDefault();
+    }, { passive: false });
+    canvas.addEventListener("webglcontextlost", (event) => {
+        event.preventDefault();
+        visualStatus = { available: false, rotor_count: 0, context_lost: true };
+        announceVisualState();
+    });
     root.addEventListener("aerosim-gsp-telemetry", (event) => { sample = event.detail || {}; });
 
     try {
         if (THREE.RoomEnvironment && THREE.PMREMGenerator) {
             const pmrem = new THREE.PMREMGenerator(renderer); scene.environment = pmrem.fromScene(new THREE.RoomEnvironment()).texture; pmrem.dispose();
         }
-        visualStatus = { available: true, rotor_count: Object.keys(rotorById).length, context_lost: false };
     } catch (_error) {
-        visualStatus = { available: true, rotor_count: Object.keys(rotorById).length, context_lost: false };
+        // A missing environment map only costs reflections.
     }
 
     function render(now) {
         const seconds = Math.min(.1, Math.max(0, (now - lastFrame) / 1000)); lastFrame = now;
-        resize(); setCamera(); updateScene(seconds); renderer.render(scene, camera); root.requestAnimationFrame(render);
+        resize(); updateScene(seconds); setCamera(); renderer.render(scene, camera); root.requestAnimationFrame(render);
     }
     root.requestAnimationFrame(render);
 }());

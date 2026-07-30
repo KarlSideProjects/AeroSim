@@ -43,6 +43,7 @@ for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state
     "rate", "vehicle", "authority", "tick", "latency", "registry", "position", "velocity", "attitude", "rates", "motors",
     "mode-armed", "config-hash", "endurance", "flight-diagnostics", "hardware-configuration", "hardware-derived", "telemetry-data",
     "visualization-status", "flow-legend", "motor-rear-right", "motor-front-right", "motor-rear-left", "motor-front-left",
+    "geometry-classification", "geometry-identity", "geometry-scale", "geometry-motors", "geometry-provenance",
     "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
     "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report"]) {
     elements.set(id, new Element(id === "sparkline" ? "canvas" : "div"));
@@ -114,9 +115,18 @@ const context = {
     console,
 };
 
+// The geometry package and the visual bridge are bundled beside the panel, so
+// load them into the same context. Without a canvas the visual layer stops at
+// its telemetry mapping, which is exactly the surface the panel reads.
+for (const asset of ["gsp_drone_geometry.js", "gsp_visual.js"]) {
+    vm.runInNewContext(fs.readFileSync(`common/gsp/assets/${asset}`, "utf8"), context, { filename: asset });
+}
+
 const html = fs.readFileSync("common/gsp/gsp_panel.html", "utf8");
 const script = html.match(/<script>\n([\s\S]*?)\n<\/script>/)[1];
 vm.runInNewContext(script, context, { filename: "gsp_panel.html" });
+
+const hardwareConfiguration = JSON.parse(fs.readFileSync("config/drones/5_inch_6s.json", "utf8"));
 
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     v: 2,
@@ -129,7 +139,7 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     t: "telemetry",
     tick: 1,
     d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1, config_hash: "config-fixture", armed: true,
-        hardware_configuration: { battery: { capacity_mah: 1300 }, spin_direction: ["cw", "ccw", "cw", "ccw"] },
+        hardware_configuration: hardwareConfiguration,
         hardware_power_model: { hover_endurance_minutes: 4.2, max_total_thrust_newtons: 40, max_total_current_a: 40 },
         motor_order: ["rear_right", "front_right", "rear_left", "front_left"], rpm: [955, 1910, 2865, 3820],
         motors: [
@@ -147,6 +157,25 @@ assert.equal(elements.get("motor-rear-right").dataset.motor, "rear_right");
 assert.match(elements.get("motor-rear-right").textContent, /M1[\s\S]*955[\s\S]*2\.00[\s\S]*1\.00/);
 assert.match(elements.get("motor-rear-left").textContent, /嚴重/);
 assert.match(elements.get("flow-legend").textContent, /FRD.*m\/s/);
+
+// Geometry stays inspectable: classification, scale, M1-M4 mapping, provenance.
+assert.equal(elements.get("geometry-classification").dataset.classification, "nominal");
+assert.equal(elements.get("geometry-classification").textContent, "名義幾何");
+assert.match(elements.get("geometry-identity").textContent, /5-inch 6S Quad-X freestyle · quad_x_5_inch_freestyle/);
+assert.match(elements.get("geometry-scale").textContent, /wheelbase 225\.0 mm/);
+assert.match(elements.get("geometry-scale").textContent, /prop ⌀127\.0 mm × 4\.3" pitch × 3/);
+assert.match(elements.get("geometry-scale").textContent, /wheelbase 225\.0 mm \(layout 318\.2 mm\)/);
+assert.match(elements.get("geometry-provenance").textContent, /warnings = wheelbase_disagrees_with_motor_layout/);
+const mapping = elements.get("geometry-motors").textContent.split("\n");
+assert.equal(mapping.length, 4);
+assert.match(mapping[0], /^M1 · 右後 · 順時針 · FRD \(-0\.1125, 0\.1125, 0\.0000\) m/);
+assert.match(mapping[1], /^M2 · 右前 · 逆時針 · FRD \(0\.1125, 0\.1125, 0\.0000\) m/);
+assert.match(mapping[2], /^M3 · 左後 · 逆時針/);
+assert.match(mapping[3], /^M4 · 左前 · 順時針/);
+assert.match(elements.get("geometry-provenance").textContent, /redistribution = release/);
+assert.match(elements.get("geometry-provenance").textContent, /license = MIT · AeroSim contributors/);
+assert.match(elements.get("geometry-provenance").textContent, /nominal_because = unqualified_dimensional_evidence, missing_dimensional_evidence_document/);
+assert.match(elements.get("geometry-provenance").textContent, /asset = common\/gsp\/assets\/gsp_drone_geometry\.js sha256:[0-9a-f]{64}/);
 const pingRequest = FakeWebSocket.instance.sent.find((item) => item.t === "ping");
 perfNow = 3;
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({

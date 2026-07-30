@@ -8,6 +8,7 @@ const DEMO_BROWSER_CLASS := "AeroSimGspDemo"
 const WINDOW_WIDTH_OVERRIDE := "display/window/size/window_width_override"
 const WINDOW_HEIGHT_OVERRIDE := "display/window/size/window_height_override"
 const PANEL_ASSET_PATHS := [
+    "res://common/gsp/assets/gsp_drone_geometry.js",
     "res://common/gsp/assets/gsp_visual.js",
     "res://common/gsp/assets/three-0.180.0.global.min.js",
 ]

@@ -28,6 +28,85 @@
     "frontal_area_m2": {"x": 0.016, "y": 0.016, "z": 0.028},
     "layout": "x"
   },
+  "geometry": {
+    "identity": {
+      "designation": "5-inch 6S Quad-X race",
+      "airframe_class": "quad_x_5_inch_race",
+      "frame_reference": "AeroSim parametric 5-inch Quad-X"
+    },
+    "body": {
+      "center_plate_length_m": 0.094,
+      "center_plate_width_m": 0.052,
+      "plate_thickness_m": 0.0020,
+      "bottom_plate_thickness_m": 0.0040,
+      "stack_width_m": 0.0355,
+      "stack_height_m": 0.0220,
+      "standoff_height_m": 0.0260,
+      "standoff_diameter_m": 0.0060,
+      "canopy_length_m": 0.0560,
+      "canopy_width_m": 0.0360,
+      "canopy_height_m": 0.0250,
+      "camera_width_m": 0.0190,
+      "camera_height_m": 0.0190,
+      "camera_depth_m": 0.0200,
+      "camera_lens_diameter_m": 0.0120,
+      "battery_length_m": 0.0720,
+      "battery_width_m": 0.0340,
+      "battery_height_m": 0.0300,
+      "arm_root_width_m": 0.0220,
+      "arm_tip_width_m": 0.0150,
+      "arm_thickness_m": 0.0060,
+      "landing_foot_height_m": 0.0100,
+      "landing_foot_diameter_m": 0.0090,
+      "antenna_length_m": 0.0520,
+      "antenna_diameter_m": 0.0040
+    },
+    "motor": {
+      "bell_diameter_m": 0.0279,
+      "bell_height_m": 0.0155,
+      "base_diameter_m": 0.0290,
+      "base_height_m": 0.0060,
+      "shaft_diameter_m": 0.0050,
+      "shaft_height_m": 0.0075
+    },
+    "propeller": {
+      "hub_diameter_m": 0.0180,
+      "hub_height_m": 0.0060,
+      "blade_root_chord_m": 0.0090,
+      "blade_max_chord_m": 0.0175,
+      "blade_tip_chord_m": 0.0075,
+      "blade_thickness_m": 0.0013,
+      "blade_root_offset_m": 0.0080,
+      "blade_root_twist_deg": 27.0,
+      "blade_tip_twist_deg": 11.0
+    },
+    "provenance": {
+      "model_source": "AeroSim parametric Quad-X geometry generated from this hardware configuration",
+      "source_url": "https://github.com/jhihweijhan/AeroSim/issues/302",
+      "dimensional_evidence": {
+        "evidence_class": "parametric_from_configuration",
+        "documents": [],
+        "notes": "Motor placement, propeller diameter, blade count, motor stator/KV, FPV camera angle and centre of mass are read from aircraft.motor_layout, propeller.*, motor.*, fpv.camera_angle_deg and aircraft.cg_offset_m. The body, motor-shell and propeller-shell dimensions are nominal values typical of a 5-inch 6S race build; they are not measured from a specific frame and no public CAD backs them. frame.wheelbase_m also disagrees with aircraft.motor_layout, whose motor radius implies a 0.304 m motor-to-motor diagonal, so no named real frame can be claimed."
+      },
+      "license": {
+        "spdx": "MIT",
+        "holder": "AeroSim contributors",
+        "attribution_required": true,
+        "attribution": "AeroSim parametric Quad-X geometry, (c) AeroSim contributors, MIT"
+      },
+      "redistribution": "release",
+      "assets": [
+        {
+          "path": "common/gsp/assets/three-0.180.0.global.min.js",
+          "sha256": "9e80ed95a3bcbb77bb1d6024de9f7f4cc7d6a9745a322f88052edd29e9faa737"
+        },
+        {
+          "path": "common/gsp/assets/gsp_drone_geometry.js",
+          "sha256": "4cc058a6f8ad00360520a5f2277360f98850caafe4617a4de2b99ee01028e60c"
+        }
+      ]
+    }
+  },
   "motor": {
     "stator": "2207",
     "kv": 1950,

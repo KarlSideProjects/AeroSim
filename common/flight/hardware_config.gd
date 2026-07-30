@@ -18,6 +18,85 @@ const FACTORY_DEFAULT := {
         "frontal_area_m2": {"x": 0.018, "y": 0.018, "z": 0.030},
         "layout": "x"
     },
+    "geometry": {
+        "identity": {
+            "designation": "5-inch 6S Quad-X freestyle",
+            "airframe_class": "quad_x_5_inch_freestyle",
+            "frame_reference": "AeroSim parametric 5-inch Quad-X"
+        },
+        "body": {
+            "center_plate_length_m": 0.100,
+            "center_plate_width_m": 0.056,
+            "plate_thickness_m": 0.0025,
+            "bottom_plate_thickness_m": 0.0040,
+            "stack_width_m": 0.0355,
+            "stack_height_m": 0.0240,
+            "standoff_height_m": 0.0300,
+            "standoff_diameter_m": 0.0060,
+            "canopy_length_m": 0.0620,
+            "canopy_width_m": 0.0400,
+            "canopy_height_m": 0.0300,
+            "camera_width_m": 0.0190,
+            "camera_height_m": 0.0190,
+            "camera_depth_m": 0.0210,
+            "camera_lens_diameter_m": 0.0120,
+            "battery_length_m": 0.0750,
+            "battery_width_m": 0.0350,
+            "battery_height_m": 0.0320,
+            "arm_root_width_m": 0.0240,
+            "arm_tip_width_m": 0.0160,
+            "arm_thickness_m": 0.0050,
+            "landing_foot_height_m": 0.0140,
+            "landing_foot_diameter_m": 0.0100,
+            "antenna_length_m": 0.0580,
+            "antenna_diameter_m": 0.0040
+        },
+        "motor": {
+            "bell_diameter_m": 0.0279,
+            "bell_height_m": 0.0155,
+            "base_diameter_m": 0.0290,
+            "base_height_m": 0.0060,
+            "shaft_diameter_m": 0.0050,
+            "shaft_height_m": 0.0075
+        },
+        "propeller": {
+            "hub_diameter_m": 0.0180,
+            "hub_height_m": 0.0060,
+            "blade_root_chord_m": 0.0085,
+            "blade_max_chord_m": 0.0165,
+            "blade_tip_chord_m": 0.0070,
+            "blade_thickness_m": 0.0012,
+            "blade_root_offset_m": 0.0080,
+            "blade_root_twist_deg": 24.0,
+            "blade_tip_twist_deg": 9.0
+        },
+        "provenance": {
+            "model_source": "AeroSim parametric Quad-X geometry generated from this hardware configuration",
+            "source_url": "https://github.com/jhihweijhan/AeroSim/issues/302",
+            "dimensional_evidence": {
+                "evidence_class": "parametric_from_configuration",
+                "documents": [],
+                "notes": "Body, motor-shell and propeller-shell dimensions are nominal 5-inch 6S values and are not measured from a specific frame."
+            },
+            "license": {
+                "spdx": "MIT",
+                "holder": "AeroSim contributors",
+                "attribution_required": true,
+                "attribution": "AeroSim parametric Quad-X geometry, (c) AeroSim contributors, MIT"
+            },
+            "redistribution": "release",
+            "assets": [
+                {
+                    "path": "common/gsp/assets/three-0.180.0.global.min.js",
+                    "sha256": "9e80ed95a3bcbb77bb1d6024de9f7f4cc7d6a9745a322f88052edd29e9faa737"
+                },
+                {
+                    "path": "common/gsp/assets/gsp_drone_geometry.js",
+                    "sha256": "4cc058a6f8ad00360520a5f2277360f98850caafe4617a4de2b99ee01028e60c"
+                }
+            ]
+        }
+    },
     "motor": {
         "stator": "2207",
         "kv": 1750,
@@ -501,6 +580,92 @@ func _validate(config: Dictionary, schema: Dictionary) -> String:
     var a5_error := _validate_a5(config.aerodynamics.a5)
     if a5_error != "":
         return a5_error
+    var geometry_error := _validate_geometry(config.geometry, schema.get("geometry"))
+    if geometry_error != "":
+        return geometry_error
+    return ""
+
+func _validate_geometry(geometry: Variant, spec_value: Variant) -> String:
+    if not (spec_value is Dictionary):
+        return "schema is missing its geometry specification"
+    var spec: Dictionary = spec_value
+    for key in ["body_keys", "motor_keys", "propeller_keys", "propeller_angle_keys", "evidence_classes", "redistribution_dispositions"]:
+        if not (spec.get(key) is Array) or spec[key].is_empty():
+            return "schema geometry.%s is missing" % key
+    for key in ["dimension_range", "angle_range"]:
+        if not (spec.get(key) is Dictionary) or not spec[key].has("min") or not spec[key].has("max"):
+            return "schema geometry.%s is missing" % key
+    if not (geometry is Dictionary):
+        return "geometry must be a dictionary"
+    var identity: Variant = geometry.get("identity")
+    if not (identity is Dictionary):
+        return "geometry.identity is required"
+    for key in ["designation", "airframe_class"]:
+        if not (identity.get(key) is String) or String(identity[key]).strip_edges().is_empty():
+            return "geometry.identity.%s must be a non-empty string" % key
+    var dimension_range: Dictionary = spec.dimension_range
+    var groups := {
+        "body": spec.body_keys,
+        "motor": spec.motor_keys,
+        "propeller": spec.propeller_keys,
+    }
+    for group in groups:
+        var section: Variant = geometry.get(group)
+        if not (section is Dictionary):
+            return "geometry.%s is required" % group
+        for key in groups[group]:
+            var value: Variant = section.get(key)
+            if not _in_range(value, dimension_range):
+                return "geometry.%s.%s out of range" % [group, key]
+    var angle_range: Dictionary = spec.angle_range
+    for key in spec.propeller_angle_keys:
+        if not _in_range(geometry.propeller.get(key), angle_range):
+            return "geometry.propeller.%s out of range" % key
+    return _validate_geometry_provenance(geometry.get("provenance"), spec)
+
+func _validate_geometry_provenance(provenance: Variant, spec: Dictionary) -> String:
+    if not (provenance is Dictionary):
+        return "geometry.provenance is required"
+    for key in ["model_source", "source_url"]:
+        if not (provenance.get(key) is String) or String(provenance[key]).strip_edges().is_empty():
+            return "geometry.provenance.%s must be a non-empty string" % key
+    var evidence: Variant = provenance.get("dimensional_evidence")
+    if not (evidence is Dictionary):
+        return "geometry.provenance.dimensional_evidence is required"
+    var evidence_classes: Array = spec.evidence_classes
+    if not evidence_classes.has(evidence.get("evidence_class")):
+        return "geometry.provenance.dimensional_evidence.evidence_class is not recognized"
+    if not (evidence.get("documents") is Array):
+        return "geometry.provenance.dimensional_evidence.documents must be an array"
+    for document in evidence.documents:
+        if not (document is Dictionary) or not (document.get("title") is String) or not (document.get("url") is String):
+            return "geometry.provenance.dimensional_evidence.documents row is incomplete"
+    var license: Variant = provenance.get("license")
+    if not (license is Dictionary):
+        return "geometry.provenance.license is required"
+    for key in ["spdx", "holder"]:
+        if not (license.get(key) is String) or String(license[key]).strip_edges().is_empty():
+            return "geometry.provenance.license.%s must be a non-empty string" % key
+    if not (license.get("attribution_required") is bool):
+        return "geometry.provenance.license.attribution_required must be boolean"
+    if not (license.get("attribution") is String):
+        return "geometry.provenance.license.attribution must be a string"
+    if bool(license.attribution_required) and String(license.attribution).strip_edges().is_empty():
+        return "geometry.provenance.license.attribution is required when attribution_required is true"
+    var dispositions: Array = spec.redistribution_dispositions
+    if not dispositions.has(provenance.get("redistribution")):
+        return "geometry.provenance.redistribution is not recognized"
+    var assets: Variant = provenance.get("assets")
+    if not (assets is Array) or assets.is_empty():
+        return "geometry.provenance.assets must list at least one asset"
+    var hash_pattern := RegEx.create_from_string("^[0-9a-f]{64}$")
+    for asset in assets:
+        if not (asset is Dictionary):
+            return "geometry.provenance.assets row must be a dictionary"
+        if not (asset.get("path") is String) or String(asset.path).strip_edges().is_empty():
+            return "geometry.provenance.assets row is missing path"
+        if not (asset.get("sha256") is String) or hash_pattern.search(String(asset.sha256)) == null:
+            return "geometry.provenance.assets row is missing a sha256 hash"
     return ""
 
 func _validate_a3(a3: Variant) -> String:

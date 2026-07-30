@@ -75,6 +75,34 @@
     }
   ],
   "boolean_paths": ["aerodynamics.a3.enabled", "aerodynamics.body_drag.enabled", "aerodynamics.a6.enabled", "aerodynamics.a5.enabled"],
+  "geometry": {
+    "body_keys": [
+      "center_plate_length_m", "center_plate_width_m", "plate_thickness_m", "bottom_plate_thickness_m",
+      "stack_width_m", "stack_height_m", "standoff_height_m", "standoff_diameter_m",
+      "canopy_length_m", "canopy_width_m", "canopy_height_m",
+      "camera_width_m", "camera_height_m", "camera_depth_m", "camera_lens_diameter_m",
+      "battery_length_m", "battery_width_m", "battery_height_m",
+      "arm_root_width_m", "arm_tip_width_m", "arm_thickness_m",
+      "landing_foot_height_m", "landing_foot_diameter_m",
+      "antenna_length_m", "antenna_diameter_m"
+    ],
+    "motor_keys": [
+      "bell_diameter_m", "bell_height_m", "base_diameter_m", "base_height_m",
+      "shaft_diameter_m", "shaft_height_m"
+    ],
+    "propeller_keys": [
+      "hub_diameter_m", "hub_height_m", "blade_root_chord_m", "blade_max_chord_m", "blade_tip_chord_m",
+      "blade_thickness_m", "blade_root_offset_m"
+    ],
+    "propeller_angle_keys": ["blade_root_twist_deg", "blade_tip_twist_deg"],
+    "dimension_range": {"min": 0.0005, "max": 1.0},
+    "angle_range": {"min": 0.0, "max": 60.0},
+    "evidence_classes": [
+      "manufacturer_cad", "manufacturer_drawing", "measured_specimen",
+      "vendor_specification", "parametric_from_configuration"
+    ],
+    "redistribution_dispositions": ["release", "internal_prototype_only", "personal_use_only"]
+  },
   "required_paths": [
     "version",
     "units",
@@ -88,6 +116,19 @@
     "frame.frontal_area_m2.x",
     "frame.frontal_area_m2.y",
     "frame.frontal_area_m2.z",
+    "geometry.identity.designation",
+    "geometry.identity.airframe_class",
+    "geometry.body",
+    "geometry.motor",
+    "geometry.propeller",
+    "geometry.provenance.model_source",
+    "geometry.provenance.source_url",
+    "geometry.provenance.dimensional_evidence.evidence_class",
+    "geometry.provenance.dimensional_evidence.documents",
+    "geometry.provenance.license.spdx",
+    "geometry.provenance.license.holder",
+    "geometry.provenance.redistribution",
+    "geometry.provenance.assets",
     "motor.stator",
     "motor.kv",
     "motor.resistance_ohm",
