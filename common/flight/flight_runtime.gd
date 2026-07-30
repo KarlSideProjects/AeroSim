@@ -1473,7 +1473,9 @@ func _unhandled_input(event: InputEvent) -> void:
     if demo_flight_active():
         if event.is_action_pressed("flight_exit"):
             cancel_demo_flight()
-        return
+            return
+        if not event.is_action_pressed("flight_pause"):
+            return
     if event is InputEventKey:
         var key_event := event as InputEventKey
         _quick_adjust_pressed_keys[int(key_event.keycode)] = key_event.pressed

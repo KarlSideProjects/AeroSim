@@ -1066,6 +1066,30 @@ func test_demo_flight_preserves_the_wind_selected_in_map_setup() -> void:
     assert_almost_eq(wind.length(), 8.0, 0.000001)
 
 
+func test_demo_flight_allows_pause_and_pause_panel_reset_after_map_setup() -> void:
+    var runtime := _quick_fly_runtime()
+    _attach_runtime_ui(runtime)
+
+    (runtime.main_menu_layer.get_node("Entries/Map") as Button).pressed.emit()
+    (runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/WindPresets/Severe") as Button).pressed.emit()
+    (runtime.main_menu_layer.get_node("FlightSetupPanel/Rows/DemoFlight") as Button).pressed.emit()
+    await _await_reset_commit()
+
+    assert_eq(runtime.selected_wind_preset, "severe")
+    assert_true(runtime.demo_flight_active())
+    var pause_action := InputEventAction.new()
+    pause_action.action = &"flight_pause"
+    pause_action.pressed = true
+    runtime._unhandled_input(pause_action)
+
+    assert_true(runtime.paused)
+    var reset_button := runtime.flight_hud_layer.get_node_or_null("PausePanel/Rows/Reset") as Button
+    assert_not_null(reset_button)
+    if reset_button != null:
+        reset_button.pressed.emit()
+    assert_ne(runtime._reset_pending_token, 0)
+
+
 func test_demo_controls_are_angle_commands_and_drive_both_sticks() -> void:
     var runtime := _quick_fly_runtime()
     _attach_runtime_ui(runtime)
