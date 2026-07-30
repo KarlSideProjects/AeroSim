@@ -44,8 +44,10 @@ for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state
     "mode-armed", "config-hash", "endurance", "flight-diagnostics", "hardware-configuration", "hardware-derived", "telemetry-data",
     "visualization-status", "flow-legend", "motor-rear-right", "motor-front-right", "motor-rear-left", "motor-front-left",
     "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
-    "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report"]) {
-    elements.set(id, new Element(id === "sparkline" ? "canvas" : "div"));
+    "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report",
+    "wind-from", "wind-speed", "wind-preview", "wind-apply", "wind-status", "source-commanded", "source-truth", "source-estimated", "source-measured",
+    "live-connection", "live-authority", "live-mode", "live-fresh", "live-vehicle", "live-tick", "live-failure", "live-m1", "live-m2", "live-m3", "live-m4", "command-chart", "rpm-chart"]) {
+    elements.set(id, new Element(["sparkline", "command-chart", "rpm-chart"].includes(id) ? "canvas" : "div"));
 }
 elements.get("sparkline").width = 840;
 elements.get("sparkline").height = 100;
@@ -147,6 +149,14 @@ assert.equal(elements.get("motor-rear-right").dataset.motor, "rear_right");
 assert.match(elements.get("motor-rear-right").textContent, /M1[\s\S]*955[\s\S]*2\.00[\s\S]*1\.00/);
 assert.match(elements.get("motor-rear-left").textContent, /嚴重/);
 assert.match(elements.get("flow-legend").textContent, /FRD.*m\/s/);
+assert.match(elements.get("source-commanded").textContent, /命令.*未提供/);
+assert.match(elements.get("source-truth").textContent, /地面真值/);
+assert.match(elements.get("live-m1").textContent, /955 rpm.*2\.00 N.*1\.00 A.*cw/);
+elements.get("wind-from").value = "90"; elements.get("wind-speed").value = "3"; elements.get("wind-apply").click();
+const windRequest = FakeWebSocket.instance.sent.at(-1);
+assert.equal(windRequest.t, "set_wind"); assert.equal(elements.get("wind-apply").disabled, true);
+FakeWebSocket.instance.listeners.message({ data: JSON.stringify({ v: 2, t: "wind_ack", d: { request_seq: windRequest.seq, ok: false, error: "unsafe" } }) });
+assert.match(elements.get("wind-status").textContent, /風場被拒絕.*unsafe/); assert.equal(elements.get("wind-apply").disabled, false);
 const pingRequest = FakeWebSocket.instance.sent.find((item) => item.t === "ping");
 perfNow = 3;
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({

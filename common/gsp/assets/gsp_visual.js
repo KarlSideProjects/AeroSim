@@ -180,12 +180,15 @@
         });
         updateFlow();
         const px4 = sample.px4_mavlink && sample.px4_mavlink.local_position_ned;
+        const attitude = sample.px4_mavlink && sample.px4_mavlink.attitude;
         const estimate = px4 && px4.sample && px4.sample.position_ned;
         const truth = sample.pos_ned;
         if (estimate && truth && finite(Number(estimate.x_val)) && finite(Number(truth.x_val))) {
-            const delta = sceneVector({ x: Number(truth.x_val) - Number(estimate.x_val), y: Number(truth.y_val) - Number(estimate.y_val), z: Number(truth.z_val) - Number(estimate.z_val) });
-            truthGhost.position.copy(delta.clampLength(0, 1.5)); truthGhost.visible = true;
-        } else truthGhost.visible = false;
+            // PX4 estimate drives the solid Drone; local simulation stays the labelled ghost.
+            const delta = sceneVector({ x: Number(estimate.x_val) - Number(truth.x_val), y: Number(estimate.y_val) - Number(truth.y_val), z: Number(estimate.z_val) - Number(truth.z_val) });
+            airframe.position.copy(delta.clampLength(0, 1.5)); truthGhost.position.set(0, 0, 0); truthGhost.visible = true;
+        } else { airframe.position.set(0, 0, 0); truthGhost.visible = false; }
+        if (attitude && attitude.sample && finite(Number(attitude.sample.roll_rad)) && finite(Number(attitude.sample.pitch_rad)) && finite(Number(attitude.sample.yaw_rad))) airframe.rotation.set(-Number(attitude.sample.pitch_rad), -Number(attitude.sample.yaw_rad), Number(attitude.sample.roll_rad));
     }
 
     function resize() {

@@ -46,3 +46,12 @@ Issue #302's qualified model, real scale, real M1–M4 locations and spin-direct
 ## Out of scope
 
 No physics authority, replay timing, flight-control behavior, transport validation, dependencies, or network assets changed. #306 qualification work was not started.
+
+## Fix round 1 evidence
+
+- Solid nominal Drone now consumes PX4 `local_position_ned` and `attitude` as the Estimated transform; the dashed Ground truth ghost remains at the local simulation transform. Both are explicitly source-labelled, and no real geometry claim was introduced.
+- Wind controls join the readiness inventory and lock from request send through ACK/rejection, preventing concurrent mutation.
+- Source spans remain individually styled after telemetry updates; Commanded traces are dashed and measured-RPM traces solid. New behavioral coverage checks localization, source labels, authoritative motor details, and the wind pending/rejection lock.
+- The only renderer is now the live renderer; view controls moved there, avoiding hidden duplicate engineering controls/canvas.
+
+Fresh focused verification: `node tests/test_gsp_panel_behavior.js`, `node tests/test_gsp_issue305_console.js`, `node tests/test_gsp_visual_state.js`, `node tests/test_gsp_panel_recovery.js`, and `python3 -m unittest tests.test_gsp_issue251_contract` all passed. The browser harness remains blocked by missing `godot`.
