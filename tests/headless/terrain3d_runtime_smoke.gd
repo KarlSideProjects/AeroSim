@@ -40,6 +40,12 @@ func _run() -> void:
         push_error("Quick Fly must load Terrain Range with Terrain3D")
         quit(1)
         return
+    var particle_grid: Node = scene.loaded_map.get_node_or_null("Terrain3D/Terrain3DParticles")
+    var particles: Array[Node] = particle_grid.get_children() if particle_grid != null else []
+    if particles.size() != 25 or not particles.all(func(node: Node) -> bool: return node is GPUParticles3D and (node as GPUParticles3D).custom_aabb.size.x >= 25.5 and (node as GPUParticles3D).custom_aabb.size.z >= 25.5):
+        push_error("Terrain Range grass must expand every existing particle-cell bound for capped blade deformation")
+        quit(1)
+        return
     var visual_wind: Node = scene.loaded_map.get_node_or_null("VisualWindController")
     if visual_wind == null or not visual_wind.has_method("snapshot"):
         push_error("Terrain3D runtime smoke requires the Terrain Range visual-wind snapshot seam")

@@ -50,6 +50,19 @@ class Terrain3DRangeGrassMaterialsTest(unittest.TestCase):
             (MATERIAL_DIRECTORY / "grass_blade_material.tres").read_text(encoding="utf-8"),
         )
 
+    def test_grass_blades_have_bounded_natural_wind_deformation(self) -> None:
+        scene = SCENE.read_text(encoding="utf-8")
+        blade_shader = (MATERIAL_DIRECTORY / "grass_blade.gdshader").read_text(encoding="utf-8")
+        visual_wind = (ROOT / "common" / "maps" / "terrain_range_visual_wind.gd").read_text(encoding="utf-8")
+
+        self.assertIn("section_segments = 3", scene)
+        for source in [blade_shader, visual_wind]:
+            self.assertIn("wind_phase", source)
+        for source in ["MAX_BEND_METERS", "smoothstep", "INSTANCE_CUSTOM.rg", "coherent_gust"]:
+            self.assertIn(source, blade_shader)
+        self.assertIn("_expand_particle_bounds", visual_wind)
+        self.assertIn("custom_aabb.grow(PARTICLE_AABB_MARGIN_METERS)", visual_wind)
+
 
 if __name__ == "__main__":
     unittest.main()

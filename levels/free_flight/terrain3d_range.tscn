@@ -172,7 +172,7 @@ height = 2.1
 [sub_resource type="RibbonTrailMesh" id="23"]
 shape = 0
 section_length = 0.055
-section_segments = 1
+section_segments = 3
 
 [node name="Terrain3DRange" type="Node3D"]
 

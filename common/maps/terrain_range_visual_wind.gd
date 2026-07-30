@@ -5,17 +5,25 @@ const CALM_SPEED_MPS := 0.001
 const SMOOTHING_SECONDS := 1.0
 const MAX_TURBULENCE_RATIO := 0.25
 const MAX_VISUAL_SPEED_MPS := 10.0
+# Covers the 0.62 m blade scale plus 0.06 m placement offset and the <0.43 m tip bend.
+const PARTICLE_AABB_MARGIN_METERS := 0.75
 
 @export var process_material: ShaderMaterial
 @export var blade_material: ShaderMaterial
 @export var sample_marker: NodePath = NodePath("../VisualWindSample")
 @export var sample_position := Vector3(480.0, 79.7, -740.0)
+@export var particle_grid: NodePath = NodePath("../Terrain3D/Terrain3DParticles")
 
 var _accepted_simulation_time_seconds := -1.0
 var _target_horizontal_wind := Vector2.ZERO
 var _smoothed_horizontal_wind := Vector2.ZERO
 var _phase := 0.0
 var _last_direction := Vector2(-1.0, 1.0).normalized()
+var _particle_bounds_expanded := false
+
+
+func _ready() -> void:
+    call_deferred("_expand_particle_bounds")
 
 
 func advance(native: Object, simulation_time_seconds: float, active: bool) -> void:
@@ -94,3 +102,16 @@ func _apply_shader_parameters() -> void:
         material.set_shader_parameter("wind_direction", direction)
         material.set_shader_parameter("wind_force", force)
         material.set_shader_parameter("wind_phase", _phase)
+
+
+func _expand_particle_bounds() -> void:
+    if _particle_bounds_expanded:
+        return
+    var grid := get_node_or_null(particle_grid)
+    if grid == null:
+        return
+    for child in grid.get_children():
+        var particles := child as GPUParticles3D
+        if particles != null:
+            particles.custom_aabb = particles.custom_aabb.grow(PARTICLE_AABB_MARGIN_METERS)
+    _particle_bounds_expanded = true
