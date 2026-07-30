@@ -216,6 +216,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   function listen(id, callback) { var element = $(id); if (element) element.addEventListener("click", callback); }
   listen("language-zh", function () { setLanguage("zh"); });
   listen("language-en", function () { setLanguage("en"); });
+  setLanguage(language);
   function panelReady() { return helloReady && snapshotReady; }
   function readinessControls() {
     var tuning = [];

@@ -46,11 +46,16 @@ for (const id of ["tuning-rows", "quick-adjust-rows", "connection", "fresh-state
     "preset-name", "preset-note", "preset-source", "preset-target", "preset-save", "preset-refresh",
     "preset-retrieve", "preset-load", "preset-preview", "preset-compare-current", "preset-compare-two", "preset-status", "preset-diff", "migration-report",
     "wind-from", "wind-speed", "wind-preview", "wind-apply", "wind-status", "source-commanded", "source-truth", "source-estimated", "source-measured",
-    "live-connection", "live-authority", "live-mode", "live-fresh", "live-vehicle", "live-tick", "live-failure", "live-m1", "live-m2", "live-m3", "live-m4", "command-chart", "rpm-chart"]) {
+    "live-connection", "live-authority", "live-mode", "live-fresh", "live-vehicle", "live-tick", "live-failure", "live-m1", "live-m2", "live-m3", "live-m4", "command-chart", "rpm-chart", "language-zh", "language-en"]) {
     elements.set(id, new Element(["sparkline", "command-chart", "rpm-chart"].includes(id) ? "canvas" : "div"));
 }
 elements.get("sparkline").width = 840;
 elements.get("sparkline").height = 100;
+elements.get("wind-status").dataset.i18n = "preview_initial";
+elements.get("wind-status").textContent = "Preview only; no physical mutation.";
+elements.get("wind-preview").dataset.i18n = "preview";
+elements.get("wind-preview").textContent = "Preview";
+const i18nNodes = [elements.get("wind-status"), elements.get("wind-preview")];
 
 class FakeWebSocket {
     static instance;
@@ -87,7 +92,9 @@ const context = {
     window,
     document: {
         hidden: false,
+        documentElement: {},
         getElementById: (id) => elements.get(id),
+        querySelectorAll: (selector) => selector === "[data-i18n]" ? i18nNodes : [],
         createElement: (tagName) => new Element(tagName),
         addEventListener() {},
     },
@@ -119,6 +126,15 @@ const context = {
 const html = fs.readFileSync("common/gsp/gsp_panel.html", "utf8");
 const script = html.match(/<script>\n([\s\S]*?)\n<\/script>/)[1];
 vm.runInNewContext(script, context, { filename: "gsp_panel.html" });
+
+assert.equal(elements.get("wind-status").textContent, "僅預覽；不會變更物理狀態。");
+assert.equal(elements.get("wind-preview").textContent, "預覽");
+assert.equal(context.document.documentElement.lang, "zh-Hant");
+elements.get("language-en").click();
+assert.equal(elements.get("wind-status").textContent, "Preview only; no physical mutation.");
+assert.equal(elements.get("wind-preview").textContent, "Preview");
+assert.equal(context.document.documentElement.lang, "en");
+elements.get("language-zh").click();
 
 FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     v: 2,

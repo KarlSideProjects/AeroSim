@@ -66,3 +66,8 @@ Fresh focused verification: `node tests/test_gsp_panel_behavior.js`, `node tests
 ## Fix round 3 evidence
 
 - The initial preview notice, PX4 MAVLink source value, and measured-RPM source value now use zh-TW/en translation keys. Focused panel and console contract tests passed.
+
+## Fix round 4 evidence
+
+- Panel initialization now applies the default zh-TW translation before the first render. The focused VM behavior test verifies the initial `preview_initial` and `preview` text are zh-TW, then verifies the English button restores their English text and `document.documentElement.lang` to `en`.
+- Fresh verification passed: `node tests/test_gsp_panel_behavior.js`, `node tests/test_gsp_issue305_console.js`, `node tests/test_gsp_visual_state.js`, `node tests/test_gsp_panel_recovery.js`, and `python3 -m unittest tests.test_gsp_issue251_contract` (`Ran 3 tests in 0.001s`, `OK`).
