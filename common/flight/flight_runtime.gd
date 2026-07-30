@@ -59,6 +59,7 @@ const DEMO_MAX_VERTICAL_TARGET_SPEED_MPS := 0.5
 const DEMO_VERTICAL_VELOCITY_GAIN := 0.02
 const DEMO_THROTTLE_RANGE := 0.05
 const GAMEPAD_BUTTON_DEBOUNCE_MS := 50
+const TRADITIONAL_CHINESE_FONT_NAMES := ["Noto Sans CJK TC", "Microsoft JhengHei UI", "PingFang TC"]
 const MAIN_MENU_ENTRIES_INSET := Vector2(24.0, 56.0)
 const COCKPIT_LEFT_RAIL_WIDTH := 360.0
 const COCKPIT_RIGHT_RAIL_WIDTH := 436.0
@@ -137,6 +138,7 @@ var last_error_message := ""
 var last_collision_authority := -1
 var collision_handoff_count := 0
 var reset_hold_frames := 0
+var _traditional_chinese_font: SystemFont
 var flight_mode := "ANGLE"
 var acro_roll_stick := 0.0
 var acro_pitch_stick := 0.0
@@ -317,6 +319,7 @@ func _ready() -> void:
     _build_main_menu()
     _build_flight_hud()
     _build_status_diagram()
+    _apply_locale_font()
     set_participant_mode(_has_arg("--aerosim-participant-mode"))
     if not _configure_license_provider_from_path(LICENSE_PROVIDER_CONFIG_PATH):
         return
@@ -3795,16 +3798,33 @@ func set_locale(locale: String) -> bool:
     var loaded: Dictionary = settings_store.load_document()
     if not loaded.ok:
         Localization.set_locale(previous_locale)
+        _apply_locale_font()
         _refresh_localized_ui()
         return false
     loaded.document["language"] = {"schema_version": LanguageProfile.SCHEMA_VERSION, "locale": locale}
     var saved: Dictionary = settings_store.save_document(loaded.document)
     if not saved.ok:
         Localization.set_locale(previous_locale)
+        _apply_locale_font()
         _refresh_localized_ui()
         return false
+    _apply_locale_font()
     _refresh_localized_ui()
     return true
+
+
+func _apply_locale_font() -> void:
+    var font: SystemFont = null
+    if Localization.current_locale == "zh_TW":
+        if _traditional_chinese_font == null:
+            _traditional_chinese_font = SystemFont.new()
+            _traditional_chinese_font.font_names = PackedStringArray(TRADITIONAL_CHINESE_FONT_NAMES)
+        font = _traditional_chinese_font
+    for control in find_children("*", "Control", true, false):
+        if font == null:
+            control.remove_theme_font_override("font")
+        else:
+            control.add_theme_font_override("font", font)
 
 
 func _refresh_language_selector() -> void:
