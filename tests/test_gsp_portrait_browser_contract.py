@@ -23,3 +23,7 @@ class GspPortraitBrowserContractTests(unittest.TestCase):
         self.assertIn('px4Command.age', source)
         self.assertIn('toFixed(2) + " s"', source)
         self.assertIn('translate("stale")', source)
+
+    def test_portrait_bounds_are_checked_after_localized_px4_source_render(self):
+        source = Path("scripts/test_gsp_panel_browser.py").read_text(encoding="utf-8")
+        self.assertLess(source.index("window.__AEROSIM_PANEL_TEST__.renderLiveConsole"), source.index("const bounds"))

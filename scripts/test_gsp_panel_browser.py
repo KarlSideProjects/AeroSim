@@ -140,6 +140,9 @@ def check_portrait_console(cdp: Cdp) -> list[dict]:
                 const english = document.documentElement.lang === 'en' && document.body.textContent.includes('AeroSim Ground Station Panel');
                 document.getElementById('language-zh').click();
                 const traditionalChinese = document.documentElement.lang === 'zh-Hant' && document.body.textContent.includes('AeroSim 地面站開發面板');
+                window.__AEROSIM_PANEL_TEST__.renderLiveConsole({ fresh: true, px4_mavlink: { hil_actuator_controls: { stale: true, age_seconds: 1, sample: { mapping_verified: true, command_normalized: { m1: .2, m2: .2, m3: .2, m4: .2 } } } } }, { tick: 1 });
+                const sourceText = document.getElementById('source-commanded').textContent;
+                const staleSource = sourceText.includes('過期') && sourceText.includes('1.00 s') && !sourceText.includes('Stale');
                 controls[0] && controls[0].focus();
                 const keyboard = document.activeElement === controls[0] && controls.every(control => control.getBoundingClientRect().width > 0);
                 const bounds = [...live.querySelectorAll('*')].every(node => {
@@ -148,9 +151,6 @@ def check_portrait_console(cdp: Cdp) -> list[dict]:
                 });
                 const resources = performance.getEntriesByType('resource').map(entry => entry.name);
                 const offline = location.protocol === 'file:' && resources.every(name => name.startsWith('file:') || name.startsWith('data:'));
-                window.__AEROSIM_PANEL_TEST__.renderLiveConsole({ fresh: true, px4_mavlink: { hil_actuator_controls: { stale: true, age_seconds: 1, sample: { mapping_verified: true, command_normalized: { m1: .2, m2: .2, m3: .2, m4: .2 } } } } }, { tick: 1 });
-                const sourceText = document.getElementById('source-commanded').textContent;
-                const staleSource = sourceText.includes('過期') && sourceText.includes('1.00 s') && !sourceText.includes('Stale');
                 return { scroll: document.documentElement.scrollHeight <= innerHeight && live.scrollHeight <= innerHeight, bounds, keyboard, english, traditional_chinese: traditionalChinese, offline, stale_source: staleSource, before };
             })()"""
         )

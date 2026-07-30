@@ -14,3 +14,9 @@ Complete. The default PX4 check path now evaluates supplied wind-step evidence a
 ## Concerns
 
 - #305 and #306 remain open while #302 is open; this task does not implement #302 or close issues.
+
+## Round 1 follow-up
+
+- Check mode now creates the wind-step qualification output directory before evaluation; valid real-transport evidence passes in a clean checkout path.
+- Portrait bounds now run after the zh-TW stale PX4 source-age render, and the installed headless browser qualified all three required portrait sizes.
+- Passed: `python3 -m unittest tests.test_px4_sitl_launcher tests.test_gsp_portrait_browser_contract tests.test_px4_wind_step_qualification` — 10 passed; `bash -n scripts/test_px4_sitl_launcher.sh`; `git diff --check`.

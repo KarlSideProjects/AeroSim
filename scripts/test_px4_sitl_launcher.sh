@@ -49,6 +49,7 @@ if [ "$mode" = "check" ]; then
     fi
     if [ "$wind_step_qualification" = true ]; then
         qualification_log="$ROOT_DIR/build/px4_sitl/wind_step_qualification.json"
+        mkdir -p "$(dirname "$qualification_log")"
         evidence_path="${AEROSIM_PX4_WIND_STEP_EVIDENCE:-}"
         qualification_args=(--output "$qualification_log")
         if [ -n "$evidence_path" ]; then
