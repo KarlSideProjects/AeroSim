@@ -3254,8 +3254,8 @@ func _apply_environment_result(result: Dictionary) -> Dictionary:
             _airsim_secondary_native.call("configure_wind", secondary_wind_config)
     if not _apply_environment_visuals(result.state):
         return {"ok": false, "error": last_error_message}
-    if not _reset_commit_in_progress:
-        _record_replay_environment(_environment_rpc_snapshot(result.state))
+    if not _reset_commit_in_progress and _replay_recording_active and not _record_replay_environment(_environment_rpc_snapshot(result.state)):
+        return {"ok": false, "error": "replay_recording_failed", "detail": _replay_recording_failure}
     return {"ok": true, "value": _environment_rpc_snapshot(result.state)}
 
 

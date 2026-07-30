@@ -181,8 +181,8 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
   var requestAnimationFrame = window.requestAnimationFrame || function (callback) { callback(performance.now()); return 0; };
   var language = "zh";
   var translations = {
-    zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…", rear_right: "右後", front_right: "右前", rear_left: "左後", front_left: "左前", normal: "正常", warning: "警告", critical: "嚴重", unavailable: "未提供", visualization_unavailable: "視覺化未提供", wind: "風場", preview: "預覽", apply: "套用", drone: "無人機", pending: "等待權威 ACK", stale: "過期—凍結", fresh: "新鮮", rejected: "風場被拒絕", source_commanded: "命令", source_truth: "地面真值", source_estimated: "估計", source_measured: "量測", from: "來自°", isometric: "等角", top: "頂視", side: "側視", rear: "後視", command_plot: "命令歸一化", rpm_plot: "量測 RPM", plot_legend: "實線=估計/量測；虛線=命令；雙線框=真值殘影。", geometry: "幾何 <b>名義幾何</b>", local: "本地模擬", command: "命令", rpm: "轉/分", saturation: "飽和", not_saturated: "未飽和", fault: "故障", location: "位置", source: "來源", invalid_preview: "預覽值無效。", preview_status: "預覽：來自 %s° → 前往 %s°，%.1f m/s；尚未套用。", invalid_wind: "風場數值無效。", preview_initial: "僅預覽；不會變更物理狀態。", px4_mavlink: "PX4 MAVLink", measured_rpm: "轉/分" },
-    en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…", rear_right: "Rear right", front_right: "Front right", rear_left: "Rear left", front_left: "Front left", normal: "Normal", warning: "Warning", critical: "Critical", unavailable: "Unavailable", visualization_unavailable: "Visualization unavailable", wind: "Wind", preview: "Preview", apply: "Apply", drone: "Drone", pending: "Pending authoritative ACK", stale: "Stale — frozen", fresh: "Fresh", rejected: "Wind rejected", source_commanded: "Commanded", source_truth: "Ground truth", source_estimated: "Estimated", source_measured: "Measured", from: "FROM°", isometric: "Isometric", top: "Top", side: "Side", rear: "Rear", command_plot: "Commanded normalized", rpm_plot: "Measured RPM", plot_legend: "Solid=estimate/measured; dashed=commanded; double border=truth ghost.", geometry: "GEOMETRY <b>Nominal geometry</b>", local: "local simulation", command: "cmd", rpm: "rpm", saturation: "SAT", not_saturated: "not SAT", fault: "fault", location: "location", source: "source", invalid_preview: "Invalid preview.", preview_status: "Preview: from %s° → toward %s° at %.1f m/s; not applied.", invalid_wind: "Invalid wind values.", preview_initial: "Preview only; no physical mutation.", px4_mavlink: "PX4 MAVLink", measured_rpm: "RPM" },
+    zh: { title: "AeroSim 地面站開發面板", vehicle: "載具實例", authority: "控制權限", rate: "實際遙測速率", connected: "已連線", live: "即時遙測", waiting: "等待新鮮遙測…", rear_right: "右後", front_right: "右前", rear_left: "左後", front_left: "左前", normal: "正常", warning: "警告", critical: "嚴重", unavailable: "未提供", visualization_unavailable: "視覺化未提供", wind: "風場", preview: "預覽", apply: "套用", drone: "無人機", pending: "等待權威 ACK", stale: "過期—凍結", fresh: "新鮮", rejected: "風場被拒絕", wind_applied: "模擬已套用：來自 %s° → 前往 %s°，%.1f m/s（ACK #%s）", wind_rejected: "風場被拒絕：%s", source_commanded: "命令", source_truth: "地面真值", source_estimated: "估計", source_measured: "量測", from: "來自°", isometric: "等角", top: "頂視", side: "側視", rear: "後視", command_plot: "命令歸一化", rpm_plot: "量測 RPM", plot_legend: "實線=估計/量測；虛線=命令；雙線框=真值殘影。", geometry: "幾何 <b>名義幾何</b>", local: "本地模擬", command: "命令", rpm: "轉/分", saturation: "飽和", not_saturated: "未飽和", fault: "故障", location: "位置", source: "來源", invalid_preview: "預覽值無效。", preview_status: "預覽：來自 %s° → 前往 %s°，%.1f m/s；尚未套用。", invalid_wind: "風場數值無效。", preview_initial: "僅預覽；不會變更物理狀態。", px4_mavlink: "PX4 MAVLink", measured_rpm: "轉/分" },
+    en: { title: "AeroSim Ground Station Panel", vehicle: "Vehicle Instance", authority: "Authority", rate: "Actual telemetry rate", connected: "Connected", live: "Live telemetry", waiting: "Waiting for fresh telemetry…", rear_right: "Rear right", front_right: "Front right", rear_left: "Rear left", front_left: "Front left", normal: "Normal", warning: "Warning", critical: "Critical", unavailable: "Unavailable", visualization_unavailable: "Visualization unavailable", wind: "Wind", preview: "Preview", apply: "Apply", drone: "Drone", pending: "Pending authoritative ACK", stale: "Stale — frozen", fresh: "Fresh", rejected: "Wind rejected", wind_applied: "Applied by simulation: from %s° → toward %s° at %.1f m/s (ACK #%s)", wind_rejected: "Wind rejected: %s", source_commanded: "Commanded", source_truth: "Ground truth", source_estimated: "Estimated", source_measured: "Measured", from: "FROM°", isometric: "Isometric", top: "Top", side: "Side", rear: "Rear", command_plot: "Commanded normalized", rpm_plot: "Measured RPM", plot_legend: "Solid=estimate/measured; dashed=commanded; double border=truth ghost.", geometry: "GEOMETRY <b>Nominal geometry</b>", local: "local simulation", command: "cmd", rpm: "rpm", saturation: "SAT", not_saturated: "not SAT", fault: "fault", location: "location", source: "source", invalid_preview: "Invalid preview.", preview_status: "Preview: from %s° → toward %s° at %.1f m/s; not applied.", invalid_wind: "Invalid wind values.", preview_initial: "Preview only; no physical mutation.", px4_mavlink: "PX4 MAVLink", measured_rpm: "RPM" },
   };
 
   function recordPerformanceSample(kind, value) {
@@ -588,18 +588,24 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
     if (plot.setLineDash) plot.setLineDash([]);
   }
   var commandHistory = [[], [], [], []], rpmHistory = [[], [], [], []];
+  function px4Commands(sample) {
+    var hil = sample.px4_mavlink && sample.px4_mavlink.hil_actuator_controls;
+    var command = hil && hil.sample && hil.sample.mapping_verified && hil.sample.command_normalized;
+    return { command: command || null, stale: !hil || !!hil.stale, age: hil && hil.age_seconds };
+  }
   function renderLiveConsole(sample, envelope) {
     var fresh = sample.fresh && !sample.stale;
     text("live-connection", fresh ? translate("live") : translate("stale")); text("live-authority", sample.authority || sample.control_authority || "—");
     text("live-mode", String(sample.mode || "—") + "/" + (sample.armed ? "ARMED" : "DISARMED")); text("live-fresh", fresh ? translate("fresh") : translate("stale") + (sample.age_seconds == null ? "" : " " + Number(sample.age_seconds).toFixed(2) + " s"));
     text("live-vehicle", sample.vehicle_instance || "—"); text("live-tick", envelope.tick == null ? "—" : envelope.tick); text("live-failure", sample.failure_state || sample.last_error || "—");
-    text("source-commanded", translate("source_commanded") + " " + (Array.isArray(sample.commanded_motor_normalized) ? "available" : translate("unavailable")));
+    var px4Command = px4Commands(sample);
+    text("source-commanded", translate("source_commanded") + " " + (px4Command.command ? translate("px4_mavlink") + " " + (px4Command.stale ? translate("stale") : translate("fresh")) : translate("unavailable")));
     text("source-truth", translate("source_truth") + " " + translate("local")); text("source-estimated", translate("source_estimated") + " " + (sample.px4_mavlink && sample.px4_mavlink.local_position_ned ? translate("px4_mavlink") : translate("unavailable"))); text("source-measured", translate("source_measured") + " " + translate("measured_rpm") + " " + translate("local"));
-    var commands = Array.isArray(sample.commanded_motor_normalized) ? sample.commanded_motor_normalized : [];
+    var commands = px4Command.command ? [px4Command.command.m1, px4Command.command.m2, px4Command.command.m3, px4Command.command.m4] : [];
     var rpms = Array.isArray(sample.rpm) ? sample.rpm : [];
     for (var index = 0; index < 4; index += 1) {
       var rpm = Number(rpms[index]); var command = Number(commands[index]);
-      if (Number.isFinite(command)) commandHistory[index].push(command);
+      if (Number.isFinite(command) && !px4Command.stale) commandHistory[index].push(command);
       if (Number.isFinite(rpm)) rpmHistory[index].push(rpm);
       if (commandHistory[index].length > 40) commandHistory[index].shift(); if (rpmHistory[index].length > 40) rpmHistory[index].shift();
       var motor = (sample.motors || [])[index] || {}, spin = ((sample.hardware_configuration || {}).spin_direction || [])[index];
@@ -608,7 +614,8 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
       if (Number.isFinite(Number(motor.thrust_newtons))) fields.push(Number(motor.thrust_newtons).toFixed(2) + " N"); if (Number.isFinite(Number(motor.current_a))) fields.push(Number(motor.current_a).toFixed(2) + " A"); if (motor.saturated != null) fields.push(motor.saturated ? translate("saturation") : translate("not_saturated")); if (spin === "cw" || spin === "ccw") fields.push(spin); if (Array.isArray(location) && location.length === 3 && location.every(Number.isFinite)) fields.push(translate("location") + " [" + location.join(",") + "]"); else fields.push(translate("location") + " " + translate("unavailable")); if (motor.fault != null) fields.push(translate("fault") + " " + motor.fault); fields.push(translate("source") + " " + translate("source_measured") + "/" + translate("local") + " " + (fresh ? translate("fresh") : translate("stale")));
       text("live-m" + (index + 1), "M" + (index + 1) + " " + fields.join(" · "));
     }
-    drawMotorPlot("command-chart", commandHistory, 1, ["#9ee6b1", "#67d5ff", "#ffcf78", "#ff8aad"]); drawMotorPlot("rpm-chart", rpmHistory, 12000, ["#9ee6b1", "#67d5ff", "#ffcf78", "#ff8aad"]);
+    var maxRpm = Number(sample.hardware_power_model && sample.hardware_power_model.max_motor_rpm);
+    drawMotorPlot("command-chart", commandHistory, 1, ["#9ee6b1", "#67d5ff", "#ffcf78", "#ff8aad"]); if (Number.isFinite(maxRpm) && maxRpm > 0) drawMotorPlot("rpm-chart", rpmHistory, maxRpm, ["#9ee6b1", "#67d5ff", "#ffcf78", "#ff8aad"]);
     setControlsEnabled(panelReady());
   }
   function previewWind() {
@@ -740,7 +747,7 @@ details.card { flex-basis: 100%; } details > summary { font-weight: 700; } detai
           tuningControls[key].status.textContent = "Committed by session";
         });
       } else if (message.t === "wind_ack") {
-        var windAck = message.d || {}; windPending = false; setControlsEnabled(panelReady()); text("wind-status", windAck.ok ? "Applied by simulation: from " + Number(windAck.wind_from_deg).toFixed(0) + "° → toward " + ((Number(windAck.wind_from_deg) + 180) % 360).toFixed(0) + "° at " + Number(windAck.speed_mps).toFixed(1) + " m/s (ACK #" + windAck.request_seq + ")" : translate("rejected") + ": " + String(windAck.error || "unknown reason"));
+        var windAck = message.d || {}; windPending = false; setControlsEnabled(panelReady()); var from = Number(windAck.wind_from_deg); var toward = Number(windAck.toward_deg); text("wind-status", windAck.ok ? translate("wind_applied").replace("%s", from.toFixed(0)).replace("%s", (Number.isFinite(toward) ? toward : (from + 180) % 360).toFixed(0)).replace("%.1f", Number(windAck.speed_mps).toFixed(1)).replace("%s", windAck.request_seq) : translate("wind_rejected").replace("%s", String(windAck.error || "unknown reason")));
       } else if (message.t === "quick_adjust_ack") {
         var quickStatus = pendingQuickAdjust[Number(message.d.request_seq)];
         if (!quickStatus) return;

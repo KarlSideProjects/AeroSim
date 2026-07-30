@@ -10,6 +10,8 @@ const WINDOW_HEIGHT_OVERRIDE := "display/window/size/window_height_override"
 const PANEL_ASSET_PATHS := [
     "res://common/gsp/assets/gsp_visual.js",
     "res://common/gsp/assets/three-0.180.0.global.min.js",
+    "res://common/gsp/assets/THREE-LICENSE",
+    "res://common/gsp/assets/asset_notes.md",
 ]
 const GspServer = preload("res://common/gsp/gsp_server.gd")
 

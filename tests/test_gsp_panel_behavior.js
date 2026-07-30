@@ -148,7 +148,8 @@ FakeWebSocket.instance.listeners.message({ data: JSON.stringify({
     tick: 1,
     d: { fresh: true, request_seq: freshRequest.seq, sample_seq: 1, config_hash: "config-fixture", authority: "flight_controller", armed: true,
         hardware_configuration: { battery: { capacity_mah: 1300 }, spin_direction: ["cw", "ccw", "cw", "ccw"] },
-        hardware_power_model: { hover_endurance_minutes: 4.2, max_total_thrust_newtons: 40, max_total_current_a: 40 },
+        hardware_power_model: { hover_endurance_minutes: 4.2, max_total_thrust_newtons: 40, max_total_current_a: 40, max_motor_rpm: 15000 },
+        px4_mavlink: { hil_actuator_controls: { source: "px4_mavlink", age_seconds: 0.02, stale: false, sample: { mapping_verified: true, command_normalized: { m1: 0.1, m2: 0.2, m3: 0.3, m4: 0.4 } } } },
         motor_order: ["rear_right", "front_right", "rear_left", "front_left"], rpm: [955, 1910, 2865, 3820],
         motors: [
             { thrust_newtons: 2, current_a: 1, saturated: false }, { thrust_newtons: 8.5, current_a: 1, saturated: false },
@@ -165,9 +166,10 @@ assert.equal(elements.get("motor-rear-right").dataset.motor, "rear_right");
 assert.match(elements.get("motor-rear-right").textContent, /M1[\s\S]*955[\s\S]*2\.00[\s\S]*1\.00/);
 assert.match(elements.get("motor-rear-left").textContent, /嚴重/);
 assert.match(elements.get("flow-legend").textContent, /FRD.*m\/s/);
-assert.match(elements.get("source-commanded").textContent, /命令.*未提供/);
+assert.match(elements.get("source-commanded").textContent, /命令.*PX4 MAVLink.*新鮮/);
 assert.match(elements.get("source-truth").textContent, /地面真值/);
 assert.match(elements.get("live-m1").textContent, /955 轉\/分.*2\.00 N.*1\.00 A.*cw.*位置 未提供/);
+assert.match(elements.get("live-m1").textContent, /0\.10 命令/);
 elements.get("wind-from").value = "90"; elements.get("wind-speed").value = "3"; elements.get("wind-apply").click();
 const windRequest = FakeWebSocket.instance.sent.at(-1);
 assert.equal(windRequest.t, "set_wind"); assert.equal(elements.get("wind-apply").disabled, true);

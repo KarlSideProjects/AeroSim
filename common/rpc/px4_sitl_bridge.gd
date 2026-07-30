@@ -86,6 +86,7 @@ func configure(vehicle_settings: Dictionary, authority_callback: Callable = Call
         "HeartbeatTimeout": float(vehicle_settings.get("HeartbeatTimeout", DEFAULT_HEARTBEAT_TIMEOUT)),
         "FailureTimeout": float(vehicle_settings.get("FailureTimeout", DEFAULT_FAILURE_TIMEOUT)),
         "ActuatorTimeout": float(vehicle_settings.get("ActuatorTimeout", 0.5)),
+        "HilActuatorQuadXOrder": vehicle_settings.get("HilActuatorQuadXOrder", []),
     }
     _authority_callback = authority_callback
     var errors: Array[String] = []
@@ -515,12 +516,13 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
             for index in 4:
                 _actuators.append(clampf(frame.decode_float(payload_offset + 16 + index * 4), 0.0, 1.0) if armed else 0.0)
             _last_actuator_time = now_seconds
-            _record_px4_message("hil_actuator_controls", {
-                "command_normalized": {
+            var hil_sample := {"mapping_verified": _verified_quad_x_mapping()}
+            if bool(hil_sample.mapping_verified):
+                hil_sample["command_normalized"] = {
                     "m1": float(_actuators[0]), "m2": float(_actuators[1]),
                     "m3": float(_actuators[2]), "m4": float(_actuators[3]),
-                },
-            }, now_seconds)
+                }
+            _record_px4_message("hil_actuator_controls", hil_sample, now_seconds)
             if _armed_since >= 0.0:
                 _refresh_authority(now_seconds, true)
         elif message_id == MAVLINK_ATTITUDE:
@@ -542,20 +544,31 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
         elif message_id == MAVLINK_ATTITUDE_TARGET:
             if payload_size < 37:
                 continue
-            _record_px4_message("attitude_target", {
-                "attitude_ned": Quaternion(frame.decode_float(payload_offset + 5), frame.decode_float(payload_offset + 6), frame.decode_float(payload_offset + 7), frame.decode_float(payload_offset + 4)),
-                "body_rates_frd_rad_s": Vector3(frame.decode_float(payload_offset + 20), frame.decode_float(payload_offset + 24), frame.decode_float(payload_offset + 28)),
-                "thrust": frame.decode_float(payload_offset + 32),
-            }, now_seconds)
+            var attitude_mask := int(frame[payload_offset + 36])
+            var attitude_target := {"type_mask": attitude_mask}
+            if (attitude_mask & 0x80) == 0:
+                attitude_target["attitude_ned"] = Quaternion(frame.decode_float(payload_offset + 8), frame.decode_float(payload_offset + 12), frame.decode_float(payload_offset + 16), frame.decode_float(payload_offset + 4))
+            if (attitude_mask & 0x07) == 0:
+                attitude_target["body_rates_frd_rad_s"] = Vector3(frame.decode_float(payload_offset + 20), frame.decode_float(payload_offset + 24), frame.decode_float(payload_offset + 28))
+            attitude_target["thrust"] = frame.decode_float(payload_offset + 32)
+            _record_px4_message("attitude_target", attitude_target, now_seconds)
         elif message_id == MAVLINK_POSITION_TARGET_LOCAL_NED:
             if payload_size < 51:
                 continue
-            _record_px4_message("position_target_local_ned", {
-                "position_ned": Vector3(frame.decode_float(payload_offset + 4), frame.decode_float(payload_offset + 8), frame.decode_float(payload_offset + 12)),
-                "velocity_ned_mps": Vector3(frame.decode_float(payload_offset + 16), frame.decode_float(payload_offset + 20), frame.decode_float(payload_offset + 24)),
-                "yaw_rad": frame.decode_float(payload_offset + 40),
-                "yaw_rate_rad_s": frame.decode_float(payload_offset + 44),
-            }, now_seconds)
+            var position_mask := int(frame.decode_u16(payload_offset + 48))
+            var coordinate_frame := int(frame[payload_offset + 50])
+            if coordinate_frame != 1:
+                continue
+            var position_target := {"type_mask": position_mask, "coordinate_frame": coordinate_frame}
+            if (position_mask & 0x07) == 0:
+                position_target["position_ned"] = Vector3(frame.decode_float(payload_offset + 4), frame.decode_float(payload_offset + 8), frame.decode_float(payload_offset + 12))
+            if (position_mask & 0x38) == 0:
+                position_target["velocity_ned_mps"] = Vector3(frame.decode_float(payload_offset + 16), frame.decode_float(payload_offset + 20), frame.decode_float(payload_offset + 24))
+            if (position_mask & 0x400) == 0:
+                position_target["yaw_rad"] = frame.decode_float(payload_offset + 40)
+            if (position_mask & 0x800) == 0:
+                position_target["yaw_rate_rad_s"] = frame.decode_float(payload_offset + 44)
+            _record_px4_message("position_target_local_ned", position_target, now_seconds)
         elif message_id == MAVLINK_WIND_COV:
             if not v2 and payload_size < 40:
                 continue
@@ -581,6 +594,10 @@ func _consume_mavlink(packet: PackedByteArray, now_seconds: float, rx_buffer: Pa
                         _arm_requested = false
                     _set_state("failed", false, "PX4 command %d rejected with result %d" % [command, result])
     return rx_buffer
+
+
+func _verified_quad_x_mapping() -> bool:
+    return _config.get("HilActuatorQuadXOrder", []) == ["rear_right", "front_right", "rear_left", "front_left"]
 
 
 func _find_mavlink_start(rx_buffer: PackedByteArray) -> int:

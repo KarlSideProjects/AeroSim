@@ -222,7 +222,7 @@ func test_real_parser_exposes_only_crc_valid_px4_observability() -> void:
     var frames := [
         _mavlink_frame(bridge, 30, _floats([12.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6])),
         _mavlink_frame(bridge, 32, _floats([13.0, 1.0, 2.0, -3.0, 4.0, 5.0, -6.0])),
-        _mavlink_frame(bridge, 83, _floats([14.0, 1.0, 0.0, 0.0, 0.0, 0.1, 0.2, 0.3, 0.7]) + PackedByteArray([0])),
+        _mavlink_frame(bridge, 83, _floats([14.0, 1.0, 0.2, 0.3, 0.4, 0.1, 0.2, 0.3, 0.7]) + PackedByteArray([0])),
         _mavlink_frame(bridge, 85, _floats([15.0, 7.0, 8.0, -9.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.4, 0.5]) + bridge._u16_bytes(0) + PackedByteArray([1])),
         _mavlink_frame(bridge, 231, bridge._u64_bytes(16_000) + _floats([2.0, 3.0, 4.0, 0.1, 0.2, 100.0, 0.3, 0.4])),
     ]
@@ -232,6 +232,7 @@ func test_real_parser_exposes_only_crc_valid_px4_observability() -> void:
     var observed := bridge.px4_observability(2.25)
     assert_eq(observed.attitude.source, "px4_mavlink")
     assert_eq(observed.local_position_ned.sample.position_ned, Vector3(1.0, 2.0, -3.0))
+    assert_eq(observed.attitude_target.sample.attitude_ned, Quaternion(0.2, 0.3, 0.4, 1.0))
     assert_almost_eq(observed.attitude_target.sample.thrust, 0.7, 0.00001)
     assert_eq(observed.position_target_local_ned.sample.position_ned, Vector3(7.0, 8.0, -9.0))
     assert_eq(observed.wind_cov.sample.wind_ned_mps, Vector3(2.0, 3.0, 4.0))
@@ -266,6 +267,32 @@ func test_px4_actuator_commands_are_m1_to_m4_and_fail_closed_when_stale() -> voi
     bridge.poll(0.12)
     assert_eq(bridge.actuator_outputs().size(), 0)
     assert_true(bridge.px4_observability(0.12).hil_actuator_controls.stale)
+
+
+func test_px4_target_masks_and_unverified_hil_mapping_remain_unavailable() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    bridge._config.HilActuatorQuadXOrder = []
+    bridge.start()
+    var attitude_payload := _floats([14.0, 1.0, 0.2, 0.3, 0.4, 0.1, 0.2, 0.3, 0.7]) + PackedByteArray([0x87])
+    var position_payload := _floats([15.0, 7.0, 8.0, -9.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.4, 0.5]) + bridge._u16_bytes(0x0007) + PackedByteArray([1])
+    bridge._consume_mavlink(_mavlink_frame(bridge, 83, attitude_payload), 0.01, PackedByteArray())
+    bridge._consume_mavlink(_mavlink_frame(bridge, 85, position_payload), 0.01, PackedByteArray())
+    var hil_payload := bridge._u64_bytes(1000)
+    for _index in 8:
+        hil_payload.append(0)
+    for value in [0.25, 0.5, 0.75, 1.0]:
+        hil_payload.append_array(bridge._float_bytes(value))
+    for _index in 12:
+        hil_payload.append_array(bridge._float_bytes(0.0))
+    hil_payload.append(0x81)
+    bridge._consume_mavlink(_mavlink_frame(bridge, 93, hil_payload), 0.01, PackedByteArray())
+
+    var observed := bridge.px4_observability(0.02)
+    assert_false(observed.attitude_target.sample.has("attitude_ned"))
+    assert_false(observed.attitude_target.sample.has("body_rates_frd_rad_s"))
+    assert_false(observed.position_target_local_ned.sample.has("position_ned"))
+    assert_false(observed.hil_actuator_controls.sample.has("command_normalized"))
+    assert_false(bool(observed.hil_actuator_controls.sample.mapping_verified))
 
 
 func test_real_parser_accepts_crc_valid_mavlink_v2_trailing_zero_truncation() -> void:
@@ -320,7 +347,8 @@ func _new_fake_bridge(heartbeat_timeout: float, actuator_timeout: float = -1.0) 
         "FailureTimeout": heartbeat_timeout * 3.0,
         "ActuatorTimeout": actuator_timeout,
         "UseSerial": false,
-        "LockStep": true
+        "LockStep": true,
+        "HilActuatorQuadXOrder": ["rear_right", "front_right", "rear_left", "front_left"],
     }, Callable(self, "_on_authority_changed"))
     return bridge
 

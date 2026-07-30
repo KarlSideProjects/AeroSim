@@ -18,6 +18,7 @@ class FakeNative extends Node:
     func configure_wind(next: Dictionary) -> void:
         config = next.duplicate(true)
 
+
 func _init() -> void:
     var valid := GspServer.validate_set_wind_message(JSON.stringify({"v": 2, "t": "set_wind", "seq": 1, "d": {"wind_from_deg": 0.0, "speed_mps": 5.0}}), 0)
     _expect(bool(valid.get("ok", false)), "bounded meteorological wind request is accepted")
@@ -41,9 +42,20 @@ func _init() -> void:
     _expect(bool(calm.get("pending", false)) and runtime.environment_state.snapshot().steady_wind == Vector3.ZERO, "zero speed remains true calm")
     var rejected := runtime.gsp_wind_request(7, 9, 13, 0.0, 10.1)
     _expect(not bool(rejected.get("ok", false)) and runtime.environment_state.snapshot().steady_wind == Vector3.ZERO, "qualified speed domain rejects without mutation")
+    runtime._replay_recording_active = true
+    runtime._replay_recording_failed = true
+    runtime._replay_recording_failure = "forced replay failure"
+    var replay_before: Dictionary = runtime.environment_state.snapshot()
+    var replay_wind_before: Dictionary = runtime.native.wind_configuration()
+    runtime.gsp_wind_request(7, 9, 14, 180.0, 4.0)
+    runtime._apply_gsp_wind_requests(44)
+    var replay_results: Array = runtime.gsp_wind_results()
+    var replay_result: Dictionary = replay_results.back() if not replay_results.is_empty() else {}
+    _expect(not bool(replay_result.get("ok", false)) and String(replay_result.get("error", "")) == "replay_recording_failed" and runtime.environment_state.snapshot() == replay_before and runtime.native.wind_configuration() == replay_wind_before, "replay recording failure rejects wind and restores every mutated boundary")
     if failures.is_empty():
         print("GSP wind contract: PASS")
         quit(0)
+        return
     for failure in failures:
         push_error(failure)
     print("GSP wind contract: FAIL")
