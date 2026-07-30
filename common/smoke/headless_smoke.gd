@@ -723,10 +723,10 @@ func _verify_telemetry_snapshot_public_path(native: Object) -> bool:
     if snapshot.propwash_disturbance_rad_s2 != Vector3.ZERO or snapshot.drag_body_n != Vector3.ZERO:
         push_error("TelemetrySnapshot vector effect indicators must stay zero until runtime models feed them")
         return false
-    if str(snapshot.body_drag_operating_state) != "disabled" or str(snapshot.body_drag_evidence_state) != "provisional" or \
+    if str(snapshot.body_drag_operating_state) != "disabled" or str(snapshot.body_drag_evidence_state) != "unavailable" or \
             str(snapshot.body_drag_reason_code) != "disabled" or snapshot.body_drag_force_body_frd_n_mean != Vector3.ZERO or \
             snapshot.body_drag_torque_body_frd_nm_mean != Vector3.ZERO:
-        push_error("TelemetrySnapshot disabled body drag must be explicit and exactly zero")
+        push_error("TelemetrySnapshot disabled body drag must be unavailable and exactly zero")
         return false
     if str(snapshot.config_hash).is_empty() or str(snapshot.config_hash) == "unavailable":
         push_error("TelemetrySnapshot must expose a config hash")

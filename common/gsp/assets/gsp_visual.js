@@ -18,18 +18,21 @@
 
     function vectorState(value, gate) {
         if (gate && gate !== "active") return { state: gate, value: null };
-        if (!value || !finite(Number(value.x_val)) || !finite(Number(value.y_val)) || !finite(Number(value.z_val))) return { state: "unavailable", value: null };
-        return { state: "active", value: { x: Number(value.x_val), y: Number(value.y_val), z: Number(value.z_val) } };
+        if (!finiteVector(value)) return { state: "unavailable", value: null };
+        return { state: "active", value: { x: vectorAxis(value, "x"), y: vectorAxis(value, "y"), z: vectorAxis(value, "z") } };
     }
 
-    function positiveVector(value) {
-        const x = value && (value.x ?? value.x_val), y = value && (value.y ?? value.y_val), z = value && (value.z ?? value.z_val);
-        return finite(Number(x)) && finite(Number(y)) && finite(Number(z)) && Number(x) > 0 && Number(y) > 0 && Number(z) > 0;
+    function vectorAxis(value, axis) {
+        if (!value || typeof value !== "object") return undefined;
+        return Object.prototype.hasOwnProperty.call(value, axis) ? value[axis] : value[axis + "_val"];
     }
 
     function finiteVector(value) {
-        const x = value && (value.x ?? value.x_val), y = value && (value.y ?? value.y_val), z = value && (value.z ?? value.z_val);
-        return finite(Number(x)) && finite(Number(y)) && finite(Number(z));
+        return finite(vectorAxis(value, "x")) && finite(vectorAxis(value, "y")) && finite(vectorAxis(value, "z"));
+    }
+
+    function positiveVector(value) {
+        return finiteVector(value) && vectorAxis(value, "x") > 0 && vectorAxis(value, "y") > 0 && vectorAxis(value, "z") > 0;
     }
 
     function qualifiedBodyDrag(sample) {
@@ -41,8 +44,8 @@
         return String(sample.body_drag_operating_state || "") === "active" &&
             ["provisional_estimate", "measured"].includes(evidenceState) &&
             typeof evidence.provenance === "string" && evidence.provenance.length > 0 &&
-            finite(Number(sample.air_density_kg_m3)) && Number(sample.air_density_kg_m3) > 0 &&
-            finite(Number(bodyDrag.air_density_kg_m3)) && Number(bodyDrag.air_density_kg_m3) > 0 &&
+            finite(sample.air_density_kg_m3) && sample.air_density_kg_m3 > 0 &&
+            finite(bodyDrag.air_density_kg_m3) && bodyDrag.air_density_kg_m3 > 0 &&
             positiveVector(bodyDrag.drag_coefficient) &&
             positiveVector(configuration.frame && configuration.frame.frontal_area_m2) &&
             finiteVector(bodyDrag.center_of_pressure_frd_m) &&

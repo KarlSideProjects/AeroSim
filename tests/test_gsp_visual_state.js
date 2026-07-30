@@ -81,6 +81,50 @@ const incompleteBodyDrag = map({
 assert.equal(incompleteBodyDrag.flow.body_drag.state, "unavailable");
 assert.equal(incompleteBodyDrag.flow.body_drag_torque.state, "unavailable");
 
+for (const missingInput of [
+    "airspeed_body_frd_mps_mean",
+    "hardware_configuration.aerodynamics.body_drag.center_of_pressure_frd_m",
+    "hardware_configuration.aircraft.cg_offset_m",
+]) {
+    const sample = JSON.parse(JSON.stringify({
+        body_drag_operating_state: "active",
+        airspeed_body_frd_mps_mean: { x_val: 2, y_val: 0, z_val: 0 },
+        air_density_kg_m3: 1.225,
+        body_drag_force_body_frd_n_mean: { x_val: 9, y_val: 8, z_val: 7 },
+        body_drag_torque_body_frd_nm_mean: { x_val: 6, y_val: 5, z_val: 4 },
+        hardware_configuration: {
+            frame: { frontal_area_m2: { x: .1, y: .1, z: .1 } },
+            aircraft: { cg_offset_m: { x: 0, y: 0, z: 0 } },
+            aerodynamics: { body_drag: {
+                air_density_kg_m3: 1.225,
+                drag_coefficient: { x: 1, y: 1, z: 1 },
+                center_of_pressure_frd_m: { x: 0, y: 0, z: 0 },
+                evidence: { state: "provisional_estimate", provenance: "complete fixture" },
+            } },
+        },
+    }));
+    let target = sample;
+    const path = missingInput.split(".");
+    for (let index = 0; index < path.length - 1; ++index) target = target[path[index]];
+    target[path.at(-1)] = null;
+    const unavailable = map(sample);
+    assert.equal(unavailable.flow.body_drag.state, "unavailable", missingInput);
+    assert.equal(unavailable.flow.body_drag_torque.state, "unavailable", missingInput);
+}
+
+const malformedWrench = map({
+    body_drag_operating_state: "active",
+    airspeed_body_frd_mps_mean: { x_val: 2, y_val: 0, z_val: 0 },
+    air_density_kg_m3: 1.225,
+    body_drag_force_body_frd_n_mean: { x_val: null, y_val: 8, z_val: 7 },
+    body_drag_torque_body_frd_nm_mean: { x_val: 6, y_val: 5, z_val: 4 },
+    hardware_configuration: {
+        frame: { frontal_area_m2: { x: .1, y: .1, z: .1 } }, aircraft: { cg_offset_m: { x: 0, y: 0, z: 0 } },
+        aerodynamics: { body_drag: { air_density_kg_m3: 1.225, drag_coefficient: { x: 1, y: 1, z: 1 }, center_of_pressure_frd_m: { x: 0, y: 0, z: 0 }, evidence: { state: "provisional_estimate", provenance: "complete fixture" } } },
+    },
+});
+assert.equal(malformedWrench.flow.body_drag.state, "unavailable");
+
 const boundaries = map({
     motor_order: ["rear_right", "front_right", "rear_left", "front_left"],
     motors: [
