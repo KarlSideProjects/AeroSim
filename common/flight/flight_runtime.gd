@@ -7748,11 +7748,8 @@ func _airsim_state(name: String) -> Dictionary:
                 "orientation": _airsim_quaternion(AirSimCoordinateContract.godot_orientation_to_ned(measurement_orientation)),
                 "barometer_altitude_m": float(raw_imu.get("barometer_altitude_m", -position.y)),
             }
-    var orientation_ned := AirSimCoordinateContract.godot_orientation_to_ned(orientation)
-    var magnetic_field_body: Vector3 = orientation_ned.inverse() * AirSimSensorSuite.MAGNETIC_FIELD_NED_GAUSS
-    var barometer_relative_altitude := float(native_imu_sample.get("barometer_altitude_m", -position_ned.z))
-    var barometer_altitude := origin_altitude + barometer_relative_altitude
-    var barometer_pressure_hpa := 1013.25 * pow(maxf(1.0 - barometer_altitude / 44330.0, 0.01), 5.25588)
+    var magnetometer_sample := airsim_sensor_suite.get_sensor(name, AirSimSensorSuite.SENSOR_MAGNETOMETER, "") if airsim_sensor_suite != null else {}
+    var barometer_sample := airsim_sensor_suite.get_sensor(name, AirSimSensorSuite.SENSOR_BAROMETER, "") if airsim_sensor_suite != null else {}
     var collision := {
         "has_collided": _airsim_collision_seen,
         "normal": _airsim_vector3(AirSimCoordinateContract.godot_direction_to_ned(_airsim_collision_normal)),
@@ -7776,8 +7773,6 @@ func _airsim_state(name: String) -> Dictionary:
         },
         "gps_location": gps_location,
         "imu_sample": native_imu_sample,
-        "magnetometer": {"magnetic_field_body": _airsim_vector3(magnetic_field_body)},
-        "barometer": {"altitude_m": barometer_altitude, "pressure_hpa": barometer_pressure_hpa},
         "timestamp": int(round(airsim_session.simulation_time_seconds * 1_000_000_000.0)),
         "landed_state": 0 if landed else 1,
         "rc_data": {"timestamp": 0, "pitch": 0.0, "roll": 0.0, "throttle": _flight_throttle(), "yaw": 0.0, "is_initialized": false, "is_valid": false},
@@ -7786,6 +7781,18 @@ func _airsim_state(name: String) -> Dictionary:
         "can_arm": native != null,
         "aerosim_identity": {"vehicle_name": _airsim_vehicle_name},
     }
+    if not magnetometer_sample.is_empty():
+        state["magnetometer"] = {
+            "magnetic_field_body": magnetometer_sample.get("magnetic_field_body", {}),
+            "time_stamp": int(magnetometer_sample.get("time_stamp", -1)),
+        }
+    if not barometer_sample.is_empty():
+        state["barometer"] = {
+            "altitude_m": float(barometer_sample.get("altitude", 0.0)),
+            "pressure_hpa": float(barometer_sample.get("pressure", 0.0)) / 100.0,
+            "temperature_c": float(barometer_sample.get("temperature", 0.0)),
+            "time_stamp": int(barometer_sample.get("time_stamp", -1)),
+        }
     return {"ok": true, "state": state}
 
 

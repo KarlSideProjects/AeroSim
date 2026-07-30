@@ -42,8 +42,8 @@ func test_hil_sensor_measurements_require_actual_mag_and_baro_samples() -> void:
             "accel": {"x_val": 0.1, "y_val": 0.2, "z_val": -9.7},
             "gyro": {"x_val": 0.01, "y_val": 0.02, "z_val": 0.03},
         },
-        "magnetometer": {"magnetic_field_body": {"x_val": 0.22, "y_val": 0.01, "z_val": 0.43}},
-        "barometer": {"altitude_m": 123.0, "pressure_hpa": 998.5},
+        "magnetometer": {"magnetic_field_body": {"x_val": 0.22, "y_val": 0.01, "z_val": 0.43}, "time_stamp": 20_000_000},
+        "barometer": {"altitude_m": 123.0, "pressure_hpa": 998.5, "temperature_c": 24.9, "time_stamp": 20_000_000},
     }
     var measurements := bridge.hil_sensor_measurements(snapshot)
     assert_true(measurements.ok)
@@ -52,6 +52,21 @@ func test_hil_sensor_measurements_require_actual_mag_and_baro_samples() -> void:
 
     snapshot.erase("magnetometer")
     assert_false(bridge.hil_sensor_measurements(snapshot).ok, "The HIL bridge must fail closed instead of inventing a magnetic field.")
+
+
+func test_hil_sensor_masks_only_declare_resampled_mag_and_baro_groups() -> void:
+    var bridge := _new_fake_bridge(1.0)
+    var snapshot := {
+        "magnetometer": {"time_stamp": 20_000_000},
+        "barometer": {"time_stamp": 20_000_000},
+    }
+
+    assert_eq(bridge.hil_sensor_fields_updated(snapshot), 1 << 31)
+    assert_eq(bridge.hil_sensor_fields_updated(snapshot), 0x1BFF)
+    assert_eq(bridge.hil_sensor_fields_updated(snapshot), 0x003F)
+    snapshot.magnetometer.time_stamp = 40_000_000
+    snapshot.barometer.time_stamp = 40_000_000
+    assert_eq(bridge.hil_sensor_fields_updated(snapshot), 0x1BFF)
 
 
 func test_fake_armed_transport_reconnects_before_failure_timeout() -> void:

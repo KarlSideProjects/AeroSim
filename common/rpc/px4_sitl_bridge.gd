@@ -30,6 +30,9 @@ const DEFAULT_CONTROL_PORT_LOCAL := 14540
 const DEFAULT_CONTROL_PORT_REMOTE := 14580
 const DEFAULT_UDP_PORT := 14560
 const QUALIFICATION_TRACE_MAX_ENTRIES := 20000
+const HIL_SENSOR_IMU_UPDATED_MASK := 0x003F
+const HIL_SENSOR_MAGNETOMETER_UPDATED_MASK := 0x01C0
+const HIL_SENSOR_BAROMETER_UPDATED_MASK := 0x1A00
 
 var state := "disconnected"
 var mission_phase := "disarmed"
@@ -49,6 +52,8 @@ var _last_actuator_simulation_time := -1.0
 var _last_actuator_time_usec := -1
 var _last_sensor_time := -1.0
 var _hil_sensor_reset_sent := false
+var _last_magnetometer_sample_time_ns := -1
+var _last_barometer_sample_time_ns := -1
 var _start_time := -1.0
 var _armed_since := -1.0
 var _arm_requested := false
@@ -129,6 +134,8 @@ func start() -> Dictionary:
     _last_actuator_time_usec = -1
     _last_sensor_time = -1.0
     _hil_sensor_reset_sent = false
+    _last_magnetometer_sample_time_ns = -1
+    _last_barometer_sample_time_ns = -1
     _armed_since = -1.0
     _arm_requested = false
     _arm_command_sent = false
@@ -243,13 +250,10 @@ func publish_sensor_snapshot(snapshot: Dictionary, simulation_time_seconds: floa
         accel.x, accel.y, accel.z,
         gyro.x, gyro.y, gyro.z,
         magnetic_field.x, magnetic_field.y, magnetic_field.z,
-        absolute_pressure_hpa, 0.0, barometer_altitude, 25.0
+        absolute_pressure_hpa, 0.0, barometer_altitude, float(measurements.temperature_c)
     ]:
         sensor_payload.append_array(_float_bytes(value))
-    var fields_updated := 0x1FFF
-    if not _hil_sensor_reset_sent:
-        fields_updated = 1 << 31
-        _hil_sensor_reset_sent = true
+    var fields_updated := hil_sensor_fields_updated(snapshot)
     sensor_payload.append_array(_u32_bytes(fields_updated))
     sensor_payload.append(0)
     _send_mavlink(sensor_payload, 107, _tcp)
@@ -262,7 +266,7 @@ func publish_sensor_snapshot(snapshot: Dictionary, simulation_time_seconds: floa
         "magnetic_field_body": [magnetic_field.x, magnetic_field.y, magnetic_field.z],
         "barometer_altitude_m": barometer_altitude,
         "absolute_pressure_hpa": absolute_pressure_hpa,
-        "temperature_c": 25.0,
+        "temperature_c": float(measurements.temperature_c),
     })
 
     var system_time_payload := _u64_bytes(int(round(simulation_time_seconds * 1_000_000.0)))
@@ -293,7 +297,8 @@ func hil_sensor_measurements(snapshot: Dictionary) -> Dictionary:
     var velocity: Variant = _finite_vector3(estimate.get("linear_velocity"))
     var barometer_altitude: Variant = barometer.get("altitude_m")
     var absolute_pressure: Variant = barometer.get("pressure_hpa")
-    if accel == null or gyro == null or magnetic_field == null or velocity == null or not _finite_number(barometer_altitude) or not _finite_number(absolute_pressure) or float(absolute_pressure) <= 0.0:
+    var temperature: Variant = barometer.get("temperature_c")
+    if accel == null or gyro == null or magnetic_field == null or velocity == null or not _finite_number(barometer_altitude) or not _finite_number(absolute_pressure) or not _finite_number(temperature) or float(absolute_pressure) <= 0.0:
         return {"ok": false, "error": "HIL sensor snapshot contains missing or non-finite measurements"}
     return {
         "ok": true,
@@ -303,7 +308,31 @@ func hil_sensor_measurements(snapshot: Dictionary) -> Dictionary:
         "velocity_ned": velocity,
         "barometer_altitude_m": float(barometer_altitude),
         "absolute_pressure_hpa": float(absolute_pressure),
+        "temperature_c": float(temperature),
     }
+
+
+func hil_sensor_fields_updated(snapshot: Dictionary) -> int:
+    if not _hil_sensor_reset_sent:
+        _hil_sensor_reset_sent = true
+        return 1 << 31
+    var fields_updated := HIL_SENSOR_IMU_UPDATED_MASK
+    var magnetometer_time_ns := _sensor_sample_time_ns(snapshot.get("magnetometer"))
+    var barometer_time_ns := _sensor_sample_time_ns(snapshot.get("barometer"))
+    if magnetometer_time_ns > _last_magnetometer_sample_time_ns:
+        fields_updated |= HIL_SENSOR_MAGNETOMETER_UPDATED_MASK
+        _last_magnetometer_sample_time_ns = magnetometer_time_ns
+    if barometer_time_ns > _last_barometer_sample_time_ns:
+        fields_updated |= HIL_SENSOR_BAROMETER_UPDATED_MASK
+        _last_barometer_sample_time_ns = barometer_time_ns
+    return fields_updated
+
+
+func _sensor_sample_time_ns(sensor: Variant) -> int:
+    if not (sensor is Dictionary):
+        return -1
+    var sample_time: Variant = sensor.get("time_stamp")
+    return int(sample_time) if sample_time is int or sample_time is float else -1
 
 
 func _finite_vector3(value: Variant) -> Variant:

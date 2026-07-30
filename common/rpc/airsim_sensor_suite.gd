@@ -38,6 +38,11 @@ const DEFAULT_SENSOR_STARTUPS := {
 const EARTH_RADIUS_M := 6378137.0
 const MAGNETIC_FIELD_NED_GAUSS := Vector3(0.22, 0.0, 0.43)
 const MAX_CATCHUP_SAMPLES := 4096
+const DETERMINISTIC_NOISE_SEED := 0.61803398875
+const MAGNETOMETER_NOISE_GAUSS := 0.0005
+const BAROMETER_PRESSURE_NOISE_PA := 0.15
+const BAROMETER_TEMPERATURE_C := 25.0
+const BAROMETER_TEMPERATURE_NOISE_C := 0.02
 
 var _streams: Dictionary = {}
 var _stream_order: Array[Dictionary] = []
@@ -293,7 +298,10 @@ func _sample_magnetometer(state: Dictionary, sample_time: float) -> Dictionary:
     var body_field := orientation.inverse() * MAGNETIC_FIELD_NED_GAUSS
     return {
         "time_stamp": _timestamp(sample_time),
-        "magnetic_field_body": _vec3(body_field.x, body_field.y, body_field.z),
+        "magnetic_field_body": _vec3(
+            body_field.x + _deterministic_noise(sample_time, 1, MAGNETOMETER_NOISE_GAUSS),
+            body_field.y + _deterministic_noise(sample_time, 2, MAGNETOMETER_NOISE_GAUSS),
+            body_field.z + _deterministic_noise(sample_time, 3, MAGNETOMETER_NOISE_GAUSS)),
         "magnetic_field_covariance": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     }
 
@@ -308,9 +316,15 @@ func _sample_barometer(state: Dictionary, sample_time: float) -> Dictionary:
     return {
         "time_stamp": _timestamp(sample_time),
         "altitude": altitude,
-        "pressure": pressure,
+        "pressure": pressure + _deterministic_noise(sample_time, 4, BAROMETER_PRESSURE_NOISE_PA),
+        "temperature": BAROMETER_TEMPERATURE_C + _deterministic_noise(sample_time, 5, BAROMETER_TEMPERATURE_NOISE_C),
         "qnh": 1013.25,
     }
+
+
+func _deterministic_noise(sample_time: float, channel: int, amplitude: float) -> float:
+    var sample_index := int(round(sample_time * 50.0))
+    return sin(float(sample_index) * 12.9898 + float(channel) * 78.233 + DETERMINISTIC_NOISE_SEED) * amplitude
 
 
 func _sample_lidar(stream: Dictionary, state: Dictionary, sample_time: float) -> Dictionary:
