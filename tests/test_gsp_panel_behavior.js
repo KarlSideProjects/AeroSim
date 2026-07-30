@@ -124,6 +124,10 @@ const context = {
 };
 
 const html = fs.readFileSync("common/gsp/gsp_panel.html", "utf8");
+assert.match(html, /<label><span data-i18n="from">FROM°<\/span><input id="wind-from"/,
+    "language changes must translate the wind label without replacing its input");
+assert.doesNotMatch(html, /geometry: "[^"]*<b>/,
+    "text-only translations must not render markup literally");
 const script = html.match(/<script>\n([\s\S]*?)\n<\/script>/)[1];
 vm.runInNewContext(script, context, { filename: "gsp_panel.html" });
 
