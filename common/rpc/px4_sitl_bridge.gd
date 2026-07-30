@@ -66,6 +66,7 @@ var _offboard_target_active := false
 var _offboard_prewarm_since := -1.0
 var _last_position_setpoint_time := -1.0
 var _offboard_publisher_started := false
+var _offboard_waiting_estimator := false
 var _takeoff_pending := false
 var _takeoff_altitude := 0.0
 var _estimator_ready_report_count := 0
@@ -151,6 +152,7 @@ func start() -> Dictionary:
     _offboard_prewarm_since = -1.0
     _last_position_setpoint_time = -1.0
     _offboard_publisher_started = false
+    _offboard_waiting_estimator = false
     _takeoff_pending = false
     _takeoff_altitude = 0.0
     _estimator_ready_report_count = 0
@@ -466,6 +468,7 @@ func setpoint_ned_frd(position_ned: Vector3, body_rates_frd: Vector3) -> Diction
         _offboard_prewarm_since = -1.0
         _last_position_setpoint_time = -1.0
         _offboard_publisher_started = false
+        _offboard_waiting_estimator = false
         _trace_qualification_event("publisher_target_accepted", _last_poll_time, {"position_ned": position_ned})
     return {"ok": true}
 
@@ -473,9 +476,17 @@ func setpoint_ned_frd(position_ned: Vector3, body_rates_frd: Vector3) -> Diction
 func _advance_offboard_setpoint_publisher(now_seconds: float) -> void:
     if _config.get("Transport") == "Fake" or not _offboard_target_active:
         return
-    if not is_authority_active() or not estimator_ready(now_seconds):
-        _clear_offboard_target("guard_authority_or_estimator")
+    if not is_authority_active():
+        _clear_offboard_target("authority_lost")
         return
+    if not estimator_ready(now_seconds):
+        if _offboard_prewarm_since >= 0.0 or _offboard_requested:
+            _clear_offboard_target("estimator_lost_after_publisher_start")
+        elif not _offboard_waiting_estimator:
+            _offboard_waiting_estimator = true
+            _trace_qualification_event("publisher_waiting_estimator", now_seconds, {})
+        return
+    _offboard_waiting_estimator = false
     if _offboard_prewarm_since < 0.0:
         _offboard_prewarm_since = now_seconds
         _offboard_publisher_started = true
@@ -498,6 +509,7 @@ func _clear_offboard_target(reason: String = "explicit") -> void:
     _offboard_prewarm_since = -1.0
     _last_position_setpoint_time = -1.0
     _offboard_requested = false
+    _offboard_waiting_estimator = false
 
 
 func _send_position_setpoint(position_ned: Vector3) -> void:

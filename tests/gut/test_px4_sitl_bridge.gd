@@ -125,7 +125,7 @@ func test_fake_armed_authority_expires_when_actuators_stop() -> void:
     assert_eq(bridge.actuator_outputs().size(), 0)
 
 
-func test_offboard_publisher_prewarm_cadence_and_stale_stop_fail_closed() -> void:
+func test_offboard_target_waits_for_estimator_then_fails_closed_after_publisher_start() -> void:
     var bridge := _new_fake_bridge(2.0)
     bridge._config.Transport = "Real"
     bridge.set_qualification_trace_enabled(true)
@@ -133,23 +133,32 @@ func test_offboard_publisher_prewarm_cadence_and_stale_stop_fail_closed() -> voi
     bridge._authority_active = true
     bridge._last_heartbeat_time = 0.0
     bridge._estimator_ready_report_count = 2
-    bridge._last_estimator_ready_report_time = 0.0
+    bridge._last_estimator_ready_report_time = -1.0
     assert_true(bridge.setpoint_ned_frd(Vector3(1.0, 2.0, -3.0), Vector3.ZERO).ok)
     assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_target_accepted").is_empty())
 
     bridge.poll(0.0)
+    assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_waiting_estimator").is_empty())
+    assert_true(bridge._offboard_target_active)
+    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size(), 0)
+
+    bridge._last_estimator_ready_report_time = 0.01
+    bridge.poll(0.01)
     assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_started").is_empty())
     assert_false(_qualification_trace_entry(bridge.qualification_trace(), "publisher_first_send").is_empty())
     bridge.poll(0.5)
     assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size(), 2)
     assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_command_long").size(), 0)
-    bridge.poll(1.0)
+    bridge.poll(1.02)
     assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_command_long").back().command, 176)
 
-    bridge._set_state("stale", false, "test")
-    assert_eq(_qualification_trace_entry(bridge.qualification_trace(), "publisher_cleared").reason, "explicit")
+    bridge._last_estimator_ready_report_time = -1.0
     bridge.poll(1.2)
-    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size(), 3)
+    assert_eq(_qualification_trace_entry(bridge.qualification_trace(), "publisher_cleared").reason, "estimator_lost_after_publisher_start")
+    assert_false(bridge._offboard_target_active)
+    var sent_before_clear := _qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size()
+    bridge.poll(1.3)
+    assert_eq(_qualification_trace_entries(bridge.qualification_trace(), "outgoing_position_setpoint").size(), sent_before_clear)
 
 
 func test_real_lockstep_actuator_freshness_uses_hil_simulation_time_not_wall_clock() -> void:
