@@ -65,7 +65,7 @@ func _run() -> void:
         quit(1)
         return
     var explicit_steady := Vector3(3.0, 0.0, -4.0)
-    var explicit_environment: Dictionary = scene._airsim_environment("simSetEnvironment", [{"steady_wind": explicit_steady, "wind_preset": "severe"}])
+    var explicit_environment: Dictionary = scene._airsim_environment("simSetEnvironment", [{"steady_wind": {"x_val": explicit_steady.x, "y_val": explicit_steady.y, "z_val": explicit_steady.z}, "wind_preset": "severe"}])
     if not explicit_environment.ok:
         push_error("Terrain3D runtime smoke must accept an explicit steady wind")
         quit(1)
