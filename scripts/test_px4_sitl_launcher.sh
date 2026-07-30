@@ -108,10 +108,25 @@ printf '%s\n' 'res://extensions/aerosim_native/aerosim_native.gdextension' > "$R
 
 log_dir="$ROOT_DIR/build/px4_sitl"
 mkdir -p "$log_dir"
+wind_artifacts=(
+    "$log_dir/mission.log"
+    "$log_dir/wind_step_evidence.json"
+    "$log_dir/wind_step_qualification.json"
+    "$log_dir/wind_step_bridge_trace.json"
+    "$log_dir/wind_step_bridge_trace.json.tmp"
+    "$log_dir/godot.log"
+)
+if [ "$wind_step_qualification" = true ]; then
+    # Do not let a partial run inherit qualification evidence from an earlier
+    # process. Keep this intentionally limited to the wind-step artifacts.
+    rm -f "${wind_artifacts[@]}"
+fi
 px4_log="$log_dir/px4.log"
 px4_runtime_log="$log_dir/px4_runtime.log"
 mission_log="$log_dir/mission.log"
 tmp_dir="$(mktemp -d)"
+run_marker="$tmp_dir/run-start"
+touch "$run_marker"
 ready_file="$tmp_dir/ready"
 gsp_ready_file="$tmp_dir/gsp-ready.json"
 stop_file="$tmp_dir/stop"
@@ -280,6 +295,20 @@ if [ "$wind_step_qualification" = true ]; then
     qualification_args=(--output "$qualification_log" --evidence "$evidence_path")
     if ! python3 "$ROOT_DIR/scripts/px4_wind_step_qualification.py" "${qualification_args[@]}"; then
         echo "PX4 wind-step qualification unavailable or failed; no authentic result is claimed" >&2
+        exit 1
+    fi
+    for artifact in "$log_dir/mission.log" "$evidence_path" "$qualification_log" "$px4_trace_file"; do
+        if [ ! -s "$artifact" ] || [ ! "$artifact" -nt "$run_marker" ]; then
+            echo "PX4 wind-step run did not produce a fresh nonempty artifact: $artifact" >&2
+            exit 1
+        fi
+    done
+    if [ -e "$px4_trace_file.tmp" ]; then
+        echo "PX4 wind-step trace atomic publish did not finish" >&2
+        exit 1
+    fi
+    if grep -Eq '^(SCRIPT ERROR:|ERROR:)' "$godot_log"; then
+        echo "Godot reported a runtime error during PX4 wind-step qualification" >&2
         exit 1
     fi
 fi

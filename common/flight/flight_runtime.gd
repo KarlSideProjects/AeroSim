@@ -5285,7 +5285,8 @@ func _refresh_osd() -> void:
     var active := screen in ["preflight", "flight", "finish", "osd"] and not (paused and screen == "flight")
     var snapshot := _osd_snapshot()
     var battery: Dictionary = snapshot.get("battery", {})
-    var armed := bool(snapshot.get("armed", _flight_control_armed()))
+    var armed_value: Variant = snapshot.get("armed", _flight_control_armed())
+    var armed: bool = armed_value if armed_value is bool else _flight_control_armed()
     var mode := String(snapshot.get("mode", flight_mode))
     var lap_text := ""
     if time_trial != null:

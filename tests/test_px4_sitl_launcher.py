@@ -62,6 +62,17 @@ class Px4SitlLauncherTests(unittest.TestCase):
         self.assertIn('for _attempt in $(seq 1 50)', source)
         self.assertIn('sleep 0.1', source)
 
+    def test_wind_run_clears_only_its_explicit_artifacts_and_fails_closed_on_stale_output(self):
+        source = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn('wind_artifacts=(', source)
+        self.assertIn('rm -f "${wind_artifacts[@]}"', source)
+        self.assertIn('"$log_dir/wind_step_evidence.json"', source)
+        self.assertIn('"$log_dir/wind_step_qualification.json"', source)
+        self.assertIn('"$log_dir/wind_step_bridge_trace.json.tmp"', source)
+        self.assertIn('touch "$run_marker"', source)
+        self.assertIn('[ ! "$artifact" -nt "$run_marker" ]', source)
+        self.assertIn('grep -Eq \'^(SCRIPT ERROR:|ERROR:)\' "$godot_log"', source)
+
     def test_wind_step_qualification_does_not_pass_without_authentic_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             environment = os.environ | {
