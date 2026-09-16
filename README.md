@@ -79,10 +79,16 @@ scripts/test_native.sh
 scripts/check_hardcoded_airframe_constants.sh
 python3 scripts/check_licenses.py
 scripts/test_license_scan.sh
-python3 -m unittest license_server.test_license_server
 ```
 
-授權伺服器測試另需 Python 3.11 與 [鎖定的 Python 依賴](license_server/requirements.lock)，安裝方式與檢查見 `scripts/test_license_dependencies.sh`。完整 Linux gate 還使用 Node.js、瀏覽器驗證工具及 Godot；請對照 [腳本](scripts/verify_issue_11.sh) 與 [CI workflow](.github/workflows/ci.yml) 準備環境：
+授權伺服器測試另需 Python 3.11 與 [鎖定的 Python 依賴](license_server/requirements.lock)，使用獨立測試環境：
+
+```bash
+PYTHON_BIN=python3.11 scripts/test_license_dependencies.sh
+build/license-venv/bin/python -m unittest license_server.test_license_server
+```
+
+完整 Linux gate 還使用 Node.js、瀏覽器驗證工具及 Godot；請對照 [腳本](scripts/verify_issue_11.sh) 與 [CI workflow](.github/workflows/ci.yml) 準備環境：
 
 ```bash
 mkdir -p build/runner-temp
