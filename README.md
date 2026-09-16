@@ -1,161 +1,119 @@
 # AeroSim
 
-Godot 4.7 + C++ GDExtension 的最小專案骨架。
+可手動飛行、觀察感測資料並重播控制輸入的多旋翼模擬專案。它讓飛行控制與模擬實作者，在同一個虛擬場景中追查「輸入、風場、機體反應與儀表讀值」之間的關係。
 
-## 產品文件
+目前 repo 包含 Godot 飛行場景、C++ 模擬核心、AirSim 相容介面的部分實作，以及本機飛行調校面板。可先閱讀 [手把操作](docs/player_mode_xbox_controls.md)、[GSP 幾何與資料呈現](docs/gsp_drone_geometry.md) 和 [資料集格式](docs/dataset_recording.md)，或依下方 Linux 步驟建置。完整 AirSim-class 最低產品驗收仍未完成，不能將個別測試通過等同於整套平台已就緒。
 
-- [產品功能與特性](docs/product_capabilities.md)：AirSim-class 最低成果、能力邊界、驗收證據與目前實作狀態。
-- [產品需求文件](PRD_AeroSim.md)：v4.1 AirSim-class minimum、既有基礎 gate 與 Ubuntu qualification 計畫。
-- [Player Mode Xbox 操作說明](docs/player_mode_xbox_controls.md)：Mode 2 控制、受控起飛、Assisted Hold 與 Controller Monitor 判讀。
-- [AirSim 參考政策](docs/airsim_reference_policy.md)：鎖定版本、上游 issue 稽核與引用證據要求。
+## 能觀察與操作什麼
 
-## 環境需求
+| 目前程式中的能力 | 入口與可查驗內容 | 邊界 |
+| --- | --- | --- |
+| 手動飛行與重試 | [飛行 runtime](common/flight/flight_runtime.gd) 串起主選單、Quick Fly、出生點、暫停、重置與飛行控制 | Player Mode 可玩性里程碑 CAP-006 尚未完整驗收；鍵盤是備援操作 |
+| 參數化機體與物理步進 | [機體設定](config/drones/)、[原生核心](src/native/aerosim_native.cpp) 將推力、姿態、速度及風場納入模擬 | 模擬輸出不等於已經真機校準的預測 |
+| 觀察風與控制反應 | [GSP 面板](common/gsp/) 顯示控制命令、機體狀態與馬達資料，並區分來源及資料時效 | 本機 debug 調校工具；PX4 資料是否可見取決於 transport 與 SITL 設定 |
+| 程式控制及感測介面 | runtime 接上 AirSim RPC、命名載具、感測與相機 backend；[相容性清單](config/airsim_compatibility_manifest.json) 定義支援範圍 | 是受限相容介面，不能假設所有 Microsoft AirSim API、場景或外掛都可直接使用 |
+| 重播與分析資料 | [重播核心](src/native/aerosim_replay.cpp) 重算輸入序列；[DatasetWriter／Reader](dataset/portable.py) 封裝、驗證錄製資料 | 飛行重播與資料集錄製是不同成果；完整產品 session 與跨環境驗收需分別確認 |
 
-- Godot `4.7-stable`
-- Python 3
-- `g++` 或相容 C++17 compiler
-- `scons`（若本機沒有，`scripts/verify_issue_11.sh` 會安裝到 `.deps/venv`）
-- `godot-cpp`：固定 commit 已隨 repo 放在 `third_party/godot-cpp/`，不需要另外下載
+[產品能力表](docs/product_capabilities.md) 和 [PRD](PRD_AeroSim.md) 保留完整目標與驗收門檻。其中有些較早的 `Current evidence` 段落仍描述尚無 RPC、風場或資料集功能，與目前 runtime／writer 已存在的實作不同。本 README 以上列程式入口說明「已有實作」，不將這個差異解讀為所有產品門檻已通過。
 
-## 快速開始（Linux）
+## 如何把一次飛行變成可分析的過程
+
+```mermaid
+flowchart LR
+    Input[手把或受支援的 RPC 命令] --> Runtime[Godot 飛行 runtime]
+    Config[機體設定與風場] --> Native[C++ 模擬與飛行控制]
+    Runtime --> Native
+    Native --> State[狀態與模擬時間]
+    State --> View[場景、感測介面與 GSP]
+    State --> Evidence[重播與資料集驗證]
+```
+
+Godot 負責場景、互動與顯示，C++ GDExtension（讓 Godot 呼叫原生程式的擴充）負責模擬核心。這樣能把飛行計算獨立做原生測試，代價是必須管理引擎、繫結版本、原生編譯與顯示整合。
+
+兩個值得深入看的設計：
+
+- **可重複不靠畫面看起來一樣。** `replay_angle_mode_batch()` 從初始狀態逐幀重算，遇到無效步進會回報失敗幀；建置關閉浮點運算 contraction。[重播測試](tests/native/test_replay.cpp) 區分同平台 bitwise replay 與跨平台容忍值（姿態差不超過 0.5 度、位置差不超過 0.05 m），不能據此宣稱任意硬體上每個浮點值都相同。
+- **錄到檔案不等於資料完整。** `DatasetWriter.finalize()` 寫入 manifest 後執行驗證，失敗會標成 `interrupted`。時間戳、缺樣、相對路徑與檔案雜湊都是 [資料集契約](config/dataset_schema.json) 的一部分，讓後續分析能辨識缺漏。
+
+## Linux 快速開始
+
+需要 repo 存取權、Python 3、相容 C++17 編譯器、SCons，以及專案鎖定的 [Godot 4.7-stable](https://github.com/godotengine/godot/releases/tag/4.7-stable)。版本與雜湊見 [版本鎖定檔](docs/versions/godot-4.7.lock)；`godot-cpp` 已放在 `third_party/godot-cpp/`。此處依 repo 的版本契約操作，不代表任意 Godot 4.x 都相容。
 
 ```bash
-git clone https://github.com/jhihweijhan/AeroSim.git
+git clone https://github.com/KarlSideProjects/AeroSim.git
 cd AeroSim
-git switch main
-```
-
-先建置 GDExtension；`godot-cpp` 已包含在 repo，不需另外下載：
-
-```bash
-python3 -m pip install --user scons  # 若 scons 尚未安裝
+python3 -m venv .deps/venv
+. .deps/venv/bin/activate
+python3 -m pip install scons
 GODOT_CPP_DIR=third_party/godot-cpp scons target=template_debug platform=linux
-```
-
-設定 Godot 4.7 執行檔後啟動編輯器：
-
-```bash
-export GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64
+export GODOT_BIN=/absolute/path/to/Godot_v4.7-stable_linux.x86_64
 "$GODOT_BIN" --editor --path .
 ```
 
-在編輯器按 `F6` 執行目前的 smoke 場景，或按 `F5` 執行專案主場景。也可不開編輯器直接執行：
+編輯器按 `F5` 執行主場景 `levels/smoke/smoke.tscn`，或關閉編輯器後直接啟動：
 
 ```bash
 "$GODOT_BIN" --path .
 ```
 
-## 版本鎖定政策
+從畫面選擇 Quick Fly，依輸入確認與起飛提示操作。Xbox 手把採 Mode 2：左桿控制偏航與油門，右桿控制滾轉與俯仰；詳見 [完整操作與輸入判讀](docs/player_mode_xbox_controls.md)。沒有手把時依鍵盤提示使用備援控制。
 
-鎖定值記錄於 `docs/versions/godot-4.7.lock`：
+若找不到 `libaerosim_native`，先確認上述 SCons 建置成功。一般飛行展示不需要真實無人機；PX4 SITL 整合測試需要另備對應軟體與設定。桌面繪圖有 Compatibility fallback，但效能與顯示結果仍需在實際設備驗證，不能套用指定 reference runner 的量測值。
 
-- Godot `4.7-stable`
-- Linux x86_64 editor SHA-256
-- export templates SHA-256
-- godot-cpp commit
+## 本機調校與驗證入口
 
-任何 Godot engine、export template 或 godot-cpp 升級都必須重跑 G0-G3 全部 Gate。
+GSP 是本機瀏覽器面板，透過 loopback 與每次啟動產生的 token 連線。一般 debug 操作可在暫停選單按 `OPEN GSP PANEL`；無法開啟時使用 `COPY GSP URL`。連線資訊、替代開啟方式及 DEV-M 授權 fixture 已移至 [本機開發操作](docs/local-development.md)，保留原有操作細節。不要分享含 token 的執行期 URL。
 
-## 啟動遊戲
-
-專案的主場景是 `levels/smoke/smoke.tscn`。Linux 上可用 Godot 4.7 編輯器啟動：
+純文件檢查：
 
 ```bash
-GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64
-"$GODOT_BIN" --editor --path .
+python3 scripts/check_docs.py
 ```
 
-在 Godot 編輯器按 `F6` 執行目前場景，或按 `F5` 執行專案主場景。也可以直接執行遊戲：
+此檢查也解析 workflow YAML，需要 PyYAML；可在上方虛擬環境安裝 `python3 -m pip install PyYAML`。
 
-```bash
-"$GODOT_BIN" --path .
-```
-
-若啟動時出現找不到 `libaerosim_native`，回到 repo 根目錄重新建置：
-
-```bash
-GODOT_CPP_DIR=third_party/godot-cpp scons target=template_debug platform=linux
-```
-
-啟動後依畫面上的控制提示操作；Xbox 手把會顯示對應的手把按鍵，未連接手把時可使用鍵盤提示。
-
-## 外部 Ground Station Panel（GSP）
-
-GSP 是開發／調校用的獨立瀏覽器面板；飛行中的操作仍在 Godot 內完成。它只在 debug build 啟用。無須設定啟動參數：模擬器會在啟動時改為 borderless windowed、在 `127.0.0.1` 的 8765–8769 間選一個可用埠，並將面板安裝到 Godot 的 user-data 目錄（Ubuntu 通常是 `~/.local/share/godot/app_userdata/AeroSim/gsp/`）；在暫停選單按 `OPEN GSP PANEL` 才開啟瀏覽器面板。
-
-這是使用者觸發的開啟請求，較符合 Wayland 的焦點規則；若仍未看到瀏覽器分頁，按 `COPY GSP URL`，再將網址貼到既有瀏覽器的位址列。面板連線所需的 token 每次啟動都會重新產生。Godot 的 stdout 會印出 `GSP panel URL: file://...#port=...&token=...`；在 **模擬器仍在執行時**，複製完整 URL 到 Firefox 或 Chromium 的網址列即可開啟同一個面板。不要自行刪除 fragment 的 token，也不要把該 URL 分享給其他人；它授予本機模擬器這次執行期的控制權。停止模擬器後，該 URL 與 token 都會失效。
-
-若 GSP 無法啟動（例如埠已被佔用），模擬器本身仍可正常執行；請查看 Godot 輸出中的錯誤訊息。
-
-## 建置與測試
-
-```bash
-GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/verify_issue_11.sh
-```
-
-拆開執行：
+需要開發驗證時，可分層執行：
 
 ```bash
 scripts/test_native.sh
+scripts/check_hardcoded_airframe_constants.sh
 python3 scripts/check_licenses.py
 scripts/test_license_scan.sh
-python3 -m unittest license_server.test_license_server
-GODOT_CPP_DIR=third_party/godot-cpp scons target=template_debug platform=linux
-GODOT_BIN=/home/karl/Workspace/Toys/Godot/Godot_v4.7-stable_linux.x86_64 scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5
 ```
 
-`scripts/run_headless_smoke.sh` 會以 headless 模式執行 `common/smoke/headless_smoke.gd`，呼叫 `AeroSimNative.probe_value()`，依 `--frames` 或 `--seconds` 跑 physics ticks，並輸出 JSON。
-
-## G0.6a 決定性與重播
-
-- `SConstruct` 與 `scripts/test_native.sh` 都關閉 fused multiply-add contraction：GCC/Clang 使用 `-ffp-contract=off`，Windows MSVC GDExtension 使用 `/fp:strict`。
-- `src/native/aerosim_replay.hpp` 提供 `FlightCommand` frame 錄製與 `replay_angle_mode` 重播；`tests/native/test_replay.cpp` 驗證同平台相同輸入序列 bitwise replay。
-- G0.6a 跨平台終端容忍固定在共用核心：姿態差 `<= 0.5` 度、位置差 `<= 0.05` m。
-
-## CI
-
-GitHub Actions 會執行：
-
-1. Linux 原生 C++ 單元測試。
-2. 授權掃描，並確認 GPL fixture 會 fail。
-3. 授權伺服器 API 整合測試。
-4. 下載並驗證 Godot `4.7-stable` Linux editor hash。
-5. 使用 repo 內鎖定 commit 的 godot-cpp，建置 Linux GDExtension。
-6. headless smoke，確認 GDScript 可呼叫 native probe 並輸出檔案。
-7. Linux headed acceptance 與 release artifact checks。
-8. Linux replay terminal-state artifact 與 build provenance 檢查。
-
-## Ubuntu DEV-M 授權 fixture
-
-要先驗證「啟用後可以玩、斷網仍可進入 grace」時，不需要 production private key。使用下列腳本在 `build/` 產生一次性的 ephemeral RSA-2048 key、license key、SQLite license database、Godot provider config，以及本機 server 啟動器：
+授權伺服器測試另需 Python 3.11 與 [鎖定的 Python 依賴](license_server/requirements.lock)，使用獨立測試環境：
 
 ```bash
-scripts/test_license_dependencies.sh
-scripts/generate_devm_license_fixture.sh
+PYTHON_BIN=python3.11 scripts/test_license_dependencies.sh
+build/license-venv/bin/python -m unittest license_server.test_license_server
 ```
 
-腳本預設輸出到 `build/devm-license-fixture/`。它不會把 private key 或 license key 印到 console，也不會修改 repo 內的 production key/config。啟動本機 server：
+完整 Linux gate 還使用 Node.js、瀏覽器驗證工具及 Godot；請對照 [腳本](scripts/verify_issue_11.sh) 與 [CI workflow](.github/workflows/ci.yml) 準備環境：
 
 ```bash
-build/devm-license-fixture/start_server.sh
+mkdir -p build/runner-temp
+RUNNER_TEMP="$PWD/build/runner-temp" GODOT_BIN="$GODOT_BIN" scripts/verify_issue_11.sh
 ```
 
-將產生的 `license_provider.json` 傳給 Godot 的 `LicenseProvider.configure_from_path()`，再以 `license.key` 的內容呼叫 `activate()`：
-
-```gdscript
-var provider := preload("res://common/license/license_provider.gd").new()
-add_child(provider)
-assert(provider.configure_from_path("/absolute/path/to/build/devm-license-fixture/license_provider.json").ok)
-var license_key := FileAccess.get_file_as_string("/absolute/path/to/build/devm-license-fixture/license.key").strip_edges()
-var activation := await provider.activate(license_key)
-assert(activation.ok)
-assert(provider.get_snapshot().status == "online_valid")
-```
-
-測試斷網 grace 時，先保留 Godot 的 state file，再停止 `start_server.sh`；provider 應回報 `offline_grace_valid`。fixture 的 private key、license key、database 都只存在 `build/devm-license-fixture/`，測試完成後刪除整個目錄：
+該 gate 會建置並記錄原生產物來源。成功後，可用相同 commit 與產物重跑 headless smoke（不開視窗的整合檢查）：
 
 ```bash
-rm -rf build/devm-license-fixture
+GODOT_BIN="$GODOT_BIN" scripts/run_headless_smoke.sh --output build/headless_smoke.json --frames 5
 ```
 
-這是 DEV-M 整合測試資料，不是 production 金鑰流程；production private key 仍必須由外部 secret store 管理。
+預期輸出 JSON 與軌跡 CSV；腳本會檢查產物來源是否對應目前 HEAD，單獨跑 SCons 不會產生所需的 provenance 收據。無視窗 smoke、實際視窗驗收、release 打包與 GPU 效能是不同 gate。
+
+本次 README 整理檢查了來源、設定及文件路徑，沒有重跑完整原生／Godot／PX4／GPU gate。現有 [CI](.github/workflows/ci.yml)、[效能紀錄](docs/performance/) 與 [能力驗收說明](docs/product_capabilities.md) 應連同各自 commit、環境與限制閱讀；CAP-006 之前的 AI 視覺驗證仍是暫定證據，不等於正式人工可用性驗收。
+
+## 探究與工程學習的延伸
+
+可以固定機體設定與控制序列，只改變風場，觀察姿態、位置及馬達反應；再比較模擬真值、感測值與估計值，練習辨識誤差來源。重播與資料完整性契約也適合討論「實驗可重複」和「資料可查驗」的差別。
+
+這些是以現有介面為基礎的活動方向，尚未宣稱完成教學研究、真機遷移或學習成效驗證。若延伸到防災或公共決策，仍須另建立場景、有效性依據與評估設計。
+
+## 來源、授權與貢獻
+
+- Microsoft AirSim 是鎖定版本的相容性與實作參考，並非整套成果由本專案原創；引用規則見 [AirSim Reference Policy](docs/airsim_reference_policy.md)。
+- Godot、godot-cpp、Terrain3D、GUT、Three.js、場景材質及其他依賴的來源與 notices 見 [第三方清單](third_party/licenses.json) 和各自授權檔；允許清單不是整個專案的授權。
+- repo 根目錄沒有授予整份專案公開再散布權的 LICENSE，不能因使用 MIT／CC0 依賴便推定本專案可自由商用。
+- 本 README 描述目前 repo 的協作成果；個人貢獻需沿 commit／PR 紀錄確認，不將所有程式、素材與上游工作歸於單一作者。
