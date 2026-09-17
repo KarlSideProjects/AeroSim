@@ -407,6 +407,8 @@ class UbuntuReleaseArtifactAuditTest(ReleaseArtifactTestCase):
                 archive.writestr(LINUX_EXECUTABLE, b"\x7fELF executable")
                 archive.writestr(LINUX_EXTENSION, b"\x7fELF extension")
                 archive.writestr(LINUX_TERRAIN_EXTENSION, b"\x7fELF terrain extension")
+                for filename in ("LICENSE", "LICENSING.md"):
+                    archive.write(ROOT / filename, f"AeroSim-linux/{filename}")
             self.mark_first_entry_encrypted(artifact)
             result = self.check(artifact)
 
@@ -435,6 +437,8 @@ class UbuntuReleaseArtifactAuditTest(ReleaseArtifactTestCase):
                 archive.writestr(LINUX_EXECUTABLE, b"\x7fELF executable")
                 archive.writestr(LINUX_EXTENSION, b"\x7fELF extension")
                 archive.writestr(LINUX_TERRAIN_EXTENSION, b"\x7fELF terrain extension")
+                for filename in ("LICENSE", "LICENSING.md"):
+                    archive.write(ROOT / filename, f"AeroSim-linux/{filename}")
             self.set_first_entry_compression(artifact, 99)
             result = self.check(artifact)
 
