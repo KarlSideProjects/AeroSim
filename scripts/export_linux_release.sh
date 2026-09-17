@@ -6,7 +6,8 @@ if [ -z "${GODOT_EXPORT_TEMPLATES_DIR:-}" ] && [ -z "${XDG_DATA_HOME:-}" ]; then
     echo "missing XDG_DATA_HOME for job-local Godot export templates" >&2
     exit 1
 fi
-templates_dir="${GODOT_EXPORT_TEMPLATES_DIR:-$XDG_DATA_HOME/godot/export_templates/4.7.stable}"
+godot_version="$("$godot_bin" --version | cut -d . -f 1-4 | sed 's/\.official$//')"
+templates_dir="${GODOT_EXPORT_TEMPLATES_DIR:-$XDG_DATA_HOME/godot/export_templates/$godot_version}"
 release_lib="bin/libaerosim_native.linux.template_release.x86_64.so"
 out_dir="build/release/AeroSim-linux"
 out_zip="build/release/AeroSim-linux.zip"

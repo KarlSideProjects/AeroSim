@@ -15,6 +15,9 @@ on:
       - '.out-of-scope/**'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -32,6 +35,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: false
+          persist-credentials: false
 
       - name: Set job-local tool paths
         run: |
@@ -49,15 +53,8 @@ jobs:
           echo "XDG_CONFIG_HOME=$tool_root/xdg-config" >> "$GITHUB_ENV"
           echo "XDG_DATA_HOME=$tool_root/xdg-data" >> "$GITHUB_ENV"
 
-      - name: Fetch Godot 4.7
-        run: |
-          godot_dir="$AEROSIM_TOOL_ROOT/godot"
-          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
-          godot_url=https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
-          godot_sha256=0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c
-          scripts/download_release_asset.sh "$godot_url" "$godot_zip" sha256 "$godot_sha256"
-          unzip -q "$godot_zip" -d "$godot_dir"
-          echo "GODOT_BIN=$(find "$godot_dir" -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
+      - name: Set up Godot 4.7 or newer
+        run: scripts/setup_godot.sh editor
 
       - name: GUT recovery-mode shadow
         run: scripts/run_gut_tests.sh --recovery-mode
@@ -80,6 +77,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: false
+          persist-credentials: false
 
       - name: Set job-local tool paths
         run: |
@@ -122,6 +120,9 @@ jobs:
 
       - name: Python pinned oracle cache unit test
         run: PYTHONPATH="$AEROSIM_TOOL_ROOT/python-packages" python3 tests/test_pinned_oracle.py
+
+      - name: Godot setup unit test
+        run: python3 tests/test_godot_setup.py
 
       - name: Native unit test
         env:
@@ -174,16 +175,8 @@ jobs:
       - name: Performance report unit test
         run: python3 tests/test_performance_report.py
 
-      - name: Fetch Godot 4.7
-        run: |
-          godot_dir="$AEROSIM_TOOL_ROOT/godot"
-          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
-          rm -rf "$godot_dir" "$godot_zip"
-          godot_url=https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
-          godot_sha256=0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c
-          scripts/download_release_asset.sh "$godot_url" "$godot_zip" sha256 "$godot_sha256"
-          unzip -q "$godot_zip" -d "$godot_dir"
-          echo "GODOT_BIN=$(find "$godot_dir" -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
+      - name: Set up Godot 4.7 or newer
+        run: scripts/setup_godot.sh editor
 
       - name: Fetch godot-cpp
         run: |
@@ -304,19 +297,8 @@ jobs:
       - name: Test parallel release asset downloader
         run: scripts/test_parallel_release_download.sh
 
-      - name: Install Godot export templates
-        run: |
-          templates_archive="$AEROSIM_TOOL_ROOT/godot-export-templates.tpz"
-          templates_unpack_dir="$AEROSIM_TOOL_ROOT/godot-export-templates"
-          templates_dir="$XDG_DATA_HOME/godot/export_templates/4.7.stable"
-          templates_url=https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_export_templates.tpz
-          templates_sha512=1035dfde4edcc2472bb0c0b9610ce3ee9302642c2b9957e9066372f9f6bb759ab250c8887551a66f0bc5f51bbd9a58bb45e33a0f29844e97615a9b1138c1120e
-          AEROSIM_DOWNLOAD_PARALLELISM=16 \
-            scripts/download_release_asset.sh "$templates_url" "$templates_archive" sha512 "$templates_sha512"
-          rm -rf "$templates_unpack_dir" "$templates_dir"
-          mkdir -p "$templates_unpack_dir" "$templates_dir"
-          unzip -q "$templates_archive" -d "$templates_unpack_dir"
-          cp -a "$templates_unpack_dir/templates/." "$templates_dir/"
+      - name: Install matching Godot export templates
+        run: scripts/setup_godot.sh templates
 
       - name: Build Linux release GDExtension
         run: scons target=template_release platform=linux

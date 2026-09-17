@@ -5,6 +5,9 @@ on:
     - cron: "0 18 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: aerosim-performance-gpu
   cancel-in-progress: false
@@ -22,6 +25,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: false
+          persist-credentials: false
 
       - name: Set job-local tool and artifact paths
         run: |
@@ -48,14 +52,8 @@ jobs:
           build/scons-venv/bin/python -m pip install scons
           echo "$PWD/build/scons-venv/bin" >> "$GITHUB_PATH"
 
-      - name: Fetch pinned Godot 4.7
-        run: |
-          godot_dir="$AEROSIM_TOOL_ROOT/godot"
-          godot_zip="$AEROSIM_TOOL_ROOT/godot.zip"
-          curl -L -o "$godot_zip" https://github.com/godotengine/godot/releases/download/4.7-stable/Godot_v4.7-stable_linux.x86_64.zip
-          echo "0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c  $godot_zip" | sha256sum -c -
-          unzip -q "$godot_zip" -d "$godot_dir"
-          echo "GODOT_BIN=$(find "$godot_dir" -type f -name 'Godot*' | head -n 1)" >> "$GITHUB_ENV"
+      - name: Set up Godot 4.7 or newer
+        run: scripts/setup_godot.sh editor
 
       - name: Fetch pinned godot-cpp
         run: |

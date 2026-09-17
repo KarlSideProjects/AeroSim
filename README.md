@@ -39,7 +39,7 @@ Godot 負責場景、互動與顯示，C++ GDExtension（讓 Godot 呼叫原生�
 
 ## Linux 快速開始
 
-需要 repo 存取權、Python 3、相容 C++17 編譯器、SCons，以及專案鎖定的 [Godot 4.7-stable](https://github.com/godotengine/godot/releases/tag/4.7-stable)。版本與雜湊見 [版本鎖定檔](docs/versions/godot-4.7.lock)；`godot-cpp` 已放在 `third_party/godot-cpp/`。此處依 repo 的版本契約操作，不代表任意 Godot 4.x 都相容。
+需要 repo 存取權、Python 3、相容 C++17 編譯器、SCons，以及 Godot **4.7 以上的 stable 版本**（例如 4.7.2）。版本選擇與基準雜湊見 [版本規範](docs/versions/godot-4.7.lock)；`godot-cpp` 已放在 `third_party/godot-cpp/`。匯出模板必須與引擎版本一致，各版本仍需通過既有測試。
 
 ```bash
 git clone https://github.com/KarlSideProjects/AeroSim.git

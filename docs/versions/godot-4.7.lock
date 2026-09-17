@@ -1,6 +1,7 @@
-# Godot 版本鎖定
+# Godot 最低版本與基準校驗值
 
-Godot version: 4.7-stable
+Minimum Godot version: 4.7-stable
+Fallback Godot version: 4.7-stable
 Godot release date: 2026-06-18
 Godot source archive SHA-256: e7acb6b27d6bee2525fdaa12660c602b034c25094e8a2679334601d8878a9e06
 Godot Linux x86_64 editor SHA-256: 0b1a6c54c2c619c12e169fe9241edda4b81080b519451cec2984bf0d2c6cb73c
@@ -8,4 +9,8 @@ Godot Linux x86_64 editor binary SHA-256: f85bbc6b15e22416c7d797cd60b63286dd67b9
 Godot export templates SHA-256: 9714459dc071907c0f3d5f17d608faf69e7cda21331fc5d39c4503ffa4e99eec
 godot-cpp commit: ba0edfed90512ec64aba51d4295a3e7e30112f86
 
-引擎或 export template 升級時，必須重跑 G0-G3 全部 Gate。
+接受 Godot 4.7 以上的 stable 版本。CI 優先使用 GODOT_BIN、PATH 上的 godot，或 ~/godot/ 下的最新 stable Linux x86_64 執行檔；沒有本機引擎時下載上述 4.7 基準版本。
+
+匯出模板必須與實際引擎版本一致，優先從 GODOT_EXPORT_TEMPLATES_DIR 或 ~/.local/share/godot/export_templates/<version>.stable 複製至 job-local 目錄；缺少時下載官方對應版本並校驗 SHA-512。ci.yml 與 performance-gpu.yml 共用 scripts/setup_godot.sh。
+
+版本接受範圍不代表所有新版已經驗證：每個版本仍須通過既有 CI，正式 GPU 效能資格仍以 G0-G3 Gate 證據為準。
