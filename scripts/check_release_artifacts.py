@@ -27,6 +27,8 @@ LINUX_RELEASE_ENTRIES = {
     "AeroSim-linux/libaerosim_native.linux.template_release.x86_64.so",
     "AeroSim-linux/libterrain.linux.release.x86_64.so",
     "AeroSim-linux/THIRD_PARTY_NOTICES.txt",
+    "AeroSim-linux/LICENSE",
+    "AeroSim-linux/LICENSING.md",
 }
 LINUX_NATIVE_ENTRIES = (
     "AeroSim-linux/AeroSim.x86_64",
@@ -158,6 +160,11 @@ def check_linux_release(path: Path) -> str | None:
             for info in infos.values():
                 if info.flag_bits & 1:
                     return f"{path}: encrypted release archive entry: {info.filename}"
+            for filename in ("LICENSE", "LICENSING.md"):
+                name = f"AeroSim-linux/{filename}"
+                expected = (MANIFEST.parent.parent / filename).read_bytes()
+                if infos[name].file_size != len(expected) or archive.read(name) != expected:
+                    return f"{path}: release {filename} does not match repository terms"
             evidence = set()
             for name in LINUX_NATIVE_ENTRIES:
                 is_elf, payload_evidence = scan_native_payload(archive, name)

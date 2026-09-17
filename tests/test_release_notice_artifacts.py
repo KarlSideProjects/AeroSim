@@ -51,12 +51,18 @@ class ReleaseArtifactTestCase(unittest.TestCase):
         terrain_extension: bytes = b"\x7fELF terrain extension",
         extra_entries: dict[str, bytes] | None = None,
         compression: int = ZIP_DEFLATED,
+        include_license: bool = True,
     ):
         with ZipFile(path, "w", compression) as archive:
             archive.writestr(LINUX_EXECUTABLE, executable)
             archive.writestr(LINUX_EXTENSION, extension)
             archive.writestr(LINUX_TERRAIN_EXTENSION, terrain_extension)
             archive.writestr(LINUX_NOTICE, notice)
+            if include_license:
+                for filename in ("LICENSE", "LICENSING.md"):
+                    name = f"AeroSim-linux/{filename}"
+                    if name not in (extra_entries or {}):
+                        archive.write(ROOT / filename, name)
             for name, payload in (extra_entries or {}).items():
                 archive.writestr(name, payload)
 
@@ -148,6 +154,21 @@ class ReleaseNoticeArtifactsTest(ReleaseArtifactTestCase):
 
 
 class UbuntuReleaseArtifactAuditTest(ReleaseArtifactTestCase):
+    def test_checker_requires_current_project_license(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "AeroSim-linux.zip"
+            notice = self.generated_notice(Path(directory))
+            self.write_linux_archive(artifact, notice, include_license=False)
+            result = self.check(artifact)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unexpected release archive entries", result.stderr)
+            self.write_linux_archive(artifact, notice, extra_entries={
+                "AeroSim-linux/LICENSE": b"unrelated terms",
+            })
+            result = self.check(artifact)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("LICENSE does not match", result.stderr)
+
     def test_checker_rejects_archive_without_notice(self):
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "AeroSim-linux.zip"
