@@ -1,5 +1,7 @@
 # AeroSim
 
+> **授權：僅限非商業用途，歡迎研究、教學與交流。** 完整條款見 [LICENSE](LICENSE)，適用範圍與第三方例外見 [授權規範](LICENSING.md)。
+
 可手動飛行、觀察感測資料並重播控制輸入的多旋翼模擬專案。它讓飛行控制與模擬實作者，在同一個虛擬場景中追查「輸入、風場、機體反應與儀表讀值」之間的關係。
 
 目前 repo 包含 Godot 飛行場景、C++ 模擬核心、AirSim 相容介面的部分實作，以及本機飛行調校面板。可先閱讀 [手把操作](docs/player_mode_xbox_controls.md)、[GSP 幾何與資料呈現](docs/gsp_drone_geometry.md) 和 [資料集格式](docs/dataset_recording.md)，或依下方 Linux 步驟建置。完整 AirSim-class 最低產品驗收仍未完成，不能將個別測試通過等同於整套平台已就緒。
@@ -37,7 +39,7 @@ Godot 負責場景、互動與顯示，C++ GDExtension（讓 Godot 呼叫原生�
 
 ## Linux 快速開始
 
-需要 repo 存取權、Python 3、相容 C++17 編譯器、SCons，以及專案鎖定的 [Godot 4.7-stable](https://github.com/godotengine/godot/releases/tag/4.7-stable)。版本與雜湊見 [版本鎖定檔](docs/versions/godot-4.7.lock)；`godot-cpp` 已放在 `third_party/godot-cpp/`。此處依 repo 的版本契約操作，不代表任意 Godot 4.x 都相容。
+需要 repo 存取權、Python 3、相容 C++17 編譯器、SCons，以及 Godot **4.7 以上的 stable 版本**（例如 4.7.2）。版本選擇與基準雜湊見 [版本規範](docs/versions/godot-4.7.lock)；`godot-cpp` 已放在 `third_party/godot-cpp/`。匯出模板必須與引擎版本一致，各版本仍需通過既有測試。
 
 ```bash
 git clone https://github.com/KarlSideProjects/AeroSim.git
@@ -115,5 +117,5 @@ GODOT_BIN="$GODOT_BIN" scripts/run_headless_smoke.sh --output build/headless_smo
 
 - Microsoft AirSim 是鎖定版本的相容性與實作參考，並非整套成果由本專案原創；引用規則見 [AirSim Reference Policy](docs/airsim_reference_policy.md)。
 - Godot、godot-cpp、Terrain3D、GUT、Three.js、場景材質及其他依賴的來源與 notices 見 [第三方清單](third_party/licenses.json) 和各自授權檔；允許清單不是整個專案的授權。
-- repo 根目錄沒有授予整份專案公開再散布權的 LICENSE，不能因使用 MIT／CC0 依賴便推定本專案可自由商用。
+- 作者有權授權的內容依 [非商用研究授權](LICENSE) 發行，歡迎非商用研究、教學、修改與交流。第三方、獨立 MIT 幾何元件及既有權利見 [LICENSING.md](LICENSING.md)，不能把依賴的 MIT／CC0 擴張為全庫商用許可。
 - 本 README 描述目前 repo 的協作成果；個人貢獻需沿 commit／PR 紀錄確認，不將所有程式、素材與上游工作歸於單一作者。

@@ -25,6 +25,8 @@ with ZipFile(artifact, "w", ZIP_DEFLATED) as archive:
         b"\x7fELF delivery-drill-test",
     )
     archive.write(notice, "AeroSim-linux/THIRD_PARTY_NOTICES.txt")
+    for filename in ("LICENSE", "LICENSING.md"):
+        archive.write(filename, f"AeroSim-linux/{filename}")
 PY
 
 scripts/exercise_delivery_drill.sh \
