@@ -297,7 +297,7 @@ jobs:
       - name: Test parallel release asset downloader
         run: scripts/test_parallel_release_download.sh
 
-      - name: Install matching Godot export templates
+      - name: Install Godot export templates
         run: scripts/setup_godot.sh templates
 
       - name: Build Linux release GDExtension
