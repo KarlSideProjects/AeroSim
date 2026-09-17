@@ -27,7 +27,9 @@
   a manufacturer drawing or a measured specimen, with at least one evidence
   document, release redistribution rights, an allowlisted SPDX licence, the
   required attribution, and a hashed asset list.
-- License: MIT, (c) AeroSim contributors, same as the repository.
+- License: MIT, (c) AeroSim contributors, as a separately licensed geometry
+  component. The repository-wide noncommercial license does not replace this
+  component grant; see [scope notices](../../../LICENSING.md).
 - Required attribution: `AeroSim parametric Quad-X geometry, (c) AeroSim
   contributors, MIT`.
 - Redistribution disposition: `release`.
